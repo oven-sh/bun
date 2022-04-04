@@ -749,8 +749,8 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
     errdefer {
         maybe_keepalive = false;
     }
-
-    for (response.headers) |header| {
+    var content_encoding_i = response.headers.len + 1;
+    for (response.headers) |header, header_i| {
         switch (hashHeaderName(header.name)) {
             content_length_header_hash => {
                 content_length = std.fmt.parseInt(u32, header.value, 10) catch 0;
@@ -761,8 +761,10 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
             content_encoding_hash => {
                 if (strings.eqlComptime(header.value, "gzip")) {
                     encoding = Encoding.gzip;
+                    content_encoding_i = header_i;
                 } else if (strings.eqlComptime(header.value, "deflate")) {
                     encoding = Encoding.deflate;
+                    content_encoding_i = header_i;
                 } else if (!strings.eqlComptime(header.value, "identity")) {
                     return error.UnsupportedContentEncoding;
                 }
@@ -1000,7 +1002,11 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
 
             switch (encoding) {
                 Encoding.gzip, Encoding.deflate => {
-                    var gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
+                    var gzip_timer: std.time.Timer = undefined;
+
+                    if (extremely_verbose)
+                        gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
+
                     body_out_str.list.expandToCapacity();
                     defer ZlibPool.instance.put(buffer_) catch unreachable;
                     ZlibPool.decompress(buffer.list.items, body_out_str) catch |err| {
@@ -1008,7 +1014,10 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
                         Output.flush();
                         return err;
                     };
-                    this.gzip_elapsed = gzip_timer.read();
+
+                    if (extremely_verbose)
+                        this.gzip_elapsed = gzip_timer.read();
+
                 },
                 else => {},
             }
@@ -1083,7 +1092,11 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
 
             switch (encoding) {
                 Encoding.gzip, Encoding.deflate => {
-                    var gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
+                    var gzip_timer: std.time.Timer = undefined;
+
+                    if (extremely_verbose)
+                        gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
+
                     body_out_str.list.expandToCapacity();
                     defer ZlibPool.instance.put(buffer_) catch unreachable;
                     ZlibPool.decompress(buffer.list.items, body_out_str) catch |err| {
@@ -1091,7 +1104,10 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
                         Output.flush();
                         return err;
                     };
-                    this.gzip_elapsed = gzip_timer.read();
+
+                    if (extremely_verbose)
+                        this.gzip_elapsed = gzip_timer.read();
+
                 },
                 else => {},
             }

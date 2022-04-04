@@ -548,6 +548,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             headers: *JSC.FetchHeaders,
         ) void {
             headers.remove(&ZigString.init("content-length"));
+            headers.remove(&ZigString.init("transfer-encoding"));
+            if (!ssl_enabled) headers.remove(&ZigString.init("strict-transport-security"));
             headers.toUWSResponse(ssl_enabled, this.resp);
         }
 

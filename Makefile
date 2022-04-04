@@ -322,7 +322,7 @@ PLATFORM_LINKER_FLAGS = $(CFLAGS) \
 		-Wl,-Bsymbolic-functions \
 		-fno-semantic-interposition \
 		-flto \
-		--allow-multiple-definition
+		-Wl,--allow-multiple-definition
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 endif

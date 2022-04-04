@@ -754,8 +754,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     }
                 },
-                .Locked => {
-                    // response.body.value.resolve(new: *Value, global: *JSGlobalObject)
+                .Locked => |*lock| {
+                    lock.callback = doRenderWithBodyLocked;
+                    lock.task = this;
+                    return;
                 },
                 else => {},
             }

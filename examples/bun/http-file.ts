@@ -7,9 +7,9 @@ Bun.serve({
   },
 
   // this is called when fetch() throws or rejects
-  error(err: Error) {
-    return new Response("uh oh! :(" + String(err.toString()), { status: 500 });
-  },
+  // error(err: Error) {
+  // return new Response("uh oh! :(" + String(err.toString()), { status: 500 });
+  // },
 
   // this boolean enables the bun's default error handler
   // sometime after the initial release, it will auto reload as well

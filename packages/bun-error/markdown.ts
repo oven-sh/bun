@@ -45,21 +45,31 @@ export function exceptionsToMarkdown(exceptions: JSExceptionType[]): string {
 
 function exceptionToMarkdown(exception: JSException): string {
   const { name: name_, message: message_, stack } = exception;
+
   var name = String(name_).trim();
   var message = String(message_).trim();
+
+  // check both so if it turns out one of them was only whitespace, we don't count it
+  const hasName = name_ && name_.length > 0 && name.length > 0;
+  const hasMessage = message_ && message_.length > 0 && message.length > 0;
 
   let markdown = "";
 
   if (
-    name === "Error" ||
-    name === "RangeError" ||
-    name === "TypeError" ||
-    name === "ReferenceError" ||
-    name === "DOMException"
+    (name === "Error" ||
+      name === "RangeError" ||
+      name === "TypeError" ||
+      name === "ReferenceError" ||
+      name === "DOMException") &&
+    hasMessage
   ) {
     markdown += `**${message}**\n`;
-  } else {
+  } else if (hasName && hasMessage) {
     markdown += `**${name}**\n${message}\n`;
+  } else if (hasMessage) {
+    markdown += `${message}\n`;
+  } else if (hasName) {
+    markdown += `**${name}**\n`;
   }
 
   if (stack.frames.length > 0) {

@@ -303,7 +303,7 @@ pub const HTMLRewriter = struct {
             defer if (!is_pending) input.detach();
 
             if (is_pending) {
-                input.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoadingWrap, global);
+                input.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
             } else if (sink.runOutputSink(input.sharedView(), false)) |error_value| {
                 return error_value;
             }
@@ -313,10 +313,6 @@ pub const HTMLRewriter = struct {
             return JSC.JSValue.fromRef(
                 Response.makeMaybePooled(sink.global.ref(), sink.response),
             );
-        }
-
-        pub fn onFinishedLoadingWrap(sink: *anyopaque, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
-            onFinishedLoading(bun.cast(*BufferOutputSink, sink), bytes);
         }
 
         pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {

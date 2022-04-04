@@ -354,6 +354,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub const RequestContextStackAllocator = std.heap.StackFallbackAllocator(@sizeOf(RequestContext) * 2048 + 4096);
 
+        // TODO: support builtin compression
+        const can_sendfile = !ssl_enabled;
+
         pub threadlocal var pool: *RequestContextStackAllocator = undefined;
 
         pub fn setAbortHandler(this: *RequestContext) void {
@@ -476,7 +479,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.aborted) {
                 return false;
             }
-
             return this.sendWritableBytes(this.fallback_buf.items, write_offset, resp);
         }
 
@@ -657,12 +659,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return this.onSendfile();
         }
 
-        pub fn onWritablePrepareSendfile(this: *RequestContext, _: c_ulong, _: *App.Response) callconv(.C) bool {
-            this.renderSendFile(this.blob);
-
-            return true;
-        }
-
         pub fn onPrepareSendfileWrap(this: *anyopaque, fd: i32, size: anyerror!Blob.SizeType, _: *JSGlobalObject) void {
             onPrepareSendfile(bun.cast(*RequestContext, this), fd, size);
         }
@@ -699,10 +695,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
-            if (this.has_sendfile_ctx) return;
-            this.has_sendfile_ctx = true;
-            this.setAbortHandler();
-
             JSC.WebCore.Blob.doOpenAndStatFile(
                 &this.blob,
                 *RequestContext,
@@ -712,27 +704,53 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             );
         }
 
-        pub fn doRender(this: *RequestContext) void {
-            if (this.aborted) {
+        pub fn doSendfile(this: *RequestContext, blob: Blob) void {
+            if (this.has_sendfile_ctx) return;
+            this.has_sendfile_ctx = true;
+            this.setAbortHandler();
+
+            if (comptime can_sendfile) {
+                return this.renderSendFile(blob);
+            }
+
+            this.blob.doReadFileInternal(*RequestContext, this, onReadFile, this.server.globalThis);
+        }
+
+        pub fn onReadFile(this: *RequestContext, result: Blob.Store.ReadFile.ResultType) void {
+            if (result == .err) {
+                this.runErrorHandler(result.err.toErrorInstance(this.server.globalThis));
                 return;
             }
-            var response = this.response_ptr.?;
-            var body = &response.body;
 
-            switch (body.value) {
+            this.blob.resolveSize();
+            this.doRenderBlob();
+        }
+
+        pub fn doRenderWithBodyLocked(this: *anyopaque, value: *JSC.WebCore.Body.Value) void {
+            doRenderWithBody(bun.cast(*RequestContext, this), value);
+        }
+
+        pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
+            if (this.aborted) {
+                this.finalize();
+                return;
+            }
+
+            switch (value.*) {
                 .Error => {
-                    const err = body.value.Error;
-                    _ = response.body.use();
+                    const err = value.Error;
+                    _ = value.use();
                     this.runErrorHandler(err);
                     return;
                 },
                 .Blob => {
-                    this.blob = response.body.use();
+                    this.blob = value.use();
 
                     if (this.blob.needsToReadFile()) {
                         this.req.setYield(false);
                         this.setAbortHandler();
-                        if (!this.has_sendfile_ctx) this.renderSendFile(this.blob);
+                        if (!this.has_sendfile_ctx)
+                            this.doSendfile(this.blob);
                         return;
                     }
                 },
@@ -742,12 +760,24 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 else => {},
             }
 
+            this.doRenderBlob();
+        }
+
+        pub fn doRenderBlob(this: *RequestContext) void {
             if (this.has_abort_handler)
                 this.resp.runCorked(*RequestContext, renderMetadata, this)
             else
                 this.renderMetadata();
 
             this.renderBytes();
+        }
+
+        pub fn doRender(this: *RequestContext) void {
+            if (this.aborted) {
+                return;
+            }
+            var response = this.response_ptr.?;
+            this.doRenderWithBody(&response.body.value);
         }
 
         pub fn renderProductionError(this: *RequestContext) void {
@@ -851,7 +881,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                                 this.resp.writeHeader(
                                     "content-disposition",
-                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename}) catch "",
+                                    std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@minimum(basename.len, 1024 - 32)]}) catch "",
                                 );
                             }
                         }

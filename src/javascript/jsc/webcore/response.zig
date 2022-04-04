@@ -1802,8 +1802,14 @@ pub const Blob = struct {
 
                 bun.default_allocator.destroy(this);
 
-                cb(cb_ctx, .{ .result = bytes });
-                store.deref();
+                // Attempt to free it as soon as possible
+                if (store.ref_count > 1) {
+                    store.deref();
+                    cb(cb_ctx, .{ .result = bytes });
+                } else {
+                    cb(cb_ctx, .{ .result = bytes });
+                    store.deref();
+                }
             }
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {
                 var frame = HTTPClient.getAllocator().create(@Frame(runAsync)) catch unreachable;
@@ -3007,7 +3013,7 @@ pub const Blob = struct {
             bun.default_allocator,
             this.store.?,
             ctx,
-            Function,
+            NewInternalReadFileHandler(Handler, Function).run,
             this.offset,
             this.size,
         ) catch unreachable;

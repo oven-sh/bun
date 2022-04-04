@@ -1,26 +1,10 @@
-// Type definitions for bun 0.0.74
+// Type definitions for bun 0.0
 // Project: https://github.com/Jarred-Sumner/bun
 // Definitions by: Jarred Sumner <https://github.com/Jarred-Sumner>
 // Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
 
-interface VoidFunction {
-  (): void;
-}
-
-/**
- *   This lets you use macros as regular imports
- *   @example
- *   ```
- *   {
- *     "react-relay": {
- *       "graphql": "bun-macro-relay/bun-macro-relay.tsx"
- *     }
- *   }
- *  ```
- */
-type MacroMap = Record<string, Record<string, string>>;
-
 export type TimeLike = string | number | Date;
+
 export type StringOrBuffer = string | TypedArray | ArrayBufferLike;
 export type PathLike = string | TypedArray | ArrayBufferLike;
 export type PathOrFileDescriptor = PathLike | number;
@@ -39,7 +23,212 @@ export type BufferEncoding =
 export interface BufferEncodingOption {
   encoding?: BufferEncoding;
 }
+
+export interface SystemError extends Error {
+  errno?: number | undefined;
+  code?: string | undefined;
+  path?: string | undefined;
+  syscall?: string | undefined;
+}
+
+export interface VoidFunction {
+  (): void;
+}
+
+/**
+ *   This lets you use macros as regular imports
+ *   @example
+ *   ```
+ *   {
+ *     "react-relay": {
+ *       "graphql": "bun-macro-relay/bun-macro-relay.tsx"
+ *     }
+ *   }
+ *  ```
+ */
+export type MacroMap = Record<string, Record<string, string>>;
+
 declare global {
+  interface console {
+    assert(condition?: boolean, ...data: any[]): void;
+    clear(): void;
+    /**
+     * Increment a [count](https://www.youtube.com/watch?v=2AoxCkySv34&t=22s)
+     * @param label label counter
+     */
+    count(label?: string): void;
+    countReset(label?: string): void;
+    debug(...data: any[]): void;
+    dir(item?: any, options?: any): void;
+    dirxml(...data: any[]): void;
+    /**
+     * Log to stderr in your terminal
+     *
+     * Appears in red
+     *
+     * @param data something to display
+     */
+    error(...data: any[]): void;
+    /** Does nothing currently */
+    group(...data: any[]): void;
+    /** Does nothing currently */
+    groupCollapsed(...data: any[]): void;
+    /** Does nothing currently */
+    groupEnd(): void;
+    info(...data: any[]): void;
+    log(...data: any[]): void;
+    /** Does nothing currently */
+    table(tabularData?: any, properties?: string[]): void;
+    /**
+     * Begin a timer to log with {@link console.timeEnd}
+     *
+     * @param label - The label to use for the timer
+     *
+     * ```ts
+     *  console.time("how long????");
+     * for (let i = 0; i < 999999; i++) {
+     *    // do stuff
+     *    let x = i * i;
+     * }
+     * console.timeEnd("how long????");
+     * ```
+     */
+    time(label?: string): void;
+    /**
+     * End a timer to log with {@link console.time}
+     *
+     * @param label - The label to use for the timer
+     *
+     * ```ts
+     *  console.time("how long????");
+     * for (let i = 0; i < 999999; i++) {
+     *  // do stuff
+     *  let x = i * i;
+     * }
+     * console.timeEnd("how long????");
+     * ```
+     */
+    timeEnd(label?: string): void;
+    timeLog(label?: string, ...data: any[]): void;
+    timeStamp(label?: string): void;
+    trace(...data: any[]): void;
+    warn(...data: any[]): void;
+  }
+
+  let console: console;
+
+  // -- HTMLRewriter --
+  /**
+   * [HTMLRewriter](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter?bun) is a fast API for transforming HTML.
+   *
+   * Bun leverages a native implementation powered by [lol-html](https://github.com/cloudflare/lol-html).
+   *
+   * HTMLRewriter can be used to transform HTML in a variety of ways, including:
+   * * Rewriting URLs
+   * * Adding meta tags
+   * * Removing elements
+   * * Adding elements to the head
+   *
+   * @example
+   * ```ts
+   * const rewriter = new HTMLRewriter().on('a[href]', {
+   *   element(element: Element) {
+   *     // Rewrite all the URLs to this youtube video
+   *     element.setAttribute('href', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+   *   }
+   * });
+   * rewriter.transform(await fetch("https://remix.run"));
+   * ```
+   */
+  class HTMLRewriter {
+    constructor();
+    on(
+      selector: string,
+      handlers: HTMLRewriterElementContentHandlers
+    ): HTMLRewriter;
+    onDocument(handlers: HTMLRewriterDocumentContentHandlers): HTMLRewriter;
+    /**
+     * @param input - The HTML to transform
+     * @returns A new {@link Response} with the transformed HTML
+     */
+    transform(input: Response): Response;
+  }
+
+  interface HTMLRewriterElementContentHandlers {
+    element?(element: Element): void | Promise<void>;
+    comments?(comment: Comment): void | Promise<void>;
+    text?(text: Text): void | Promise<void>;
+  }
+
+  interface HTMLRewriterDocumentContentHandlers {
+    doctype?(doctype: Doctype): void | Promise<void>;
+    comments?(comment: Comment): void | Promise<void>;
+    text?(text: Text): void | Promise<void>;
+    end?(end: DocumentEnd): void | Promise<void>;
+  }
+
+  interface Text {
+    readonly text: string;
+    readonly lastInTextNode: boolean;
+    readonly removed: boolean;
+    before(content: Content, options?: ContentOptions): Text;
+    after(content: Content, options?: ContentOptions): Text;
+    replace(content: Content, options?: ContentOptions): Text;
+    remove(): Text;
+  }
+
+  interface Doctype {
+    readonly name: string | null;
+    readonly publicId: string | null;
+    readonly systemId: string | null;
+  }
+
+  interface DocumentEnd {
+    append(content: Content, options?: ContentOptions): DocumentEnd;
+  }
+
+  interface ContentOptions {
+    html?: boolean;
+  }
+  type Content = string;
+
+  interface Comment {
+    text: string;
+    readonly removed: boolean;
+    before(content: Content, options?: ContentOptions): Comment;
+    after(content: Content, options?: ContentOptions): Comment;
+    replace(content: Content, options?: ContentOptions): Comment;
+    remove(): Comment;
+  }
+
+  interface Element {
+    tagName: string;
+    readonly attributes: IterableIterator<string[]>;
+    readonly removed: boolean;
+    readonly namespaceURI: string;
+    getAttribute(name: string): string | null;
+    hasAttribute(name: string): boolean;
+    setAttribute(name: string, value: string): Element;
+    removeAttribute(name: string): Element;
+    before(content: Content, options?: ContentOptions): Element;
+    after(content: Content, options?: ContentOptions): Element;
+    prepend(content: Content, options?: ContentOptions): Element;
+    append(content: Content, options?: ContentOptions): Element;
+    replace(content: Content, options?: ContentOptions): Element;
+    remove(): Element;
+    removeAndKeepContent(): Element;
+    setInnerContent(content: Content, options?: ContentOptions): Element;
+    onEndTag(handler: (tag: EndTag) => void | Promise<void>): void;
+  }
+
+  interface EndTag {
+    name: string;
+    before(content: Content, options?: ContentOptions): EndTag;
+    after(content: Content, options?: ContentOptions): EndTag;
+    remove(): EndTag;
+  }
+  // -- HTMLRewriter
+
   interface ImportMeta {
     /**
      * Absolute path to the source file
@@ -74,10 +263,11 @@ declare global {
      *
      * On failure, throws a `ResolveError`
      */
+    // tslint:disable-next-line:unified-signatures
     resolve(moduleId: string, parent: string): Promise<string>;
   }
 
-  export interface EncodeIntoResult {
+  interface EncodeIntoResult {
     /**
      * The read Unicode code units of input.
      */
@@ -88,9 +278,19 @@ declare global {
     written: number;
   }
 
-  export interface Process {
+  interface Process {
+    /**
+     * The current version of Bun
+     */
     version: string;
-    nextTick(callback: Function, ...args: any): void;
+    /**
+     * Run a function on the next tick of the event loop
+     *
+     * This is the same as {@link queueMicrotask}
+     *
+     * @param callback - The function to run
+     */
+    nextTick(callback: (...args: any) => any, ...args: any): void;
     versions: Record<string, string>;
     ppid: number;
     pid: number;
@@ -124,9 +324,9 @@ declare global {
     setuid(id: number | string): void;
   }
 
-  export var process: Process;
+  let process: Process;
 
-  export interface BlobInterface {
+  interface BlobInterface {
     text(): Promise<string>;
     arrayBuffer(): Promise<ArrayBuffer>;
     json(): Promise<JSON>;
@@ -141,8 +341,19 @@ declare global {
     endings?: "transparent" | "native";
   }
 
-  /** This Fetch API interface allows you to perform various actions on HTTP request and response headers. These actions include retrieving, setting, adding to, and removing. A Headers object has an associated header list, which is initially empty and consists of zero or more name and value pairs.  You can add to this using methods like append() (see Examples.) In all methods of this interface, header names are matched by case-insensitive byte sequence. */
-  export interface Headers {
+  /**
+   * This Fetch API interface allows you to perform various actions on HTTP
+   * request and response headers. These actions include retrieving, setting,
+   * adding to, and removing. A Headers object has an associated header list,
+   * which is initially empty and consists of zero or more name and value
+   * pairs.
+   *
+   * You can add to this using methods like append()
+   *
+   * In all methods of this interface, header names are matched by
+   * case-insensitive byte sequence.
+   */
+  interface Headers {
     append(name: string, value: string): void;
     delete(name: string): void;
     get(name: string): string | null;
@@ -154,14 +365,31 @@ declare global {
     ): void;
   }
 
-  export var Headers: {
+  let Headers: {
     prototype: Headers;
     new (init?: HeadersInit): Headers;
   };
 
-  type HeadersInit = [string, string][] | Record<string, string> | Headers;
+  type HeadersInit = Array<[string, string]> | Record<string, string> | Headers;
+  type ResponseType =
+    | "basic"
+    | "cors"
+    | "default"
+    | "error"
+    | "opaque"
+    | "opaqueredirect";
 
-  export class Blob implements BlobInterface {
+  class Blob implements BlobInterface {
+    /**
+     * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+     *
+     * @param `parts` - An array of strings, numbers, TypedArray, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+     * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
+     */
+    constructor(
+      parts?: BlobPart[] | Blob | FileBlob,
+      options?: BlobPropertyBag
+    );
     /**
      * Create a new view **without 🚫 copying** the underlying data.
      *
@@ -192,23 +420,106 @@ declare global {
      *
      */
     json(): Promise<JSON>;
+
+    type: string;
+    size: number;
   }
 
-  export class Response implements BlobInterface {
+  interface ResponseInit {
+    headers?: HeadersInit;
+    /** @default 200 */
+    status?: number;
+
+    /** @default "OK" */
+    statusText?: string;
+  }
+
+  /**
+   * Represents an HTTP [Response](https://developer.mozilla.org/en-US/docs/Web/API/Response)
+   *
+   * Use it to get the body of the response, the status code, and other information.
+   *
+   * @example
+   * ```ts
+   * const response: Response = await fetch("https://remix.run");
+   * await response.text();
+   * ```
+   * @example
+   * ```ts
+   * const response: Response = await fetch("https://remix.run");
+   * await Bun.write("remix.html", response);
+   * ```
+   */
+  class Response implements BlobInterface {
     constructor(
       body: BlobPart | BlobPart[] | Blob | FileBlob,
-      options?: {
-        headers?: HeadersInit;
-        /** @default 200 */
-        status?: number;
-      }
+      options?: ResponseInit
     );
-    headers: Headers;
 
     /**
-     * Is the body of the response available for use?
+     * Create a new {@link Response} with a JSON body
+     *
+     * @param body - The body of the response
+     * @param options - options to pass to the response
+     *
+     * @example
+     *
+     * ```ts
+     * const response = Response.json({hi: "there"});
+     * console.assert(
+     *   await response.text(),
+     *   `{"hi":"there"}`
+     * );
+     * ```
+     * -------
+     *
+     * This is syntactic sugar for:
+     * ```js
+     *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
+     * ```
+     * @link https://github.com/whatwg/fetch/issues/1389
      */
-    bodyUsed: boolean;
+    static json(body?: any, options?: ResponseInit): Response;
+    /**
+     * Create a new {@link Response} that redirects to url
+     *
+     * @param url - the URL to redirect to
+     * @param status - the HTTP status code to use for the redirect
+     */
+    // tslint:disable-next-line:unified-signatures
+    static redirect(url: string, status?: number): Response;
+
+    /**
+     * Create a new {@link Response} that redirects to url
+     *
+     * @param url - the URL to redirect to
+     * @param options - options to pass to the response
+     */
+    // tslint:disable-next-line:unified-signatures
+    static redirect(url: string, options?: ResponseInit): Response;
+
+    /**
+     * Create a new {@link Response} that has a network error
+     */
+    static error(): Response;
+
+    /**
+     * HTTP [Headers](https://developer.mozilla.org/en-US/docs/Web/API/Headers) sent with the response.
+     *
+     * @example
+     * ```ts
+     * const {headers} = await fetch("https://remix.run");
+     * headers.get("Content-Type");
+     * headers.get("Content-Length");
+     * headers.get("Set-Cookie");
+     * ```
+     */
+    readonly headers: Headers;
+
+    /**
+     * Has the body of the response already been consumed?
+     */
+    readonly bodyUsed: boolean;
 
     /**
      * Read the data from the Response as a string. It will be decoded from UTF-8.
@@ -237,37 +548,197 @@ declare global {
      *
      * This allows you to reuse the underlying data.
      *
+     * @returns Promise<Blob> - The body of the response as a {@link Blob}.
      */
     blob(): Promise<Blob>;
+
+    readonly ok: boolean;
+    readonly redirected: boolean;
+    /**
+     * HTTP status code
+     *
+     * @example
+     * 200
+     *
+     * 0 for network errors
+     */
+    readonly status: number;
+    readonly statusText: string;
+    readonly type: ResponseType;
+    /** HTTP url as a string */
+    readonly url: string;
+
+    /** Copy the Response object into a new Response, including the body */
+    clone(): Response;
+  }
+
+  type RequestCache =
+    | "default"
+    | "force-cache"
+    | "no-cache"
+    | "no-store"
+    | "only-if-cached"
+    | "reload";
+  type RequestCredentials = "include" | "omit" | "same-origin";
+  type RequestDestination =
+    | ""
+    | "audio"
+    | "audioworklet"
+    | "document"
+    | "embed"
+    | "font"
+    | "frame"
+    | "iframe"
+    | "image"
+    | "manifest"
+    | "object"
+    | "paintworklet"
+    | "report"
+    | "script"
+    | "sharedworker"
+    | "style"
+    | "track"
+    | "video"
+    | "worker"
+    | "xslt";
+  type RequestMode = "cors" | "navigate" | "no-cors" | "same-origin";
+  type RequestRedirect = "error" | "follow" | "manual";
+  type ReferrerPolicy =
+    | ""
+    | "no-referrer"
+    | "no-referrer-when-downgrade"
+    | "origin"
+    | "origin-when-cross-origin"
+    | "same-origin"
+    | "strict-origin"
+    | "strict-origin-when-cross-origin"
+    | "unsafe-url";
+  type RequestInfo = Request | string;
+
+  type BodyInit = XMLHttpRequestBodyInit;
+  type XMLHttpRequestBodyInit = Blob | BufferSource | string;
+
+  interface RequestInit {
+    /**
+     * A BodyInit object or null to set request's body.
+     */
+    body?: BodyInit | null;
+    /**
+     * A string indicating how the request will interact with the browser's cache to set request's cache.
+     *
+     * Note: as of Bun v0.0.74, this is not implemented yet.
+     */
+    cache?: RequestCache;
+    /**
+     * A string indicating whether credentials will be sent with the request always, never, or only when sent to a same-origin URL. Sets request's credentials.
+     */
+    credentials?: RequestCredentials;
+    /**
+     * A Headers object, an object literal, or an array of two-item arrays to set request's headers.
+     */
+    headers?: HeadersInit;
+    /**
+     * A cryptographic hash of the resource to be fetched by request. Sets request's integrity.
+     *
+     * Note: as of Bun v0.0.74, this is not implemented yet.
+     */
+    integrity?: string;
+    /**
+     * A boolean to set request's keepalive.
+     *
+     * Note: as of Bun v0.0.74, this is not implemented yet.
+     */
+    keepalive?: boolean;
+    /**
+     * A string to set request's method.
+     */
+    method?: string;
+    /**
+     * A string to indicate whether the request will use CORS, or will be restricted to same-origin URLs. Sets request's mode.
+     */
+    mode?: RequestMode;
+    /**
+     * A string indicating whether request follows redirects, results in an error upon encountering a redirect, or returns the redirect (in an opaque fashion). Sets request's redirect.
+     */
+    redirect?: RequestRedirect;
+    /**
+     * A string whose value is a same-origin URL, "about:client", or the empty string, to set request's referrer.
+     */
+    referrer?: string;
+    /**
+     * A referrer policy to set request's referrerPolicy.
+     */
+    referrerPolicy?: ReferrerPolicy;
+    /**
+     * An AbortSignal to set request's signal.
+     *
+     * Note: as of Bun v0.0.74, this is not implemented yet.
+     */
+    signal?: AbortSignal | null;
+    /**
+     * Can only be null. Used to disassociate request from any Window.
+     *
+     * This does nothing in Bun
+     */
+    window?: any;
   }
 
   /**
    * [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) represents an HTTP request.
+   *
+   * @example
+   * ```ts
+   * const request = new Request("https://remix.run/");
+   * await fetch(request);
+   * ```
+   *
+   * @example
+   * ```ts
+   * const request = new Request("https://remix.run/");
+   * await fetch(request);
+   * ```
    */
-  export class Request implements BlobInterface {
-    constructor(
-      body: BlobPart | BlobPart[] | Blob,
-      options: {
-        headers?: HeadersInit;
-      }
-    );
+  class Request implements BlobInterface {
+    constructor(requestInfo: RequestInfo, requestInit?: RequestInit);
+
+    /**
+     * Read or write the HTTP headers for this request.
+     *
+     * @example
+     * ```ts
+     * const request = new Request("https://remix.run/");
+     * request.headers.set("Content-Type", "application/json");
+     * request.headers.set("Accept", "application/json");
+     * await fetch(request);
+     * ```
+     */
     headers: Headers;
 
     /**
-     * Read the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a string. It will be decoded from UTF-8.
+     * The URL (as a string) corresponding to the HTTP request
+     * @example
+     * ```ts
+     * const request = new Request("https://remix.run/");
+     * request.url; // "https://remix.run/"
+     * ```
+     */
+    readonly url: string;
+
+    /**
+     * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a string. It will be decoded from UTF-8.
      *
      * When the body is valid latin1, this operation is zero copy.
      */
     text(): Promise<string>;
 
     /**
-     * Read the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as an ArrayBuffer.
+     * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as an ArrayBuffer.
      *
      */
     arrayBuffer(): Promise<ArrayBuffer>;
 
     /**
-     * Read the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a JSON object.
+     * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a JSON object.
      *
      * This first decodes the data from UTF-8, then parses it as JSON.
      *
@@ -275,15 +746,75 @@ declare global {
     json(): Promise<JSON>;
 
     /**
-     * Read the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a `Blob`.
+     * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a `Blob`.
      *
      * This allows you to reuse the underlying data.
      *
      */
     blob(): Promise<Blob>;
+
+    /**
+     * Returns the cache mode associated with request, which is a string indicating how the request will interact with the browser's cache when fetching.
+     */
+    readonly cache: RequestCache;
+    /**
+     * Returns the credentials mode associated with request, which is a string indicating whether credentials will be sent with the request always, never, or only when sent to a same-origin URL.
+     */
+    readonly credentials: RequestCredentials;
+    /**
+     * Returns the kind of resource requested by request, e.g., "document" or "script".
+     *
+     * In Bun, this always returns "navigate".
+     */
+    readonly destination: RequestDestination;
+    /**
+     * Returns request's subresource integrity metadata, which is a cryptographic hash of the resource being fetched. Its value consists of multiple hashes separated by whitespace. [SRI]
+     *
+     * This does nothing in Bun right now.
+     */
+    readonly integrity: string;
+    /**
+     * Returns a boolean indicating whether or not request can outlive the global in which it was created.
+     *
+     * In Bun, this always returns false.
+     */
+    readonly keepalive: boolean;
+    /**
+     * Returns request's HTTP method, which is "GET" by default.
+     */
+    readonly method: string;
+    /**
+     * Returns the mode associated with request, which is a string indicating whether the request will use CORS, or will be restricted to same-origin URLs.
+     */
+    readonly mode: RequestMode;
+    /**
+     * Returns the redirect mode associated with request, which is a string indicating how redirects for the request will be handled during fetching. A request will follow redirects by default.
+     */
+    readonly redirect: RequestRedirect;
+    /**
+     * Returns the referrer of request. Its value can be a same-origin URL
+     * if explicitly set in init, the empty string to indicate no referrer,
+     * and "about:client" when defaulting to the global's default. This is
+     * used during fetching to determine the value of the `Referer` header
+     * of the request being made.
+     */
+    readonly referrer: string;
+    /**
+     * Returns the referrer policy associated with request. This is used during fetching to compute the value of the request's referrer.
+     */
+    readonly referrerPolicy: ReferrerPolicy;
+    /**
+     * Returns the signal associated with request, which is an AbortSignal object indicating whether or not request has been aborted, and its abort event handler.
+     *
+     * Note: this is **not implemented yet**. The cake is a lie.
+     */
+    readonly signal: AbortSignal;
+
+    /** Copy the Request object into a new Request, including the body */
+    clone(): Request;
   }
 
-  export interface Crypto {
+  interface Crypto {
     getRandomValues(array: TypedArray): void;
     /**
      * Generate a cryptographically secure random UUID.
@@ -298,21 +829,21 @@ declare global {
     randomUUID(): string;
   }
 
-  export var crypto: Crypto;
+  let crypto: Crypto;
 
   /**
    * [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/atob) converts ascii text into base64.
    *
    * @param asciiText The ascii text to convert.
    */
-  export function atob(asciiText: string): string;
+  function atob(asciiText: string): string;
 
   /**
    * [`btoa`](https://developer.mozilla.org/en-US/docs/Web/API/btoa) decodes base64 into ascii text.
    *
    * @param base64Text The base64 text to convert.
    */
-  export function btoa(base64Text: string): string;
+  function btoa(base64Text: string): string;
 
   /**
    * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextEncoder` API. All
@@ -324,7 +855,7 @@ declare global {
    * ```
    *
    */
-  export class TextEncoder {
+  class TextEncoder {
     constructor(encoding?: "utf-8");
     readonly encoding: "utf-8";
 
@@ -350,7 +881,7 @@ declare global {
     encodeInto(src?: string, dest?: TypedArray): EncodeIntoResult;
   }
 
-  export class TextDecoder {
+  class TextDecoder {
     constructor(
       encoding?: Bun.WebPlatform.Encoding,
       options?: { fatal?: boolean; ignoreBOM?: boolean }
@@ -384,7 +915,7 @@ declare global {
 
   namespace Bun {
     namespace WebPlatform {
-      export type Encoding = "utf-8" | "windows-1252" | "utf-16";
+      type Encoding = "utf-8" | "windows-1252" | "utf-16";
     }
 
     type Platform =
@@ -405,12 +936,13 @@ declare global {
     type JavaScriptLoader = "jsx" | "js" | "ts" | "tsx";
 
     interface TranspilerOptions {
-      /** Replace key with value. Value must be a JSON string.
-     @example
-     ```
-     { "process.env.NODE_ENV": "\"production\"" }
-     ```
-    */
+      /**
+       * Replace key with value. Value must be a JSON string.
+       * @example
+       *  ```
+       *  { "process.env.NODE_ENV": "\"production\"" }
+       * ```
+       */
       define?: Record<string, string>;
 
       /** What is the default loader used for this transpiler?  */
@@ -421,49 +953,49 @@ declare global {
       platform?: Platform;
 
       /**
-       TSConfig.json file as stringified JSON or an object
-       Use this to set a custom JSX factory, fragment, or import source
-       For example, if you want to use Preact instead of React. Or if you want to use Emotion.
-     */
+       *  TSConfig.json file as stringified JSON or an object
+       *  Use this to set a custom JSX factory, fragment, or import source
+       *  For example, if you want to use Preact instead of React. Or if you want to use Emotion.
+       */
       tsconfig?: string;
 
-      /** 
-     Replace an import statement with a macro.
-
-     This will remove the import statement from the final output
-     and replace any function calls or template strings with the result returned by the macro
-
-    @example
-    ```json
-    {
-        "react-relay": {
-            "graphql": "bun-macro-relay"
-        }
-    }
-    ```
-
-    Code that calls `graphql` will be replaced with the result of the macro.
-
-    ```js
-    import {graphql} from "react-relay";
-
-    // Input:
-    const query = graphql`
-        query {
-            ... on User {
-                id
-            }
-        }
-    }`;
-    ```
-
-    Will be replaced with:
-    
-    ```js
-    import UserQuery from "./UserQuery.graphql";
-    const query = UserQuery;
-    ```
-    */
+      /**
+       *    Replace an import statement with a macro.
+       *
+       *    This will remove the import statement from the final output
+       *    and replace any function calls or template strings with the result returned by the macro
+       *
+       *    @example
+       *    ```json
+       *    {
+       *        "react-relay": {
+       *            "graphql": "bun-macro-relay"
+       *        }
+       *    }
+       *    ```
+       *
+       *    Code that calls `graphql` will be replaced with the result of the macro.
+       *
+       *    ```js
+       *    import {graphql} from "react-relay";
+       *
+       *    // Input:
+       *    const query = graphql`
+       *        query {
+       *            ... on User {
+       *                id
+       *            }
+       *        }
+       *    }`;
+       *    ```
+       *
+       *    Will be replaced with:
+       *
+       *    ```js
+       *    import UserQuery from "./UserQuery.graphql";
+       *    const query = UserQuery;
+       *    ```
+       */
       macros: MacroMap;
     }
 
@@ -487,10 +1019,11 @@ declare global {
      * ```
      *
      */
-    export class Transpiler {
+    class Transpiler {
       constructor(options: TranspilerOptions);
 
-      /** Transpile code from TypeScript or JSX into valid JavaScript.
+      /**
+       * Transpile code from TypeScript or JSX into valid JavaScript.
        * This function does not resolve imports.
        * @param code The code to transpile
        */
@@ -498,19 +1031,22 @@ declare global {
         code: StringOrBuffer,
         loader?: JavaScriptLoader
       ): Promise<string>;
-      /** Transpile code from TypeScript or JSX into valid JavaScript.
+      /**
+       * Transpile code from TypeScript or JSX into valid JavaScript.
        * This function does not resolve imports.
        * @param code The code to transpile
+       *
        */
       transformSync(code: StringOrBuffer, loader?: JavaScriptLoader): string;
 
-      /** Get a list of import paths and export paths from a TypeScript, JSX, TSX, or JavaScript file.
+      /**
+       * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.
        * @param code The code to scan
        * @example
        * ```js
        * const {imports, exports} = transpiler.scan(`
        * import {foo} from "baz";
-       * export const hello = "hi!";
+       * const hello = "hi!";
        * `);
        *
        * console.log(imports); // ["baz"]
@@ -519,7 +1055,8 @@ declare global {
        */
       scan(code: StringOrBuffer): { exports: string[]; imports: Import[] };
 
-      /** Get a list of import paths from a TypeScript, JSX, TSX, or JavaScript file.
+      /**
+       *  Get a list of import paths from a TypeScript, JSX, TSX, or JavaScript file.
        * @param code The code to scan
        * @example
        * ```js
@@ -536,7 +1073,7 @@ declare global {
       scanImports(code: StringOrBuffer): Import[];
     }
 
-    type Import = {
+    interface Import {
       path: string;
 
       kind:
@@ -548,9 +1085,9 @@ declare global {
         | "url-token"
         | "internal"
         | "entry-point";
-    };
+    }
 
-    export interface HTTP {
+    interface HTTP {
       /**
        * What port should the server listen on?
        * @default process.env.PORT || "3000"
@@ -622,17 +1159,17 @@ declare global {
       certFile: string;
     }
 
-    export type SSLServeOptions = HTTP &
+    type SSLServeOptions = HTTP &
       SSLOptions &
       SSLAdvancedOptions & {
-        /** 
-          The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
-          The values are SSL options objects. 
-        */
+        /**
+         *  The keys are [SNI](https://en.wikipedia.org/wiki/Server_Name_Indication) hostnames.
+         *  The values are SSL options objects.
+         */
         serverNames: Record<string, SSLOptions & SSLAdvancedOptions>;
       };
 
-    export type Serve = SSLServeOptions | HTTP;
+    type Serve = SSLServeOptions | HTTP;
     /**
      * Start a fast HTTP server.
      *
@@ -669,7 +1206,34 @@ declare global {
      * });
      * ```
      */
-    export function serve(options: Serve): void;
+    function serve(options: Serve): void;
+
+    /**
+     *
+     * Persist a {@link Response} body to disk.
+     *
+     * @param destination The file to write to. If the file doesn't exist,
+     * it will be created and if the file does exist, it will be
+     * overwritten. If `input`'s size is less than `destination`'s size,
+     * `destination` will be truncated.
+     * @param input - `Response` object
+     * @returns A promise that resolves with the number of bytes written.
+     */
+    function write(destination: FileBlob, input: Response): Promise<number>;
+
+    /**
+     *
+     * Persist a {@link Response} body to disk.
+     *
+     * @param destinationPath The file path to write to. If the file doesn't
+     * exist, it will be created and if the file does exist, it will be
+     * overwritten. If `input`'s size is less than `destination`'s size,
+     * `destination` will be truncated.
+     * @param input - `Response` object
+     * @returns A promise that resolves with the number of bytes written.
+     */
+    // tslint:disable-next-line:unified-signatures
+    function write(destinationPath: string, input: Response): Promise<number>;
 
     /**
      *
@@ -679,16 +1243,19 @@ declare global {
      *
      * On Linux, this uses `copy_file_range`.
      *
-     * On macOS, when the destination doesn't already exist, this uses [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
+     * On macOS, when the destination doesn't already exist, this uses
+     * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
+     * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
      *
-     * @param destination The file to write to. If the file doesn't exist, it will be created and if the file does exist, it will be overwritten. If `input`'s size is less than `destination`'s size, `destination` will be truncated.
+     * @param destination The file to write to. If the file doesn't exist,
+     * it will be created and if the file does exist, it will be
+     * overwritten. If `input`'s size is less than `destination`'s size,
+     * `destination` will be truncated.
      * @param input The file to copy from.
      * @returns A promise that resolves with the number of bytes written.
      */
-    export function write(
-      destination: FileBlob | string,
-      input: FileBlob
-    ): Promise<number>;
+    // tslint:disable-next-line:unified-signatures
+    function write(destination: FileBlob, input: FileBlob): Promise<number>;
 
     /**
      *
@@ -698,16 +1265,19 @@ declare global {
      *
      * On Linux, this uses `copy_file_range`.
      *
-     * On macOS, when the destination doesn't already exist, this uses [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
+     * On macOS, when the destination doesn't already exist, this uses
+     * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
+     * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
      *
-     * @param destinationPath The file path to write to. If the file doesn't exist, it will be created and if the file does exist, it will be overwritten. If `input`'s size is less than `destination`'s size, `destination` will be truncated.
+     * @param destinationPath The file path to write to. If the file doesn't
+     * exist, it will be created and if the file does exist, it will be
+     * overwritten. If `input`'s size is less than `destination`'s size,
+     * `destination` will be truncated.
      * @param input The file to copy from.
      * @returns A promise that resolves with the number of bytes written.
      */
-    export function write(
-      destinationPath: string,
-      input: FileBlob
-    ): Promise<number>;
+    // tslint:disable-next-line:unified-signatures
+    function write(destinationPath: string, input: FileBlob): Promise<number>;
 
     /**
      *
@@ -719,7 +1289,8 @@ declare global {
      * @param input The data to copy into `destination`.
      * @returns A promise that resolves with the number of bytes written.
      */
-    export function write(
+    // tslint:disable-next-line:unified-signatures
+    function write(
       destination: FileBlob | string,
       input: Blob | TypedArray | string | BlobPart[]
     ): Promise<number>;
@@ -731,14 +1302,16 @@ declare global {
      *
      * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
      */
-    export function resolve(moduleId: string, parent: string): Promise<string>;
+    // tslint:disable-next-line:unified-signatures
+    function resolve(moduleId: string, parent: string): Promise<string>;
 
     /**
      * Synchronously resolve a `moduleId` as though it were imported from `parent`
      *
      * On failure, throws a `ResolveError`
      */
-    export function resolveSync(moduleId: string, parent: string): string;
+    // tslint:disable-next-line:unified-signatures
+    function resolveSync(moduleId: string, parent: string): string;
 
     /**
      * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -765,7 +1338,8 @@ declare global {
      * @param path The path to the file (lazily loaded)
      *
      */
-    export function file(path: string, options?: BlobPropertyBag): FileBlob;
+    // tslint:disable-next-line:unified-signatures
+    function file(path: string, options?: BlobPropertyBag): FileBlob;
 
     /**
      * `Blob` that leverages the fastest system calls available to operate on files.
@@ -783,7 +1357,8 @@ declare global {
      *
      * @param path The path to the file as a byte buffer (the buffer is copied)
      */
-    export function file(
+    // tslint:disable-next-line:unified-signatures
+    function file(
       path: ArrayBufferLike | Uint8Array,
       options?: BlobPropertyBag
     ): FileBlob;
@@ -802,28 +1377,28 @@ declare global {
      *
      * @param fileDescriptor The file descriptor of the file
      */
-    export function file(
-      fileDescriptor: number,
-      options?: BlobPropertyBag
-    ): FileBlob;
+    // tslint:disable-next-line:unified-signatures
+    function file(fileDescriptor: number, options?: BlobPropertyBag): FileBlob;
 
     /**
      * Allocate a new [`Uint8Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8Array) without zeroing the bytes.
      *
-     * This can be 3.5x faster than `new Uint8Array(size)`, but bugs in your application code could cause this to leak private information.
-     **/
-    export function allocUnsafe(size: number): Uint8Array;
+     * This can be 3.5x faster than `new Uint8Array(size)`, but if you send uninitialized memory to your users (even unintentionally), it can potentially leak anything recently in memory.
+     */
+    function allocUnsafe(size: number): Uint8Array;
 
     /**
-     * Pretty-print an object the same as console.log()
-     * Except, it returns a string instead of printing it.
+     * Pretty-print an object the same as {@link console.log} to a `string`
+     *
+     * Supports JSX
+     *
      * @param args
      */
-    export function inspect(...args: any): string;
+    function inspect(...args: any): string;
 
     interface MMapOptions {
       /**
-       * Sets MAP_SYNC flag on Linux. macOS doesn't support this flag
+       * Sets MAP_SYNC flag on Linux. Ignored on macOS due to lack of support.
        */
       sync?: boolean;
       /**
@@ -852,13 +1427,13 @@ declare global {
      * To close the file, set the array to `null` and it will be garbage collected eventually.
      *
      */
-    export function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
+    function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
 
     interface unsafe {
       /**
        * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
        *
-       * **Only use this for latin1 strings**. If there are non-latin1 characters, your application may crash and/or very confusing bugs will happen such as `"foo" !== "foo"`.
+       * **Only use this for ASCII strings**. If there are non-ascii characters, your application may crash and/or very confusing bugs will happen such as `"foo" !== "foo"`.
        *
        * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
        *
@@ -873,15 +1448,45 @@ declare global {
        * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
        *
        */
+      // tslint:disable-next-line:unified-signatures
       arrayBufferToString(buffer: Uint16Array): string;
 
       /** Mock bun's segfault handler. You probably don't want to use this */
       segfault(): void;
     }
-    export var unsafe: unsafe;
+    let unsafe: unsafe;
+
+    /**
+     * Manually trigger the garbage collector
+     *
+     * This does two things:
+     * 1. It tells JavaScriptCore to run the garbage collector
+     * 2. It tells [mimalloc](https://github.com/microsoft/mimalloc) to clean up fragmented memory. Mimalloc manages the heap not used in JavaScriptCore.
+     *
+     * @param force Synchronously run the garbage collector
+     */
+    function gc(force: boolean): void;
+
+    /**
+     * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.
+     */
+    function shrink(): void;
+
+    /**
+     * Open a file in your local editor. Auto-detects via `$VISUAL` || `$EDITOR`
+     *
+     * @param path path to open
+     */
+    function openInEditor(path: string, options?: EditorOptions): void;
+
+    interface EditorOptions {
+      editor?: "vscode" | "subl";
+      line?: number;
+      column?: number;
+    }
   }
 
-  export interface Blob {
+  interface Blob {
     /**
      * Read the contents of the [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) as a JSON object
      * @warn in browsers, this function is only available for `Response` and `Request`
@@ -923,10 +1528,94 @@ declare global {
    * ```
    *
    */
-  export interface FileBlob extends Blob {
+  interface FileBlob extends Blob {
     /** Currently, "name" is not exposed because it may or may not exist */
     name: never;
   }
+
+  /**
+   * Cancel a repeating timer by its timer ID.
+   * @param id timer id
+   */
+  function clearInterval(id?: number): void;
+  /**
+   * Cancel a delayed function call by its timer ID.
+   * @param id timer id
+   */
+  function clearTimeout(id?: number): void;
+  // declare function createImageBitmap(image: ImageBitmapSource, options?: ImageBitmapOptions): Promise<ImageBitmap>;
+  // declare function createImageBitmap(image: ImageBitmapSource, sx: number, sy: number, sw: number, sh: number, options?: ImageBitmapOptions): Promise<ImageBitmap>;
+  /**
+   * Send a HTTP(s) request
+   *
+   * @param url URL string
+   * @param init A structured value that contains settings for the fetch() request.
+   *
+   * @returns A promise that resolves to {@link Response} object.
+   *
+   *
+   */
+  function fetch(url: string, init?: RequestInit): Promise<Response>;
+
+  /**
+   * Send a HTTP(s) request
+   *
+   * @param request Request object
+   * @param init A structured value that contains settings for the fetch() request.
+   *
+   * @returns A promise that resolves to {@link Response} object.
+   *
+   *
+   */
+  // tslint:disable-next-line:unified-signatures
+  function fetch(request: Request, init?: RequestInit): Promise<Response>;
+
+  function queueMicrotask(callback: VoidFunction): void;
+  /**
+   * Log an error using the default exception handler
+   * @param error Error or string
+   */
+  function reportError(error: any): void;
+  /**
+   * Run a function every `interval` milliseconds
+   * @param handler function to call
+   * @param interval milliseconds to wait between calls
+   */
+  function setInterval(
+    handler: TimerHandler,
+    interval?: number,
+    ...arguments: any[]
+  ): number;
+  /**
+   * Run a function after `timeout` (milliseconds)
+   * @param handler function to call
+   * @param timeout milliseconds to wait between calls
+   */
+  function setTimeout(
+    handler: TimerHandler,
+    timeout?: number,
+    ...arguments: any[]
+  ): number;
+  function addEventListener<K extends keyof EventMap>(
+    type: K,
+    listener: (this: object, ev: EventMap[K]) => any,
+    options?: boolean | AddEventListenerOptions
+  ): void;
+  function addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions
+  ): void;
+  function removeEventListener<K extends keyof EventMap>(
+    type: K,
+    listener: (this: object, ev: EventMap[K]) => any,
+    options?: boolean | EventListenerOptions
+  ): void;
+  function removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | EventListenerOptions
+  ): void;
 
   // -----------------------
   // -----------------------
@@ -993,19 +1682,34 @@ declare global {
   /** EventTarget is a DOM interface implemented by objects that can receive events and may have listeners for them. */
   interface EventTarget {
     /**
-     * Appends an event listener for events whose type attribute value is type. The callback argument sets the callback that will be invoked when the event is dispatched.
+     * Appends an event listener for events whose type attribute value is
+     * type. The callback argument sets the callback that will be invoked
+     * when the event is dispatched.
      *
-     * The options argument sets listener-specific options. For compatibility this can be a boolean, in which case the method behaves exactly as if the value was specified as options's capture.
+     * The options argument sets listener-specific options. For
+     * compatibility this can be a boolean, in which case the method behaves
+     * exactly as if the value was specified as options's capture.
      *
-     * When set to true, options's capture prevents callback from being invoked when the event's eventPhase attribute value is BUBBLING_PHASE. When false (or not present), callback will not be invoked when event's eventPhase attribute value is CAPTURING_PHASE. Either way, callback will be invoked if event's eventPhase attribute value is AT_TARGET.
+     * When set to true, options's capture prevents callback from being
+     * invoked when the event's eventPhase attribute value is
+     * BUBBLING_PHASE. When false (or not present), callback will not be
+     * invoked when event's eventPhase attribute value is CAPTURING_PHASE.
+     * Either way,callback will be invoked if event's eventPhase attribute
+     * value is AT_TARGET.
      *
-     * When set to true, options's passive indicates that the callback will not cancel the event by invoking preventDefault(). This is used to enable performance optimizations described in § 2.8 Observing event listeners.
+     * When set to true, options's passive indicates that the callback will
+     * not cancel the event by invoking preventDefault(). This is used to
+     * enable performance optimizations described in § 2.8 Observing event
+     * listeners.
      *
-     * When set to true, options's once indicates that the callback will only be invoked once after which the event listener will be removed.
+     * When set to true, options's once indicates that the callback will
+     * only be invoked once after which the event listener will be removed.
      *
-     * If an AbortSignal is passed for options's signal, then the event listener will be removed when signal is aborted.
+     * If an AbortSignal is passed for options's signal, then the event
+     * listener will be removed when signal is aborted.
      *
-     * The event listener is appended to target's event listener list and is not appended if it has the same type, callback, and capture.
+     * The event listener is appended to target's event listener list and is
+     * not appended if it has the same type, callback, and capture.
      */
     addEventListener(
       type: string,
@@ -1022,47 +1726,103 @@ declare global {
     ): void;
   }
 
-  var EventTarget: {
+  let EventTarget: {
     prototype: EventTarget;
     new (): EventTarget;
   };
 
   /** An event which takes place in the DOM. */
   interface Event {
-    /** Returns true or false depending on how event was initialized. True if event goes through its target's ancestors in reverse tree order, and false otherwise. */
+    /**
+     * Returns true or false depending on how event was initialized. True
+     * if event goes through its target's ancestors in reverse tree order,
+     * and false otherwise.
+     */
     readonly bubbles: boolean;
     cancelBubble: boolean;
-    /** Returns true or false depending on how event was initialized. Its return value does not always carry meaning, but true can indicate that part of the operation during which event was dispatched, can be canceled by invoking the preventDefault() method. */
+    /**
+     * Returns true or false depending on how event was initialized. Its
+     * return value does not always carry meaning, but true can indicate
+     * that part of the operation during which event was dispatched, can be
+     * canceled by invoking the preventDefault() method.
+     */
     readonly cancelable: boolean;
-    /** Returns true or false depending on how event was initialized. True if event invokes listeners past a ShadowRoot node that is the root of its target, and false otherwise. */
+    /**
+     * Returns true or false depending on how event was initialized. True
+     * if event invokes listeners past a ShadowRoot node that is the root of
+     * its target, and false otherwise.
+     */
     readonly composed: boolean;
-    /** Returns the object whose event listener's callback is currently being invoked. */
+    /**
+     * Returns the object whose event listener's callback is currently
+     * being invoked.
+     */
     readonly currentTarget: EventTarget | null;
-    /** Returns true if preventDefault() was invoked successfully to indicate cancelation, and false otherwise. */
+    /**
+     * Returns true if preventDefault() was invoked successfully to
+     * indicate cancelation, and false otherwise.
+     */
     readonly defaultPrevented: boolean;
-    /** Returns the event's phase, which is one of NONE, CAPTURING_PHASE, AT_TARGET, and BUBBLING_PHASE. */
+    /**
+     * Returns the event's phase, which is one of NONE, CAPTURING_PHASE,
+     * AT_TARGET, and BUBBLING_PHASE.
+     */
     readonly eventPhase: number;
-    /** Returns true if event was dispatched by the user agent, and false otherwise. */
+    /**
+     * Returns true if event was dispatched by the user agent, and false
+     * otherwise.
+     */
     readonly isTrusted: boolean;
-    /** @deprecated */
+    /**
+     * @deprecated
+     */
     returnValue: boolean;
-    /** @deprecated */
+    /**
+     * @deprecated
+     */
     readonly srcElement: EventTarget | null;
-    /** Returns the object to which event is dispatched (its target). */
+    /**
+     * Returns the object to which event is dispatched (its target).
+     */
     readonly target: EventTarget | null;
-    /** Returns the event's timestamp as the number of milliseconds measured relative to the time origin. */
+    /**
+     * Returns the event's timestamp as the number of milliseconds measured
+     * relative to the time origin.
+     */
     readonly timeStamp: DOMHighResTimeStamp;
-    /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+    /**
+     * Returns the type of event, e.g. "click", "hashchange", or "submit".
+     */
     readonly type: string;
-    /** Returns the invocation target objects of event's path (objects on which listeners will be invoked), except for any nodes in shadow trees of which the shadow root's mode is "closed" that are not reachable from event's currentTarget. */
+    /**
+     * Returns the invocation target objects of event's path (objects on
+     * which listeners will be invoked), except for any nodes in shadow
+     * trees of which the shadow root's mode is "closed" that are not
+     * reachable from event's currentTarget.
+     */
     composedPath(): EventTarget[];
-    /** @deprecated */
+    /**
+     * @deprecated
+     */
     initEvent(type: string, bubbles?: boolean, cancelable?: boolean): void;
-    /** If invoked when the cancelable attribute value is true, and while executing a listener for the event with passive set to false, signals to the operation that caused event to be dispatched that it needs to be canceled. */
+    /**
+     * If invoked when the cancelable attribute value is true, and while
+     * executing a listener for the event with passive set to false, signals
+     * to the operation that caused event to be dispatched that it needs to
+     * be canceled.
+     */
     preventDefault(): void;
-    /** Invoking this method prevents event from reaching any registered event listeners after the current one finishes running and, when dispatched in a tree, also prevents event from reaching any other objects. */
+    /**
+     * Invoking this method prevents event from reaching any registered
+     * event listeners after the current one finishes running and, when
+     * dispatched in a tree, also prevents event from reaching any other
+     * objects.
+     */
     stopImmediatePropagation(): void;
-    /** When dispatched in a tree, invoking this method prevents event from reaching any objects other than the current object. */
+    /**
+     * When dispatched in a tree, invoking this method prevents event from
+     * reaching any objects other than the current object.
+     */
     stopPropagation(): void;
     readonly AT_TARGET: number;
     readonly BUBBLING_PHASE: number;
@@ -1070,7 +1830,7 @@ declare global {
     readonly NONE: number;
   }
 
-  export var Event: {
+  let Event: {
     prototype: Event;
     new (type: string, eventInitDict?: EventInit): Event;
     readonly AT_TARGET: number;
@@ -1079,7 +1839,9 @@ declare global {
     readonly NONE: number;
   };
 
-  /** Events providing information related to errors in scripts or in files. */
+  /**
+   * Events providing information related to errors in scripts or in files.
+   */
   interface ErrorEvent extends Event {
     readonly colno: number;
     readonly error: any;
@@ -1088,13 +1850,16 @@ declare global {
     readonly message: string;
   }
 
-  export var ErrorEvent: {
+  let ErrorEvent: {
     prototype: ErrorEvent;
     new (type: string, eventInitDict?: ErrorEventInit): ErrorEvent;
   };
 
-  /** The URL interface represents an object providing static methods used for creating object URLs. */
-  export interface URL {
+  /**
+   * The URL interface represents an object providing static methods used for
+   * creating object URLs.
+   */
+  interface URL {
     hash: string;
     host: string;
     hostname: string;
@@ -1111,7 +1876,7 @@ declare global {
     toJSON(): string;
   }
 
-  export interface URLSearchParams {
+  interface URLSearchParams {
     /** Appends a specified key/value pair as a new search parameter. */
     append(name: string, value: string): void;
     /** Deletes the given search parameter, and its associated value, from the list of all search parameters. */
@@ -1133,7 +1898,7 @@ declare global {
     ): void;
   }
 
-  export var URLSearchParams: {
+  let URLSearchParams: {
     prototype: URLSearchParams;
     new (
       init?: string[][] | Record<string, string> | string | URLSearchParams
@@ -1141,7 +1906,7 @@ declare global {
     toString(): string;
   };
 
-  export var URL: {
+  let URL: {
     prototype: URL;
     new (url: string | URL, base?: string | URL): URL;
     /** Not implemented yet */
@@ -1150,7 +1915,7 @@ declare global {
     revokeObjectURL(url: string): void;
   };
 
-  type TimerHandler = Function;
+  type TimerHandler = (...args: any[]) => void;
 
   interface EventListener {
     (evt: Event): void;
@@ -1160,7 +1925,7 @@ declare global {
     handleEvent(object: Event): void;
   }
 
-  var AbortController: {
+  let AbortController: {
     prototype: AbortController;
     new (): AbortController;
   };
@@ -1170,8 +1935,7 @@ declare global {
     readonly url: string;
 
     waitUntil(promise: Promise<any>): void;
-    respondWith(response: Response): void;
-    respondWith(response: Promise<Response>): void;
+    respondWith(response: Response | Promise<Response>): void;
   }
 
   interface EventMap {
@@ -1218,48 +1982,10 @@ declare global {
     ): void;
   }
 
-  var AbortSignal: {
+  let AbortSignal: {
     prototype: AbortSignal;
     new (): AbortSignal;
   };
-
-  function clearInterval(id?: number): void;
-  function clearTimeout(id?: number): void;
-  // declare function createImageBitmap(image: ImageBitmapSource, options?: ImageBitmapOptions): Promise<ImageBitmap>;
-  // declare function createImageBitmap(image: ImageBitmapSource, sx: number, sy: number, sw: number, sh: number, options?: ImageBitmapOptions): Promise<ImageBitmap>;
-  // declare function fetch(input: RequestInfo, init?: RequestInit): Promise<Response>;
-  function queueMicrotask(callback: VoidFunction): void;
-  function reportError(e: any): void;
-  function setInterval(
-    handler: TimerHandler,
-    timeout?: number,
-    ...arguments: any[]
-  ): number;
-  function setTimeout(
-    handler: TimerHandler,
-    timeout?: number,
-    ...arguments: any[]
-  ): number;
-  function addEventListener<K extends keyof EventMap>(
-    type: K,
-    listener: (this: Object, ev: EventMap[K]) => any,
-    options?: boolean | AddEventListenerOptions
-  ): void;
-  function addEventListener(
-    type: string,
-    listener: EventListenerOrEventListenerObject,
-    options?: boolean | AddEventListenerOptions
-  ): void;
-  function removeEventListener<K extends keyof EventMap>(
-    type: K,
-    listener: (this: Object, ev: EventMap[K]) => any,
-    options?: boolean | EventListenerOptions
-  ): void;
-  function removeEventListener(
-    type: string,
-    listener: EventListenerOrEventListenerObject,
-    options?: boolean | EventListenerOptions
-  ): void;
 
   // type AlgorithmIdentifier = Algorithm | string;
   type BigInteger = Uint8Array;
@@ -1278,15 +2004,6 @@ declare global {
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
 }
 
-export {};
-
-export interface SystemError extends Error {
-  errno?: number | undefined;
-  code?: string | undefined;
-  path?: string | undefined;
-  syscall?: string | undefined;
-}
-
 /**
  * To run the tests, run `bun wiptest`
  *
@@ -1302,33 +2019,247 @@ export interface SystemError extends Error {
  * ```
  */
 declare module "bun:test" {
-  export function describe(label: string, body: VoidFunction): any;
-  export function it(label: string, test: () => any): any;
-  export function it(label: string, test: () => Promise<any>): any;
-  export function test(label: string, test: () => any): any;
-  export function test(label: string, test: () => Promise<any>): any;
+  function describe(label: string, body: VoidFunction): any;
+  function it(label: string, test: () => void | Promise<any>): any;
+  function test(label: string, test: () => void | Promise<any>): any;
 
-  export function expect(value: any): Expect;
+  function expect(value: any): Expect;
 
-  export interface Expect {
+  interface Expect {
     toBe(value: any): void;
     toContain(value: any): void;
   }
 }
 
 /**
- * The `fs` module enables interacting with the file system in a
- * way modeled on standard POSIX functions.
+ * The `path` module provides utilities for working with file and directory paths.
+ * It can be accessed using:
  *
  * ```js
- * import * as fs from 'fs';
+ * import path from 'path';
  * ```
- *
- * All file system operations have synchronous and callback
- * forms, and are accessible using both CommonJS syntax and ES6 Modules (ESM).
  */
-declare module "node:fs" {
-  export = fs;
+export namespace path {
+  /**
+   * A parsed path object generated by path.parse() or consumed by path.format().
+   */
+  interface ParsedPath {
+    /**
+     * The root of the path such as '/' or 'c:\'
+     */
+    root: string;
+    /**
+     * The full directory path such as '/home/user/dir' or 'c:\path\dir'
+     */
+    dir: string;
+    /**
+     * The file name including extension (if any) such as 'index.html'
+     */
+    base: string;
+    /**
+     * The file extension (if any) such as '.html'
+     */
+    ext: string;
+    /**
+     * The file name without extension (if any) such as 'index'
+     */
+    name: string;
+  }
+  interface FormatInputPathObject {
+    /**
+     * The root of the path such as '/' or 'c:\'
+     */
+    root?: string | undefined;
+    /**
+     * The full directory path such as '/home/user/dir' or 'c:\path\dir'
+     */
+    dir?: string | undefined;
+    /**
+     * The file name including extension (if any) such as 'index.html'
+     */
+    base?: string | undefined;
+    /**
+     * The file extension (if any) such as '.html'
+     */
+    ext?: string | undefined;
+    /**
+     * The file name without extension (if any) such as 'index'
+     */
+    name?: string | undefined;
+  }
+  interface PlatformPath {
+    /**
+     * Normalize a string path, reducing '..' and '.' parts.
+     * When multiple slashes are found, they're replaced by a single one; when the path contains a trailing slash, it is preserved. On Windows backslashes are used.
+     *
+     * @param p string path to normalize.
+     */
+    normalize(p: string): string;
+    /**
+     * Join all arguments together and normalize the resulting path.
+     * Arguments must be strings. In v0.8, non-string arguments were silently ignored. In v0.10 and up, an exception is thrown.
+     *
+     * @param paths paths to join.
+     */
+    join(...paths: string[]): string;
+    /**
+     * The right-most parameter is considered {to}.  Other parameters are considered an array of {from}.
+     *
+     * Starting from leftmost {from} parameter, resolves {to} to an absolute path.
+     *
+     * If {to} isn't already absolute, {from} arguments are prepended in right to left order,
+     * until an absolute path is found. If after using all {from} paths still no absolute path is found,
+     * the current working directory is used as well. The resulting path is normalized,
+     * and trailing slashes are removed unless the path gets resolved to the root directory.
+     *
+     * @param pathSegments string paths to join.  Non-string arguments are ignored.
+     */
+    resolve(...pathSegments: string[]): string;
+    /**
+     * Determines whether {path} is an absolute path. An absolute path will always resolve to the same location, regardless of the working directory.
+     *
+     * @param path path to test.
+     */
+    isAbsolute(p: string): boolean;
+    /**
+     * Solve the relative path from {from} to {to}.
+     * At times we have two absolute paths, and we need to derive the relative path from one to the other. This is actually the reverse transform of path.resolve.
+     */
+    relative(from: string, to: string): string;
+    /**
+     * Return the directory name of a path. Similar to the Unix dirname command.
+     *
+     * @param p the path to evaluate.
+     */
+    dirname(p: string): string;
+    /**
+     * Return the last portion of a path. Similar to the Unix basename command.
+     * Often used to extract the file name from a fully qualified path.
+     *
+     * @param p the path to evaluate.
+     * @param ext optionally, an extension to remove from the result.
+     */
+    basename(p: string, ext?: string): string;
+    /**
+     * Return the extension of the path, from the last '.' to end of string in the last portion of the path.
+     * If there is no '.' in the last portion of the path or the first character of it is '.', then it returns an empty string
+     *
+     * @param p the path to evaluate.
+     */
+    extname(p: string): string;
+    /**
+     * The platform-specific file separator. '\\' or '/'.
+     */
+    readonly sep: string;
+    /**
+     * The platform-specific file delimiter. ';' or ':'.
+     */
+    readonly delimiter: string;
+    /**
+     * Returns an object from a path string - the opposite of format().
+     *
+     * @param pathString path to evaluate.
+     */
+    parse(p: string): ParsedPath;
+    /**
+     * Returns a path string from an object - the opposite of parse().
+     *
+     * @param pathString path to evaluate.
+     */
+    format(pP: FormatInputPathObject): string;
+    /**
+     * On Windows systems only, returns an equivalent namespace-prefixed path for the given path.
+     * If path is not a string, path will be returned without modifications.
+     * This method is meaningful only on Windows system.
+     * On POSIX systems, the method is non-operational and always returns path without modifications.
+     */
+    toNamespacedPath(path: string): string;
+    /**
+     * Posix specific pathing.
+     * Same as parent object on posix.
+     */
+    readonly posix: PlatformPath;
+    /**
+     * Windows specific pathing.
+     * Same as parent object on windows
+     */
+    readonly win32: PlatformPath;
+  }
+}
+
+/**
+ * The `path` module provides utilities for working with file and directory paths.
+ * It can be accessed using:
+ *
+ * ```js
+ * import path  from 'path';
+ * ```
+ */
+declare module "path" {
+  const path: path.PlatformPath;
+  export = path;
+}
+
+/**
+ * The `path` module provides utilities for working with file and directory paths.
+ * It can be accessed using:
+ *
+ * ```js
+ * import path  from 'path';
+ * ```
+ */
+declare module "path/posix" {
+  const path: path.PlatformPath;
+  export = path;
+}
+/**
+ * The `path` module provides utilities for working with file and directory paths.
+ * It can be accessed using:
+ *
+ * ```js
+ * import path  from 'path';
+ * ```
+ */
+declare module "path/win32" {
+  const path: path.PlatformPath;
+  export = path;
+}
+
+/**
+ * The `path` module provides utilities for working with file and directory paths.
+ * It can be accessed using:
+ *
+ * ```js
+ * import path  from 'path';
+ * ```
+ */
+declare module "node:path" {
+  const path: path.PlatformPath;
+  export = path;
+}
+/**
+ * The `path` module provides utilities for working with file and directory paths.
+ * It can be accessed using:
+ *
+ * ```js
+ * import path  from 'path';
+ * ```
+ */
+declare module "node:path/posix" {
+  const path: path.PlatformPath;
+  export = path;
+}
+/**
+ * The `path` module provides utilities for working with file and directory paths.
+ * It can be accessed using:
+ *
+ * ```js
+ * import path  from 'path';
+ * ```
+ */
+declare module "node:path/win32" {
+  const path: path.PlatformPath;
+  export = path;
 }
 
 /**
@@ -1343,21 +2274,6 @@ declare module "node:fs" {
  * forms, and are accessible using both CommonJS syntax and ES6 Modules (ESM).
  */
 declare module "fs" {
-  export = fs;
-}
-
-/**
- * The `fs` module enables interacting with the file system in a
- * way modeled on standard POSIX functions.
- *
- * ```js
- * import * as fs from 'fs';
- * ```
- *
- * All file system operations have synchronous and callback
- * forms, and are accessible using both CommonJS syntax and ES6 Modules (ESM).
- */
-declare namespace fs {
   interface ObjectEncodingOptions {
     encoding?: BufferEncoding | null | undefined;
   }
@@ -2014,7 +2930,9 @@ declare namespace fs {
       options?: StatOptions
     ): Promise<Stats | BigIntStats>;
   }
+  // tslint:disable-next-line:unified-signatures
   interface StatSyncFn extends Function {
+    // tslint:disable-next-line:unified-signatures
     (path: PathLike, options?: undefined): Stats;
     (
       path: PathLike,
@@ -2030,8 +2948,10 @@ declare namespace fs {
         throwIfNoEntry: false;
       }
     ): BigIntStats | undefined;
+    // tslint:disable-next-line:unified-signatures
     (
       path: PathLike,
+      // tslint:disable-next-line:unified-signatures
       options?: StatSyncOptions & {
         bigint?: false | undefined;
       }
@@ -2314,6 +3234,7 @@ declare namespace fs {
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `'utf8'` is used.
    */
+  // tslint:disable-next-line:unified-signatures
   function readlink(
     path: PathLike,
     options: BufferEncodingOption,
@@ -2324,15 +3245,18 @@ declare namespace fs {
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `'utf8'` is used.
    */
+  // tslint:disable-next-line:unified-signatures
   function readlink(
     path: PathLike,
     options: EncodingOption,
+    // tslint:disable-next-line:unified-signatures
     callback: (err: SystemError | null, linkString: string | Buffer) => void
   ): void;
   /**
    * Asynchronous readlink(2) - read value of a symbolic link.
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    */
+  // tslint:disable-next-line:unified-signatures
   function readlink(
     path: PathLike,
     callback: (err: SystemError | null, linkString: string) => void
@@ -2429,6 +3353,7 @@ declare namespace fs {
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `'utf8'` is used.
    */
+  // tslint:disable-next-line:unified-signatures
   function realpath(
     path: PathLike,
     options: BufferEncodingOption,
@@ -2439,15 +3364,18 @@ declare namespace fs {
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    * @param options The encoding (or an object specifying the encoding), used as the encoding of the result. If not provided, `'utf8'` is used.
    */
+  // tslint:disable-next-line:unified-signatures
   function realpath(
     path: PathLike,
     options: EncodingOption,
+    // tslint:disable-next-line:unified-signatures
     callback: (err: SystemError | null, resolvedPath: string | Buffer) => void
   ): void;
   /**
    * Asynchronous realpath(3) - return the canonicalized absolute pathname.
    * @param path A path to a file. If a URL is provided, it must use the `file:` protocol.
    */
+  // tslint:disable-next-line:unified-signatures
   function realpath(
     path: PathLike,
     callback: (err: SystemError | null, resolvedPath: string) => void
@@ -2500,16 +3428,19 @@ declare namespace fs {
     function native(
       path: PathLike,
       options: EncodingOption,
+      // tslint:disable-next-line:unified-signatures
       callback: (err: SystemError | null, resolvedPath: string) => void
     ): void;
     function native(
       path: PathLike,
       options: BufferEncodingOption,
+      // tslint:disable-next-line:unified-signatures
       callback: (err: SystemError | null, resolvedPath: Buffer) => void
     ): void;
     function native(
       path: PathLike,
       options: EncodingOption,
+      // tslint:disable-next-line:unified-signatures
       callback: (err: SystemError | null, resolvedPath: string | Buffer) => void
     ): void;
     function native(
@@ -2748,6 +3679,7 @@ declare namespace fs {
    */
   function mkdir(
     path: PathLike,
+    // tslint:disable-next-line:unified-signatures
     options: Mode | MakeDirectoryOptions | null | undefined,
     callback: (err: SystemError | null, path?: string) => void
   ): void;
@@ -2917,12 +3849,14 @@ declare namespace fs {
   function mkdtemp(
     prefix: string,
     options: EncodingOption,
+    // tslint:disable-next-line:unified-signatures
     callback: (err: SystemError | null, folder: string | Buffer) => void
   ): void;
   /**
    * Asynchronously creates a unique temporary directory.
    * Generates six random characters to be appended behind a required prefix to create a unique temporary directory.
    */
+  // tslint:disable-next-line:unified-signatures
   function mkdtemp(
     prefix: string,
     callback: (err: SystemError | null, folder: string) => void
@@ -3634,7 +4568,10 @@ declare namespace fs {
     }>;
   }
 
-  type Abortable = {};
+  // TODO: Add AbortSignal support
+  // tslint:disable-next-line:no-empty-interface
+  interface Abortable {}
+
   /**
    * Returns the number of `bytesRead`.
    *
@@ -4900,7 +5837,7 @@ declare namespace fs {
      */
     errorOnExist?: boolean;
     /**
-     * Function to filter copied files/directories. Return
+     * function to filter copied files/directories. Return
      * `true` to copy the item, `false` to ignore it.
      */
     filter?(source: string, destination: string): boolean;

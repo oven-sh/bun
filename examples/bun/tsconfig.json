@@ -1,11 +1,3 @@
 {
-  "compilerOptions": {
-    "lib": ["ESNext"],
-    "allowJs": true,
-    "checkJs": true,
-    "noEmit": true,
-    "target": "esnext",
-    "module": "esnext",
-    "types": ["../../types/bun"]
-  }
+  "extends": "../../tsconfig.json"
 }

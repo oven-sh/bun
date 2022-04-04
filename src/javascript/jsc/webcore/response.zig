@@ -1607,7 +1607,7 @@ pub const Blob = struct {
                         this.system_error = .{
                             .syscall = ZigString.init("open"),
                             .code = ZigString.init(std.mem.span(@errorName(errno))),
-                            .path = path_string.slice(),
+                            .path = ZigString.init(path_string.slice()),
                         };
 
                         return @errSetCast(AsyncIO.OpenError, errno);

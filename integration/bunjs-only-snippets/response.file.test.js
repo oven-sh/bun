@@ -170,6 +170,7 @@ it("Bun.file -> Response", async () => {
   await gcTick();
   const resp = await fetch("https://example.com");
   await gcTick();
+
   expect(await Bun.write("/tmp/fetch.js.out", resp)).toBe(text.length);
   await gcTick();
   expect(await Bun.file("/tmp/fetch.js.out").text()).toBe(text);
@@ -188,4 +189,30 @@ it("Response -> Bun.file -> Response -> text", async () => {
   await gcTick();
   expect(await response2.text()).toBe(text);
   await gcTick();
+});
+
+// If you write nothing to a file, it shouldn't modify it
+// If you want to truncate a file, it should be more explicit
+it("Bun.write('output.html', '')", async () => {
+  await Bun.write("/tmp/output.html", "lalalala");
+  expect(await Bun.write("/tmp/output.html", "")).toBe(0);
+  expect(await Bun.file("/tmp/output.html").text()).toBe("lalalala");
+});
+
+// Since Bun.file is resolved lazily, this needs to specifically be checked
+it("Bun.write('output.html', HTMLRewriter.transform(Bun.file)))", async () => {
+  var rewriter = new HTMLRewriter();
+  rewriter.on("div", {
+    element(element) {
+      element.setInnerContent("<blink>it worked!</blink>", { html: true });
+    },
+  });
+  await Bun.write("/tmp/html-rewriter.txt.js", "<div>hello</div>");
+  var input = new Response(Bun.file("/tmp/html-rewriter.txt.js"));
+  var output = rewriter.transform(input);
+  const outpath = `/tmp/html-rewriter.${Date.now()}.html`;
+  await Bun.write(outpath, output);
+  expect(await Bun.file(outpath).text()).toBe(
+    "<div><blink>it worked!</blink></div>"
+  );
 });

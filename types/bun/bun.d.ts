@@ -1335,7 +1335,7 @@ declare global {
      * @returns A promise that resolves with the number of bytes written.
      */
     // tslint:disable-next-line:unified-signatures
-    function write(destinationPath: string, input: Response): Promise<number>;
+    function write(destinationPath: PathLike, input: Response): Promise<number>;
 
     /**
      *
@@ -1379,7 +1379,7 @@ declare global {
      * @returns A promise that resolves with the number of bytes written.
      */
     // tslint:disable-next-line:unified-signatures
-    function write(destinationPath: string, input: FileBlob): Promise<number>;
+    function write(destinationPath: PathLike, input: FileBlob): Promise<number>;
 
     /**
      *
@@ -1393,7 +1393,7 @@ declare global {
      */
     // tslint:disable-next-line:unified-signatures
     function write(
-      destination: FileBlob | string,
+      destination: FileBlob | PathLike,
       input: Blob | TypedArray | string | BlobPart[]
     ): Promise<number>;
 
@@ -1631,8 +1631,17 @@ declare global {
    *
    */
   interface FileBlob extends Blob {
-    /** Currently, "name" is not exposed because it may or may not exist */
-    name: never;
+    /**
+     * Offset any operation on the file starting at `begin` and ending at `end`. `end` is relative to 0
+     *
+     * Similar to [`TypedArray.subarray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray/subarray). Does not copy the file, open the file, or modify the file.
+     *
+     * If `begin` > 0, {@link Bun.write()} will be slower on macOS
+     *
+     * @param begin - start offset in bytes
+     * @param end - absolute offset in bytes (relative to 0)
+     */
+    slice(begin?: number, end?: number): FileBlob;
   }
 
   /**

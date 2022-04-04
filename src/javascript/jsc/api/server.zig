@@ -441,7 +441,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
             defer allocator.destroy(fallback_container);
             fallback_container.* = Api.FallbackMessageContainer{
-                .message = std.fmt.allocPrint(allocator, fmt, args) catch unreachable,
+                .message = std.fmt.allocPrint(allocator, comptime Output.prettyFmt(fmt, false), args) catch unreachable,
                 .router = null,
                 .reason = .fetch_event_handler,
                 .cwd = VirtualMachine.vm.bundler.fs.top_level_dir,
@@ -795,7 +795,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.resp.hasResponded()) return;
 
             var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
-
+            defer exception_list.deinit();
             if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
                 this.has_called_error_handler = true;
                 var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
@@ -821,8 +821,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     JSC.VirtualMachine.vm.log,
                     error.ExceptionOcurred,
                     exception_list.toOwnedSlice(),
-                    "Unhandled exception in request handler",
-                    .{},
+                    "<r><red>{s}<r> - <b>{s}<r> failed",
+                    .{ std.mem.span(@tagName(this.method)), this.url },
                 );
             } else {
                 JSC.VirtualMachine.vm.defaultErrorHandler(value, &exception_list);

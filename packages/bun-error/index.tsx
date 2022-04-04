@@ -942,7 +942,7 @@ const JSException = ({
       const newline = message.indexOf("\n");
       if (newline > -1) {
         const subtitle = message.substring(newline + 1).trim();
-        const message = message.substring(0, newline).trim();
+        message = message.substring(0, newline).trim();
         if (subtitle.length) {
           return (
             <div className={`BunError-JSException`}>

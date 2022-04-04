@@ -106,6 +106,8 @@ COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 
 WORKDIR $BUN_DIR
 
+RUN make boringssl && rm -rf src/deps/boringssl Makefile
+
 FROM bunbunbunbun/bun-base:latest as uws
 
 ARG DEBIAN_FRONTEND=noninteractive

@@ -981,8 +981,8 @@ mimalloc:
 			-DMI_BUILD_OBJECT=ON \
 			-DMI_USE_CXX=ON \
 			-DMI_OVERRIDE=ON \
-			-DCMAKE_C_FLAGS="$(CFLAGS) -emit-llvm" \
-			-DCMAKE_CXX_FLAGS="$(CFLAGS) -emit-llvm" \
+			-DCMAKE_C_FLAGS="$(CFLAGS)" \
+			-DCMAKE_CXX_FLAGS="$(CFLAGS)" \
 			${MIMALLOC_OVERRIDE_FLAG} \
 			 .\
 			&& make -j $(CPUS); 

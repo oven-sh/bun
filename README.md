@@ -55,7 +55,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [`bun install`](#bun-install)
     - [`Configuring bun install`](#configuring-bun-install-with-bunfigtoml)
   - [`bun run`](#bun-run)
-  - [`bun create`](#bun-run)
+  - [`bun create`](#bun-create)
   - [`bun bun`](#bun-bun)
   - [`bun completions`](#bun-completions)
   - [`Bun.Transpiler`](#buntranspiler)

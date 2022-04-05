@@ -39,36 +39,43 @@ if ("HtmlContext" in NextUtils) {
   }
 }
 
-function appendNextBody(html: string, docPropsHtml) {
+function appendNextBody(documentHTML: string, pageContent: string) {
   if (nextVersion.startsWith("12.0")) {
     const NEXT_12_0_BODY_RENDER_TARGET = "__NEXT_BODY_RENDER_TARGET__";
 
-    const bodyRenderIdx = html.indexOf(NEXT_12_0_BODY_RENDER_TARGET);
+    const bodyRenderIdx = documentHTML.indexOf(NEXT_12_0_BODY_RENDER_TARGET);
 
-    return (
-      html.substring(0, bodyRenderIdx) +
-      docPropsHtml +
-      html.substring(bodyRenderIdx + NEXT_12_0_BODY_RENDER_TARGET.length)
-    );
-  } else {
-    const end = html.lastIndexOf("</next-js-internal-body-render-target>");
-
-    const start = html.lastIndexOf(
-      "<next-js-internal-body-render-target>",
-      end
-    );
-
-    if (start === -1 || end === -1) {
-      throw new Error(
-        "Can't find where your <App /> starts or where the <Document /> ends. \nThis is probably a version incompatibility. Please mention this error in Bun's discord\n\n" +
-          html
-      );
+    if (!documentHTML.startsWith("<!DOCTYPE html>")) {
+      documentHTML = "<!DOCTYPE html>" + documentHTML;
     }
 
     return (
-      html.substring(0, start) +
-      `<div id="__next">${docPropsHtml || ""}</div>` +
-      html.substring(end)
+      documentHTML.substring(0, bodyRenderIdx) +
+      pageContent +
+      documentHTML.substring(
+        bodyRenderIdx + NEXT_12_0_BODY_RENDER_TARGET.length
+      )
+    );
+  } else {
+    var [renderTargetPrefix, renderTargetSuffix] = documentHTML.split(
+      "<next-js-internal-body-render-target></next-js-internal-body-render-target>"
+    );
+
+    if (!renderTargetPrefix || !renderTargetSuffix) {
+      throw new Error(
+        "Can't find where your <App /> starts or where the <Document /> ends. \nThis is probably a version incompatibility. Please mention this error in Bun's discord\n\n" +
+          documentHTML
+      );
+    }
+
+    if (!renderTargetPrefix.startsWith("<!DOCTYPE html>")) {
+      renderTargetPrefix = "<!DOCTYPE html>" + renderTargetPrefix;
+    }
+
+    return (
+      renderTargetPrefix +
+      `<div id="__next">${pageContent || ""}</div>` +
+      renderTargetSuffix
     );
   }
 }
@@ -243,19 +250,16 @@ function renderDocument(
     ...docProps,
   };
 
-  return (
-    "<!DOCTYPE html>" +
-    ReactDOMServer.renderToStaticMarkup(
-      <AmpStateContext.Provider value={ampState}>
-        {/* HTMLContextProvider expects useMainContent */}
+  return ReactDOMServer.renderToString(
+    <AmpStateContext.Provider value={ampState}>
+      {/* HTMLContextProvider expects useMainContent */}
+      {/* @ts-expect-error */}
+      <HtmlContext.Provider value={htmlProps}>
+        {/* Document doesn't expect useMaybeDeferContent */}
         {/* @ts-expect-error */}
-        <HtmlContext.Provider value={htmlProps}>
-          {/* Document doesn't expect useMaybeDeferContent */}
-          {/* @ts-expect-error */}
-          <Document {...htmlProps} {...docProps}></Document>
-        </HtmlContext.Provider>
-      </AmpStateContext.Provider>
-    )
+        <Document {...htmlProps} {...docProps}></Document>
+      </HtmlContext.Provider>
+    </AmpStateContext.Provider>
   );
 }
 
@@ -760,7 +764,7 @@ export async function render({
     },
     // Only enabled in production as development mode has features relying on HMR (style injection for example)
     // @ts-expect-error
-    unstable_runtimeJS: true,
+    unstable_runtimeJS: false,
     //   process.env.NODE_ENV === "production"
     //     ? pageConfig.unstable_runtimeJS
     //     : undefined,

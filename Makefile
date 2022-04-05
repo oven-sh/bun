@@ -302,7 +302,7 @@ ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 ifeq ($(OS_NAME), darwin)
 	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/*.o) $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/**/*.o) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 else
-	ARCHIVE_FILES += $(BUN_DEPS_OUT_DIR)/uSockets.a $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+	ARCHIVE_FILES += -lusockets -luwsockets
 endif
 
 STATIC_MUSL_FLAG ?= 
@@ -481,10 +481,10 @@ usockets:
 			$(CXX) -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -Isrc $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.cpp;
 
 		cd $(BUN_DEPS_DIR)/uws/uSockets && \
-			$(AR) rcvs $(BUN_DEPS_OUT_DIR)/uSockets.a src/*.o src/eventing/*.o src/crypto/*.o
+			$(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a src/*.o src/eventing/*.o src/crypto/*.o
 
 uws: usockets
-	$(CXX) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/uSockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+	$(CXX) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 
 

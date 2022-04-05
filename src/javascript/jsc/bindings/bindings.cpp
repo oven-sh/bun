@@ -53,7 +53,6 @@
 #include "DOMURL.h"
 #include "JSDOMURL.h"
 
-#include "_libusockets.h"
 #include <string_view>
 #include <uws/src/App.h>
 #include <uws/uSockets/src/internal/internal.h>

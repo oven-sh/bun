@@ -1957,7 +1957,6 @@ pub const Blob = struct {
                             .syscall = .read,
                         }).toSystemError();
                     } else {
-                        this.errno = AsyncIO.asError(-completion.result);
                         this.errno = err;
                         this.system_error = .{ .code = ZigString.init(std.mem.span(@errorName(err))), .syscall = ZigString.init("read") };
                     }

@@ -1390,6 +1390,7 @@ export function renderRuntimeError(error: Error) {
               remapped[1];
         }, console.error);
       } else {
+        if (!mappings) return null;
         var frame = exception.stack.frames[frameIndex];
         const { line, column_start } = frame.position;
         const remapped = remapPosition(mappings, line, column_start);

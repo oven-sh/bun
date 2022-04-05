@@ -281,7 +281,7 @@ export function fetchAllMappings(files, signal) {
 
   for (const [file, indices] of [...map.entries()]) {
     const mapped = fetchMappings(file, signal);
-    if (mapped.then) {
+    if (mapped?.then) {
       var resolvers = [];
       for (let i = 0; i < indices.length; i++) {
         results[indices[i]] = new Promise((resolve, reject) => {

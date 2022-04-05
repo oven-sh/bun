@@ -69,7 +69,7 @@ it("Bun.file -> Bun.file", async () => {
   const file = path.join(import.meta.dir, "fetch.js.txt");
   await gcTick();
   const text = fs.readFileSync(file, "utf8");
-  fs.writeFileSync("/tmp/fetch.js.in", text, { mode: 0644 });
+  fs.writeFileSync("/tmp/fetch.js.in", text);
   await gcTick();
   {
     const result = await Bun.write(

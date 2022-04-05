@@ -1,7 +1,7 @@
 const boring = @import("./boringssl.translated.zig");
 pub usingnamespace boring;
 const std = @import("std");
-
+const global = @import("../global.zig");
 var loaded = false;
 pub fn load() void {
     if (loaded) return;
@@ -28,6 +28,49 @@ pub fn initClient() *boring.SSL {
     return ssl;
 }
 
+// void*, OPENSSL_memory_alloc, (size_t size)
+// void, OPENSSL_memory_free, (void *ptr)
+// size_t, OPENSSL_memory_get_size, (void *ptr)
+
+// The following three functions can be defined to override default heap
+// allocation and freeing. If defined, it is the responsibility of
+// |OPENSSL_memory_free| to zero out the memory before returning it to the
+// system. |OPENSSL_memory_free| will not be passed NULL pointers.
+//
+// WARNING: These functions are called on every allocation and free in
+// BoringSSL across the entire process. They may be called by any code in the
+// process which calls BoringSSL, including in process initializers and thread
+// destructors. When called, BoringSSL may hold pthreads locks. Any other code
+// in the process which, directly or indirectly, calls BoringSSL may be on the
+// call stack and may itself be using arbitrary synchronization primitives.
+//
+// As a result, these functions may not have the usual programming environment
+// available to most C or C++ code. In particular, they may not call into
+// BoringSSL, or any library which depends on BoringSSL. Any synchronization
+// primitives used must tolerate every other synchronization primitive linked
+// into the process, including pthreads locks. Failing to meet these constraints
+// may result in deadlocks, crashes, or memory corruption.
+
+export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
+    return global.Global.Mimalloc.mi_malloc(size);
+}
+
+// BoringSSL always expects memory to be zero'd
+export fn OPENSSL_memory_free(ptr: *anyopaque) void {
+    @memset(@ptrCast([*]u8, ptr), 0, global.Global.Mimalloc.mi_usable_size(ptr));
+    global.Global.Mimalloc.mi_free(ptr);
+}
+
+export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
+    return global.Global.Mimalloc.mi_usable_size(ptr);
+}
+
 test "load" {
     load();
+}
+
+comptime {
+    _ = OPENSSL_memory_alloc;
+    _ = OPENSSL_memory_free;
+    _ = OPENSSL_memory_get_size;
 }

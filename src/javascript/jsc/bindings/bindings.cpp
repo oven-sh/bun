@@ -2410,13 +2410,19 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
 {
 
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
+    JSC::VM &vm = arg1->vm();
 
     if (obj == nullptr) {
         arg2->len = 0;
         return;
     }
 
-    JSC::JSValue name = obj->getDirect(arg1->vm(), arg1->vm().propertyNames->name);
+    JSC::JSValue name = obj->getDirect(vm, vm.propertyNames->toStringTagSymbol);
+    if (name == JSC::JSValue{}) {
+        name = obj->getDirect(vm, vm.propertyNames->name);
+    }
+    
+
     if (name && name.isString()) {
         auto str = name.toWTFString(arg1);
         if (!str.isEmpty()) {
@@ -2425,9 +2431,9 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
         }
     }
 
-    if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(arg1->vm(), obj)) {
+    if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(vm, obj)) {
 
-        WTF::String actualName = function->name(arg1->vm());
+        WTF::String actualName = function->name(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
             *arg2 = Zig::toZigString(actualName);
             return;
@@ -2439,7 +2445,7 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
         return;
     }
 
-    if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(arg1->vm(), obj)) {
+    if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(vm, obj)) {
         auto view = WTF::StringView(function->name());
         *arg2 = Zig::toZigString(view);
         return;

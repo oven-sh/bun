@@ -40,6 +40,8 @@ const JSC = @import("javascript_core");
 const Jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Test = TestRunner.Test;
+const NetworkThread = @import("http").NetworkThread;
+
 pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
@@ -240,6 +242,7 @@ pub const TestCommand = struct {
             break :brk loader;
         };
         JSC.C.JSCInitialize();
+        NetworkThread.init() catch {};
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
             .jest = TestRunner{

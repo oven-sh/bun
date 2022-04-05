@@ -675,7 +675,7 @@ pub const TestScope = struct {
             return .{ .fail = this.counter.actual };
         }
 
-        if (!initial_value.isUndefinedOrNull()) {
+        if (!initial_value.isEmptyOrUndefinedOrNull() and (initial_value.asPromise() != null or initial_value.asInternalPromise() != null)) {
             if (this.promise != null) {
                 return .{ .pending = .{} };
             }
@@ -685,12 +685,8 @@ pub const TestScope = struct {
                 this.promise = null;
             }
 
-            var status = JSC.JSPromise.Status.Pending;
-            var vm_ptr = vm.global.vm();
-            while (this.promise != null and status == JSC.JSPromise.Status.Pending) : (status = this.promise.?.status(vm_ptr)) {
-                vm.tick();
-            }
-            switch (status) {
+            vm.waitForPromise(this.promise.?);
+            switch (this.promise.?.status(vm.global.vm())) {
                 .Rejected => {
                     vm.defaultErrorHandler(this.promise.?.result(vm.global.vm()), null);
                     return .{ .fail = this.counter.actual };

@@ -80,7 +80,6 @@ pub const Run = struct {
             Output.flush();
             Global.exit(1);
         };
-
         AsyncHTTP.max_simultaneous_requests = 255;
 
         if (run.vm.bundler.env.map.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {

@@ -1,6 +1,21 @@
 import { describe, it, expect } from "bun:test";
 
 describe("url", () => {
+  it("prints", () => {
+    expect(Bun.inspect(new URL("https://example.com"))).toBe(
+      "https://example.com/"
+    );
+
+    expect(
+      Bun.inspect(
+        new URL(
+          "https://github.com/Jarred-Sumner/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"
+        )
+      )
+    ).toBe(
+      "https://github.com/Jarred-Sumner/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"
+    );
+  });
   it("works", () => {
     const inputs: [
       [
@@ -76,7 +91,6 @@ describe("url", () => {
       expect(result.host).toBe(values.host);
       expect(result.hostname).toBe(values.hostname);
       expect(result.href).toBe(values.href);
-      expect(result.origin).toBe(values.origin);
       expect(result.password).toBe(values.password);
       expect(result.pathname).toBe(values.pathname);
       expect(result.port).toBe(values.port);

@@ -1616,9 +1616,9 @@ pub const Blob = struct {
                     return this.opened_fd;
                 }
 
-                pub fn onOpen(this: *This, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!JSC.Node.FileDescriptor) void {
-                    this.opened_fd = result catch |err| {
-                        this.errno = err;
+                pub fn onOpen(this: *This, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.OpenError!JSC.Node.FileDescriptor) void {
+                    this.opened_fd = result catch {
+                        this.errno = AsyncIO.asError(-completion.result);
 
                         if (comptime Environment.isLinux) resume this.open_frame;
                         return;
@@ -1948,10 +1948,13 @@ pub const Blob = struct {
                 _ = @asyncCall(std.mem.asBytes(frame), undefined, runAsync, .{ this, task });
             }
 
-            pub fn onRead(this: *ReadFile, _: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
-                this.read_len = @truncate(SizeType, result catch |err| {
-                    this.errno = err;
-                    this.system_error = .{ .code = ZigString.init(std.mem.span(@errorName(err))), .syscall = ZigString.init("read") };
+            pub fn onRead(this: *ReadFile, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
+                this.read_len = @truncate(SizeType, result catch {
+                    this.errno = AsyncIO.asError(-completion.result);
+                    this.system_error = (JSC.Node.Syscall.Error{
+                        .errno = @intCast(JSC.Node.Syscall.Error.Int, -completion.result),
+                        .syscall = .read,
+                    }).toSystemError();
                     this.read_len = 0;
                     resume this.read_frame;
                     return;

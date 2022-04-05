@@ -304,7 +304,7 @@
       "request": "launch",
       "name": "bun test current",
       "program": "bun-debug",
-      "args": ["wiptest", "response.file"],
+      "args": ["wiptest", "mmap"],
       "cwd": "${workspaceFolder}/integration",
       "env": {
         "FORCE_COLOR": "1"

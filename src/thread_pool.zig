@@ -205,6 +205,8 @@ noinline fn wait(self: *ThreadPool, _is_waking: bool) error{Shutdown}!bool {
     return _wait(self, _is_waking, false);
 }
 
+pub fn waitForIO(_: *ThreadPool) void {}
+
 // sleep_on_idle seems to impact `bun install` performance negatively
 // so we can just not sleep for that
 fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) error{Shutdown}!bool {
@@ -272,6 +274,7 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
             if (self.io) |io| {
                 const HTTP = @import("http");
                 io.tick() catch {};
+
                 const end_count = HTTP.AsyncHTTP.active_requests_count.loadUnchecked();
 
                 if (end_count > 0) {
@@ -290,18 +293,23 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
                 const idle = HTTP.AsyncHTTP.active_requests_count.loadUnchecked() == 0;
 
                 if (sleep_on_idle and io.hasNoWork()) {
-                    idle_network_ticks += @as(u32, @boolToInt(idle));
-
-                    // If it's been roughly 2ms since the last network request, go to sleep!
-                    // this is 4ms because run_for_ns runs for 10 microseconds
-                    // 10 microseconds * 400 == 4ms
-                    if (idle_network_ticks > 400) {
-                        idle_network_ticks = 0;
-                        // force(true) causes an assertion failure
-                        // judging from reading mimalloc's code,
-                        // it should only be used when the thread is about to shutdown
+                    if (comptime @hasField(AsyncIO, "pending_count")) {
                         HTTP.cleanup(false);
-                        self.idle_event.wait();
+                        self.idle_event.waitFor(comptime std.time.ns_per_s * 60);
+                    } else {
+                        idle_network_ticks += @as(u32, @boolToInt(idle));
+
+                        // If it's been roughly 2ms since the last network request, go to sleep!
+                        // this is 4ms because run_for_ns runs for 10 microseconds
+                        // 10 microseconds * 400 == 4ms
+                        if (idle_network_ticks > 400) {
+                            idle_network_ticks = 0;
+                            // force(true) causes an assertion failure
+                            // judging from reading mimalloc's code,
+                            // it should only be used when the thread is about to shutdown
+                            HTTP.cleanup(false);
+                            self.idle_event.wait();
+                        }
                     }
                 }
 
@@ -547,6 +555,57 @@ const Event = struct {
             // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
             // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
             Futex.wait(&self.state, WAITING, null) catch unreachable;
+            state = self.state.load(.Monotonic);
+            acquire_with = WAITING;
+        }
+    }
+
+    /// Wait for and consume a notification
+    /// or wait for the event to be shutdown entirely
+    noinline fn waitFor(self: *Event, timeout: usize) void {
+        var acquire_with: u32 = EMPTY;
+        var state = self.state.load(.Monotonic);
+
+        while (true) {
+            // If we're shutdown then exit early.
+            // Acquire barrier to ensure operations before the shutdown() are seen after the wait().
+            // Shutdown is rare so it's better to have an Acquire barrier here instead of on CAS failure + load which are common.
+            if (state == SHUTDOWN) {
+                std.atomic.fence(.Acquire);
+                return;
+            }
+
+            // Consume a notification when it pops up.
+            // Acquire barrier to ensure operations before the notify() appear after the wait().
+            if (state == NOTIFIED) {
+                state = self.state.tryCompareAndSwap(
+                    state,
+                    acquire_with,
+                    .Acquire,
+                    .Monotonic,
+                ) orelse return;
+                continue;
+            }
+
+            // There is no notification to consume, we should wait on the event by ensuring its WAITING.
+            if (state != WAITING) blk: {
+                state = self.state.tryCompareAndSwap(
+                    state,
+                    WAITING,
+                    .Monotonic,
+                    .Monotonic,
+                ) orelse break :blk;
+                continue;
+            }
+
+            // Wait on the event until a notify() or shutdown().
+            // If we wake up to a notification, we must acquire it with WAITING instead of EMPTY
+            // since there may be other threads sleeping on the Futex who haven't been woken up yet.
+            //
+            // Acquiring to WAITING will make the next notify() or shutdown() wake a sleeping futex thread
+            // who will either exit on SHUTDOWN or acquire with WAITING again, ensuring all threads are awoken.
+            // This unfortunately results in the last notify() or shutdown() doing an extra futex wake but that's fine.
+            Futex.wait(&self.state, WAITING, timeout) catch {};
             state = self.state.load(.Monotonic);
             acquire_with = WAITING;
         }

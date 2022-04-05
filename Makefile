@@ -290,13 +290,14 @@ endif
 
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
-		$(BUN_DEPS_OUT_DIR)/libz.a \
-		$(BUN_DEPS_OUT_DIR)/libarchive.a \
-		$(BUN_DEPS_OUT_DIR)/libssl.a \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
-		$(BUN_DEPS_OUT_DIR)/liblolhtml.a \
+		-L$(BUN_DEPS_OUT_DIR) \
+		-llolhtml \
+		-lz \
+		-larchive \
+		-lssl \
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 
 ifeq ($(OS_NAME), darwin)
 	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/*.o) $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/**/*.o) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
@@ -309,7 +310,6 @@ STATIC_MUSL_FLAG ?=
 ifeq ($(OS_NAME), linux)
 PLATFORM_LINKER_FLAGS = $(CFLAGS) \
 	    -fuse-ld=lld \
-		-lc \
 		-Wl,-z,now \
 		-Wl,--as-needed \
 		-Wl,--gc-sections \
@@ -336,7 +336,7 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 		
 
 
-BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS}
+BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS} -lc
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -358,7 +358,7 @@ boringssl-build-debug:
 
 boringssl-copy:
 	cp $(BUN_DEPS_DIR)/boringssl/build/ssl/libssl.a $(BUN_DEPS_OUT_DIR)/libssl.a
-	cp $(BUN_DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(BUN_DEPS_OUT_DIR)/libcrypto.boring.a
+	cp $(BUN_DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(BUN_DEPS_OUT_DIR)/libcrypto.a
 
 boringssl: boringssl-build boringssl-copy
 boringssl-debug: boringssl-build-debug boringssl-copy

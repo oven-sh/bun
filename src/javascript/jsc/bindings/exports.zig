@@ -1266,6 +1266,7 @@ pub const ZigConsoleClient = struct {
                             .cell = js_type,
                         };
                     }
+
                     return .{
                         .tag = .Object,
                         .cell = js_type,
@@ -1288,6 +1289,10 @@ pub const ZigConsoleClient = struct {
                         if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &reactElement), globalThis) or JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis)) {
                             return .{ .tag = .JSX, .cell = js_type };
                         }
+                    }
+
+                    if (value.as(JSC.DOMURL) != null) {
+                        return .{ .tag = .String, .cell = js_type };
                     }
                 }
 
@@ -2047,6 +2052,11 @@ pub const ZigConsoleClient = struct {
 
                         if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
                             writer.print("{} ", .{name_str});
+                        } else {
+                            value.getNameProperty(this.globalThis, &name_str);
+                            if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                                writer.print("{} ", .{name_str});
+                            }
                         }
 
                         if (count_ == 0) {

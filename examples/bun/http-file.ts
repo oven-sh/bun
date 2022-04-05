@@ -3,7 +3,6 @@ Bun.serve({
   fetch(req) {
     const url = new URL(req.url.substring(1), "file://" + import.meta.path);
     const path = Bun.resolveSync(url.pathname, import.meta.path);
-
     return new Response(Bun.file(path));
   },
 

@@ -302,7 +302,7 @@ ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 ifeq ($(OS_NAME), darwin)
 	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/*.o) $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/**/*.o) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 else
-	ARCHIVE_FILES += -lusockets -luwsockets
+	ARCHIVE_FILES += -lusockets $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 endif
 
 STATIC_MUSL_FLAG ?= 

@@ -17,7 +17,7 @@ const C = @import("../../../global.zig").C;
 const linux = os.linux;
 const Maybe = JSC.Node.Maybe;
 
-pub const system = if (Environment.isLinux) linux else darwin;
+pub const system = if (Environment.isLinux) linux else @import("io").darwin;
 pub const S = struct {
     pub usingnamespace if (Environment.isLinux) linux.S else std.os.S;
 };
@@ -88,6 +88,8 @@ pub const Tag = enum(u8) {
     getcwd,
     chdir,
     fcopyfile,
+    recv,
+    send,
 
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
@@ -269,6 +271,48 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
             return err;
         }
         return Maybe(usize){ .result = @intCast(usize, rc) };
+    }
+    unreachable;
+}
+
+pub fn recv(fd: os.fd_t, buf: []u8, flag: u32) Maybe(usize) {
+    if (comptime Environment.isMac) {
+        const rc = system.@"recvfrom$NOCANCEL"(fd, buf.ptr, bun.len, flag, null, null);
+        if (Maybe(usize).errnoSys(rc, .recv)) |err| {
+            return err;
+        }
+        return Maybe(usize){ .result = @intCast(usize, rc) };
+    } else {
+        while (true) {
+            const rc = linux.recvfrom(fd, buf.ptr, bun.len, flag | os.SOCK.CLOEXEC | os.MSG.NOSIGNAL, null, null);
+            if (Maybe(usize).errnoSys(rc, .recv)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+            return Maybe(usize){ .result = @intCast(usize, rc) };
+        }
+    }
+    unreachable;
+}
+
+pub fn send(fd: os.fd_t, buf: []const u8, flag: u32) Maybe(usize) {
+    if (comptime Environment.isMac) {
+        const rc = system.@"sendto$NOCANCEL"(fd, buf.ptr, buf.len, flag, null, 0);
+        if (Maybe(usize).errnoSys(rc, .send)) |err| {
+            return err;
+        }
+        return Maybe(usize){ .result = @intCast(usize, rc) };
+    } else {
+        while (true) {
+            const rc = linux.sendto(fd, buf.ptr, buf.len, flag | os.SOCK.CLOEXEC | os.MSG.NOSIGNAL, null, 0);
+
+            if (Maybe(usize).errnoSys(rc, .send)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+
+            return Maybe(usize){ .result = @intCast(usize, rc) };
+        }
     }
     unreachable;
 }

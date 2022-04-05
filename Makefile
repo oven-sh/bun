@@ -61,11 +61,11 @@ CC = $(shell which clang-13 || which clang)
 CXX = $(shell which clang++-13 || which clang++)
 
 ifeq ($(OS_NAME),darwin)
-# LLVM_PREFIX = $(shell brew --prefix llvm)
-# LDFLAGS += " -L$(LLVM_PREFIX)/lib"
-# CPPFLAGS += " -I$(LLVM_PREFIX)/include"
-CC = /usr/bin/clang
-CXX = /usr/bin/clang++
+LLVM_PREFIX = $(shell brew --prefix llvm)
+LDFLAGS += " -L$(LLVM_PREFIX)/lib"
+CPPFLAGS += " -I$(LLVM_PREFIX)/include"
+CC = $(LLVM_PREFIX)/bin/clang
+CXX = $(LLVM_PREFIX)/bin/clang++
 CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning | awk '/Apple Development/ { print $$2 }')
 endif
 
@@ -948,19 +948,21 @@ jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
 	cd $(BUN_DEPS_DIR)/mimalloc; make clean || echo ""; \
-		CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) \
+		CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) ${MIMALLOC_OVERRIDE_FLAG} \
 			-DCMAKE_BUILD_TYPE=Debug \
 			-DMI_DEBUG_FULL=1 \
 			-DMI_SKIP_COLLECT_ON_EXIT=1 \
 			-DMI_BUILD_SHARED=OFF \
 			-DMI_BUILD_STATIC=ON \
 			-DMI_BUILD_TESTS=OFF \
-			-DMI_BUILD_OBJECT=ON \
-			-DMI_BUILD_OBJECT=ON \
 			-DMI_OSX_ZONE=OFF \
 			-DMI_OSX_INTERPOSE=OFF \
-			${MIMALLOC_OVERRIDE_FLAG} \
-			-DMI_USE_CXX=OFF .\
+			-DMI_BUILD_OBJECT=ON \
+			-DMI_USE_CXX=ON \
+			-DMI_OVERRIDE=OFF \
+			-DCMAKE_C_FLAGS="$(CFLAGS)" \
+			-DCMAKE_CXX_FLAGS="$(CFLAGS)" \
+			. \
 			&& make -j $(CPUS); 
 	cp $(BUN_DEPS_DIR)/mimalloc/$(_MIMALLOC_DEBUG_FILE) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
@@ -980,7 +982,7 @@ mimalloc:
 			-DMI_OSX_INTERPOSE=OFF \
 			-DMI_BUILD_OBJECT=ON \
 			-DMI_USE_CXX=ON \
-			-DMI_OVERRIDE=ON \
+			-DMI_OVERRIDE=OFF \
 			-DCMAKE_C_FLAGS="$(CFLAGS)" \
 			-DCMAKE_CXX_FLAGS="$(CFLAGS)" \
 			${MIMALLOC_OVERRIDE_FLAG} \

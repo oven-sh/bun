@@ -73,6 +73,7 @@ threadlocal var res_headers_buf: [100]picohttp.Header = undefined;
 const sync = @import("./sync.zig");
 const JavaScript = @import("javascript_core");
 const JavaScriptCore = JavaScriptCore.C;
+const Syscall = JavaScript.Node.Syscall;
 const Router = @import("./router.zig");
 pub const Watcher = watcher.NewWatcher(*Server);
 const ZigURL = @import("./url.zig").URL;
@@ -663,18 +664,29 @@ pub const RequestContext = struct {
         _ = try ctx.writeSocket(writer.getWritten(), SOCKET_FLAGS);
     }
 
+    const AsyncIO = @import("io");
     pub fn writeSocket(ctx: *RequestContext, buf: anytype, _: anytype) !usize {
         // ctx.conn.client.setWriteBufferSize(@intCast(u32, buf.len)) catch {};
-        const written = ctx.conn.client.write(buf, SOCKET_FLAGS) catch |err| {
-            Output.printError("Write error: {s}", .{@errorName(err)});
-            return err;
-        };
 
-        if (written == 0) {
-            return error.SocketClosed;
+        switch (Syscall.send(ctx.conn.client.socket.fd, buf, SOCKET_FLAGS)) {
+            .err => |err| {
+                const erro = AsyncIO.asError(err.getErrno());
+                if (erro == error.EBADF or erro == error.ECONNABORTED or erro == error.ECONNREFUSED) {
+                    return error.SocketClosed;
+                }
+
+                Output.prettyErrorln("send() error: {s}", .{err.toSystemError().message.slice()});
+
+                return erro;
+            },
+            .result => |written| {
+                if (written == 0) {
+                    return error.SocketClosed;
+                }
+
+                return written;
+            },
         }
-
-        return written;
     }
 
     pub fn writeBodyBuf(ctx: *RequestContext, body: []const u8) !void {
@@ -707,14 +719,15 @@ pub const RequestContext = struct {
     }
 
     pub fn init(
+        this: *RequestContext,
         req: Request,
         arena: ThreadlocalArena,
         conn: *tcp.Connection,
         bundler_: *Bundler,
         watcher_: *Watcher,
         timer: std.time.Timer,
-    ) !RequestContext {
-        var ctx = RequestContext{
+    ) !void {
+        this.* = RequestContext{
             .request = req,
             .arena = arena,
             .bundler = bundler_,
@@ -727,8 +740,6 @@ pub const RequestContext = struct {
             .timer = timer,
             .origin = bundler_.options.origin,
         };
-
-        return ctx;
     }
 
     // not all browsers send this
@@ -1676,8 +1687,8 @@ pub const RequestContext = struct {
             clone.websocket = Websocket.Websocket.create(&clone.conn, SOCKET_FLAGS);
             clone.tombstone = false;
 
-            clone.ctx.allocator = undefined;
-            clone.ctx.arena.deinit();
+            ctx.allocator = undefined;
+            ctx.arena.deinit();
 
             try open_websockets.append(clone);
             return clone;
@@ -1771,25 +1782,27 @@ pub const RequestContext = struct {
                 websocket_printer,
             );
 
-            _handle(self) catch {};
+            self.ctx.arena = ThreadlocalArena.init() catch unreachable;
+            self.ctx.allocator = self.ctx.arena.allocator();
+            self.builder.bundler.resolver.caches = CacheSet.init(self.ctx.allocator);
+            self.builder.bundler.resolver.caches.fs.stream = true;
+
+            _handle(self, &self.ctx) catch {};
         }
 
-        fn _handle(handler: *WebsocketHandler) !void {
-            var ctx = &handler.ctx;
-            ctx.arena = ThreadlocalArena.init() catch unreachable;
-            ctx.allocator = ctx.arena.allocator();
-            handler.builder.bundler.resolver.caches = CacheSet.init(ctx.allocator);
-            handler.builder.bundler.resolver.caches.fs.stream = true;
-
+        fn _handle(handler: *WebsocketHandler, ctx: *RequestContext) !void {
             var is_socket_closed = false;
+            const fd = ctx.conn.client.socket.fd;
             defer {
                 websocket_printer = handler.builder.printer.ctx;
                 handler.tombstone = true;
                 removeWebsocket(handler);
+
                 ctx.arena.deinit();
                 if (!is_socket_closed) {
-                    ctx.conn.deinit();
+                    _ = Syscall.close(fd);
                 }
+                bun.default_allocator.destroy(handler);
                 Output.flush();
             }
 
@@ -1826,8 +1839,20 @@ pub const RequestContext = struct {
             ctx.appendHeader("Upgrade", "websocket");
             ctx.appendHeader("Sec-WebSocket-Accept", key);
             ctx.appendHeader("Sec-WebSocket-Protocol", "bun-hmr");
-            try ctx.writeStatus(101);
-            try ctx.flushHeaders();
+            ctx.writeStatus(101) catch |err| {
+                if (err == error.SocketClosed) {
+                    is_socket_closed = true;
+                }
+
+                return;
+            };
+            ctx.flushHeaders() catch |err| {
+                if (err == error.SocketClosed) {
+                    is_socket_closed = true;
+                }
+
+                return;
+            };
             // Output.prettyErrorln("<r><green>101<r><d> Hot Module Reloading connected.<r>", .{});
             // Output.flush();
             Analytics.Features.hot_module_reloading = true;
@@ -3656,14 +3681,16 @@ pub const Server = struct {
 
         var req = picohttp.Request.parse(req_buf_node.data[0..read_size], &req_headers_buf) catch |err| {
             _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
-            conn.client.deinit();
+            _ = Syscall.close(conn.client.socket.fd);
             Output.printErrorln("ERR: {s}", .{@errorName(err)});
             return;
         };
 
         var request_arena = ThreadlocalArena.init() catch unreachable;
+        var request_allocator = request_arena.allocator();
+        var req_ctx = request_allocator.create(RequestContext) catch unreachable;
 
-        req_ctx_ = RequestContext.init(
+        req_ctx.init(
             req,
             request_arena,
             conn,
@@ -3672,15 +3699,15 @@ pub const Server = struct {
             server.timer,
         ) catch |err| {
             Output.prettyErrorln("<r>[<red>{s}<r>] - <b>{s}<r>: {s}", .{ @errorName(err), req.method, req.path });
-            conn.client.deinit();
+            _ = Syscall.close(conn.client.socket.fd);
+            request_arena.deinit();
             return;
         };
 
-        var req_ctx = &req_ctx_;
         req_ctx.req_body_node = req_buf_node;
         req_ctx.timer.reset();
 
-        const is_navigation_request = req_ctx_.isBrowserNavigation();
+        const is_navigation_request = req_ctx.isBrowserNavigation();
         defer if (is_navigation_request == .yes) Analytics.enqueue(Analytics.EventName.http_build);
         req_ctx.parseOrigin();
         // req_ctx.appendHeader("Date", value: string)

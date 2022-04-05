@@ -259,7 +259,7 @@ const fd_t = os.fd_t;
 const mem = std.mem;
 const assert = std.debug.assert;
 const c = std.c;
-const darwin = struct {
+pub const darwin = struct {
     pub usingnamespace os.darwin;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
     pub extern "c" fn @"sendto$NOCANCEL"(sockfd: c.fd_t, buf: *const anyopaque, len: usize, flags: u32, dest_addr: ?*const c.sockaddr, addrlen: c.socklen_t) isize;

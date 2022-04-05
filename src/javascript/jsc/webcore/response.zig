@@ -1949,12 +1949,18 @@ pub const Blob = struct {
             }
 
             pub fn onRead(this: *ReadFile, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
-                this.read_len = @truncate(SizeType, result catch {
-                    this.errno = AsyncIO.asError(-completion.result);
-                    this.system_error = (JSC.Node.Syscall.Error{
-                        .errno = @intCast(JSC.Node.Syscall.Error.Int, -completion.result),
-                        .syscall = .read,
-                    }).toSystemError();
+                this.read_len = @truncate(SizeType, result catch |err| {
+                    if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
+                        this.errno = AsyncIO.asError(-completion.result);
+                        this.system_error = (JSC.Node.Syscall.Error{
+                            .errno = @intCast(JSC.Node.Syscall.Error.Int, -completion.result),
+                            .syscall = .read,
+                        }).toSystemError();
+                    } else {
+                        this.errno = AsyncIO.asError(-completion.result);
+                        this.errno = err;
+                        this.system_error = .{ .code = ZigString.init(std.mem.span(@errorName(err))), .syscall = ZigString.init("read") };
+                    }
                     this.read_len = 0;
                     resume this.read_frame;
                     return;

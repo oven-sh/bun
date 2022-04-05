@@ -61,11 +61,11 @@ CC = $(shell which clang-13 || which clang)
 CXX = $(shell which clang++-13 || which clang++)
 
 ifeq ($(OS_NAME),darwin)
-LLVM_PREFIX = $(shell brew --prefix llvm)
-LDFLAGS += " -L$(LLVM_PREFIX)/lib"
-CPPFLAGS += " -I$(LLVM_PREFIX)/include"
-CC = $(LLVM_PREFIX)/bin/clang
-CXX = $(LLVM_PREFIX)/bin/clang++
+# LLVM_PREFIX = $(shell brew --prefix llvm)
+# LDFLAGS += " -L$(LLVM_PREFIX)/lib"
+# CPPFLAGS += " -I$(LLVM_PREFIX)/include"
+CC = /usr/bin/clang
+CXX = /usr/bin/clang++
 CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning | awk '/Apple Development/ { print $$2 }')
 endif
 
@@ -94,7 +94,7 @@ LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
 LIBTOOL=glibtoolize
 AR=llvm-ar
-BITCODE_OR_SECTIONS=-fembed-bitcode=all
+BITCODE_OR_SECTIONS=-fdata-sections -ffunction-sections
 endif
 
 ifeq ($(OS_NAME),linux)
@@ -103,7 +103,7 @@ AR=llvm-ar-13
 endif
 
 OPTIMIZATION_LEVEL=-O3
-CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(BITCODE_OR_SECTIONS) -g $(OPTIMIZATION_LEVEL)
+CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(BITCODE_OR_SECTIONS) -g $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
 
@@ -208,7 +208,7 @@ LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
 
-INCLUDE_DIRS := $(UWS_INCLUDE_DIR)
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include
 
 
 ifeq ($(OS_NAME),linux)
@@ -338,7 +338,7 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 		
 
 
-BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS} -lc
+BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS}
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -353,7 +353,7 @@ lolhtml:
 	cd $(BUN_DEPS_DIR)/lol-html/ && cd $(BUN_DEPS_DIR)/lol-html/c-api && cargo build --release && cp target/release/liblolhtml.a $(BUN_DEPS_OUT_DIR)
 
 boringssl-build:
-	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS) -emit-llvm" cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
 
 boringssl-build-debug:
 	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) -GNinja .. && ninja 
@@ -468,25 +468,25 @@ build-obj-safe:
 	$(ZIG) build obj -Drelease-safe
 
 UWS_CC_FLAGS = -pthread  -DLIBUS_USE_OPENSSL=1 -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion $(UWS_INCLUDE) -DUWS_WITH_PROXY
-UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=gnu++17
+UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=gnu++17 -fno-exceptions
 UWS_LDFLAGS = -I$(BUN_DEPS_DIR)/boringssl/include -I$(ZLIB_INCLUDE_DIR)
 
 usockets:
 	rm -rf $(BUN_DEPS_DIR)/uws/uSockets/*.o $(BUN_DEPS_DIR)/uws/uSockets/**/*.o $(BUN_DEPS_DIR)/uws/uSockets/*.a
 
 		cd $(BUN_DEPS_DIR)/uws/uSockets/src && \
-			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS)   -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
+			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -emit-llvm -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
 		cd $(BUN_DEPS_DIR)/uws/uSockets/src/eventing && \
-			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS)   -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
+			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -emit-llvm  -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
 		cd $(BUN_DEPS_DIR)/uws/uSockets/src/crypto && \
-			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS)   -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
-			$(CXX) -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -Isrc $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.cpp;
+			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -emit-llvm  -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
+			$(CXX) -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -emit-llvm -Isrc $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.cpp;
 
 		cd $(BUN_DEPS_DIR)/uws/uSockets && \
 			$(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a src/*.o src/eventing/*.o src/crypto/*.o
 
 uws: usockets
-	$(CXX) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+	$(CXX) -emit-llvm -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
 
 
@@ -979,9 +979,12 @@ mimalloc:
 			-DMI_OSX_ZONE=OFF \
 			-DMI_OSX_INTERPOSE=OFF \
 			-DMI_BUILD_OBJECT=ON \
-			-DCMAKE_C_FLAGS="$(CFLAGS)" \
+			-DMI_USE_CXX=ON \
+			-DMI_OVERRIDE=ON \
+			-DCMAKE_C_FLAGS="$(CFLAGS) -emit-llvm" \
+			-DCMAKE_CXX_FLAGS="$(CFLAGS) -emit-llvm" \
 			${MIMALLOC_OVERRIDE_FLAG} \
-			-DMI_USE_CXX=OFF .\
+			 .\
 			&& make -j $(CPUS); 
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 
@@ -1022,7 +1025,6 @@ bun-link-lld-release:
 		$(BUN_RELEASE_BIN).o \
 		-o $(BUN_RELEASE_BIN) \
 		-W \
-		-flto \
 		$(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
@@ -1061,6 +1063,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
+		-emit-llvm \
 		-g3 -c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
@@ -1069,6 +1072,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
+		-emit-llvm \
 		-g3 -c -o $@ $<
 		
 sizegen:

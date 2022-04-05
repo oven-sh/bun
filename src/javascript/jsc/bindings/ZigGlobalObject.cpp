@@ -56,19 +56,14 @@
 #include "JavaScriptCore/VMEntryScope.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "wtf/Gigacage.h"
-#include "wtf/StdLibExtras.h"
 #include "wtf/URL.h"
 #include "wtf/text/ExternalStringImpl.h"
 #include "wtf/text/StringCommon.h"
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
-#include <unistd.h>
 
 #include "wtf/text/Base64.h"
-#include <cstdlib>
-#include <exception>
-#include <iostream>
 // #include "JavaScriptCore/CachedType.h"
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
@@ -91,7 +86,7 @@
 
 #include "Process.h"
 
-#include <JavaScriptCore/RemoteInspectorServer.h>
+#include "JavaScriptCore/RemoteInspectorServer.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -125,7 +120,7 @@ extern "C" void JSCInitialize()
         JSC::Options::useSigillCrashAnalyzer() = true;
         JSC::Options::useWebAssembly() = true;
         JSC::Options::useSourceProviderCache() = true;
-        JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
+        // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
         JSC::Options::exposeInternalModuleLoader() = true;
         JSC::Options::useSharedArrayBuffer() = true;
         JSC::Options::useJIT() = true;

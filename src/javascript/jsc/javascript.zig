@@ -620,7 +620,7 @@ pub const VirtualMachine = struct {
             while (true) {
                 this.tickConcurrent();
 
-                this.global.vm().doWork();
+                // this.global.vm().doWork();
 
                 while (this.tickWithCount() > 0) {}
 

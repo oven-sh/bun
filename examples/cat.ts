@@ -1,5 +1,6 @@
 import { resolve } from "path";
 const { write, stdout, file } = Bun;
-const input = resolve(process.argv[process.argv.length - 1]);
+const { argv } = process;
 
-await write(stdout, file(input));
+const path = resolve(argv.at(-1));
+await write(stdout, file(path));

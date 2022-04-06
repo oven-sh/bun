@@ -1,9 +1,7 @@
 // Start a fast HTTP server from a function
 Bun.serve({
   fetch(req) {
-    const url = new URL(req.url.substring(1), "file://" + import.meta.path);
-    const path = Bun.resolveSync(url.pathname, import.meta.path);
-    return new Response(Bun.file(path));
+    return new Response("Hello World!");
   },
 
   // this is called when fetch() throws or rejects

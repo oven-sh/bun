@@ -19,7 +19,6 @@ Bun.serve({
   // keyFile: './key.pem',
 
   port: 8080, // number or string
-  hostname: "localhost", // defaults to 0.0.0.0
 });
 
 // Start a fast HTTP server from the main file's export

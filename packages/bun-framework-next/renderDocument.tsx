@@ -109,19 +109,31 @@ function getScripts(files: DocumentFiles) {
   const normalScripts = files?.allFiles?.filter(isJSFile) ?? [];
   const lowPriorityScripts =
     buildManifest?.lowPriorityFiles?.filter(isJSFile) ?? [];
+  var entryPointIndex = -1;
+  const scripts = [...normalScripts, ...lowPriorityScripts].map(
+    (file, index) => {
+      if (file.includes(".entry.")) {
+        entryPointIndex = index;
+      }
 
-  return [...normalScripts, ...lowPriorityScripts].map((file) => {
-    return (
-      <script
-        key={file}
-        src={`${encodeURI(file)}${devOnlyCacheBusterQueryString}`}
-        nonce={props.nonce}
-        async
-        crossOrigin={props.crossOrigin || process.env.__NEXT_CROSS_ORIGIN}
-        type="module"
-      />
-    );
-  });
+      return (
+        <script
+          key={file}
+          src={`${encodeURI(file)}${devOnlyCacheBusterQueryString}`}
+          nonce={props.nonce}
+          async
+          crossOrigin={props.crossOrigin || process.env.__NEXT_CROSS_ORIGIN}
+          type="module"
+        />
+      );
+    }
+  );
+  if (entryPointIndex > 0) {
+    const entry = scripts.splice(entryPointIndex, 1);
+    scripts.unshift(...entry);
+  }
+
+  return scripts;
 }
 
 interface DomainLocale {
@@ -357,17 +369,28 @@ function enhanceComponents(
       : Component,
   };
 }
+const scriptsGetter = {
+  get() {
+    return getScripts;
+  },
+};
 
-Object.defineProperty(NextDocument.Head.prototype, "getScripts", {
-  get() {
-    return getScripts;
-  },
-});
-Object.defineProperty(NextDocument.NextScript.prototype, "getScripts", {
-  get() {
-    return getScripts;
-  },
-});
+Object.defineProperty(NextDocument.Head.prototype, "getScripts", scriptsGetter);
+Object.defineProperty(
+  NextDocument.NextScript.prototype,
+  "getScripts",
+  scriptsGetter
+);
+try {
+  Object.defineProperty(
+    NextDocument.default.prototype,
+    "getScripts",
+    scriptsGetter
+  );
+} catch {}
+try {
+  Object.defineProperty(NextDocument.default, "getScripts", scriptsGetter);
+} catch {}
 
 export async function render({
   route,
@@ -764,7 +787,7 @@ export async function render({
     },
     // Only enabled in production as development mode has features relying on HMR (style injection for example)
     // @ts-expect-error
-    unstable_runtimeJS: false,
+    unstable_runtimeJS: true,
     //   process.env.NODE_ENV === "production"
     //     ? pageConfig.unstable_runtimeJS
     //     : undefined,

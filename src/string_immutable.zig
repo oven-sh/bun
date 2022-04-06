@@ -1106,6 +1106,8 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
                     (@as(u32, sequence[2]) << 6) + @as(u32, sequence[3])) - 0x03C82080,
             };
         },
+        // invalid unicode sequence
+        0 => return UTF16Replacement{ .len = 1 },
         else => unreachable,
     }
 }

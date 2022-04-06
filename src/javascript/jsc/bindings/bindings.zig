@@ -2533,7 +2533,10 @@ pub const JSValue = enum(u64) {
 
     pub fn asArrayBuffer(this: JSValue, global: *JSGlobalObject) ?ArrayBuffer {
         var out: ArrayBuffer = undefined;
-        if (this.asArrayBuffer_(global, &out)) return out;
+        if (this.asArrayBuffer_(global, &out)) {
+            out.value = this;
+            return out;
+        }
         return null;
     }
 

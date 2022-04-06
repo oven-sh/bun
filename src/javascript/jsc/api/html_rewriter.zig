@@ -304,7 +304,7 @@ pub const HTMLRewriter = struct {
 
             if (is_pending) {
                 input.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
-            } else if (sink.runOutputSink(input.sharedView(), false)) |error_value| {
+            } else if (sink.runOutputSink(input.sharedView(), false, false)) |error_value| {
                 return error_value;
             }
 
@@ -337,15 +337,24 @@ pub const HTMLRewriter = struct {
                     return;
                 },
                 .result => |data| {
-                    _ = sink.runOutputSink(data, true);
+                    _ = sink.runOutputSink(data.buf, true, data.is_temporary);
                 },
             }
         }
 
-        pub fn runOutputSink(sink: *BufferOutputSink, bytes: []const u8, is_async: bool) ?JSValue {
+        pub fn runOutputSink(
+            sink: *BufferOutputSink,
+            bytes: []const u8,
+            is_async: bool,
+            free_bytes_on_end: bool,
+        ) ?JSValue {
+            defer if (free_bytes_on_end)
+                bun.default_allocator.free(bun.constStrToU8(bytes));
+
             sink.bytes.growBy(bytes.len) catch unreachable;
             var global = sink.global;
             var response = sink.response;
+
             sink.rewriter.write(bytes) catch {
                 sink.deinit();
                 bun.default_allocator.destroy(sink);

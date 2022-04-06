@@ -280,3 +280,20 @@ pub const SystemErrno = enum(u8) {
 pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t) anyerror!void {
     _ = std.os.linux.fallocate(fd, 0, @intCast(i64, offset), len);
 }
+
+/// splice() moves data between two file descriptors without copying
+/// between kernel address space and user address space.  It
+/// transfers up to len bytes of data from the file descriptor fd_in
+/// to the file descriptor fd_out, where one of the file descriptors
+/// must refer to a pipe.
+pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?*i64, len: usize, flags: u32) usize {
+    return std.os.linux.syscall6(
+        .splice,
+        @bitCast(usize, @as(isize, fd_in)),
+        @ptrToInt(off_in),
+        @bitCast(usize, @as(isize, fd_out)),
+        @ptrToInt(off_out),
+        len,
+        flags,
+    );
+}

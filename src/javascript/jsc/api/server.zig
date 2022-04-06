@@ -357,7 +357,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         sendfile: SendfileContext = undefined,
         request_js_object: JSC.C.JSObjectRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
-        fallback_buf: std.ArrayListUnmanaged(u8) = .{},
+        /// Used either for temporary blob data or fallback
+        /// When the response body is a temporary value
+        response_buf_owned: std.ArrayListUnmanaged(u8) = .{},
 
         pub const RequestContextStackAllocator = std.heap.StackFallbackAllocator(@sizeOf(RequestContext) * 2048 + 4096);
 
@@ -478,15 +480,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
-            this.fallback_buf = std.ArrayListUnmanaged(u8){ .items = bb.items, .capacity = bb.capacity };
-            this.resp.onWritable(*RequestContext, onWritableFallback, this);
+            this.response_buf_owned = std.ArrayListUnmanaged(u8){ .items = bb.items, .capacity = bb.capacity };
+            this.renderResponseBuffer();
         }
 
-        pub fn onWritableFallback(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+        pub fn renderResponseBuffer(this: *RequestContext) void {
+            this.resp.onWritable(*RequestContext, onWritableResponseBuffer, this);
+        }
+
+        pub fn onWritableResponseBuffer(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
             if (this.aborted) {
                 return false;
             }
-            return this.sendWritableBytes(this.fallback_buf.items, write_offset, resp);
+            return this.sendWritableBytes(this.response_buf_owned.items, write_offset, resp);
         }
 
         pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
@@ -542,7 +548,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.response_headers = null;
             }
 
-            this.fallback_buf.clearAndFree(bun.default_allocator);
+            this.response_buf_owned.clearAndFree(bun.default_allocator);
         }
         pub fn finalize(this: *RequestContext) void {
             this.finalizeWithoutDeinit();
@@ -731,8 +737,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
-            this.blob.resolveSize();
-            this.doRenderBlob();
+            const is_temporary = result.result.is_temporary;
+            if (!is_temporary) {
+                this.blob.resolveSize();
+                this.doRenderBlob();
+            } else {
+                this.blob.size = @truncate(Blob.SizeType, result.result.buf.len);
+                this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
+                this.renderResponseBuffer();
+            }
         }
 
         pub fn doRenderWithBodyLocked(this: *anyopaque, value: *JSC.WebCore.Body.Value) void {

@@ -90,6 +90,8 @@ pub const Tag = enum(u8) {
     fcopyfile,
     recv,
     send,
+    sendfile,
+    splice,
 
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };

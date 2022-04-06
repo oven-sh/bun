@@ -255,6 +255,75 @@ pub fn getOrigin(
     return ZigString.init(VirtualMachine.vm.origin.origin).toValue(ctx.ptr()).asRef();
 }
 
+pub fn getStdin(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunSTDIN"));
+    if (existing.isEmpty()) {
+        var rare_data = JSC.VirtualMachine.vm.rareData();
+        var store = rare_data.stdin();
+        var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+        blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
+
+        return ctx.ptr().putCachedObject(
+            &ZigString.init("BunSTDIN"),
+            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+        ).asObjectRef();
+    }
+
+    return existing.asObjectRef();
+}
+
+pub fn getStderr(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunSTDERR"));
+    if (existing.isEmpty()) {
+        var rare_data = JSC.VirtualMachine.vm.rareData();
+        var store = rare_data.stderr();
+        var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+        blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
+
+        return ctx.ptr().putCachedObject(
+            &ZigString.init("BunSTDERR"),
+            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+        ).asObjectRef();
+    }
+
+    return existing.asObjectRef();
+}
+
+pub fn getStdout(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunSTDOUT"));
+    if (existing.isEmpty()) {
+        var rare_data = JSC.VirtualMachine.vm.rareData();
+        var store = rare_data.stdout();
+        var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+        blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
+
+        return ctx.ptr().putCachedObject(
+            &ZigString.init("BunSTDOUT"),
+            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+        ).asObjectRef();
+    }
+
+    return existing.asObjectRef();
+}
+
 pub fn enableANSIColors(
     _: void,
     ctx: js.JSContextRef,
@@ -1062,6 +1131,15 @@ pub const Class = NewClass(
         .origin = .{
             .get = getOrigin,
             .ts = d.ts{ .name = "origin", .@"return" = "string" },
+        },
+        .stdin = .{
+            .get = getStdin,
+        },
+        .stdout = .{
+            .get = getStdout,
+        },
+        .stderr = .{
+            .get = getStderr,
         },
         .routesDir = .{
             .get = getRoutesDir,

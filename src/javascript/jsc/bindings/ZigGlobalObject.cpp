@@ -707,7 +707,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
             auto clientData = WebCore::clientData(vm);
 
-            from = JSC::JSValue::encode(thisObject->get(globalObject, clientData->builtinNames().urlPublicName()));
+            from = JSC::JSValue::encode(thisObject->get(globalObject, clientData->builtinNames().pathPublicName()));
         }
 
         return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from);
@@ -1090,8 +1090,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     }
 
     metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), key);
-    // this is a lie
-    metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), key);
+    metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), JSC::JSValue(JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string())));
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 

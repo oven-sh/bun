@@ -806,7 +806,8 @@ pub const JSX = struct {
         import_source: string = "react/jsx-dev-runtime",
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
-        refresh_runtime: string = "react-refresh/runtime.js",
+        // https://github.com/facebook/react/commit/2f26eb85d657a08c21edbac1e00f9626d68f84ae
+        refresh_runtime: string = "react-refresh/runtime",
         supports_fast_refresh: bool = true,
         use_embedded_refresh_runtime: bool = false,
 

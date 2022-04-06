@@ -365,9 +365,18 @@ export async function _boot(EntryPointNamespace, isError) {
   );
 
   if (USE_REACT_18) {
-    if (!isError && !reactRoot) {
-      // Unlike with createRoot, you don't need a separate root.render() call here
-      reactRoot = ReactDOM.hydrateRoot(domEl, reactEl);
+    if (!isError && domEl.hasChildNodes() && !reactRoot) {
+      try {
+        // Unlike with createRoot, you don't need a separate root.render() call here
+        reactRoot = ReactDOM.hydrateRoot(domEl, reactEl);
+      } catch (exception) {
+        try {
+          reactRoot = ReactDOM.createRoot(domEl);
+          reactRoot.render(reactEl);
+        } catch {
+          throw exception;
+        }
+      }
     } else {
       if (!reactRoot) {
         reactRoot = ReactDOM.createRoot(domEl);

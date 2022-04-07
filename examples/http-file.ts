@@ -1,11 +1,12 @@
 const { serve, file, resolveSync } = Bun;
-const { url: baseURL, path: basePath } = import.meta;
-
-// Start a fast HTTP server from a function
+const { path } = import.meta;
 serve({
-  fetch({ url }: Request) {
-    const { pathname } = new URL(url.slice(1), baseURL);
-    return new Response(file(resolveSync(pathname, basePath)));
+  fetch(req: Request) {
+    const modulePath = resolveSync(
+      new URL(req.url).pathname.substring(1),
+      path
+    );
+    return new Response(file(modulePath));
   },
 
   // this is called when fetch() throws or rejects
@@ -22,6 +23,6 @@ serve({
   // certFile: './cert.pem',
   // keyFile: './key.pem',
 
-  port: 8080, // number or string
+  port: 3000, // number or string
   hostname: "localhost", // defaults to 0.0.0.0
 });

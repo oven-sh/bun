@@ -95,6 +95,11 @@ const linux = std.os.linux;
 pub const ServerConfig = struct {
     port: u16 = 0,
     hostname: [*:0]const u8 = "0.0.0.0",
+
+    // TODO: use webkit URL parser instead of bun's
+    base_url: URL = URL{},
+    base_uri: string = "",
+
     ssl_config: ?SSLConfig = null,
     max_request_body_size: usize = 1024 * 1024 * 128,
     development: bool = false,
@@ -238,7 +243,7 @@ pub const ServerConfig = struct {
             .hostname = "0.0.0.0",
             .development = true,
         };
-
+        var has_hostname = false;
         if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
             args.development = false;
         }
@@ -261,6 +266,10 @@ pub const ServerConfig = struct {
             args.port = port;
         }
 
+        if (VirtualMachine.vm.bundler.options.transform_options.origin) |origin| {
+            args.base_uri = origin;
+        }
+
         if (arguments.next()) |arg| {
             if (arg.isUndefinedOrNull() or !arg.isObject()) {
                 JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global.ref(), exception);
@@ -271,6 +280,15 @@ pub const ServerConfig = struct {
                 args.port = @intCast(u16, @minimum(@maximum(0, port_.toInt32()), std.math.maxInt(u16)));
             }
 
+            if (arg.getTruthy(global, "baseURI")) |baseURI| {
+                var sliced = baseURI.toSlice(global, bun.default_allocator);
+
+                if (sliced.len > 0) {
+                    defer sliced.deinit();
+                    args.base_uri = bun.default_allocator.dupe(u8, sliced.slice()) catch unreachable;
+                }
+            }
+
             if (arg.getTruthy(global, "hostname") orelse arg.getTruthy(global, "host")) |host| {
                 const host_str = host.toSlice(
                     global,
@@ -278,6 +296,7 @@ pub const ServerConfig = struct {
                 );
                 if (host_str.len > 0) {
                     args.hostname = bun.default_allocator.dupeZ(u8, host_str.slice()) catch unreachable;
+                    has_hostname = true;
                 }
             }
 
@@ -327,6 +346,80 @@ pub const ServerConfig = struct {
 
         if (args.port == 0) {
             JSC.throwInvalidArguments("Invalid port: must be > 0", .{}, global.ref(), exception);
+        }
+
+        if (args.base_uri.len > 0) {
+            args.base_url = URL.parse(args.base_uri);
+            if (args.base_url.hostname.len == 0) {
+                JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global.ref(), exception);
+                bun.default_allocator.free(bun.constStrToU8(args.base_uri));
+                args.base_uri = "";
+                return args;
+            }
+
+            if (!strings.isAllASCII(args.base_uri)) {
+                JSC.throwInvalidArguments("Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.", .{}, global.ref(), exception);
+                bun.default_allocator.free(bun.constStrToU8(args.base_uri));
+                args.base_uri = "";
+                return args;
+            }
+
+            if (args.base_url.protocol.len == 0) {
+                const protocol: string = if (args.ssl_config != null) "https" else "http";
+
+                args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/{s}", .{
+                        protocol,
+                        args.base_url.hostname,
+                        strings.trimLeadingChar(args.base_url.pathname, '/'),
+                    })
+                else
+                    std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/{s}", .{
+                        protocol,
+                        args.base_url.hostname,
+                        args.port,
+                        strings.trimLeadingChar(args.base_url.pathname, '/'),
+                    })) catch unreachable;
+
+                args.base_url = URL.parse(args.base_uri);
+            }
+        } else {
+            const hostname: string =
+                if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "localhost";
+            const protocol: string = if (args.ssl_config != null) "https" else "http";
+
+            args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))
+                std.fmt.allocPrint(bun.default_allocator, "{s}://{s}/", .{
+                    protocol,
+                    hostname,
+                })
+            else
+                std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
+
+            if (!strings.isAllASCII(hostname)) {
+                JSC.throwInvalidArguments("Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.", .{}, global.ref(), exception);
+                bun.default_allocator.free(bun.constStrToU8(args.base_uri));
+                args.base_uri = "";
+                return args;
+            }
+
+            args.base_url = URL.parse(args.base_uri);
+        }
+
+        // I don't think there's a case where this can happen
+        // but let's check anyway, just in case
+        if (args.base_url.hostname.len == 0) {
+            JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global.ref(), exception);
+            bun.default_allocator.free(bun.constStrToU8(args.base_uri));
+            args.base_uri = "";
+            return args;
+        }
+
+        if (args.base_url.username.len > 0 or args.base_url.password.len > 0) {
+            JSC.throwInvalidArguments("baseURI can't have a username or password", .{}, global.ref(), exception);
+            bun.default_allocator.free(bun.constStrToU8(args.base_uri));
+            args.base_uri = "";
+            return args;
         }
 
         return args;
@@ -499,7 +592,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.* = .{
                 .resp = resp,
                 .req = req,
-                .url = req.url(),
+                // this memory is owned by the Request object
+                .url = strings.append(bun.default_allocator, server.base_url_string_for_joining, req.url()) catch
+                    @panic("Out of memory while joining the URL path?"),
                 .method = HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
             };
@@ -1030,7 +1125,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         app: *App = undefined,
         globalThis: *JSGlobalObject,
-
+        base_url_string_for_joining: string = "",
         response_objects_pool: JSC.WebCore.Response.Pool = JSC.WebCore.Response.Pool{},
         config: ServerConfig = ServerConfig{},
         request_pool_allocator: std.mem.Allocator = undefined,
@@ -1040,6 +1135,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             server.* = .{
                 .globalThis = globalThis,
                 .config = config,
+                .base_url_string_for_joining = strings.trim(config.base_url.href, "/"),
             };
             RequestContext.pool = bun.default_allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
             server.request_pool_allocator = RequestContext.pool.get();
@@ -1190,6 +1286,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     },
                 },
             };
+            request_object.url.mark();
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.C.JSValueRef{JSC.WebCore.Request.Class.make(this.globalThis.ref(), request_object)};
             ctx.request_js_object = args[0];

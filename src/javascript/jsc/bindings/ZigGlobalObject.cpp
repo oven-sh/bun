@@ -1085,7 +1085,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 
         metaProperties->putDirect(vm, clientData->builtinNames().resolvePublicName(),
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
-                WTF::String("resolve"), functionImportMeta__resolve),
+                WTF::String("resolve"_s), functionImportMeta__resolve),
             0);
     }
 

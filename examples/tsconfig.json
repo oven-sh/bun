@@ -3,6 +3,6 @@
     "lib": ["ESNext"],
     "module": "esnext",
     "target": "esnext",
-    "typeRoots": ["~/.bun/types"]
+    "typeRoots": ["../types"]
   }
 }

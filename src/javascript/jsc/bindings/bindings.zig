@@ -2780,6 +2780,10 @@ pub const JSValue = enum(u64) {
         return @intToPtr(C_API.JSValueRef, @intCast(usize, @enumToInt(this)));
     }
 
+    pub inline fn c(this: C_API.JSValueRef) JSValue {
+        return @intToEnum(JSValue, @ptrToInt(this));
+    }
+
     pub inline fn fromRef(this: C_API.JSValueRef) JSValue {
         return @intToEnum(JSValue, @ptrToInt(this));
     }

@@ -231,7 +231,7 @@ pub const Response = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
-        return ZigString.init(this.url).withEncoding().toValueGC(ctx.ptr()).asObjectRef();
+        return ZigString.init(this.url).toValueGC(ctx.ptr()).asObjectRef();
     }
 
     pub fn getResponseType(
@@ -4350,6 +4350,10 @@ pub const Request = struct {
         if (this.headers) |headers| {
             headers.deref();
             this.headers = null;
+        }
+
+        if (this.url.isGloballyAllocated()) {
+            bun.default_allocator.free(bun.constStrToU8(this.url.slice()));
         }
 
         bun.default_allocator.destroy(this);

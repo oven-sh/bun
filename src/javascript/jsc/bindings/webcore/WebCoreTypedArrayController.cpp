@@ -25,8 +25,6 @@
 
 #include "root.h"
 
-#include "JavaScriptCore/JSCInlines.h"
-
 #include "WebCoreTypedArrayController.h"
 
 #include "JSDOMConvertBufferSource.h"

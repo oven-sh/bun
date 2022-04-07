@@ -3,8 +3,6 @@
 
 #include "BunClientData.h"
 
-#include "JavaScriptCore/JSCInlines.h"
-
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/ObjectConstructor.h"

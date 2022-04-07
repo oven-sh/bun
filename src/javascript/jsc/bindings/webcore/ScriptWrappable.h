@@ -32,7 +32,7 @@
 #pragma once
 
 #include "root.h"
-#include "JavaScriptCore/JSCInlines.h"
+
 #include "JSDOMWrapper.h"
 
 // #include "wtf/IsoMalloc.h"

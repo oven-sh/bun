@@ -8,7 +8,6 @@
 #include "wtf/text/WTFString.h"
 
 #include "GCDefferalContext.h"
-#include "JavaScriptCore/JSCInlines.h"
 
 using ScriptArguments = Inspector::ScriptArguments;
 using MessageType = JSC::MessageType;

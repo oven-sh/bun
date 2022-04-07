@@ -2,8 +2,6 @@
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 
-#include "JavaScriptCore/JSCInlines.h"
-
 #pragma mark - Node.js Process
 
 namespace Zig {

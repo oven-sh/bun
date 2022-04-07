@@ -2,8 +2,6 @@
 
 #include "root.h"
 
-#include "JavaScriptCore/JSCInlines.h"
-
 #include "wtf/Forward.h"
 
 namespace WebCore {

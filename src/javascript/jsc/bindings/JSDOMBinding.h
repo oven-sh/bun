@@ -18,4 +18,3 @@
 #include "wtf/GetPtr.h"
 #include "wtf/Vector.h"
 #include <cstddef>
-#include "JavaScriptCore/WeakHandleOwner.h"

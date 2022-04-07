@@ -1,7 +1,6 @@
 #pragma once
 
 #include "config.h"
-#include "JavaScriptCore/WeakHandleOwner.h"
 
 namespace JSC {
 

@@ -24,122 +24,120 @@
  */
 
 #include "config.h"
+
+#include "JavaScriptCore/WeakInlines.h"
+#include "JavaScriptCore/AbstractSlotVisitorInlines.h"
+
+#include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/MarkingConstraint.h"
+
+namespace JSC {
+
+class VisitCounter {
+public:
+    VisitCounter() {}
+
+    VisitCounter(AbstractSlotVisitor& visitor)
+        : m_visitor(&visitor)
+        , m_initialVisitCount(visitor.visitCount())
+    {
+    }
+
+    AbstractSlotVisitor& visitor() const { return *m_visitor; }
+
+    size_t visitCount() const
+    {
+        return m_visitor->visitCount() - m_initialVisitCount;
+    }
+
+private:
+    AbstractSlotVisitor* m_visitor { nullptr };
+    size_t m_initialVisitCount { 0 };
+};
+
+static constexpr bool verboseMarkingConstraint = false;
+
+MarkingConstraint::MarkingConstraint(CString abbreviatedName, CString name, ConstraintVolatility volatility, ConstraintConcurrency concurrency, ConstraintParallelism parallelism)
+    : m_abbreviatedName(abbreviatedName)
+    , m_name(WTFMove(name))
+    , m_volatility(volatility)
+    , m_concurrency(concurrency)
+    , m_parallelism(parallelism)
+{
+}
+
+MarkingConstraint::~MarkingConstraint()
+{
+}
+
+void MarkingConstraint::resetStats()
+{
+    m_lastVisitCount = 0;
+}
+
+void MarkingConstraint::execute(SlotVisitor& visitor)
+{
+    ASSERT(!visitor.heap()->isMarkingForGCVerifier());
+    VisitCounter visitCounter(visitor);
+    executeImpl(visitor);
+    m_lastVisitCount += visitCounter.visitCount();
+    if (verboseMarkingConstraint && visitCounter.visitCount())
+        dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in execute)");
+}
+
+void MarkingConstraint::executeSynchronously(AbstractSlotVisitor& visitor)
+{
+    prepareToExecuteImpl(NoLockingNecessary, visitor);
+    executeImpl(visitor);
+}
+
+double MarkingConstraint::quickWorkEstimate(SlotVisitor&)
+{
+    return 0;
+}
+
+double MarkingConstraint::workEstimate(SlotVisitor& visitor)
+{
+    return lastVisitCount() + quickWorkEstimate(visitor);
+}
+
+void MarkingConstraint::prepareToExecute(const AbstractLocker& constraintSolvingLocker, SlotVisitor& visitor)
+{
+    ASSERT(!visitor.heap()->isMarkingForGCVerifier());
+    dataLogIf(Options::logGC(), abbreviatedName());
+    VisitCounter visitCounter(visitor);
+    prepareToExecuteImpl(constraintSolvingLocker, visitor);
+    m_lastVisitCount = visitCounter.visitCount();
+    if (verboseMarkingConstraint && visitCounter.visitCount())
+        dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in prepareToExecute)");
+}
+
+void MarkingConstraint::doParallelWork(SlotVisitor& visitor, SharedTask<void(SlotVisitor&)>& task)
+{
+    ASSERT(!visitor.heap()->isMarkingForGCVerifier());
+    VisitCounter visitCounter(visitor);
+    task.run(visitor);
+    if (verboseMarkingConstraint && visitCounter.visitCount())
+        dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in doParallelWork)");
+    {
+        Locker locker { m_lock };
+        m_lastVisitCount += visitCounter.visitCount();
+    }
+}
+
+void MarkingConstraint::prepareToExecuteImpl(const AbstractLocker&, AbstractSlotVisitor&)
+{
+}
+
+} // namespace JSC
+
 #include "BunGCOutputConstraint.h"
 
-#include "JavaScriptCore/JSCInlines.h"
 #include "WebCoreJSClientData.h"
 #include "JavaScriptCore/BlockDirectoryInlines.h"
 #include "JavaScriptCore/HeapInlines.h"
 #include "JavaScriptCore/MarkedBlockInlines.h"
 #include "JavaScriptCore/SubspaceInlines.h"
-
-// #include "JavaScriptCore/WeakInlines.h"
-// #include "JavaScriptCore/AbstractSlotVisitorInlines.h"
-
-// #include "JavaScriptCore/VM.h"
-// #include "JavaScriptCore/MarkingConstraint.h"
-
-// #include "JavaScriptCore/JSCInlines.h"
-
-// namespace JSC {
-
-// class VisitCounter {
-// public:
-//     VisitCounter() {}
-
-//     VisitCounter(AbstractSlotVisitor& visitor)
-//         : m_visitor(&visitor)
-//         , m_initialVisitCount(visitor.visitCount())
-//     {
-//     }
-
-//     AbstractSlotVisitor& visitor() const { return *m_visitor; }
-
-//     size_t visitCount() const
-//     {
-//         return m_visitor->visitCount() - m_initialVisitCount;
-//     }
-
-// private:
-//     AbstractSlotVisitor* m_visitor { nullptr };
-//     size_t m_initialVisitCount { 0 };
-// };
-
-// static constexpr bool verboseMarkingConstraint = false;
-
-// MarkingConstraint::MarkingConstraint(CString abbreviatedName, CString name, ConstraintVolatility volatility, ConstraintConcurrency concurrency, ConstraintParallelism parallelism)
-//     : m_abbreviatedName(abbreviatedName)
-//     , m_name(WTFMove(name))
-//     , m_volatility(volatility)
-//     , m_concurrency(concurrency)
-//     , m_parallelism(parallelism)
-// {
-// }
-
-// MarkingConstraint::~MarkingConstraint()
-// {
-// }
-
-// void MarkingConstraint::resetStats()
-// {
-//     m_lastVisitCount = 0;
-// }
-
-// void MarkingConstraint::execute(SlotVisitor& visitor)
-// {
-//     ASSERT(!visitor.heap()->isMarkingForGCVerifier());
-//     VisitCounter visitCounter(visitor);
-//     executeImpl(visitor);
-//     m_lastVisitCount += visitCounter.visitCount();
-//     if (verboseMarkingConstraint && visitCounter.visitCount())
-//         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in execute)");
-// }
-
-// void MarkingConstraint::executeSynchronously(AbstractSlotVisitor& visitor)
-// {
-//     prepareToExecuteImpl(NoLockingNecessary, visitor);
-//     executeImpl(visitor);
-// }
-
-// double MarkingConstraint::quickWorkEstimate(SlotVisitor&)
-// {
-//     return 0;
-// }
-
-// double MarkingConstraint::workEstimate(SlotVisitor& visitor)
-// {
-//     return lastVisitCount() + quickWorkEstimate(visitor);
-// }
-
-// void MarkingConstraint::prepareToExecute(const AbstractLocker& constraintSolvingLocker, SlotVisitor& visitor)
-// {
-//     ASSERT(!visitor.heap()->isMarkingForGCVerifier());
-//     dataLogIf(Options::logGC(), abbreviatedName());
-//     VisitCounter visitCounter(visitor);
-//     prepareToExecuteImpl(constraintSolvingLocker, visitor);
-//     m_lastVisitCount = visitCounter.visitCount();
-//     if (verboseMarkingConstraint && visitCounter.visitCount())
-//         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in prepareToExecute)");
-// }
-
-// void MarkingConstraint::doParallelWork(SlotVisitor& visitor, SharedTask<void(SlotVisitor&)>& task)
-// {
-//     ASSERT(!visitor.heap()->isMarkingForGCVerifier());
-//     VisitCounter visitCounter(visitor);
-//     task.run(visitor);
-//     if (verboseMarkingConstraint && visitCounter.visitCount())
-//         dataLog("(", abbreviatedName(), " visited ", visitCounter.visitCount(), " in doParallelWork)");
-//     {
-//         Locker locker { m_lock };
-//         m_lastVisitCount += visitCounter.visitCount();
-//     }
-// }
-
-// void MarkingConstraint::prepareToExecuteImpl(const AbstractLocker&, AbstractSlotVisitor&)
-// {
-// }
-
-// } // namespace JSC
 
 namespace WebCore {
 

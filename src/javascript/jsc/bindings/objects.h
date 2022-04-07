@@ -4,7 +4,7 @@
 // #include "headers.h"
 
 // #include "JavaScriptCore/JSObject.h"
-// #include "JavaScriptCore/JSCInlines.h"
+//
 // #include "JavaScriptCore/InternalFunction.h"
 
 // namespace Zig {

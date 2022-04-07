@@ -25,8 +25,6 @@
 
 #include "root.h"
 
-#include "JavaScriptCore/WeakHandleOwner.h"
-
 #include "ExceptionDetails.h"
 #include "ExceptionOr.h"
 #include "JavaScriptCore/ThrowScope.h"

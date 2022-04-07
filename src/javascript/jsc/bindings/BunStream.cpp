@@ -2,8 +2,6 @@
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 
-#include "JavaScriptCore/JSCInlines.h"
-
 namespace WebCore {
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;

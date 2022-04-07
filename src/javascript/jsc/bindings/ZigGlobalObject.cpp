@@ -22,7 +22,7 @@
 #include "JavaScriptCore/InitializeThreading.h"
 #include "JavaScriptCore/IteratorOperations.h"
 #include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSCInlines.h"
+
 #include "JavaScriptCore/JSCallbackConstructor.h"
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSCast.h"
@@ -109,7 +109,6 @@ extern "C" void JSCInitialize()
     has_loaded_jsc = true;
     JSC::Config::enableRestrictedOptions();
 
-    // JSC::Options::useAtMethod() = true;
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
     JSC::initialize();
@@ -136,12 +135,12 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     auto heapSize = JSC::HeapType::Large;
 
     JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
+    JSC::Wasm::enableFastMemory();
 
-    WebCore::JSVMClientData::create(&vm);
-
+    // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
 
-    JSC::Wasm::enableFastMemory();
+    WebCore::JSVMClientData::create(&vm);
 
     JSC::JSLockHolder locker(vm);
     Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
@@ -152,6 +151,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     }
 
     JSC::gcProtect(globalObject);
+
     vm.ref();
     return globalObject;
 }

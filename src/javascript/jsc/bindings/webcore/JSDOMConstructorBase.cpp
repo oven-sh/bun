@@ -22,7 +22,6 @@
 #include "config.h"
 #include "JSDOMConstructor.h"
 
-#include "JavaScriptCore/JSCInlines.h"
 #include "WebCoreJSClientData.h"
 
 namespace WebCore {

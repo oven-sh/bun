@@ -27,8 +27,6 @@
 #include "JavaScriptCore/ErrorPrototype.h"
 #include "wtf/NeverDestroyed.h"
 
-#include "JavaScriptCore/WeakHandleOwner.h"
-
 namespace WebCore {
 
 class JSDOMException : public JSDOMWrapper<DOMException> {

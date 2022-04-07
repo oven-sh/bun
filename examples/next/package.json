@@ -1,11 +1,11 @@
 {
   "name": "@bun-examples/next",
-  "version": "0.0.48",
+  "version": "0.0.51",
   "main": "index.js",
   "dependencies": {
     "next": "^12.1.0",
-    "react": "beta",
-    "react-dom": "beta",
+    "react": "^18",
+    "react-dom": "^18",
     "react-is": "^17.0.2"
   },
   "devDependencies": {

@@ -28,8 +28,6 @@
 #include "wtf/NeverDestroyed.h"
 #include "JSAbortSignal.h"
 
-#include "JavaScriptCore/WeakHandleOwner.h"
-
 namespace WebCore {
 
 bool JSAbortSignalOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, const char** reason)

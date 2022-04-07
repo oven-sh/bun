@@ -18,7 +18,7 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSArrayBuffer.h"
 #include "JavaScriptCore/JSArrayInlines.h"
-#include "JavaScriptCore/JSCInlines.h"
+
 #include "JavaScriptCore/JSCallbackObject.h"
 #include "JavaScriptCore/JSClassRef.h"
 #include "JavaScriptCore/JSInternalPromise.h"
@@ -2409,7 +2409,7 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
 {
 
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
-    JSC::VM &vm = arg1->vm();
+    JSC::VM& vm = arg1->vm();
 
     if (obj == nullptr) {
         arg2->len = 0;
@@ -2417,10 +2417,9 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
     }
 
     JSC::JSValue name = obj->getDirect(vm, vm.propertyNames->toStringTagSymbol);
-    if (name == JSC::JSValue{}) {
+    if (name == JSC::JSValue {}) {
         name = obj->getDirect(vm, vm.propertyNames->name);
     }
-    
 
     if (name && name.isString()) {
         auto str = name.toWTFString(arg1);

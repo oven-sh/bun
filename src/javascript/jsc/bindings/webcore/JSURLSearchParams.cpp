@@ -45,7 +45,7 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/HeapAnalyzer.h"
 #include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSCInlines.h"
+
 #include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
 #include "JavaScriptCore/SlotVisitorMacros.h"
 #include "JavaScriptCore/SubspaceInlines.h"

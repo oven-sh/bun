@@ -857,7 +857,6 @@ jsc-build-mac-compile:
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
 			-DCMAKE_BUILD_TYPE=Release \
-			-DCMAKE_BUILD_TYPE=Release \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
 			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
@@ -869,7 +868,7 @@ jsc-build-mac-compile:
 			-DUSE_VISIBILITY_ATTRIBUTE=1 \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
-	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
+	CFLAGS="$(CFLAGS) -emit-llvm -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -emit-llvm  -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
 
 jsc-build-mac-compile-debug:
@@ -891,7 +890,7 @@ jsc-build-mac-compile-debug:
 			-DUSE_VISIBILITY_ATTRIBUTE=1 \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
-	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
+	CFLAGS="$(CFLAGS) -emit-llvm -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config Debug --target jsc
 
 jsc-build-linux-compile-config:

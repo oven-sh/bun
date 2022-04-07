@@ -429,7 +429,6 @@ if (typeof window !== "undefined") {
             update.node.tagName === "LINK" ||
             update.node.tagName === "STYLE"
           ) {
-            console.log("check");
             // This might cause CSS specifity issues....
             // I'm not 100% sure this is a safe operation
             const sheet = new CSSStyleSheet();

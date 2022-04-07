@@ -304,6 +304,9 @@ pub const Runtime = struct {
         __FastRefreshRuntime: ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
+            // __HMRClient goes first
+            // This is so we can call Bun.activate(true) as soon as possible
+            "__HMRClient",
             "__name",
             "__toModule",
             "__require",
@@ -314,7 +317,6 @@ pub const Runtime = struct {
             "$$m",
             "$$lzy",
             "__HMRModule",
-            "__HMRClient",
             "__FastRefreshModule",
             "__exportValue",
             "__exportDefault",

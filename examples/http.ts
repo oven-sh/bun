@@ -1,16 +1,17 @@
 // Start a fast HTTP server from a function
 Bun.serve({
-  fetch(req) {
-    return new Response("Hello World!");
+  async fetch(req: Request) {
+    return new Response(`Echo: ${req.url}`);
   },
+
+  // baseURI: "http://localhost:3000",
 
   // this is called when fetch() throws or rejects
-  error(err: Error) {
-    return new Response("uh oh! :(" + err.toString(), { status: 500 });
-  },
+  // error(err: Error) {
+  //   return new Response("uh oh! :(\n" + err.toString(), { status: 500 });
+  // },
 
-  // this boolean enables the bun's default error handler
-  // sometime after the initial release, it will auto reload as well
+  // this boolean enables bun's default error handler
   development: process.env.NODE_ENV !== "production",
   // note: this isn't node, but for compatibility bun supports process.env + more stuff in process
 
@@ -18,7 +19,7 @@ Bun.serve({
   // certFile: './cert.pem',
   // keyFile: './key.pem',
 
-  port: 8080, // number or string
+  port: 3000, // number or string
 });
 
 // Start a fast HTTP server from the main file's export

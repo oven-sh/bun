@@ -1,7 +1,11 @@
+const { serve, file, resolveSync } = Bun;
+const { url: baseURL, path: basePath } = import.meta;
+
 // Start a fast HTTP server from a function
-Bun.serve({
-  fetch(req) {
-    return new Response("Hello World!");
+serve({
+  fetch({ url }: Request) {
+    const { pathname } = new URL(url.slice(1), baseURL);
+    return new Response(file(resolveSync(pathname, basePath)));
   },
 
   // this is called when fetch() throws or rejects

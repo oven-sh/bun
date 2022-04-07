@@ -231,11 +231,13 @@ declare global {
 
   interface ImportMeta {
     /**
-     * Absolute path to the source file
+     * `file://` url string for the current module.
      *
-     * This is an alias of `import.meta.path`
-     *
-     * A future version of this may be an absolute URL.
+     * @example
+     * ```ts
+     * console.log(import.meta.url);
+     * "file:///Users/me/projects/my-app/src/my-app.ts"
+     * ```
      */
     url: string;
     /**
@@ -993,6 +995,19 @@ declare global {
     | Float32Array
     | Float64Array;
 
+  const performance: {
+    /**
+     * Seconds since Bun.js started
+     *
+     * Uses a high-precision system timer to measure the time elapsed since the
+     * Bun.js runtime was initialized. The value is represented as a double
+     * precision floating point number. The value is monotonically increasing
+     * during the lifetime of the runtime.
+     *
+     */
+    now: () => number;
+  };
+
   namespace Bun {
     type HashFunction = (
       data: string | ArrayBufferView | ArrayBuffer,
@@ -1189,19 +1204,55 @@ declare global {
         | "entry-point";
     }
 
-    interface HTTP {
+    interface ServeOptions {
       /**
        * What port should the server listen on?
        * @default process.env.PORT || "3000"
        */
       port?: string | number;
+
       /**
        * What hostname should the server listen on?
-       * @default "0.0.0.0" // listen on all interfaces
-       * @example "127.0.0.1" // Only listen locally
-       * @example "remix.run" // Only listen on remix.run
+       *
+       * @default
+       * ```js
+       * "0.0.0.0" // listen on all interfaces
+       * ```
+       * @example
+       *  ```js
+       * "127.0.0.1" // Only listen locally
+       * ```
+       * @example
+       * ```js
+       * "remix.run" // Only listen on remix.run
+       * ````
+       *
+       * note: hostname should not include a {@link port}
        */
       hostname?: string;
+
+      /**
+       * What URI should be used to make {@link Request.url} absolute?
+       *
+       * By default, looks at {@link hostname}, {@link port}, and whether or not SSL is enabled to generate one
+       *
+       * @example
+       *```js
+       * "http://my-app.com"
+       * ```
+       *
+       * @example
+       *```js
+       * "https://wongmjane.com/"
+       * ```
+       *
+       * This should be the public, absolute URL – include the protocol and {@link hostname}. If the port isn't 80 or 443, then include the {@link port} too.
+       *
+       * @example
+       * "http://localhost:3000"
+       *
+       */
+      baseURI?: string;
 
       /**
        * What is the maximum size of a request body? (in bytes)
@@ -1261,7 +1312,7 @@ declare global {
       certFile: string;
     }
 
-    type SSLServeOptions = HTTP &
+    type SSLServeOptions = ServeOptions &
       SSLOptions &
       SSLAdvancedOptions & {
         /**
@@ -1308,7 +1359,7 @@ declare global {
      * });
      * ```
      */
-    function serve(options: Serve): void;
+    function serve(options: ServeOptions): void;
 
     /**
      *
@@ -1531,6 +1582,17 @@ declare global {
      */
     function mmap(path: PathLike, opts?: MMapOptions): Uint8Array;
 
+    /** Write to stdout */
+    const stdout: FileBlob;
+    /** Write to stderr */
+    const stderr: FileBlob;
+    /**
+     * Read from stdin
+     *
+     * This is read-only
+     */
+    const stdin: FileBlob;
+
     interface unsafe {
       /**
        * Cast bytes to a `String` without copying. This is the fastest way to get a `String` from a `Uint8Array` or `ArrayBuffer`.
@@ -1559,6 +1621,22 @@ declare global {
     let unsafe: unsafe;
 
     /**
+     * Are ANSI colors enabled for stdin and stdout?
+     *
+     * Used for {@link console.log}
+     */
+    const enableANSIColors: boolean;
+
+    /**
+     * What script launched bun?
+     *
+     * Absolute file path
+     *
+     * @example "/never-gonna-give-you-up.js"
+     */
+    const main: string;
+
+    /**
      * Manually trigger the garbage collector
      *
      * This does two things:
@@ -1568,6 +1646,33 @@ declare global {
      * @param force Synchronously run the garbage collector
      */
     function gc(force: boolean): void;
+
+    /**
+     * JavaScriptCore engine's internal heap snapshot
+     *
+     * I don't know how to make this something Chrome or Safari can read.
+     *
+     * If you have any ideas, please file an issue https://github.com/Jarred-Sumner/bun
+     */
+    interface HeapSnapshot {
+      /** "2" */
+      version: string;
+
+      /** "Inspector" */
+      type: string;
+
+      nodes: number[];
+
+      nodeClassNames: string[];
+      edges: number[];
+      edgeTypes: string[];
+      edgeNames: string[];
+    }
+
+    /**
+     * Generate a heap snapshot for seeing where the heap is being used
+     */
+    function generateHeapSnapshot(): HeapSnapshot;
 
     /**
      * The next time JavaScriptCore is idle, clear unused memory and attempt to reduce the heap size.
@@ -2147,10 +2252,10 @@ declare module "bun:test" {
  * It can be accessed using:
  *
  * ```js
- * import path from 'path';
+ * import path  from 'path';
  * ```
  */
-export namespace path {
+declare module "path/posix" {
   /**
    * A parsed path object generated by path.parse() or consumed by path.format().
    */
@@ -2198,104 +2303,105 @@ export namespace path {
      */
     name?: string | undefined;
   }
-  interface PlatformPath {
-    /**
-     * Normalize a string path, reducing '..' and '.' parts.
-     * When multiple slashes are found, they're replaced by a single one; when the path contains a trailing slash, it is preserved. On Windows backslashes are used.
-     *
-     * @param p string path to normalize.
-     */
-    normalize(p: string): string;
-    /**
-     * Join all arguments together and normalize the resulting path.
-     * Arguments must be strings. In v0.8, non-string arguments were silently ignored. In v0.10 and up, an exception is thrown.
-     *
-     * @param paths paths to join.
-     */
-    join(...paths: string[]): string;
-    /**
-     * The right-most parameter is considered {to}.  Other parameters are considered an array of {from}.
-     *
-     * Starting from leftmost {from} parameter, resolves {to} to an absolute path.
-     *
-     * If {to} isn't already absolute, {from} arguments are prepended in right to left order,
-     * until an absolute path is found. If after using all {from} paths still no absolute path is found,
-     * the current working directory is used as well. The resulting path is normalized,
-     * and trailing slashes are removed unless the path gets resolved to the root directory.
-     *
-     * @param pathSegments string paths to join.  Non-string arguments are ignored.
-     */
-    resolve(...pathSegments: string[]): string;
-    /**
-     * Determines whether {path} is an absolute path. An absolute path will always resolve to the same location, regardless of the working directory.
-     *
-     * @param path path to test.
-     */
-    isAbsolute(p: string): boolean;
-    /**
-     * Solve the relative path from {from} to {to}.
-     * At times we have two absolute paths, and we need to derive the relative path from one to the other. This is actually the reverse transform of path.resolve.
-     */
-    relative(from: string, to: string): string;
-    /**
-     * Return the directory name of a path. Similar to the Unix dirname command.
-     *
-     * @param p the path to evaluate.
-     */
-    dirname(p: string): string;
-    /**
-     * Return the last portion of a path. Similar to the Unix basename command.
-     * Often used to extract the file name from a fully qualified path.
-     *
-     * @param p the path to evaluate.
-     * @param ext optionally, an extension to remove from the result.
-     */
-    basename(p: string, ext?: string): string;
-    /**
-     * Return the extension of the path, from the last '.' to end of string in the last portion of the path.
-     * If there is no '.' in the last portion of the path or the first character of it is '.', then it returns an empty string
-     *
-     * @param p the path to evaluate.
-     */
-    extname(p: string): string;
-    /**
-     * The platform-specific file separator. '\\' or '/'.
-     */
-    readonly sep: string;
-    /**
-     * The platform-specific file delimiter. ';' or ':'.
-     */
-    readonly delimiter: string;
-    /**
-     * Returns an object from a path string - the opposite of format().
-     *
-     * @param pathString path to evaluate.
-     */
-    parse(p: string): ParsedPath;
-    /**
-     * Returns a path string from an object - the opposite of parse().
-     *
-     * @param pathString path to evaluate.
-     */
-    format(pP: FormatInputPathObject): string;
-    /**
-     * On Windows systems only, returns an equivalent namespace-prefixed path for the given path.
-     * If path is not a string, path will be returned without modifications.
-     * This method is meaningful only on Windows system.
-     * On POSIX systems, the method is non-operational and always returns path without modifications.
-     */
-    toNamespacedPath(path: string): string;
-    /**
-     * Posix specific pathing.
-     * Same as parent object on posix.
-     */
-    readonly posix: PlatformPath;
-    /**
-     * Windows specific pathing.
-     * Same as parent object on windows
-     */
-    readonly win32: PlatformPath;
-  }
+
+  /**
+   * Normalize a string path, reducing '..' and '.' parts.
+   * When multiple slashes are found, they're replaced by a single one; when the path contains a trailing slash, it is preserved. On Windows backslashes are used.
+   *
+   * @param p string path to normalize.
+   */
+  export function normalize(p: string): string;
+  /**
+   * Join all arguments together and normalize the resulting path.
+   * Arguments must be strings. In v0.8, non-string arguments were silently ignored. In v0.10 and up, an exception is thrown.
+   *
+   * @param paths paths to join.
+   */
+  export function join(...paths: string[]): string;
+  /**
+   * The right-most parameter is considered {to}.  Other parameters are considered an array of {from}.
+   *
+   * Starting from leftmost {from} parameter, resolves {to} to an absolute path.
+   *
+   * If {to} isn't already absolute, {from} arguments are prepended in right to left order,
+   * until an absolute path is found. If after using all {from} paths still no absolute path is found,
+   * the current working directory is used as well. The resulting path is normalized,
+   * and trailing slashes are removed unless the path gets resolved to the root directory.
+   *
+   * @param pathSegments string paths to join.  Non-string arguments are ignored.
+   */
+  export function resolve(...pathSegments: string[]): string;
+  /**
+   * Determines whether {path} is an absolute path. An absolute path will always resolve to the same location, regardless of the working directory.
+   *
+   * @param path path to test.
+   */
+  export function isAbsolute(p: string): boolean;
+  /**
+   * Solve the relative path from {from} to {to}.
+   * At times we have two absolute paths, and we need to derive the relative path from one to the other. This is actually the reverse transform of path.resolve.
+   */
+  export function relative(from: string, to: string): string;
+  /**
+   * Return the directory name of a path. Similar to the Unix dirname command.
+   *
+   * @param p the path to evaluate.
+   */
+  export function dirname(p: string): string;
+  /**
+   * Return the last portion of a path. Similar to the Unix basename command.
+   * Often used to extract the file name from a fully qualified path.
+   *
+   * @param p the path to evaluate.
+   * @param ext optionally, an extension to remove from the result.
+   */
+  export function basename(p: string, ext?: string): string;
+  /**
+   * Return the extension of the path, from the last '.' to end of string in the last portion of the path.
+   * If there is no '.' in the last portion of the path or the first character of it is '.', then it returns an empty string
+   *
+   * @param p the path to evaluate.
+   */
+  export function extname(p: string): string;
+  /**
+   * The platform-specific file separator. '\\' or '/'.
+   */
+  export const sep: string;
+  /**
+   * The platform-specific file delimiter. ';' or ':'.
+   */
+  export const delimiter: string;
+  /**
+   * Returns an object from a path string - the opposite of format().
+   *
+   * @param pathString path to evaluate.
+   */
+  export function parse(p: string): ParsedPath;
+  /**
+   * Returns a path string from an object - the opposite of parse().
+   *
+   * @param pathString path to evaluate.
+   */
+  export function format(pP: FormatInputPathObject): string;
+  /**
+   * On Windows systems only, returns an equivalent namespace-prefixed path for the given path.
+   * If path is not a string, path will be returned without modifications.
+   * This method is meaningful only on Windows system.
+   * On POSIX systems, the method is non-operational and always returns path without modifications.
+   */
+  export function toNamespacedPath(path: string): string;
+}
+
+/**
+ * The `path` module provides utilities for working with file and directory paths.
+ * It can be accessed using:
+ *
+ * ```js
+ * import path  from 'path';
+ * ```
+ */
+declare module "path/win32" {
+  export * from "path/posix";
 }
 
 /**
@@ -2307,33 +2413,9 @@ export namespace path {
  * ```
  */
 declare module "path" {
-  const path: path.PlatformPath;
-  export = path;
-}
-
-/**
- * The `path` module provides utilities for working with file and directory paths.
- * It can be accessed using:
- *
- * ```js
- * import path  from 'path';
- * ```
- */
-declare module "path/posix" {
-  const path: path.PlatformPath;
-  export = path;
-}
-/**
- * The `path` module provides utilities for working with file and directory paths.
- * It can be accessed using:
- *
- * ```js
- * import path  from 'path';
- * ```
- */
-declare module "path/win32" {
-  const path: path.PlatformPath;
-  export = path;
+  export * from "path/posix";
+  export * as posix from "path/posix";
+  export * as win32 from "path/win32";
 }
 
 /**
@@ -2345,8 +2427,7 @@ declare module "path/win32" {
  * ```
  */
 declare module "node:path" {
-  const path: path.PlatformPath;
-  export = path;
+  export * from "path";
 }
 /**
  * The `path` module provides utilities for working with file and directory paths.
@@ -2357,8 +2438,7 @@ declare module "node:path" {
  * ```
  */
 declare module "node:path/posix" {
-  const path: path.PlatformPath;
-  export = path;
+  export * from "path/posix";
 }
 /**
  * The `path` module provides utilities for working with file and directory paths.
@@ -2369,8 +2449,7 @@ declare module "node:path/posix" {
  * ```
  */
 declare module "node:path/win32" {
-  const path: path.PlatformPath;
-  export = path;
+  export * from "path/win32";
 }
 
 /**

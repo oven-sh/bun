@@ -2829,7 +2829,41 @@ pub const Parser = struct {
             (p.has_called_runtime or p.options.features.hot_module_reloading or has_cjs_imports))
         {
             const before_start = before.items.len;
-            if (p.options.features.hot_module_reloading) p.resolveHMRSymbols();
+            if (p.options.features.hot_module_reloading) {
+                p.resolveHMRSymbols();
+
+                if (runtime_imports_iter.next()) |entry| {
+                    std.debug.assert(entry.key == 0);
+
+                    // HMRClient.activate(true)
+                    var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
+
+                    var hmr_module_class_ident = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
+                    const imports = [_]u16{entry.key};
+                    // TODO: remove these unnecessary allocations
+                    p.generateImportStmt(
+                        RuntimeImports.Name,
+                        &imports,
+                        &before,
+                        p.runtime_imports,
+                        p.s(
+                            S.SExpr{
+                                .value = p.e(E.Call{
+                                    .target = p.e(E.Dot{
+                                        .target = hmr_module_class_ident,
+                                        .name = "activate",
+                                        .name_loc = logger.Loc.Empty,
+                                    }, logger.Loc.Empty),
+                                    .args = ExprNodeList.init(args_list),
+                                }, logger.Loc.Empty),
+                            },
+                            logger.Loc.Empty,
+                        ),
+                        "import_",
+                        true,
+                    ) catch unreachable;
+                }
+            }
 
             while (runtime_imports_iter.next()) |entry| {
                 const imports = [_]u16{entry.key};
@@ -16099,7 +16133,7 @@ fn NewParser_(
                 // We still call exportAll just with an empty object.
                 const has_any_exports = named_exports_count > 0;
 
-                const toplevel_stmts_count = 4 + (@intCast(usize, @boolToInt(has_any_exports)) * 2);
+                const toplevel_stmts_count = 3 + (@intCast(usize, @boolToInt(has_any_exports)) * 2);
                 var _stmts = allocator.alloc(
                     Stmt,
                     end_iife_stmts_count + toplevel_stmts_count + (named_exports_count * 2) + imports_count + exports_from_count,
@@ -16153,8 +16187,6 @@ fn NewParser_(
                     }
                 }
 
-                var args_list: []Expr = if (Environment.isDebug) &Prefill.HotModuleReloading.DebugEnabledArgs else &Prefill.HotModuleReloading.DebugDisabled;
-
                 const new_call_args_count: usize = if (p.options.features.react_fast_refresh) 3 else 2;
                 var call_args = try allocator.alloc(Expr, new_call_args_count + 1);
                 var new_call_args = call_args[0..new_call_args_count];
@@ -16167,24 +16199,8 @@ fn NewParser_(
                     new_call_args[2] = p.e(E.Identifier{ .ref = p.jsx_refresh_runtime.ref }, logger.Loc.Empty);
                 }
 
-                var hmr_module_class_ident = p.e(E.Identifier{ .ref = p.runtime_imports.__HMRClient.?.ref }, logger.Loc.Empty);
                 var toplevel_stmts_i: u8 = 0;
-                // HMRClient.activate(true)
-                toplevel_stmts[toplevel_stmts_i] = p.s(
-                    S.SExpr{
-                        .value = p.e(E.Call{
-                            .target = p.e(E.Dot{
-                                .target = hmr_module_class_ident,
-                                .name = "activate",
-                                .name_loc = logger.Loc.Empty,
-                            }, logger.Loc.Empty),
 
-                            .args = ExprNodeList.init(args_list),
-                        }, logger.Loc.Empty),
-                    },
-                    logger.Loc.Empty,
-                );
-                toplevel_stmts_i += 1;
                 var decls = try allocator.alloc(G.Decl, 2 + named_exports_count);
                 var first_decl = decls[0..2];
                 // We cannot rely on import.meta.url because if we import it within a blob: url, it will be nonsensical

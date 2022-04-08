@@ -137,6 +137,9 @@ Then, add this to your `tsconfig.json` or `jsconfig.json`:
 ```jsonc
 {
   "compilerOptions": {
+    "lib": ["ESNext"],
+    "module": "esnext",
+    "target": "esnext",
     "types": ["bun-types"]
   }
 }

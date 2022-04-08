@@ -381,8 +381,6 @@ pub fn NewWatcher(comptime ContextType: type) type {
 
         pub fn flushEvictions(this: *Watcher) void {
             if (evict_list_i == 0) return;
-            this.mutex.lock();
-            defer this.mutex.unlock();
             defer evict_list_i = 0;
 
             // swapRemove messes up the order
@@ -447,6 +445,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
                         watchevents[i].fromKEvent(event);
                     }
 
+                    this.mutex.lock();
+                    defer this.mutex.unlock();
+
                     this.ctx.onFileUpdate(watchevents, this.changed_filepaths[0..watchevents.len], this.watchlist);
                 }
             } else if (Environment.isLinux) {
@@ -509,6 +510,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
                             last_event_id = all_events[i].index;
                         }
                         if (all_events.len == 0) continue :restart;
+
+                        this.mutex.lock();
+                        defer this.mutex.unlock();
+
                         this.ctx.onFileUpdate(all_events[0 .. last_event_index + 1], this.changed_filepaths[0 .. name_off + 1], this.watchlist);
                         remaining_events -= slice.len;
                     }
@@ -535,6 +540,9 @@ pub fn NewWatcher(comptime ContextType: type) type {
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
         ) !void {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+
             if (this.indexOf(hash)) |index| {
                 if (comptime FeatureFlags.atomic_file_watcher) {
                     // On Linux, the file descriptor might be out of date.
@@ -546,7 +554,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 return;
             }
 
-            try this.appendFile(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path);
+            try this.appendFileMaybeLock(fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, false);
         }
 
         fn appendFileAssumeCapacity(
@@ -719,19 +727,19 @@ pub fn NewWatcher(comptime ContextType: type) type {
             hash: HashType,
             comptime copy_file_path: bool,
         ) !void {
+            this.mutex.lock();
+            defer this.mutex.unlock();
+
             if (this.indexOf(hash) != null) {
                 return;
             }
-
-            this.mutex.lock();
-            defer this.mutex.unlock();
 
             try this.watchlist.ensureUnusedCapacity(this.allocator, 1);
 
             _ = try this.appendDirectoryAssumeCapacity(fd, file_path, hash, copy_file_path);
         }
 
-        pub fn appendFile(
+        pub fn appendFileMaybeLock(
             this: *Watcher,
             fd: StoredFileDescriptorType,
             file_path: string,
@@ -740,9 +748,10 @@ pub fn NewWatcher(comptime ContextType: type) type {
             dir_fd: StoredFileDescriptorType,
             package_json: ?*PackageJSON,
             comptime copy_file_path: bool,
+            comptime lock: bool,
         ) !void {
-            this.mutex.lock();
-            defer this.mutex.unlock();
+            if (comptime lock) this.mutex.lock();
+            defer if (comptime lock) this.mutex.unlock();
             std.debug.assert(file_path.len > 1);
             const pathname = Fs.PathName.init(file_path);
 
@@ -791,6 +800,19 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     Output.prettyln("<r><d>Added <b>{s}<r><d> to watch list.<r>", .{file_path});
                 }
             }
+        }
+
+        pub fn appendFile(
+            this: *Watcher,
+            fd: StoredFileDescriptorType,
+            file_path: string,
+            hash: HashType,
+            loader: options.Loader,
+            dir_fd: StoredFileDescriptorType,
+            package_json: ?*PackageJSON,
+            comptime copy_file_path: bool,
+        ) !void {
+            return appendFileMaybeLock(this, fd, file_path, hash, loader, dir_fd, package_json, copy_file_path, true);
         }
     };
 }

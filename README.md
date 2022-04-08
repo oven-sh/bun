@@ -74,7 +74,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 ## Using bun.js - a new JavaScript runtime environment
 
-bun.js focuses on performance, developer experience, and compatibility with the JavaScript ecosystem.
+bun.js focuses on performance, developer experience and compatibility with the JavaScript ecosystem.
 
 ```ts
 // http.ts
@@ -109,7 +109,7 @@ bun.js prefers Web API compatibility or node API compatibility instead of design
 
 - TypeScript & JSX support is builtin, powered by Bun's JavaScript transpiler
 - ESM & CommonJS modules are supported (internally, bun.js uses ESM)
-- Many npm packages "just work" with bun.js (particularly ones which use few/no node APIs)
+- Many npm packages "just work" with bun.js (when they use few/no node APIs)
 - tsconfig.json `"paths"` is natively supported, along with `"exports"` in package.json
 - `fs`, `path`, and `process` from Node are partially implemented
 - Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are builtin

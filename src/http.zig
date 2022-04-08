@@ -3273,18 +3273,10 @@ pub const Server = struct {
         changed_files: []?[:0]u8,
         watchlist: watcher.Watchlist,
     ) void {
-        if (ctx.javascript_enabled) {
-            if (Output.isEmojiEnabled()) {
-                _onFileUpdate(ctx, events, changed_files, watchlist, true, true);
-            } else {
-                _onFileUpdate(ctx, events, changed_files, watchlist, true, false);
-            }
+        if (Output.isEmojiEnabled()) {
+            _onFileUpdate(ctx, events, changed_files, watchlist, true);
         } else {
-            if (Output.isEmojiEnabled()) {
-                _onFileUpdate(ctx, events, changed_files, watchlist, false, true);
-            } else {
-                _onFileUpdate(ctx, events, changed_files, watchlist, false, false);
-            }
+            _onFileUpdate(ctx, events, changed_files, watchlist, false);
         }
     }
 
@@ -3294,7 +3286,6 @@ pub const Server = struct {
         events: []watcher.WatchEvent,
         changed_files: []?[:0]u8,
         watchlist: watcher.Watchlist,
-        comptime is_javascript_enabled: bool,
         comptime is_emoji_enabled: bool,
     ) void {
         var fbs = std.io.fixedBufferStream(&filechange_buf);
@@ -3345,13 +3336,6 @@ pub const Server = struct {
             const id = hashes[event.index];
             var content_fbs = std.io.fixedBufferStream(filechange_buf[header.len..]);
             var hinted_content_fbs = std.io.fixedBufferStream(filechange_buf_hinted[header.len..]);
-
-            defer {
-                if (comptime is_javascript_enabled) {
-                    // TODO: does this need a lock?
-                    // RequestContext.JavaScriptHandler.javascript_vm.incrementUpdateCounter(id, update_count);
-                }
-            }
 
             if (comptime Environment.isDebug) {
                 Output.prettyErrorln("[watcher] {s}: -- {}", .{ @tagName(kind), event.op });

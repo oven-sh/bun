@@ -165,7 +165,7 @@ await Bun.write("output.txt", Bun.file("input.txt"));
 
 On Linux, this uses the [`copy_file_range`](https://man7.org/linux/man-pages/man2/copy_file_range.2.html) syscall and on macOS, this becomes `clonefile` (or [`fcopyfile`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/copyfile.3.html)).
 
-`Bun.write` also supports `Response` objects.
+`Bun.write` also supports [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) objects, it automatically converts to a [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob).
 
 ```js
 // Eventually, this will stream the response to disk but today it buffers

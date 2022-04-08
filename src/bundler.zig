@@ -1095,7 +1095,6 @@ pub const Bundler = struct {
                 return null;
             }
 
-            // Delay by one tick so that the rest of the file loads first
             if (include_refresh_runtime and refresh_runtime_module_id > 0) {
                 var refresh_runtime_injector_buf: [1024]u8 = undefined;
                 var fixed_buffer = std.io.fixedBufferStream(&refresh_runtime_injector_buf);
@@ -1103,7 +1102,7 @@ pub const Bundler = struct {
 
                 fixed_buffer_writer.print(
                     \\if ('window' in globalThis) {{
-                    \\  (async function() {{
+                    \\  (function() {{
                     \\    BUN_RUNTIME.__injectFastRefresh(${x}());
                     \\  }})();
                     \\}}

@@ -75,8 +75,6 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 bun.js is an all-in-one JavaScript runtime environment focused on performance and developer experience.
 
-bun.js prefers Web API compatibility or node API compatibility instead of designing new APIs when possible.
-
 - TypeScript & JSX support is builtin, powered by Bun's JavaScript transpiler
 - ESM & CommonJS modules work regardless of file extension
 - Many npm packages "just work" with bun.js (particularly ones that don't use many node APIs)
@@ -86,6 +84,8 @@ bun.js prefers Web API compatibility or node API compatibility instead of design
 - [HTMLRewriter](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/) makes it easy to rewrite HTML in bun.js
 - Starts [4x faster than Node](https://twitter.com/jarredsumner/status/1499225725492076544) (try it yourself)
 - `.env` files automatically load into `process.env` and `Bun.env`
+
+bun.js prefers Web API compatibility or node API compatibility instead of designing new APIs when possible.
 
 The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some of the web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/javascript/jsc/bindings/webcore/JSFetchHeaders.cpp#L1).
 
@@ -123,7 +123,7 @@ PRs adding more examples are very welcome!
 
 ### Types for bun.js
 
-The best docs right now are the TypeScript types in the [`bun-types`](packages/bun-types) package.
+The best docs right now are the TypeScript types in the [`bun-types`](types/bun/bun.d.ts) package.
 
 To add bun.js types to your project:
 

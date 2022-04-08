@@ -1714,7 +1714,8 @@ pub const Blob = struct {
             pub const OnCompleteCallback = fn (
                 ctx: *anyopaque,
                 fd: JSC.Node.FileDescriptor,
-                size: anyerror!SizeType,
+                size: SizeType,
+                system_error: ?SystemError,
                 global: *JSGlobalObject,
             ) void;
 
@@ -1759,15 +1760,16 @@ pub const Blob = struct {
                 var cb_ctx = this.onCompleteCtx;
                 const fd = this.opened_fd;
                 const _size = this.size;
-                const errno = this.errno;
-                this.store.deref();
+                const system_error_ = this.system_error;
+                var store = this.store;
 
                 bun.default_allocator.destroy(this);
-                if (errno) |err| {
-                    cb(cb_ctx, fd, err, globalThis);
+                if (system_error_) |err| {
+                    cb(cb_ctx, -1, 0, err, globalThis);
                 } else {
-                    cb(cb_ctx, fd, _size, globalThis);
+                    cb(cb_ctx, fd, _size, null, globalThis);
                 }
+                store.deref();
             }
 
             fn _runAsync(this: *OpenAndStatFile) void {
@@ -1785,6 +1787,7 @@ pub const Blob = struct {
                     .result => |result| result,
                     .err => |err| {
                         this.errno = AsyncIO.asError(err.errno);
+                        this.system_error = err.toSystemError();
                         return;
                     },
                 };

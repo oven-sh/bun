@@ -769,29 +769,41 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return this.onSendfile();
         }
 
-        pub fn onPrepareSendfileWrap(this: *anyopaque, fd: i32, size: anyerror!Blob.SizeType, _: *JSGlobalObject) void {
-            onPrepareSendfile(bun.cast(*RequestContext, this), fd, size);
+        pub fn onPrepareSendfileWrap(this: *anyopaque, fd: i32, size: Blob.SizeType, err: ?JSC.SystemError, globalThis: *JSGlobalObject) void {
+            onPrepareSendfile(bun.cast(*RequestContext, this), fd, size, err, globalThis);
         }
 
-        fn onPrepareSendfile(this: *RequestContext, fd: i32, size: anyerror!Blob.SizeType) void {
+        fn onPrepareSendfile(this: *RequestContext, fd: i32, size: Blob.SizeType, err: ?JSC.SystemError, globalThis: *JSGlobalObject) void {
             this.setAbortHandler();
-            if (this.aborted) return;
-            const size_ = size catch {
-                this.req.setYield(true);
-                this.finalize();
+
+            if (err) |system_error| {
+                if (system_error.errno == @enumToInt(std.os.E.NOENT)) {
+                    this.runErrorHandlerWithStatusCode(system_error.toErrorInstance(globalThis), 404);
+                } else {
+                    this.runErrorHandlerWithStatusCode(system_error.toErrorInstance(globalThis), 500);
+                }
+
                 return;
-            };
-            this.blob.size = size_;
+            }
+
+            this.blob.size = size;
             this.needs_content_length = true;
+
             this.sendfile = .{
                 .fd = fd,
-                .remain = size_,
-                .socket_fd = this.resp.getNativeHandle(),
+                .remain = size,
+                .socket_fd = if (!this.aborted) this.resp.getNativeHandle() else -999,
             };
+
+            if (this.aborted) {
+                _ = JSC.Node.Syscall.close(this.sendfile.fd);
+                this.finalize();
+                return;
+            }
 
             this.resp.runCorked(*RequestContext, renderMetadata, this);
 
-            if (size_ == 0) {
+            if (size == 0) {
                 this.cleanupAfterSendfile();
                 this.finalize();
 
@@ -900,15 +912,34 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.doRenderWithBody(&response.body.value);
         }
 
-        pub fn renderProductionError(this: *RequestContext) void {
-            this.resp.writeStatus("500 Internal Server Error");
-            this.resp.writeHeader("content-type", "text/plain");
-            this.resp.end("Something went wrong!", true);
+        pub fn renderProductionError(this: *RequestContext, status: u16) void {
+            switch (status) {
+                404 => {
+                    this.resp.writeStatus("404 Not Found");
+                    this.resp.endWithoutBody();
+                },
+                else => {
+                    this.resp.writeStatus("500 Internal Server Error");
+                    this.resp.writeHeader("content-type", "text/plain");
+                    this.resp.end("Something went wrong!", true);
+                },
+            }
 
             this.finalize();
         }
 
-        pub fn runErrorHandler(this: *RequestContext, value: JSC.JSValue) void {
+        pub fn runErrorHandler(
+            this: *RequestContext,
+            value: JSC.JSValue,
+        ) void {
+            runErrorHandlerWithStatusCode(this, value, 500);
+        }
+
+        pub fn runErrorHandlerWithStatusCode(
+            this: *RequestContext,
+            value: JSC.JSValue,
+            status: u16,
+        ) void {
             if (this.resp.hasResponded()) return;
 
             var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
@@ -919,10 +950,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis.ref(), this.server.config.onError.asObjectRef(), null, 1, &args);
 
                 if (!result.isEmptyOrUndefinedOrNull()) {
-                    JSC.C.JSValueProtect(this.server.globalThis.ref(), result.asObjectRef());
                     if (result.isError() or result.isAggregateError(this.server.globalThis)) {
                         this.runErrorHandler(result);
-                        JSC.C.JSValueUnprotect(this.server.globalThis.ref(), result.asObjectRef());
                         return;
                     } else if (result.as(Response)) |response| {
                         this.render(response);
@@ -942,8 +971,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     .{ std.mem.span(@tagName(this.method)), this.url },
                 );
             } else {
-                JSC.VirtualMachine.vm.defaultErrorHandler(value, &exception_list);
-                this.renderProductionError();
+                if (status != 404)
+                    JSC.VirtualMachine.vm.defaultErrorHandler(value, &exception_list);
+                this.renderProductionError(status);
             }
             JSC.VirtualMachine.vm.log.reset();
             return;

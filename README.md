@@ -57,6 +57,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [`bun run`](#bun-run)
   - [`bun create`](#bun-create)
   - [`bun bun`](#bun-bun)
+  - [`bun upgrade`](#bun-upgrade)
   - [`bun completions`](#bun-completions)
   - [`Bun.Transpiler`](#buntranspiler)
     - [`transformSync`](#buntranspilertransformsync)
@@ -142,6 +143,7 @@ Then, add this to your `tsconfig.json` or `jsconfig.json`:
     "lib": ["ESNext"],
     "module": "esnext",
     "target": "esnext",
+    // "bun-types" is the important part
     "types": ["bun-types"]
   }
 }
@@ -1347,6 +1349,28 @@ Is generated like this:
 3. Truncate the hash generated above to a `u32`
 
 The implementation details of this module ID hash will vary between versions of bun. The important part is the metadata contains the module IDs, the package paths, and the package hashes so it shouldn’t really matter in practice if other tooling wants to make use of any of this.
+
+### `bun upgrade`
+
+To upgrade bun, run `bun upgrade`.
+
+It automatically downloads the latest version of bun and overwrites the currently-running version.
+
+This works by checking the latest version of bun in [bun-releases-for-updater](https://github.com/Jarred-Sumner/bun-releases-for-updater/releases) and unzipping it using the system-provided `unzip` library (so that Gatekeeper works on macOS)
+
+If for any reason you run into issues, you can also use the curl install script:
+
+```bash
+curl https://bun.sh/install | bash
+```
+
+It will still work when bun is already installed.
+
+bun is distributed as a single binary file, so you can also do this manually:
+
+- Download the latest version of bun for your platform in [bun-releases-for-updater](https://github.com/Jarred-Sumner/bun-releases-for-updater/releases/latest) (`darwin` == macOS)
+- Unzip the folder
+- Move the `bun` binary to `~/.bun/bin` (or anywhere)
 
 ### `bun completions`
 

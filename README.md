@@ -76,14 +76,15 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 bun.js is an all-in-one JavaScript runtime environment focused on performance and developer experience.
 
 - TypeScript & JSX support is builtin, powered by Bun's JavaScript transpiler
-- ESM & CommonJS modules work regardless of file extension
-- Many npm packages "just work" with bun.js (particularly ones that don't use many node APIs)
-- tsconfig.json `"paths"` are natively supported, along with `"exports"` in package.json
+- ESM & CommonJS modules are supported (internally, bun.js uses ESM)
+- Many npm packages "just work" with bun.js (particularly ones which use few/no node APIs)
+- tsconfig.json `"paths"` is natively supported, along with `"exports"` in package.json
 - `fs`, `path`, and `process` from Node are partially implemented
 - Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are builtin
 - [`HTMLRewriter`](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/) makes it easy to transform HTML in bun.js
 - Starts [4x faster than Node](https://twitter.com/jarredsumner/status/1499225725492076544) (try it yourself)
 - `.env` files automatically load into `process.env` and `Bun.env`
+- top level await
 
 bun.js prefers Web API compatibility or node API compatibility instead of designing new APIs when possible.
 
@@ -103,7 +104,7 @@ export default {
 // bun ./http.ts
 ```
 
-`cat` clone that runs [2x faster than GNU cat for large files on Linux](https://twitter.com/jarredsumner/status/1511707890708586496):
+`cat` clone that runs [2x faster than GNU cat](https://twitter.com/jarredsumner/status/1511707890708586496) for large files on Linux
 
 ```js
 // cat.js
@@ -112,6 +113,7 @@ const { write, stdout, file } = Bun;
 const { argv } = process;
 
 const path = resolve(argv.at(-1));
+// file(path) returns a Blob - https://developer.mozilla.org/en-US/docs/Web/API/Blob
 await write(stdout, file(path));
 
 // bun ./cat.js ./path-to-file
@@ -146,6 +148,27 @@ Then, add this to your `tsconfig.json` or `jsconfig.json`:
 ```
 
 You can also [view the types here](./types/bun/bun.d.ts).
+
+### Fast paths for common use cases
+
+bun.js has fast paths for common use cases that make Web APIs live up to the performance demands of servers and CLIs.
+
+`Bun.file(path)` returns a [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) that represents a lazily-loaded file.
+
+When you pass two file blobs to `Bun.write`, Bun automatically uses a faster system call:
+
+```js
+await Bun.write("output.txt", Bun.file("input.txt"));
+```
+
+On Linux, this uses the [`copy_file_range`](https://man7.org/linux/man-pages/man2/copy_file_range.2.html) syscall and on macOS, this becomes `clonefile` (or [`fcopyfile`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/copyfile.3.html)).
+
+`Bun.write` also supports `Response` objects.
+
+```js
+// Eventually, this will stream the response to disk but today it buffers
+await Bun.write("index.html", await fetch("https://example.com"));
+```
 
 ## Using bun as a package manager
 
@@ -1570,7 +1593,7 @@ export const loader = () => import('./loader');
 
 bun itself is MIT-licensed.
 
-However, JavaScriptCore (and WebKit) is LGPL-2 and bun statically links it.
+However, JavaScriptCore (and WebKit) is LGPL-2 and bun statically links it. WebCore files from WebKit are also licensed under LGPL2.
 
 Per LGPL2:
 
@@ -1594,6 +1617,8 @@ bun also statically links these libraries:
 - [`libarchive`](https://github.com/libarchive/libarchive), which has [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING)
 - [`libiconv`](https://www.gnu.org/software/libiconv/), which is LGPL2. It’s a dependency of libarchive.
 - [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api), which is MIT licensed
+- A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is MIT licensed
+- [`uSockets`](https://github.com/uNetworking/uSockets), which is MIT licensed
 
 For compatibiltiy reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 

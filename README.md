@@ -89,7 +89,7 @@ bun.js is an all-in-one JavaScript runtime environment focused on performance an
 
 bun.js prefers Web API compatibility or node API compatibility instead of designing new APIs when possible.
 
-The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some of the web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/javascript/jsc/bindings/webcore/JSFetchHeaders.cpp#L1).
+The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/javascript/jsc/bindings/webcore/JSFetchHeaders.cpp#L1).
 
 [fast HTTP server](https://twitter.com/jarredsumner/status/1505559457832443906) in 6 lines of code:
 
@@ -124,18 +124,20 @@ There are some more examples in the [examples](./examples) folder.
 
 PRs adding more examples are very welcome!
 
-### Types for bun.js
+### Types for bun.js (editor autocomplete)
 
-The best docs right now are the TypeScript types in the [`bun-types`](types/bun/bun.d.ts) package.
+The best docs right now are the TypeScript types in the [`bun-types`](types/bun/bun.d.ts) npm package. A docs site is coming soon.
 
-To add bun.js types to your project:
+To get autocomplete for bun.js types in your editor,
+
+1. Install the `bun-types` npm package:
 
 ```bash
 # yarn/npm/pnpm work too, "bun-types" is an ordinary npm package
 bun add bun-types
 ```
 
-Then, add this to your `tsconfig.json` or `jsconfig.json`:
+2. Add this to your `tsconfig.json` or `jsconfig.json`:
 
 ```jsonc
 {
@@ -151,7 +153,7 @@ Then, add this to your `tsconfig.json` or `jsconfig.json`:
 
 You can also [view the types here](./types/bun/bun.d.ts).
 
-### Fast paths for common use cases
+### Fast paths for Web APIs
 
 bun.js has fast paths for common use cases that make Web APIs live up to the performance demands of servers and CLIs.
 
@@ -160,12 +162,13 @@ bun.js has fast paths for common use cases that make Web APIs live up to the per
 When you pass two file blobs to `Bun.write`, Bun automatically uses a faster system call:
 
 ```js
-await Bun.write("output.txt", Bun.file("input.txt"));
+const blob = Bun.file("input.txt");
+await Bun.write("output.txt", blob);
 ```
 
 On Linux, this uses the [`copy_file_range`](https://man7.org/linux/man-pages/man2/copy_file_range.2.html) syscall and on macOS, this becomes `clonefile` (or [`fcopyfile`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/copyfile.3.html)).
 
-`Bun.write` also supports [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) objects, it automatically converts to a [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob).
+`Bun.write` also supports [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) objects. It automatically converts to a [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob).
 
 ```js
 // Eventually, this will stream the response to disk but today it buffers

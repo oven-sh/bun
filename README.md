@@ -73,30 +73,32 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 ## Using bun.js - a new JavaScript runtime environment
 
-bun.js is a fast & easy JavaScript runtime environment.
+bun.js is a JavaScript runtime environment focused on performance, Web API compatibility, and compatibility with npm.
 
 - Builtin support for running TypeScript & JSX files, powered by Bun's JavaScript transpiler
-- ESM & CommonJS modules are supported regardless of file extension
-- Many NPM packages "just work" with bun.js (despite being a completely different runtime than node)
+- ESM & CommonJS modules are supported regardless of file extension.
+- `"exports"` in package.json and tsconfig.json `"paths"` are also supported.
+- Many npm packages "just work" with bun.js (despite being a completely different runtime than node)
 - Native implementations of some Node.js APIs like `fs`, `path`, and `process`
 - Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are builtin
 - [HTMLRewriter](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/) makes it easy to rewrite HTML in bun.js
 - Starts [4x faster than Node](https://twitter.com/jarredsumner/status/1499225725492076544) (try it yourself)
+- `.env` files automatically load into `process.env` and `Bun.env`
 
-The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari.
+The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some of the web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use Safari's implementation.
 
-fast HTTP server in 6 lines of code:
+[fast HTTP server](https://twitter.com/jarredsumner/status/1505559457832443906) in 6 lines of code:
 
 ```js
-// http.js
+// http.ts
 export default {
   port: 3000,
-  fetch(request) {
+  fetch(request: Request) {
     return new Response("Hello World");
   },
 };
 
-// To run: `bun ./http.js`
+// To run: `bun ./http.ts`
 ```
 
 `cat` clone that runs [2x faster than GNU cat for large files on Linux](https://twitter.com/jarredsumner/status/1511707890708586496):
@@ -354,12 +356,9 @@ bun.js == bun’s JavaScriptCore integration that executes JavaScript. Similar t
 
 ### Limitations & intended usage
 
-bun is great for building websites &amp; webapps. For libraries, consider using Rollup or esbuild instead. bun currently doesn’t minify code and bun’s dead code elimination doesn’t look beyond the current file.
+bun's bundler & transpiler are great for building websites &amp; webapps, but note that bun doesn't have a minifier or support tree-shaking yet. For production, you probably still want to use a tool like esbuild to do that.
 
-Today, bun is focused on:
-
-- Development, not production
-- Compatibility with existing frameworks & tooling
+Today, bun is mostly focused on compatibility with existing frameworks & tooling.
 
 Ideally, most projects can use bun with their existing tooling while making few changes to their codebase. That means using bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it’s not far from the status quo.
 

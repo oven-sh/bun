@@ -1,6 +1,6 @@
 // Start a fast HTTP server from a function
 Bun.serve({
-  async fetch(req: Request) {
+  fetch(req: Request) {
     return new Response(`Echo: ${req.url}`);
   },
 

@@ -74,24 +74,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 ## Using bun.js - a new JavaScript runtime environment
 
-bun.js is an all-in-one JavaScript runtime environment focused on performance and developer experience.
-
-- TypeScript & JSX support is builtin, powered by Bun's JavaScript transpiler
-- ESM & CommonJS modules are supported (internally, bun.js uses ESM)
-- Many npm packages "just work" with bun.js (particularly ones which use few/no node APIs)
-- tsconfig.json `"paths"` is natively supported, along with `"exports"` in package.json
-- `fs`, `path`, and `process` from Node are partially implemented
-- Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are builtin
-- [`HTMLRewriter`](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/) makes it easy to transform HTML in bun.js
-- Starts [4x faster than Node](https://twitter.com/jarredsumner/status/1499225725492076544) (try it yourself)
-- `.env` files automatically load into `process.env` and `Bun.env`
-- top level await
-
-bun.js prefers Web API compatibility or node API compatibility instead of designing new APIs when possible.
-
-The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/javascript/jsc/bindings/webcore/JSFetchHeaders.cpp#L1).
-
-[fast HTTP server](https://twitter.com/jarredsumner/status/1505559457832443906) in 6 lines of code:
+bun.js is an all-in-one JavaScript runtime environment focused on performance, developer experience, and compatibility with the JavaScript ecosystem.
 
 ```ts
 // http.ts
@@ -104,6 +87,38 @@ export default {
 
 // bun ./http.ts
 ```
+
+<details>
+
+<summary>view benchmark</summary>
+
+| Requests per second                                                    | OS    | CPU                            | bun version |
+| ---------------------------------------------------------------------- | ----- | ------------------------------ | ----------- |
+| [260,000](https://twitter.com/jarredsumner/status/1512040623200616449) | macOS | Apple Silicon M1 Max           | 0.0.76      |
+| [160,000](https://twitter.com/jarredsumner/status/1511988933587976192) | Linux | AMD Ryzen 5 3600 6-Core 2.2ghz | 0.0.76      |
+
+Measured with [http_load_test](https://github.com/uNetworking/uSockets/blob/master/examples/http_load_test.c) by running:
+
+```bash
+./http_load_test  20 127.0.0.1 3000
+```
+
+</details>
+
+bun.js prefers Web API compatibility or node API compatibility instead of designing new APIs when possible.
+
+- TypeScript & JSX support is builtin, powered by Bun's JavaScript transpiler
+- ESM & CommonJS modules are supported (internally, bun.js uses ESM)
+- Many npm packages "just work" with bun.js (particularly ones which use few/no node APIs)
+- tsconfig.json `"paths"` is natively supported, along with `"exports"` in package.json
+- `fs`, `path`, and `process` from Node are partially implemented
+- Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are builtin
+- [`HTMLRewriter`](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/) makes it easy to transform HTML in bun.js
+- Starts [4x faster than Node](https://twitter.com/jarredsumner/status/1499225725492076544) (try it yourself)
+- `.env` files automatically load into `process.env` and `Bun.env`
+- top level await
+
+The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/javascript/jsc/bindings/webcore/JSFetchHeaders.cpp#L1).
 
 `cat` clone that runs [2x faster than GNU cat](https://twitter.com/jarredsumner/status/1511707890708586496) for large files on Linux
 

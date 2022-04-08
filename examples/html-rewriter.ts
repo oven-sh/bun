@@ -1,7 +1,10 @@
 // Start a fast HTTP server from a function
 Bun.serve({
   async fetch(req) {
-    if (!(req.url.startsWith("/https://") || req.url.startsWith("/http://"))) {
+    const { pathname } = new URL(req.url);
+    if (
+      !(pathname.startsWith("/https://") || pathname.startsWith("/http://"))
+    ) {
       return new Response(
         "Enter a path that starts with https:// or http://\n",
         {
@@ -10,12 +13,10 @@ Bun.serve({
       );
     }
 
-    const url = new URL(req.url.substring(1));
-    const response = await fetch(url.toString(), req.clone());
-
-    if (!response.headers.get("Content-Type").includes("html")) {
-      return response;
-    }
+    const response = await fetch(
+      req.url.substring("http://localhost:3000/".length),
+      req.clone()
+    );
 
     return new HTMLRewriter()
       .on("a[href]", {
@@ -42,6 +43,5 @@ Bun.serve({
   // certFile: './cert.pem',
   // keyFile: './key.pem',
 
-  port: 8080, // number or string
-  hostname: "localhost", // defaults to 0.0.0.0
+  port: 3000, // number or string
 });

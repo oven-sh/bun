@@ -60,7 +60,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [`bun upgrade`](#bun-upgrade)
   - [`bun completions`](#bun-completions)
   - [`Bun.serve`](#bunserve)
-  - [`Bun.write`](#bunwrite)
+  - [`Bun.write`](##bunwrite--optimizing-io)
   - [`Bun.Transpiler`](#buntranspiler)
     - [`transformSync`](#buntranspilertransformsync)
     - [`transform`](#buntranspilertransform)
@@ -262,9 +262,10 @@ bun
 To use an existing Next.js app with bun:
 
 ```bash
-npm install bun-framework-next
-bun bun --use next
-bun
+bun add bun-framework-next
+echo "framework = 'next'" > bunfig.toml
+bun bun # bundle dependencies
+bun dev # start dev server
 ```
 
 Many of Next.js’ features are supported, but not all.
@@ -472,6 +473,7 @@ port = 5000
 # When navigating to a blob: or src: link, open the file in your editor
 # If not, it tries $EDITOR or $VISUAL
 # If that still fails, it will try Visual Studio Code, then Sublime Text, then a few others
+# This is used by Bun.openInEditor()
 editor = "code"
 
 # List of editors:

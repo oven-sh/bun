@@ -435,12 +435,12 @@ if (typeof window !== "undefined") {
             const decoded = this.decoder.decode(bytes);
 
             sheet.replaceSync(decoded);
+            update.node.remove();
 
             document.adoptedStyleSheets = [
               ...document.adoptedStyleSheets,
               sheet,
             ];
-            update.node.remove();
           }
           break;
         }

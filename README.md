@@ -33,7 +33,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 ## Table of Contents
 
 - [Install](#install)
-- [Benchmarks](#benchmarks)
+- [Using bun.js - a new JavaScript runtime environment](#using-bunjs---a-new-javascript-runtime-environment)
 - [Using bun as a package manager](#using-bun-as-a-package-manager)
 - [Using bun as a task runner](#using-bun-as-a-task-runner)
 - [Using bun with Next.js](#using-bun-with-nextjs)
@@ -73,11 +73,13 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 ## Using bun.js - a new JavaScript runtime environment
 
-bun.js is a JavaScript runtime environment focused on performance, Web API compatibility, compatibility with npm, and being easy to use.
+bun.js is an all-in-one JavaScript runtime environment focused on performance and developer experience.
 
-- Builtin support for running TypeScript & JSX files, powered by Bun's JavaScript transpiler
-- ESM & CommonJS modules are supported regardless of file extension.
-- Several npm packages "just work" with bun.js (despite being a completely different runtime than node)
+bun.js prefers Web API compatibility or node API compatibility instead of designing new APIs when possible.
+
+- TypeScript & JSX support is builtin, powered by Bun's JavaScript transpiler
+- ESM & CommonJS modules work regardless of file extension
+- Many npm packages "just work" with bun.js (particularly ones that don't use many node APIs)
 - tsconfig.json `"paths"` are natively supported, along with `"exports"` in package.json
 - Native implementations of some Node.js APIs like `fs`, `path`, and `process`
 - Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are builtin
@@ -85,11 +87,11 @@ bun.js is a JavaScript runtime environment focused on performance, Web API compa
 - Starts [4x faster than Node](https://twitter.com/jarredsumner/status/1499225725492076544) (try it yourself)
 - `.env` files automatically load into `process.env` and `Bun.env`
 
-The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some of the web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use Safari's implementation.
+The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some of the web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/javascript/jsc/bindings/webcore/JSFetchHeaders.cpp#L1).
 
 [fast HTTP server](https://twitter.com/jarredsumner/status/1505559457832443906) in 6 lines of code:
 
-```js
+```ts
 // http.ts
 export default {
   port: 3000,
@@ -98,7 +100,7 @@ export default {
   },
 };
 
-// To run: `bun ./http.ts`
+// bun ./http.ts
 ```
 
 `cat` clone that runs [2x faster than GNU cat for large files on Linux](https://twitter.com/jarredsumner/status/1511707890708586496):
@@ -112,7 +114,7 @@ const { argv } = process;
 const path = resolve(argv.at(-1));
 await write(stdout, file(path));
 
-// To run, `bun ./cat.js ./path-to-file`
+// bun ./cat.js ./path-to-file
 ```
 
 There are some more examples in the [examples](./examples) folder.

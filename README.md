@@ -457,6 +457,7 @@ entryPoints = ["./app/index.ts"]
 
 [dev]
 # Change the default port from 3000 to 5000
+# Also inherited by Bun.serve
 port = 5000
 
 [define]

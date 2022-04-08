@@ -71,11 +71,74 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [MacOS](#macos)
 - [vscode-zig](#vscode-zig)
 
-## Benchmarks
+## Using bun.js - a new JavaScript runtime environment
 
-**CSS**: [bun is 14x faster](./bench/hot-module-reloading/css-stress-test) than Next.js at hot reloading CSS. TODO: compare Vite
+bun.js is a fast & easy JavaScript runtime environment.
 
-**JavaScript**: TODO
+- Builtin support for running TypeScript & JSX files, powered by Bun's JavaScript transpiler
+- ESM & CommonJS modules are supported regardless of file extension
+- Many NPM packages "just work" with bun.js (despite being a completely different runtime than node)
+- Native implementations of some Node.js APIs like `fs`, `path`, and `process`
+- Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are builtin
+- [HTMLRewriter](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/) makes it easy to rewrite HTML in bun.js
+- Starts [4x faster than Node](https://twitter.com/jarredsumner/status/1499225725492076544) (try it yourself)
+
+The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari.
+
+fast HTTP server in 6 lines of code:
+
+```js
+// http.js
+export default {
+  port: 3000,
+  fetch(request) {
+    return new Response("Hello World");
+  },
+};
+
+// To run: `bun ./http.js`
+```
+
+`cat` clone that runs [2x faster than GNU cat for large files on Linux](https://twitter.com/jarredsumner/status/1511707890708586496):
+
+```js
+// cat.js
+import { resolve } from "path";
+const { write, stdout, file } = Bun;
+const { argv } = process;
+
+const path = resolve(argv.at(-1));
+await write(stdout, file(path));
+
+// To run, `bun ./cat.js ./path-to-file`
+```
+
+There are some more examples in the [examples](./examples) folder.
+
+PRs adding more examples are very welcome!
+
+### Types for bun.js
+
+The best docs right now are the TypeScript types in the [`bun-types`](packages/bun-types) package.
+
+To add bun.js types to your project:
+
+```bash
+# yarn/npm/pnpm work too, "bun-types" is an ordinary npm package
+bun add bun-types
+```
+
+Then, add this to your `tsconfig.json` or `jsconfig.json`:
+
+```jsonc
+{
+  "compilerOptions": {
+    "types": ["bun-types"]
+  }
+}
+```
+
+You can also [view the types here](./types/bun/bun.d.ts).
 
 ## Using bun as a package manager
 
@@ -236,6 +299,8 @@ If no directory is specified and `./public/` doesn’t exist, bun will try `./st
 
 ## Using bun with TypeScript
 
+#### Transpiling TypeScript with Bun
+
 TypeScript just works. There’s nothing to configure and nothing extra to install. If you import a `.ts` or `.tsx` file, bun will transpile it into JavaScript. bun also transpiles `node_modules` containing `.ts` or `.tsx` files. This is powered by bun’s TypeScript transpiler, so it’s fast.
 
 bun also reads `tsconfig.json`, including `baseUrl` and `paths`.
@@ -299,6 +364,14 @@ Today, bun is focused on:
 Ideally, most projects can use bun with their existing tooling while making few changes to their codebase. That means using bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it’s not far from the status quo.
 
 Longer-term, bun intends to replace Node.js, Webpack, Babel, and PostCSS (in production).
+
+## Benchmarks
+
+TODO: update this section with runtime benchmarks
+
+**CSS**: [bun is 14x faster](./bench/hot-module-reloading/css-stress-test) than Next.js at hot reloading CSS. TODO: compare Vite
+
+**JavaScript**: TODO
 
 ## Configuration
 

@@ -11,7 +11,7 @@ bun is a new:
 
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
 
-**bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#things-that-dont-work-yet).
+**bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#not-implemented-yet).
 
 ## Install
 

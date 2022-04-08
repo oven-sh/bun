@@ -74,7 +74,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 ## Using bun.js - a new JavaScript runtime environment
 
-bun.js is an all-in-one JavaScript runtime environment focused on performance, developer experience, and compatibility with the JavaScript ecosystem.
+bun.js focuses on performance, developer experience, and compatibility with the JavaScript ecosystem.
 
 ```ts
 // http.ts

@@ -79,9 +79,9 @@ bun.js is an all-in-one JavaScript runtime environment focused on performance an
 - ESM & CommonJS modules work regardless of file extension
 - Many npm packages "just work" with bun.js (particularly ones that don't use many node APIs)
 - tsconfig.json `"paths"` are natively supported, along with `"exports"` in package.json
-- Native implementations of some Node.js APIs like `fs`, `path`, and `process`
+- `fs`, `path`, and `process` from Node are mostly implemented
 - Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are builtin
-- [HTMLRewriter](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/) makes it easy to rewrite HTML in bun.js
+- [`HTMLRewriter`](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/) makes it easy to transform HTML in bun.js
 - Starts [4x faster than Node](https://twitter.com/jarredsumner/status/1499225725492076544) (try it yourself)
 - `.env` files automatically load into `process.env` and `Bun.env`
 

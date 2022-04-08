@@ -90,16 +90,13 @@ export default {
 // bun ./http.ts
 ```
 
-<details>
-
-<summary>view benchmark</summary>
-
 | Requests per second                                                    | OS    | CPU                            | bun version |
 | ---------------------------------------------------------------------- | ----- | ------------------------------ | ----------- |
 | [260,000](https://twitter.com/jarredsumner/status/1512040623200616449) | macOS | Apple Silicon M1 Max           | 0.0.76      |
 | [160,000](https://twitter.com/jarredsumner/status/1511988933587976192) | Linux | AMD Ryzen 5 3600 6-Core 2.2ghz | 0.0.76      |
 
-Measured with [http_load_test](https://github.com/uNetworking/uSockets/blob/master/examples/http_load_test.c) by running:
+<details>
+<summary>Measured with [http_load_test](https://github.com/uNetworking/uSockets/blob/master/examples/http_load_test.c)</summary> by running:
 
 ```bash
 ./http_load_test  20 127.0.0.1 3000

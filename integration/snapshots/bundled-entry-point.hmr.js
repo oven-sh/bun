@@ -4,6 +4,8 @@ __require as require
 import {
 __HMRClient as Bun
 } from "http://localhost:8080/bun:wrap";
+Bun.activate(false);
+
 import {
 __FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
@@ -11,9 +13,8 @@ import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
-Bun.activate(false);
-
 var hmr = new FastHMR(3012834585, "bundled-entry-point.js", FastRefresh), exports = hmr.exports;
+
 (hmr._load = function() {
   function test() {
     return testDone(import.meta.url);

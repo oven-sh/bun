@@ -1,15 +1,16 @@
 import {
 __HMRClient as Bun
 } from "http://localhost:8080/bun:wrap";
+Bun.activate(false);
+
 import {
 __FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-Bun.activate(false);
-
 var hmr = new FastHMR(583570002, "number-literal-bug.js", FastRefresh), exports = hmr.exports;
+
 (hmr._load = function() {
   function test() {
     const precision = 10;

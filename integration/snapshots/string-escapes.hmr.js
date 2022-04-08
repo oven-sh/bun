@@ -2,10 +2,12 @@ import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 import {
-__require as require
-} from "http://localhost:8080/bun:wrap";
-import {
 __HMRClient as Bun
+} from "http://localhost:8080/bun:wrap";
+Bun.activate(false);
+
+import {
+__require as require
 } from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
@@ -16,7 +18,6 @@ import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;
 
-Bun.activate(false);
 var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var tab = "\t";

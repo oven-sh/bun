@@ -1,12 +1,13 @@
 import {
-__HMRModule as HMR
-} from "http://localhost:8080/bun:wrap";
-import {
 __HMRClient as Bun
 } from "http://localhost:8080/bun:wrap";
 Bun.activate(false);
 
+import {
+__HMRModule as HMR
+} from "http://localhost:8080/bun:wrap";
 var hmr = new HMR(650094581, "type-only-imports.ts"), exports = hmr.exports;
+
 (hmr._load = function() {
   var baconator = true;
   var SilentSymbolCollisionsAreOkayInTypeScript = true;

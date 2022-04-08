@@ -408,7 +408,7 @@ bun's bundler & transpiler are great for building websites &amp; webapps, but no
 
 Today, bun is mostly focused on compatibility with existing frameworks & tooling.
 
-Ideally, most projects can use bun with their existing tooling while making few changes to their codebase. That means using bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it’s not far from the status quo.
+Ideally, most projects can use bun with their existing tooling while making few changes to their codebase. For frontend work, that means using bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it’s not far from the status quo.
 
 Longer-term, bun intends to replace Node.js, Webpack, Babel, and PostCSS (in production).
 

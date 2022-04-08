@@ -8,7 +8,7 @@
   },
   "repository": "https://github.com/jarred-sumner/bun",
   "readme": "This package is a temporary workaround until https://github.com/DefinitelyTyped/DefinitelyTyped/pull/59670 is merged.",
-  "version": "0.0.74",
+  "version": "0.0.76",
   "types": "types.d.ts",
   "scripts": {
     "prepublishOnly": "cp ../../types/bun/bun.d.ts types.d.ts"

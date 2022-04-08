@@ -455,12 +455,16 @@ pub fn NewWatcher(comptime ContextType: type) type {
                     defer Output.flush();
 
                     var events = try INotify.read();
+                    if (events.len == 0) continue :restart;
+
                     // TODO: is this thread safe?
-                    const eventlist_index = this.watchlist.items(.eventlist_index);
                     var remaining_events = events.len;
+
                     var name_off: u8 = 0;
                     var temp_name_list: [128]?[:0]u8 = undefined;
                     var temp_name_off: u8 = 0;
+
+                    const eventlist_index = this.watchlist.items(.eventlist_index);
 
                     while (remaining_events > 0) {
                         const slice = events[0..@minimum(remaining_events, this.watch_events.len)];

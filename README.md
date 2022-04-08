@@ -59,6 +59,8 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [`bun bun`](#bun-bun)
   - [`bun upgrade`](#bun-upgrade)
   - [`bun completions`](#bun-completions)
+  - [`Bun.serve`](#bunserve)
+  - [`Bun.write`](#bunwrite)
   - [`Bun.Transpiler`](#buntranspiler)
     - [`transformSync`](#buntranspilertransformsync)
     - [`transform`](#buntranspilertransform)
@@ -1395,6 +1397,153 @@ bun is distributed as a single binary file, so you can also do this manually:
 This command installs completions for `zsh` and/or `fish`. It’s run automatically on every `bun upgrade` and on install. It reads from `$SHELL` to determine which shell to install for. It tries several common shell completion directories for your shell and OS.
 
 If you want to copy the completions manually, run `bun completions > path-to-file`. If you know the completions directory to install them to, run `bun completions /path/to/directory`.
+
+## `Bun.serve` - fast HTTP server
+
+For a hello world HTTP server that writes "bun!", `Bun.serve` serves about 2.5x more requests per second than node.js on Linux:
+
+| Requests per second | Runtime |
+| ------------------- | ------- |
+| ~64,000             | Node 16 |
+| ~160,000            | Bun     |
+
+<sup>Bigger is better</sup>
+
+<details>
+<summary>Code</summary>
+
+Bun:
+
+```ts
+Bun.serve({
+  fetch(req: Request) {
+    return new Response(`bun!`);
+  },
+  port: 3000,
+});
+```
+
+Node:
+
+```ts
+require("http")
+  .createServer((req, res) => res.end("bun!"))
+  .listen(8080);
+```
+
+<img width="499" alt="image" src="https://user-images.githubusercontent.com/709451/162389032-fc302444-9d03-46be-ba87-c12bd8ce89a0.png">
+
+</details>
+
+#### Usage
+
+Two ways to start an HTTP server with bun.js:
+
+1. `export default` an object with a `fetch` function
+
+If the file used to start bun has a default export with a `fetch` function, it will start the http server.
+
+```ts
+// hi.js
+export default {
+  fetch(req) {
+    return new Response("HI!");
+  },
+};
+
+// bun ./hi.js
+```
+
+`fetch` receives a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) object and must return either a [`Response` ](https://developer.mozilla.org/en-US/docs/Web/API/Response) or a [`Promise<Response>`](https://developer.mozilla.org/en-US/docs/Web/API/Response). In a future version, it might have an additional arguments for things like cookies.
+
+2. `Bun.serve` starts the http server explicitly
+
+```ts
+Bun.serve({
+  fetch(req) {
+    return new Response("HI!");
+  },
+});
+```
+
+#### Error handling
+
+For error handling, you get an `error` function.
+
+If `development: true` and `error` is not defined or doesn't return a `Response`, you will get an exception page with a stack trace:
+
+<img width="687" alt="image" src="https://user-images.githubusercontent.com/709451/162382958-23614e8f-239c-4ba6-be75-b76ceef8227c.png">
+
+It will hopefully make it easier to debug issues with bun until bun gets debugger support. This error page is based on what `bun dev` does.
+
+**If the error function returns a `Response`, it will be served instead**
+
+```js
+Bun.serve({
+  fetch(req) {
+    throw new Error("woops!");
+  },
+  error(error: Error) {
+    return new Response("Uh oh!!\n" + error.toString(), { status: 500 });
+  },
+});
+```
+
+**If the `error` function itself throws and `development` is `false`, a generic 500 page will be shown**
+
+Currently, there is no way to stop the HTTP server once started 😅, but that will be added in a future version.
+
+The interface for `Bun.serve` is based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
+
+## `Bun.write` – optimizing I/O
+
+`Bun.write` lets you write, copy or pipe files automatically using the fastest system calls compatible with the input and platform.
+
+```ts
+interface Bun {
+  write(
+    destination: string | number | FileBlob,
+    input: string | FileBlob | Blob | ArrayBufferView
+  ): Promise<number>;
+}
+```
+
+| Output                     | Input          | System Call                   | Platform |
+| -------------------------- | -------------- | ----------------------------- | -------- |
+| file                       | file           | copy_file_range               | Linux    |
+| file                       | pipe           | sendfile                      | Linux    |
+| pipe                       | pipe           | splice                        | Linux    |
+| terminal                   | file           | sendfile                      | Linux    |
+| terminal                   | terminal       | sendfile                      | Linux    |
+| socket                     | file or pipe   | sendfile (if http, not https) | Linux    |
+| file (path, doesn't exist) | file (path)    | clonefile                     | macOS    |
+| file                       | file           | fcopyfile                     | macOS    |
+| file                       | Blob or string | write                         | macOS    |
+| file                       | Blob or string | write                         | Linux    |
+
+All this complexity is handled by a single function.
+
+```ts
+// Write "Hello World" to output.txt
+await Bun.write("output.txt", "Hello World");
+```
+
+```ts
+// log a file to stdout
+await Bun.write(Bun.stdout, Bun.file("input.txt"));
+```
+
+```ts
+// write the HTTP response body to disk
+await Bun.write("index.html", await fetch("http://example.com"));
+// this does the same thing
+await Bun.write(Bun.file("index.html"), await fetch("http://example.com"));
+```
+
+```ts
+// copy input.txt to output.txt
+await Bun.write("output.txt", Bun.file("input.txt"));
+```
 
 ### `Bun.Transpiler`
 

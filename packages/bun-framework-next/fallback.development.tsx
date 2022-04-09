@@ -59,6 +59,7 @@ function renderFallback({ router }: FallbackMessageContainer) {
 
   document.removeEventListener("onimportcss", insertGlobalStyleSheet);
   document.addEventListener("onimportcss", pageLoader.onImportCSS);
+
   var cssQueue;
   return import(route)
     .then((Namespace) => {

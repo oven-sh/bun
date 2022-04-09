@@ -4,7 +4,7 @@ import { HeadManagerContext } from "next/dist/shared/lib/head-manager-context";
 import Loadable from "next/dist/shared/lib/loadable";
 import { LoadableContext } from "next/dist/shared/lib/loadable-context";
 import { RouterContext } from "next/dist/shared/lib/router-context";
-import { type NextRouter } from "next/dist/shared/lib/router/router";
+import type { NextRouter } from "next/dist/shared/lib/router/router";
 import {
   getDisplayName,
   loadGetInitialProps,
@@ -262,7 +262,7 @@ function renderDocument(
     ...docProps,
   };
 
-  return ReactDOMServer.renderToString(
+  return ReactDOMServer.renderToStaticMarkup(
     <AmpStateContext.Provider value={ampState}>
       {/* HTMLContextProvider expects useMainContent */}
       {/* @ts-expect-error */}
@@ -306,9 +306,16 @@ class ServerRouter implements NextRouter {
     isLocaleDomain?: boolean
   ) {
     this.route = pathname.replace(/\/$/, "") || "/";
-    this.pathname = pathname;
+    this.pathname = new URL(
+      pathname || "/",
+      Bun.origin || "http://localhost:3000"
+    ).href;
+
     this.query = query;
-    this.asPath = as;
+    this.asPath = new URL(
+      as || "/",
+      Bun.origin || "http://localhost:3000"
+    ).href;
     this.isFallback = isFallback;
     this.basePath = basePath;
     this.locale = locale;
@@ -419,7 +426,7 @@ export async function render({
   const getStaticProps = (PageNamespace as any)?.getStaticProps || null;
   const { default: AppComponent_ } = AppNamespace || {};
   var query = Object.assign({}, route.query);
-  const origin = "";
+  const origin = Bun.origin;
 
   // These are reversed in our Router versus Next.js...mostly due to personal preference.
   const pathname = route.name;
@@ -787,13 +794,13 @@ export async function render({
     },
     // Only enabled in production as development mode has features relying on HMR (style injection for example)
     // @ts-expect-error
-    unstable_runtimeJS: false,
+    unstable_runtimeJS: true,
     //   process.env.NODE_ENV === "production"
     //     ? pageConfig.unstable_runtimeJS
     //     : undefined,
     // unstable_JsPreload: pageConfig.unstable_JsPreload,
     // @ts-expect-error
-    unstable_JsPreload: false,
+    unstable_JsPreload: true,
     dangerousAsPath: router.asPath,
     ampState: undefined,
     props,
@@ -822,20 +829,13 @@ export async function render({
   });
   // __NEXT_BODY_RENDER_TARGET__
   html = appendNextBody(html, docProps.html);
-
+  html = html
+    .replaceAll('"/_next/http://', '"http://')
+    .replaceAll('"/_next/https://', '"https://');
   if (responseHeaders) {
-    return new Response(
-      html
-        .replaceAll("/_next/http://", "http://")
-        .replaceAll("/_next/https://", "https://"),
-      { headers: responseHeaders }
-    );
+    return new Response(html, { headers: responseHeaders });
   } else {
-    return new Response(
-      html
-        .replaceAll("/_next/http://", "http://")
-        .replaceAll("/_next/https://", "https://")
-    );
+    return new Response(html);
   }
 }
 

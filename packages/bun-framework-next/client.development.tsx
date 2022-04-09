@@ -41,8 +41,6 @@ import {
   createRouter,
   makePublicRouterInstance,
 } from "next/dist/client/router";
-import { packageVersion } from "macro:./packageVersion";
-import NextHead from "next/head";
 
 export const emitter: MittEmitter<string> = mitt();
 
@@ -63,7 +61,6 @@ function nextDataFromBunData() {
   const {
     router: { routes, route, params: paramsList },
   } = globalThis.__BUN_DATA__;
-  const appStyles = globalThis.__BUN_APP_STYLES || [];
 
   const paramsMap = new Map();
   for (let i = 0; i < paramsList.keys.length; i++) {
@@ -79,19 +76,8 @@ function nextDataFromBunData() {
   Object.assign(params, Object.fromEntries(paramsMap.entries()));
 
   const pages = routes.keys.reduce((acc, routeName, i) => {
-    if (!routes.values[i].startsWith("/_next/")) {
-      routes.values[i] =
-        "/_next/" +
-        routes.values[i].substring(routes.values[i].startsWith("/") ? 1 : 0);
-    }
-
     const routePath = routes.values[i];
-    if (routeName === "/_app" && appStyles.length) {
-      acc[routeName] = [routePath, ...appStyles];
-    } else {
-      acc[routeName] = [routePath];
-    }
-
+    acc[routeName] = [routePath];
     return acc;
   }, {});
 
@@ -121,11 +107,6 @@ const nextDataTag = document.getElementById("__NEXT_DATA__");
 const data: NEXT_DATA & { pages: Record<string, string[]> } = nextDataTag
   ? JSON.parse(document.getElementById("__NEXT_DATA__")!.textContent!)
   : nextDataFromBunData();
-
-var headManager: {
-  mountedInstances: Set<unknown>;
-  updateHead: (head: JSX.Element[]) => void;
-} = initHeadManager();
 
 window.__NEXT_DATA__ = data;
 
@@ -161,33 +142,19 @@ if (hasBasePath(asPath)) {
   asPath = delBasePath(asPath);
 }
 
-window.__DEV_PAGES_MANIFEST = pages;
 export const pageLoader: PageLoader = new PageLoader(buildId, prefix, pages);
+
+const headManager: {
+  mountedInstances: Set<unknown>;
+  updateHead: (head: JSX.Element[]) => void;
+} = initHeadManager();
 
 export let router: Router;
 
 let CachedApp: AppComponent = null;
-var ranBoot = false;
+
 export default function boot(EntryPointNamespace) {
-  if (ranBoot) return;
-  ranBoot = true;
-  switch (document.readyState) {
-    case "loading": {
-      document.addEventListener(
-        "DOMContentLoaded",
-        () => boot(EntryPointNamespace),
-        {
-          once: true,
-          passive: true,
-        }
-      );
-      break;
-    }
-    case "interactive":
-    case "complete": {
-      return _boot(EntryPointNamespace, false);
-    }
-  }
+  _boot(EntryPointNamespace, false);
 }
 
 class Container extends React.Component<{
@@ -313,9 +280,7 @@ class BootError extends Error {
 }
 
 export async function _boot(EntryPointNamespace, isError) {
-  NextRouteLoader.getClientBuildManifest = () => {
-    return Promise.resolve({});
-  };
+  NextRouteLoader.getClientBuildManifest = () => Promise.resolve({});
 
   const PageComponent = EntryPointNamespace.default;
 
@@ -326,7 +291,6 @@ export async function _boot(EntryPointNamespace, isError) {
   // @ts-expect-error
   CachedApp = NextApp;
   CachedComponent = PageComponent;
-  const styleSheets = [];
 
   if (appScripts && appScripts.length > 0) {
     let appSrc;
@@ -338,7 +302,6 @@ export async function _boot(EntryPointNamespace, isError) {
     }
 
     if (appSrc) {
-      const initialHeadCount = document?.head?.children?.length ?? 0;
       const AppModule = await import(appSrc);
 
       console.assert(
@@ -349,49 +312,8 @@ export async function _boot(EntryPointNamespace, isError) {
       if ("default" in AppModule) {
         CachedApp = AppModule.default;
       }
-
-      if (pageLoader.cssQueue.length > 0) {
-        await Promise.allSettled(pageLoader.cssQueue.slice());
-        pageLoader.cssQueue.length = 0;
-      }
-
-      const newCount = document?.head?.children?.length ?? 0;
-      if (newCount > initialHeadCount && newCount > 1) {
-        // Move any <App />-inserted nodes to the beginning, preserving the order
-        // This way if there are stylesheets they appear in the expected order
-        var firstNonMetaTag = document.head.children.length;
-
-        for (let i = 0; i < document.head.childNodes.length; i++) {
-          if (document.head.children[i].tagName !== "META") {
-            firstNonMetaTag = i;
-            break;
-          }
-        }
-
-        if (firstNonMetaTag !== document.head.children.length) {
-          outer: for (let i = newCount - 1; i > initialHeadCount - 1; i--) {
-            const node = document.head.children[i];
-            if (
-              node.tagName === "LINK" &&
-              node.hasAttribute("href") &&
-              node.href
-            ) {
-              const normalized = new URL(node.href, location.origin).href;
-              for (let script of appScripts) {
-                if (new URL(script, location.origin).href === normalized)
-                  continue outer;
-              }
-
-              appScripts.push(normalized);
-            }
-            styleSheets.push(node);
-          }
-        }
-      }
     }
   }
-
-  headManager = initHeadManager();
 
   router = createRouter(page, query, asPath, {
     initialProps: hydrateProps,
@@ -434,27 +356,12 @@ export async function _boot(EntryPointNamespace, isError) {
     domEl = nextEl;
   }
 
-  const StylePreserver = () => {
-    React.useEffect(() => {
-      for (let i = 0; i < styleSheets.length; i++) {
-        if (!document.head.contains(styleSheets[i])) {
-          document.head.appendChild(styleSheets[i]);
-        }
-      }
-    }, []);
-
-    return null;
-  };
-
   const reactEl = (
-    <>
-      <TopLevelRender
-        App={CachedApp}
-        Component={PageComponent}
-        props={hydrateProps}
-      />
-      <StylePreserver />
-    </>
+    <TopLevelRender
+      App={CachedApp}
+      Component={PageComponent}
+      props={hydrateProps}
+    />
   );
 
   if (USE_REACT_18) {
@@ -529,7 +436,7 @@ export function renderError(e) {
 }
 
 globalThis.next = {
-  version: packageVersion("next"),
+  version: "12.0.4",
   emitter,
   render,
   renderError,

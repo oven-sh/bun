@@ -4,8 +4,8 @@
   "main": "index.js",
   "dependencies": {
     "next": "^12.1.0",
-    "react": "^18",
-    "react-dom": "^18",
+    "react": "^17",
+    "react-dom": "^17",
     "react-is": "^17.0.2"
   },
   "devDependencies": {

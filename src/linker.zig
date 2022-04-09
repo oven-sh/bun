@@ -195,6 +195,18 @@ pub const Linker = struct {
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         comptime ignore_runtime: bool,
     ) !void {
+        return linkAllowImportingFromBundle(linker, file_path, result, origin, import_path_format, ignore_runtime, true);
+    }
+
+    pub fn linkAllowImportingFromBundle(
+        linker: *ThisLinker,
+        file_path: Fs.Path,
+        result: *_bundler.ParseResult,
+        origin: URL,
+        comptime import_path_format: Options.BundleOptions.ImportPathFormat,
+        comptime ignore_runtime: bool,
+        comptime allow_import_from_bundle: bool,
+    ) !void {
         const source_dir = file_path.sourceDir();
         var externals = std.ArrayList(u32).init(linker.allocator);
         var needs_bundle = false;
@@ -293,34 +305,36 @@ pub const Linker = struct {
                         }
                     }
 
-                    if (linker.options.node_modules_bundle) |node_modules_bundle| {
-                        if (Resolver.isPackagePath(import_record.path.text)) {
-                            const text = import_record.path.text;
+                    if (comptime allow_import_from_bundle) {
+                        if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                            if (Resolver.isPackagePath(import_record.path.text)) {
+                                const text = import_record.path.text;
 
-                            var package_name = text;
-                            if (text[0] == '@') {
-                                if (std.mem.indexOfScalar(u8, text, '/')) |i| {
-                                    if (std.mem.indexOfScalar(u8, text[i + 1 ..], '/')) |j| {
-                                        package_name = text[0 .. i + 1 + j];
+                                var package_name = text;
+                                if (text[0] == '@') {
+                                    if (std.mem.indexOfScalar(u8, text, '/')) |i| {
+                                        if (std.mem.indexOfScalar(u8, text[i + 1 ..], '/')) |j| {
+                                            package_name = text[0 .. i + 1 + j];
+                                        }
+                                    }
+                                } else {
+                                    if (std.mem.indexOfScalar(u8, text, '/')) |i| {
+                                        package_name = text[0..i];
                                     }
                                 }
-                            } else {
-                                if (std.mem.indexOfScalar(u8, text, '/')) |i| {
-                                    package_name = text[0..i];
-                                }
-                            }
-                            if (package_name.len != text.len) {
-                                if (node_modules_bundle.getPackage(package_name)) |pkg| {
-                                    const import_path = text[@minimum(text.len, package_name.len + 1)..];
-                                    if (node_modules_bundle.findModuleIDInPackageIgnoringExtension(pkg, import_path)) |found_module| {
-                                        import_record.is_bundled = true;
-                                        node_module_bundle_import_path = node_module_bundle_import_path orelse
-                                            linker.nodeModuleBundleImportPath(origin);
+                                if (package_name.len != text.len) {
+                                    if (node_modules_bundle.getPackage(package_name)) |pkg| {
+                                        const import_path = text[@minimum(text.len, package_name.len + 1)..];
+                                        if (node_modules_bundle.findModuleIDInPackageIgnoringExtension(pkg, import_path)) |found_module| {
+                                            import_record.is_bundled = true;
+                                            node_module_bundle_import_path = node_module_bundle_import_path orelse
+                                                linker.nodeModuleBundleImportPath(origin);
 
-                                        import_record.path.text = node_module_bundle_import_path.?;
-                                        import_record.module_id = node_modules_bundle.bundle.modules[found_module].id;
-                                        needs_bundle = true;
-                                        continue :outer;
+                                            import_record.path.text = node_module_bundle_import_path.?;
+                                            import_record.module_id = node_modules_bundle.bundle.modules[found_module].id;
+                                            needs_bundle = true;
+                                            continue :outer;
+                                        }
                                     }
                                 }
                             }
@@ -332,21 +346,23 @@ pub const Linker = struct {
                             else => {},
                             // for fast refresh, attempt to read the version directly from the bundle instead of resolving it
                             .react_refresh => {
-                                if (linker.options.node_modules_bundle) |node_modules_bundle| {
-                                    const runtime = linker.options.jsx.refresh_runtime;
-                                    const package_name = runtime[0 .. strings.indexOfChar(runtime, '/') orelse runtime.len];
+                                if (comptime allow_import_from_bundle) {
+                                    if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                                        const runtime = linker.options.jsx.refresh_runtime;
+                                        const package_name = runtime[0 .. strings.indexOfChar(runtime, '/') orelse runtime.len];
 
-                                    if (node_modules_bundle.getPackage(package_name)) |pkg| {
-                                        const import_path = runtime[@minimum(runtime.len, package_name.len + 1)..];
-                                        if (node_modules_bundle.findModuleInPackage(pkg, import_path)) |found_module| {
-                                            import_record.is_bundled = true;
-                                            node_module_bundle_import_path = node_module_bundle_import_path orelse
-                                                linker.nodeModuleBundleImportPath(origin);
+                                        if (node_modules_bundle.getPackage(package_name)) |pkg| {
+                                            const import_path = runtime[@minimum(runtime.len, package_name.len + 1)..];
+                                            if (node_modules_bundle.findModuleInPackage(pkg, import_path)) |found_module| {
+                                                import_record.is_bundled = true;
+                                                node_module_bundle_import_path = node_module_bundle_import_path orelse
+                                                    linker.nodeModuleBundleImportPath(origin);
 
-                                            import_record.path.text = node_module_bundle_import_path.?;
-                                            import_record.module_id = found_module.id;
-                                            needs_bundle = true;
-                                            continue :outer;
+                                                import_record.path.text = node_module_bundle_import_path.?;
+                                                import_record.module_id = found_module.id;
+                                                needs_bundle = true;
+                                                continue :outer;
+                                            }
                                         }
                                     }
                                 }
@@ -390,54 +406,56 @@ pub const Linker = struct {
 
                         const loader = linker.options.loader(path.name.ext);
                         if (loader.isJavaScriptLikeOrJSON()) {
-                            bundled: {
-                                if (linker.options.node_modules_bundle) |node_modules_bundle| {
-                                    const package_json = resolved_import.package_json orelse break :bundled;
-                                    const package_base_dir = package_json.source.path.sourceDir();
-                                    if (node_modules_bundle.getPackageIDByHash(package_json.hash)) |pkg_id| {
-                                        const package = node_modules_bundle.bundle.packages[pkg_id];
+                            if (comptime allow_import_from_bundle) {
+                                bundled: {
+                                    if (linker.options.node_modules_bundle) |node_modules_bundle| {
+                                        const package_json = resolved_import.package_json orelse break :bundled;
+                                        const package_base_dir = package_json.source.path.sourceDir();
+                                        if (node_modules_bundle.getPackageIDByHash(package_json.hash)) |pkg_id| {
+                                            const package = node_modules_bundle.bundle.packages[pkg_id];
 
-                                        if (comptime Environment.isDebug) {
-                                            std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
-                                            std.debug.assert(strings.eql(node_modules_bundle.str(package.version), package_json.version));
-                                        }
+                                            if (comptime Environment.isDebug) {
+                                                std.debug.assert(strings.eql(node_modules_bundle.str(package.name), package_json.name));
+                                                std.debug.assert(strings.eql(node_modules_bundle.str(package.version), package_json.version));
+                                            }
 
-                                        const package_relative_path = linker.fs.relative(
-                                            package_base_dir,
-                                            if (!strings.eqlComptime(path.namespace, "node")) path.pretty else path.text,
-                                        );
-
-                                        const found_module = node_modules_bundle.findModuleInPackage(&package, package_relative_path) orelse {
-                                            // linker.log.addErrorFmt(
-                                            //     null,
-                                            //     logger.Loc.Empty,
-                                            //     linker.allocator,
-                                            //     "New dependency import: \"{s}/{s}\"\nPlease run `bun bun` to update the .bun.",
-                                            //     .{
-                                            //         package_json.name,
-                                            //         package_relative_path,
-                                            //     },
-                                            // ) catch {};
-                                            break :bundled;
-                                        };
-
-                                        if (comptime Environment.isDebug) {
-                                            const module_path = node_modules_bundle.str(found_module.path);
-                                            std.debug.assert(
-                                                strings.eql(
-                                                    module_path,
-                                                    package_relative_path,
-                                                ),
+                                            const package_relative_path = linker.fs.relative(
+                                                package_base_dir,
+                                                if (!strings.eqlComptime(path.namespace, "node")) path.pretty else path.text,
                                             );
-                                        }
 
-                                        import_record.is_bundled = true;
-                                        node_module_bundle_import_path = node_module_bundle_import_path orelse
-                                            linker.nodeModuleBundleImportPath(origin);
-                                        import_record.path.text = node_module_bundle_import_path.?;
-                                        import_record.module_id = found_module.id;
-                                        needs_bundle = true;
-                                        continue;
+                                            const found_module = node_modules_bundle.findModuleInPackage(&package, package_relative_path) orelse {
+                                                // linker.log.addErrorFmt(
+                                                //     null,
+                                                //     logger.Loc.Empty,
+                                                //     linker.allocator,
+                                                //     "New dependency import: \"{s}/{s}\"\nPlease run `bun bun` to update the .bun.",
+                                                //     .{
+                                                //         package_json.name,
+                                                //         package_relative_path,
+                                                //     },
+                                                // ) catch {};
+                                                break :bundled;
+                                            };
+
+                                            if (comptime Environment.isDebug) {
+                                                const module_path = node_modules_bundle.str(found_module.path);
+                                                std.debug.assert(
+                                                    strings.eql(
+                                                        module_path,
+                                                        package_relative_path,
+                                                    ),
+                                                );
+                                            }
+
+                                            import_record.is_bundled = true;
+                                            node_module_bundle_import_path = node_module_bundle_import_path orelse
+                                                linker.nodeModuleBundleImportPath(origin);
+                                            import_record.path.text = node_module_bundle_import_path.?;
+                                            import_record.module_id = found_module.id;
+                                            needs_bundle = true;
+                                            continue;
+                                        }
                                     }
                                 }
                             }

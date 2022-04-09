@@ -484,7 +484,7 @@ const ImportVariant = enum {
         };
     }
 
-    pub fn determine(record: *const importRecord.ImportRecord, _: *const Symbol, s_import: *const S.Import) ImportVariant {
+    pub fn determine(record: *const importRecord.ImportRecord, s_import: *const S.Import) ImportVariant {
         var variant = ImportVariant.path_only;
 
         if (record.contains_import_star) {
@@ -3883,7 +3883,15 @@ pub fn NewPrinter(
             const is_disabled = import_record.path.is_disabled;
             const module_id = import_record.module_id;
 
-            switch (ImportVariant.determine(&record, p.symbols.get(s.namespace_ref).?, s)) {
+            // If the bundled import was disabled and only imported for side effects
+            // we can skip it
+
+            if (record.path.is_disabled) {
+                if (p.symbols.get(s.namespace_ref) == null)
+                    return;
+            }
+
+            switch (ImportVariant.determine(&record, s)) {
                 .path_only => {
                     if (!is_disabled) {
                         p.printCallModuleID(module_id);

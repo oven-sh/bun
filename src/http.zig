@@ -344,7 +344,15 @@ pub const RequestContext = struct {
                 bundler_parse_options,
                 @as(?*bundler.FallbackEntryPoint, &fallback_entry_point),
             )) |*result| {
-                try bundler_.linker.link(fallback_entry_point.source.path, result, this.origin, .absolute_url, false);
+                try bundler_.linker.linkAllowImportingFromBundle(
+                    fallback_entry_point.source.path,
+                    result,
+                    this.origin,
+                    .absolute_url,
+                    false,
+                    false,
+                );
+
                 var buffer_writer = try JSPrinter.BufferWriter.init(default_allocator);
                 var writer = JSPrinter.BufferPrinter.init(buffer_writer);
                 _ = try bundler_.print(
@@ -3316,7 +3324,7 @@ pub const Server = struct {
         const kinds = slice.items(.kind);
         const hashes = slice.items(.hash);
         var file_descriptors = slice.items(.fd);
-        var header = fbs.getWritten();
+        const header = fbs.getWritten();
         defer ctx.watcher.flushEvictions();
         defer Output.flush();
 

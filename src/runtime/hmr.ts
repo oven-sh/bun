@@ -1338,9 +1338,11 @@ if (typeof window !== "undefined") {
       // we cannot export new modules. we can only mutate existing ones.
 
       const oldGraphUsed = HMRModule.dependencies.graph_used;
-      var oldModule = HMRModule.dependencies.modules[this.module_index];
+      var oldModule =
+        HMRModule.dependencies.modules.length > this.module_index &&
+        HMRModule.dependencies.modules[this.module_index];
       HMRModule.dependencies = orig_deps.fork(this.module_index);
-      var blobURL = null;
+      var blobURL = "";
 
       // We inject the source map URL into the end of the file.
       // We do that here for a few reasons:
@@ -1366,6 +1368,8 @@ if (typeof window !== "undefined") {
         blobURL = URL.createObjectURL(blob);
         HMRModule.dependencies.blobToID.set(blobURL, this.module_id);
         await import(blobURL);
+        this.bytes = null;
+        URL.revokeObjectURL(blobURL);
         this.timings.import = performance.now() - importStart;
       } catch (exception) {
         HMRModule.dependencies = orig_deps;
@@ -1392,7 +1396,7 @@ if (typeof window !== "undefined") {
         // If we do import a new module, we have to do a full page reload for now
       }
 
-      URL.revokeObjectURL(blobURL);
+      blobURL = "";
       // Ensure we don't keep the bytes around longer than necessary
       this.bytes = null;
 

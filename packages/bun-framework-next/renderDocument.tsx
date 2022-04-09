@@ -112,9 +112,9 @@ function getScripts(files: DocumentFiles) {
   var entryPointIndex = -1;
   const scripts = [...normalScripts, ...lowPriorityScripts].map(
     (file, index) => {
-      if (file.includes(".entry.")) {
-        entryPointIndex = index;
-      }
+      // if (file.includes(".entry.")) {
+      //   entryPointIndex = index;
+      // }
 
       return (
         <script
@@ -128,10 +128,10 @@ function getScripts(files: DocumentFiles) {
       );
     }
   );
-  if (entryPointIndex > 0) {
-    const entry = scripts.splice(entryPointIndex, 1);
-    scripts.unshift(...entry);
-  }
+  // if (entryPointIndex > 0) {
+  //   const entry = scripts.splice(entryPointIndex, 1);
+  //   scripts.unshift(...entry);
+  // }
 
   return scripts;
 }
@@ -787,13 +787,13 @@ export async function render({
     },
     // Only enabled in production as development mode has features relying on HMR (style injection for example)
     // @ts-expect-error
-    unstable_runtimeJS: true,
+    unstable_runtimeJS: false,
     //   process.env.NODE_ENV === "production"
     //     ? pageConfig.unstable_runtimeJS
     //     : undefined,
     // unstable_JsPreload: pageConfig.unstable_JsPreload,
     // @ts-expect-error
-    unstable_JsPreload: true,
+    unstable_JsPreload: false,
     dangerousAsPath: router.asPath,
     ampState: undefined,
     props,

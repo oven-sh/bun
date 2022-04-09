@@ -1763,7 +1763,15 @@ pub const Bundler = struct {
 
                                         const resolved_import: *const _resolver.Result = _resolved_import;
 
-                                        const _module_data = BundledModuleData.getForceBundle(this, resolved_import) orelse unreachable;
+                                        const _module_data = BundledModuleData.getForceBundle(this, resolved_import) orelse {
+                                            // if a macro imports code that cannot be bundled
+                                            // we just silently disable it
+                                            // because...we need some kind of hook to say "don't bundle this"
+                                            import_record.path.is_disabled = true;
+                                            import_record.is_bundled = false;
+
+                                            continue;
+                                        };
                                         import_record.module_id = _module_data.module_id;
                                         std.debug.assert(import_record.module_id != 0);
                                         import_record.is_bundled = true;

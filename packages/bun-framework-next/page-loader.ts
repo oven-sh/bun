@@ -3,13 +3,13 @@ import NextPageLoader, {
 } from "next/dist/client/page-loader";
 import getAssetPathFromRoute from "next/dist/shared/lib/router/utils/get-asset-path-from-route";
 
-export function insertStyleSheet(url: string) {
+export function insertStyleSheet(url: string, isFallback: boolean = false) {
   if (document.querySelector(`link[href="${url}"]`)) {
     return Promise.resolve();
   }
 
   return new Promise((resolve, reject) => {
-    const link = document.createElement("link");
+    const link: HTMLLinkElement = document.createElement("link");
     link.rel = "stylesheet";
 
     // marking this resolve as void seems to break other things
@@ -17,6 +17,10 @@ export function insertStyleSheet(url: string) {
     link.onerror = reject;
 
     link.href = url;
+
+    if (isFallback) {
+      link.setAttribute("data-href", url);
+    }
 
     document.head.appendChild(link);
   });

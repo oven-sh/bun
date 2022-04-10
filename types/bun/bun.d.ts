@@ -1,3 +1,20 @@
+/**
+ *
+ * Bun.js runtime APIs
+ *
+ * @example
+ *
+ * ```js
+ * import {file} from 'bun';
+ *
+ * // Log the file to the console
+ * const input = await file('/path/to/file.txt').text();
+ * console.log(input);
+ * ```
+ *
+ * This module aliases `globalThis.Bun`.
+ *
+ */
 declare module "bun" {
   /**
    * Start a fast HTTP server.

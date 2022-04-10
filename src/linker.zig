@@ -265,6 +265,11 @@ pub const Linker = struct {
                             continue;
                         }
 
+                        if (strings.eqlComptime(import_record.path.text, "bun")) {
+                            import_record.tag = .bun;
+                            continue;
+                        }
+
                         if (strings.eqlComptime(import_record.path.text, "path") or strings.eqlComptime(import_record.path.text, "node:path")) {
                             import_record.path.text = "node:path";
                             externals.append(record_index) catch unreachable;
@@ -287,6 +292,7 @@ pub const Linker = struct {
                                 "vitest",
                             )) {
                                 import_record.path.namespace = "bun";
+                                import_record.tag = .bun_test;
                                 import_record.path.text = "test";
                                 continue;
                             }

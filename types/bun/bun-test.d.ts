@@ -1,6 +1,6 @@
 /**
  *
- * This isn't really designed for third-party usage yet
+ * This isn't really designed for third-party usage yet.
  * You can try it if you want though!
  *
  * To run the tests, run `bun wiptest`
@@ -16,6 +16,7 @@
  * $ bun wiptest file-name
  * ```
  */
+
 declare module "bun:test" {
   export function describe(label: string, body: () => {}): any;
   export function it(label: string, test: () => void | Promise<any>): any;

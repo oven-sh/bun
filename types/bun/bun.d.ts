@@ -1,4 +1,159 @@
 declare module "bun" {
+  /**
+   * Start a fast HTTP server.
+   *
+   * @param options Server options (port defaults to $PORT || 8080)
+   *
+   * -----
+   *
+   * @example
+   *
+   * ```ts
+   * Bun.serve({
+   *   fetch(req: Request): Response | Promise<Response> {
+   *     return new Response("Hello World!");
+   *   },
+   *
+   *   // Optional port number - the default value is 3000
+   *   port: process.env.PORT || 3000,
+   * });
+   * ```
+   * -----
+   *
+   * @example
+   *
+   * Send a file
+   *
+   * ```ts
+   * Bun.serve({
+   *   fetch(req: Request): Response | Promise<Response> {
+   *     return new Response(Bun.file("./package.json"));
+   *   },
+   *
+   *   // Optional port number - the default value is 3000
+   *   port: process.env.PORT || 3000,
+   * });
+   * ```
+   */
+  export function serve(options: Serve): void;
+
+  /**
+   * Synchronously resolve a `moduleId` as though it were imported from `parent`
+   *
+   * On failure, throws a `ResolveError`
+   */
+  // tslint:disable-next-line:unified-signatures
+  export function resolveSync(moduleId: string, parent: string): string;
+
+  /**
+   * Resolve a `moduleId` as though it were imported from `parent`
+   *
+   * On failure, throws a `ResolveError`
+   *
+   * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
+   */
+  // tslint:disable-next-line:unified-signatures
+  export function resolve(moduleId: string, parent: string): Promise<string>;
+
+  /**
+   *
+   * Use the fastest syscalls available to copy from `input` into `destination`.
+   *
+   * If `destination` exists, it must be a regular file or symlink to a file.
+   *
+   * @param destination The file or file path to write to
+   * @param input The data to copy into `destination`.
+   * @returns A promise that resolves with the number of bytes written.
+   */
+  // tslint:disable-next-line:unified-signatures
+  export function write(
+    destination: FileBlob | PathLike,
+    input: Blob | TypedArray | string | BlobPart[]
+  ): Promise<number>;
+
+  /**
+   *
+   * Persist a {@link Response} body to disk.
+   *
+   * @param destination The file to write to. If the file doesn't exist,
+   * it will be created and if the file does exist, it will be
+   * overwritten. If `input`'s size is less than `destination`'s size,
+   * `destination` will be truncated.
+   * @param input - `Response` object
+   * @returns A promise that resolves with the number of bytes written.
+   */
+  export function write(
+    destination: FileBlob,
+    input: Response
+  ): Promise<number>;
+
+  /**
+   *
+   * Persist a {@link Response} body to disk.
+   *
+   * @param destinationPath The file path to write to. If the file doesn't
+   * exist, it will be created and if the file does exist, it will be
+   * overwritten. If `input`'s size is less than `destination`'s size,
+   * `destination` will be truncated.
+   * @param input - `Response` object
+   * @returns A promise that resolves with the number of bytes written.
+   */
+  // tslint:disable-next-line:unified-signatures
+  export function write(
+    destinationPath: PathLike,
+    input: Response
+  ): Promise<number>;
+
+  /**
+   *
+   * Use the fastest syscalls available to copy from `input` into `destination`.
+   *
+   * If `destination` exists, it must be a regular file or symlink to a file.
+   *
+   * On Linux, this uses `copy_file_range`.
+   *
+   * On macOS, when the destination doesn't already exist, this uses
+   * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
+   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
+   *
+   * @param destination The file to write to. If the file doesn't exist,
+   * it will be created and if the file does exist, it will be
+   * overwritten. If `input`'s size is less than `destination`'s size,
+   * `destination` will be truncated.
+   * @param input The file to copy from.
+   * @returns A promise that resolves with the number of bytes written.
+   */
+  // tslint:disable-next-line:unified-signatures
+  export function write(
+    destination: FileBlob,
+    input: FileBlob
+  ): Promise<number>;
+
+  /**
+   *
+   * Use the fastest syscalls available to copy from `input` into `destination`.
+   *
+   * If `destination` exists, it must be a regular file or symlink to a file.
+   *
+   * On Linux, this uses `copy_file_range`.
+   *
+   * On macOS, when the destination doesn't already exist, this uses
+   * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
+   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
+   *
+   * @param destinationPath The file path to write to. If the file doesn't
+   * exist, it will be created and if the file does exist, it will be
+   * overwritten. If `input`'s size is less than `destination`'s size,
+   * `destination` will be truncated.
+   * @param input The file to copy from.
+   * @returns A promise that resolves with the number of bytes written.
+   */
+  // tslint:disable-next-line:unified-signatures
+  export function write(
+    destinationPath: PathLike,
+    input: FileBlob
+  ): Promise<number>;
+
   export interface SystemError extends Error {
     errno?: number | undefined;
     code?: string | undefined;
@@ -390,160 +545,6 @@ declare module "bun" {
     };
 
   export type Serve = SSLServeOptions | ServeOptions;
-  /**
-   * Start a fast HTTP server.
-   *
-   * @param options Server options (port defaults to $PORT || 8080)
-   *
-   * -----
-   *
-   * @example
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response("Hello World!");
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   * -----
-   *
-   * @example
-   *
-   * Send a file
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response(Bun.file("./package.json"));
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   */
-  export function serve(options: Serve): void;
-
-  /**
-   *
-   * Use the fastest syscalls available to copy from `input` into `destination`.
-   *
-   * If `destination` exists, it must be a regular file or symlink to a file.
-   *
-   * @param destination The file or file path to write to
-   * @param input The data to copy into `destination`.
-   * @returns A promise that resolves with the number of bytes written.
-   */
-  // tslint:disable-next-line:unified-signatures
-  export function write(
-    destination: FileBlob | PathLike,
-    input: Blob | TypedArray | string | BlobPart[]
-  ): Promise<number>;
-
-  /**
-   *
-   * Persist a {@link Response} body to disk.
-   *
-   * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input - `Response` object
-   * @returns A promise that resolves with the number of bytes written.
-   */
-  export function write(
-    destination: FileBlob,
-    input: Response
-  ): Promise<number>;
-
-  /**
-   *
-   * Persist a {@link Response} body to disk.
-   *
-   * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input - `Response` object
-   * @returns A promise that resolves with the number of bytes written.
-   */
-  // tslint:disable-next-line:unified-signatures
-  export function write(
-    destinationPath: PathLike,
-    input: Response
-  ): Promise<number>;
-
-  /**
-   *
-   * Use the fastest syscalls available to copy from `input` into `destination`.
-   *
-   * If `destination` exists, it must be a regular file or symlink to a file.
-   *
-   * On Linux, this uses `copy_file_range`.
-   *
-   * On macOS, when the destination doesn't already exist, this uses
-   * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
-   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
-   *
-   * @param destination The file to write to. If the file doesn't exist,
-   * it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input The file to copy from.
-   * @returns A promise that resolves with the number of bytes written.
-   */
-  // tslint:disable-next-line:unified-signatures
-  export function write(
-    destination: FileBlob,
-    input: FileBlob
-  ): Promise<number>;
-
-  /**
-   *
-   * Use the fastest syscalls available to copy from `input` into `destination`.
-   *
-   * If `destination` exists, it must be a regular file or symlink to a file.
-   *
-   * On Linux, this uses `copy_file_range`.
-   *
-   * On macOS, when the destination doesn't already exist, this uses
-   * [`clonefile()`](https://www.manpagez.com/man/2/clonefile/) and falls
-   * back to [`fcopyfile()`](https://www.manpagez.com/man/2/fcopyfile/)
-   *
-   * @param destinationPath The file path to write to. If the file doesn't
-   * exist, it will be created and if the file does exist, it will be
-   * overwritten. If `input`'s size is less than `destination`'s size,
-   * `destination` will be truncated.
-   * @param input The file to copy from.
-   * @returns A promise that resolves with the number of bytes written.
-   */
-  // tslint:disable-next-line:unified-signatures
-  export function write(
-    destinationPath: PathLike,
-    input: FileBlob
-  ): Promise<number>;
-
-  /**
-   * Resolve a `moduleId` as though it were imported from `parent`
-   *
-   * On failure, throws a `ResolveError`
-   *
-   * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
-   */
-  // tslint:disable-next-line:unified-signatures
-  export function resolve(moduleId: string, parent: string): Promise<string>;
-
-  /**
-   * Synchronously resolve a `moduleId` as though it were imported from `parent`
-   *
-   * On failure, throws a `ResolveError`
-   */
-  // tslint:disable-next-line:unified-signatures
-  export function resolveSync(moduleId: string, parent: string): string;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.

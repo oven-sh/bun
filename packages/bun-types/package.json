@@ -1,16 +1,17 @@
 {
   "name": "bun-types",
-  "description": "Types for bun.js",
-  "homepage": "https://bun.sh",
-  "author": {
-    "name": "Jarred Sumner",
-    "email": "jarred@jarredsumner.com"
-  },
-  "repository": "https://github.com/jarred-sumner/bun",
-  "readme": "This package is a temporary workaround until https://github.com/DefinitelyTyped/DefinitelyTyped/pull/59670 is merged.",
-  "version": "0.0.76",
+  "version": "0.0.78",
+  "description": "Type definitions for bun.js",
   "types": "types.d.ts",
-  "scripts": {
-    "prepublishOnly": "cp ../../types/bun/bun.d.ts types.d.ts"
-  }
+  "files": [
+    "types.d.ts"
+  ],
+  "private": false,
+  "keywords": [
+    "bun",
+    "bun.js",
+    "types"
+  ],
+  "repository": "https://github.com/Jarred-Sumner/bun",
+  "homepage": "https://bun.sh"
 }

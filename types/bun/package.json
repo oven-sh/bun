@@ -1,4 +1,4 @@
 {
   "name": "bun",
-  "types": "./bun.d.ts"
+  "types": "index.d.ts"
 }

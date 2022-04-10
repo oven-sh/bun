@@ -1,0 +1,8 @@
+// Type definitions for bun 0.0
+// Project: https://github.com/Jarred-Sumner/bun
+// Definitions by: Jarred Sumner <https://github.com/Jarred-Sumner>
+// Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
+/// <reference no-default-lib="true" />
+/// <reference lib="esnext" />
+
+// This file is bundled so that your TypeScript editor integration loads it faster.

@@ -259,7 +259,23 @@ pub const Linker = struct {
                     }
 
                     if (linker.options.platform.isBun()) {
-                        if (strings.eqlComptime(import_record.path.text, "fs") or strings.eqlComptime(import_record.path.text, "node:fs")) {
+                        if (import_record.path.text.len > 5 and strings.eqlComptime(import_record.path.text[0.."node:".len], "node:")) {
+                            const is_fs = strings.eqlComptime(import_record.path.text[5..], "fs");
+                            const is_path = strings.eqlComptime(import_record.path.text[5..], "path");
+                            if (is_path) {
+                                import_record.path.text = "node:fs";
+                                externals.append(record_index) catch unreachable;
+                                continue;
+                            }
+
+                            if (is_fs) {
+                                import_record.path.text = "node:path";
+                                externals.append(record_index) catch unreachable;
+                                continue;
+                            }
+                        }
+
+                        if (strings.eqlComptime(import_record.path.text, "fs")) {
                             import_record.path.text = "node:fs";
                             externals.append(record_index) catch unreachable;
                             continue;
@@ -270,13 +286,13 @@ pub const Linker = struct {
                             continue;
                         }
 
-                        if (strings.eqlComptime(import_record.path.text, "path") or strings.eqlComptime(import_record.path.text, "node:path")) {
+                        if (strings.eqlComptime(import_record.path.text, "path")) {
                             import_record.path.text = "node:path";
                             externals.append(record_index) catch unreachable;
                             continue;
                         }
 
-                        // if (strings.eqlComptime(import_record.path.text, "process") or strings.eqlComptime(import_record.path.text, "node:process")) {
+                        // if (strings.eqlComptime(import_record.path.text, "process")) {
                         //     import_record.path.text = "node:process";
                         //     externals.append(record_index) catch unreachable;
                         //     continue;
@@ -301,6 +317,9 @@ pub const Linker = struct {
                         if (import_record.path.text.len > 4 and strings.eqlComptime(import_record.path.text[0.."bun:".len], "bun:")) {
                             import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                             import_record.path.namespace = "bun";
+                            if (strings.eqlComptime(import_record.path.text, "test")) {
+                                import_record.tag = .bun_test;
+                            }
                             // don't link bun
                             continue;
                         }

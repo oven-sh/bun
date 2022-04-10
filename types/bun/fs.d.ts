@@ -10,16 +10,8 @@
  * forms, and are accessible using both CommonJS syntax and ES6 Modules (ESM).
  */
 declare module "fs" {
-  import type {
-    Buffer,
-    BufferEncoding,
-    BufferEncodingOption,
-    NoParamCallback,
-    PathLike,
-    PathOrFileDescriptor,
-    SystemError,
-    TimeLike,
-  } from "bun";
+  type Buffer = Uint8Array;
+  import type { SystemError } from "bun";
 
   interface ObjectEncodingOptions {
     encoding?: BufferEncoding | null | undefined;
@@ -919,7 +911,7 @@ declare module "fs" {
   function symlink(
     target: PathLike,
     path: PathLike,
-    type: symlink.Type | undefined | null,
+    type: "symlink" | "junction" | undefined | null,
     callback: NoParamCallback
   ): void;
   /**
@@ -957,7 +949,7 @@ declare module "fs" {
   function symlinkSync(
     target: PathLike,
     path: PathLike,
-    type?: symlink.Type | null
+    type?: "symlink" | "junction" | null
   ): void;
   /**
    * Reads the contents of the symbolic link referred to by `path`. The callback gets

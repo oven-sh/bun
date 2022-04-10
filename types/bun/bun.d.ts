@@ -1,3 +1,7 @@
+interface VoidFunction {
+  (): void;
+}
+
 /**
  *
  * Bun.js runtime APIs
@@ -176,10 +180,6 @@ declare module "bun" {
     code?: string | undefined;
     path?: string | undefined;
     syscall?: string | undefined;
-  }
-
-  interface VoidFunction {
-    (): void;
   }
 
   /**

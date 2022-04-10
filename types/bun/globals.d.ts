@@ -820,17 +820,6 @@ declare class ShadowRealm {
   evaluate(sourceText: string): any;
 }
 
-type TypedArray =
-  | Uint8Array
-  | Int8Array
-  | Uint8ClampedArray
-  | Int16Array
-  | Uint16Array
-  | Int32Array
-  | Uint32Array
-  | Float32Array
-  | Float64Array;
-
 interface Blob {
   /**
    * Read the contents of the [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) as a JSON object

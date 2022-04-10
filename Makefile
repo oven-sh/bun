@@ -348,6 +348,12 @@ bun:
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws
 
+prepare-types:
+	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) types/bun/bundle.ts packages/bun-types
+	echo "Generated types for $(PACKAGE_JSON_VERSION) in packages/bun-types"
+
+release-types:
+	cd packages/bun-types && npm publish
 
 lolhtml:
 	cd $(BUN_DEPS_DIR)/lol-html/ && cd $(BUN_DEPS_DIR)/lol-html/c-api && cargo build --release && cp target/release/liblolhtml.a $(BUN_DEPS_OUT_DIR)
@@ -440,10 +446,6 @@ dev-wasm: dev-build-obj-wasm
 		packages/debug-bun-freestanding-wasm32/bun-wasm.o $(OPTIMIZATION_LEVEL) --no-entry --allow-undefined  -s ASSERTIONS=0  -s ALLOW_MEMORY_GROWTH=1 -s WASM_BIGINT=1  \
 		-o packages/debug-bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/debug-bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
-
-bun-types-pkg:
-	rm -rf packages/bun-types/*.d.ts
-	cd packages/bun-types && $(NPM_CLIENT) run prepublishOnly
 
 build-obj-wasm: 
 	$(ZIG) build bun-wasm -Drelease-fast -Dtarget=wasm32-freestanding --prominent-compile-errors

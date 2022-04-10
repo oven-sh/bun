@@ -3388,7 +3388,7 @@ pub const Expr = struct {
             },
             // "!!!a" => "!a"
             .e_unary => |un| {
-                if (un.op == Op.Code.un_not and isBoolean(un.value)) {
+                if (un.op == Op.Code.un_not and knownPrimitive(un.value) == .boolean) {
                     return un.value;
                 }
             },

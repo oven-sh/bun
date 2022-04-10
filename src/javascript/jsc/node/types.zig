@@ -755,7 +755,15 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
         pub const Class = JSC.NewClass(
             This,
             .{ .name = name },
-            .{},
+            .{
+                .isFile = .{
+                    .rfn = JSC.wrap(This, "isFile", false),
+                },
+                .isDirectory = .{
+                    .rfn = JSC.wrap(This, "isDirectory", false),
+                },
+                .finalize = finalize,
+            },
             .{
                 .dev = .{
                     .get = JSC.To.JS.Getter(This, .dev),
@@ -885,6 +893,13 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
                 else
                     @intToEnum(Date, @intCast(u64, @maximum(stat_.birthtime().tv_sec, 0))),
             };
+        }
+
+        pub fn isFile(this: *Stats) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(os.mode_t, this.mode)));
+        }
+        pub fn isDirectory(this: *Stats) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(os.mode_t, this.mode)));
         }
 
         pub fn toJS(this: Stats, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {

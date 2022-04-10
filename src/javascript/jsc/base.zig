@@ -2788,9 +2788,9 @@ pub fn wrap(
                 return null;
             }
 
-            JavaScript.VirtualMachine.vm.tick();
+            if (comptime maybe_async) {
+                JavaScript.VirtualMachine.vm.tick();
 
-            if (maybe_async) {
                 var promise = JSC.JSInternalPromise.resolvedPromise(ctx.ptr(), result);
 
                 switch (promise.status(ctx.ptr().vm())) {

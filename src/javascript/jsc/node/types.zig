@@ -896,10 +896,10 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
         }
 
         pub fn isFile(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(os.mode_t, this.mode)));
+            return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.mode)));
         }
         pub fn isDirectory(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(os.mode_t, this.mode)));
+            return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.mode)));
         }
 
         pub fn toJS(this: Stats, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {

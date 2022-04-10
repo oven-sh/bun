@@ -1038,6 +1038,10 @@ class Foo {
   });
 
   describe("simplification", () => {
+    it("unary operator", () => {
+      expectPrinted("a = !(b, c)", "a = (b , !c)");
+    });
+
     it("constant folding", () => {
       expectPrinted("1 && 2", "2");
       expectPrinted("1 || 2", "1");

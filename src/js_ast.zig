@@ -3350,8 +3350,18 @@ pub const Expr = struct {
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(expr: *Expr, allocator: std.mem.Allocator) Expr {
-        return maybeSimplifyNot(expr, allocator) orelse expr.*;
+    pub fn not(expr: Expr, allocator: std.mem.Allocator) Expr {
+        return maybeSimplifyNot(
+            expr,
+            allocator,
+        ) orelse Expr.init(
+            E.Unary,
+            E.Unary{
+                .op = .un_not,
+                .value = expr,
+            },
+            expr.loc,
+        );
     }
 
     pub fn hasValueForThisInCall(expr: Expr) bool {
@@ -3366,7 +3376,7 @@ pub const Expr = struct {
     /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
     /// It's separate from "Not()" above to avoid allocation on failure in case
     /// that is undesired.
-    pub fn maybeSimplifyNot(expr: *Expr, allocator: std.mem.Allocator) ?Expr {
+    pub fn maybeSimplifyNot(expr: Expr, allocator: std.mem.Allocator) ?Expr {
         switch (expr.data) {
             .e_null, .e_undefined => {
                 return expr.at(E.Boolean, E.Boolean{ .value = true }, allocator);
@@ -3399,24 +3409,29 @@ pub const Expr = struct {
                 // NaN (or undefined, or null, or possibly other problem cases too).
                 switch (ex.op) {
                     Op.Code.bin_loose_eq => {
+                        // "!(a == b)" => "a != b"
                         ex.op = .bin_loose_ne;
-                        return expr.*;
+                        return expr;
                     },
                     Op.Code.bin_loose_ne => {
+                        // "!(a != b)" => "a == b"
                         ex.op = .bin_loose_eq;
-                        return expr.*;
+                        return expr;
                     },
                     Op.Code.bin_strict_eq => {
+                        // "!(a === b)" => "a !== b"
                         ex.op = .bin_strict_ne;
-                        return expr.*;
+                        return expr;
                     },
                     Op.Code.bin_strict_ne => {
+                        // "!(a !== b)" => "a === b"
                         ex.op = .bin_strict_eq;
-                        return expr.*;
+                        return expr;
                     },
                     Op.Code.bin_comma => {
+                        // "!(a, b)" => "a, !b"
                         ex.right = ex.right.not(allocator);
-                        return expr.*;
+                        return expr;
                     },
                     else => {},
                 }

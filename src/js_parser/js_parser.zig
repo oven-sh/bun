@@ -12892,6 +12892,8 @@ fn NewParser_(
 
                             switch (e_.op) {
                                 .un_not => {
+                                    e_.value = SideEffects.simplifyBoolean(p, e_.value);
+
                                     const side_effects = SideEffects.toBoolean(e_.value.data);
                                     if (side_effects.ok) {
                                         return p.e(E.Boolean{ .value = !side_effects.value }, expr.loc);
@@ -12932,6 +12934,31 @@ fn NewParser_(
                                     // TODO: private fields
                                 },
                                 else => {},
+                            }
+
+                            // "-(a, b)" => "a, -b"
+                            if (switch (e_.op) {
+                                .un_delete, .un_typeof => false,
+                                else => true,
+                            }) {
+                                switch (e_.value.data) {
+                                    .e_binary => |comma| {
+                                        if (comma.op == .bin_comma) {
+                                            return Expr.joinWithComma(
+                                                comma.left,
+                                                p.e(
+                                                    E.Unary{
+                                                        .op = e_.op,
+                                                        .value = comma.right,
+                                                    },
+                                                    comma.right.loc,
+                                                ),
+                                                p.allocator,
+                                            );
+                                        }
+                                    },
+                                    else => {},
+                                }
                             }
                         },
                     }

@@ -637,17 +637,25 @@ pub fn NewPrinter(
         }
 
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
-            p.print("const ");
+            printInternalBunImport(p, import, "globalThis.Bun.jest(import.meta.path)");
+        }
+
+        fn printGlobalBunImportStatement(p: *Printer, import: S.Import) void {
+            printInternalBunImport(p, import, "globalThis.Bun");
+        }
+
+        fn printInternalBunImport(p: *Printer, import: S.Import, comptime statement: anytype) void {
+            p.print("var ");
 
             if (import.star_name_loc != null) {
                 p.printSymbol(import.namespace_ref);
                 p.printSpace();
                 p.print("=");
                 p.printSpaceBeforeIdentifier();
-                p.print("Bun.jest(import.meta.path)");
+                p.print(statement);
                 p.printSemicolonAfterStatement();
                 p.printIndent();
-                p.print("const ");
+                p.print("var ");
             }
 
             if (import.items.len > 0) {
@@ -687,7 +695,7 @@ pub fn NewPrinter(
                 }
 
                 if (import.star_name_loc == null) {
-                    p.print("} = Bun.jest(import.meta.path)");
+                    p.print("} = " ++ statement);
                 } else {
                     p.print("} =");
                     p.printSpaceBeforeIdentifier();
@@ -3578,9 +3586,20 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
-                    if (record.path.isBun() and strings.eqlComptime(record.path.text, "test")) {
-                        p.printBunJestImportStatement(s.*);
-                        return;
+                    if (comptime is_bun_platform) {
+                        if (record.tag != .none) {
+                            switch (record.tag) {
+                                .bun_test => {
+                                    p.printBunJestImportStatement(s.*);
+                                    return;
+                                },
+                                .bun => {
+                                    p.printGlobalBunImportStatement(s.*);
+                                    return;
+                                },
+                                else => {},
+                            }
+                        }
                     }
 
                     if (is_inside_bundle) {

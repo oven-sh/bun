@@ -149,6 +149,8 @@ pub const ImportRecord = struct {
         react_refresh,
         jsx_import,
         jsx_classic,
+        bun,
+        bun_test,
     };
 
     pub const PrintMode = enum {

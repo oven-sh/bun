@@ -31,8 +31,10 @@ namespace WebCore {
 
 #define DOM_EVENT_NAMES_FOR_EACH(macro) \
     macro(error)                        \
-        macro(abort)
-//
+        macro(abort)                    \
+            macro(unhandledrejection)   \
+                macro(message)
+// end of DOM_EVENT_NAMES_FOR_EACH
 
 // macro(DOMActivate) \
     // macro(DOMCharacterDataModified) \

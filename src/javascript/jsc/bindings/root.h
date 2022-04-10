@@ -78,4 +78,7 @@
 #define WTF_MAKE_ISO_ALLOCATED_EXPORT(className, a) WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(className);
 
 #define WTF_MAKE_ISO_ALLOCATED_IMPL(className)
+
+#define JSC_NOT_IMPLEMENTED_GETTER_BODY return JSC::JSValue::encode(JSC::jsUndefined())
+
 #endif

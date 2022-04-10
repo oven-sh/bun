@@ -1,0 +1,75 @@
+/*
+ * Copyright (C) 2006-2009, 2013, 1016 Apple Inc. All rights reserved.
+ * Copyright (C) 2011 Google Inc. All rights reserved.
+ * Copyright (C) 2013 Samsung Electronics. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// FIXME: This should include SVGImageElement.
+typedef (HTMLImageElement
+#if defined(ENABLE_VIDEO) && ENABLE_VIDEO
+    or HTMLVideoElement
+#endif
+    or HTMLCanvasElement
+    or ImageBitmap
+#if defined(ENABLE_OFFSCREEN_CANVAS) && ENABLE_OFFSCREEN_CANVAS
+    or OffscreenCanvas
+#endif
+#if defined(ENABLE_CSS_TYPED_OM) && ENABLE_CSS_TYPED_OM
+    or CSSStyleImageValue
+#endif
+) CanvasImageSource;
+
+typedef (CanvasImageSource or Blob or ImageData) ImageBitmapSource;
+
+// https://html.spec.whatwg.org/multipage/webappapis.html#windoworworkerglobalscope-mixin
+interface mixin WindowOrWorkerGlobalScope {
+    [Replaceable] readonly attribute USVString origin;
+    readonly attribute boolean isSecureContext;
+
+    [EnabledBySetting=CrossOriginOpenerPolicyEnabled] readonly attribute boolean crossOriginIsolated;
+
+    [CallWith=RelevantGlobalObject] undefined reportError(any error);
+
+    // Base64 utility methods.
+    DOMString atob(DOMString string);
+    DOMString btoa(DOMString string);
+
+    // Timers.
+    // FIXME: This should take a TimerHandler (a.k.a. (DOMString or Function)) rather than a ScheduledAction.
+    long setTimeout(ScheduledAction handler, optional long timeout = 0, any... arguments);
+    undefined clearTimeout(optional long handle = 0);
+    // FIXME: This should take a TimerHandler (a.k.a. (DOMString or Function)) rather than a ScheduledAction.
+    long setInterval(ScheduledAction handler, optional long timeout = 0, any... arguments);
+    undefined clearInterval(optional long handle = 0);
+
+    // microtask queuing.
+    [Custom] undefined queueMicrotask(VoidCallback callback);
+
+    // ImageBitmap.
+    [EnabledAtRuntime=ImageBitmapEnabled] Promise<ImageBitmap> createImageBitmap(ImageBitmapSource image, optional ImageBitmapOptions options);
+    [EnabledAtRuntime=ImageBitmapEnabled] Promise<ImageBitmap> createImageBitmap(ImageBitmapSource image, long sx, long sy, long sw, long sh, optional ImageBitmapOptions options);
+
+    // structured cloning
+    [CallWith=CurrentGlobalObject&RelevantGlobalObject] any structuredClone(any value, optional StructuredSerializeOptions options);
+};

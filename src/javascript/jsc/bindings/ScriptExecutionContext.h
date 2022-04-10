@@ -1,7 +1,6 @@
 #pragma once
 
 #include "root.h"
-#include "ActiveDOMObject.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -65,12 +64,37 @@ public:
     bool isDocument() { return false; }
     bool isWorkerGlobalScope() { return true; }
     bool isJSExecutionForbidden() { return false; }
+
+    EventLoopTaskGroup& eventLoop() { return m_eventLoop; }
+
     void reportException(const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL, JSC::Exception* exception, RefPtr<void*>&&, CachedScript* = nullptr, bool = false)
     {
     }
-    // void reportUnhandledPromiseRejection(JSC::JSGlobalObject&, JSC::JSPromise&, RefPtr<Inspector::ScriptCallStack>&&)
-    // {
-    // }
+    void reportUnhandledPromiseRejection(JSC::JSGlobalObject&, JSC::JSPromise&, RefPtr<Inspector::ScriptCallStack>&&)
+    {
+    }
+    // Called from the constructor and destructors of ActiveDOMObject.
+    void didCreateActiveDOMObject(ActiveDOMObject&);
+    void willDestroyActiveDOMObject(ActiveDOMObject&);
+
+    // Called after the construction of an ActiveDOMObject to synchronize suspend state.
+    void suspendActiveDOMObjectIfNeeded(ActiveDOMObject&);
+
+    void didCreateDestructionObserver(ContextDestructionObserver&);
+    void willDestroyDestructionObserver(ContextDestructionObserver&);
+
+    // MessagePort is conceptually a kind of ActiveDOMObject, but it needs to be tracked separately for message dispatch.
+    void processMessageWithMessagePortsSoon();
+    void dispatchMessagePortEvents();
+    void createdMessagePort(MessagePort&);
+    void destroyedMessagePort(MessagePort&);
+
+    ReasonForSuspension reasonForSuspendingActiveDOMObjects() const { return m_reasonForSuspendingActiveDOMObjects; }
+
+    bool hasPendingActivity() const;
+    void removeFromContextsMap();
+    void removeRejectedPromiseTracker();
+    void regenerateIdentifier();
 
     void postTask(Task&&)
     {
@@ -91,5 +115,21 @@ private:
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();
+
+    enum class ShouldContinue { No,
+        Yes };
+    void forEachActiveDOMObject(const Function<ShouldContinue(ActiveDOMObject&)>&) const;
+    RejectedPromiseTracker& ensureRejectedPromiseTrackerSlow();
+    HashSet<MessagePort*> m_messagePorts;
+    HashSet<ContextDestructionObserver*> m_destructionObservers;
+    HashSet<ActiveDOMObject*> m_activeDOMObjects;
+    std::unique_ptr<RejectedPromiseTracker> m_rejectedPromiseTracker;
+
+    ReasonForSuspension m_reasonForSuspendingActiveDOMObjects { static_cast<ReasonForSuspension>(-1) };
+    bool m_activeDOMObjectsAreSuspended { false };
+    bool m_activeDOMObjectsAreStopped { false };
+    bool m_inDispatchErrorEvent { false };
+    mutable bool m_activeDOMObjectAdditionForbidden { false };
+    bool m_willprocessMessageWithMessagePortsSoon { false };
 };
 }

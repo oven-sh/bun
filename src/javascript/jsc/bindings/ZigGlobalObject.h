@@ -11,6 +11,7 @@ class Identifier;
 
 namespace WebCore {
 class ScriptExecutionContext;
+class DOMGuardedObject;
 }
 
 #include "root.h"
@@ -30,6 +31,7 @@ class ScriptExecutionContext;
 #include "DOMIsoSubspaces.h"
 
 namespace Zig {
+using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
 
 using JSDOMStructureMap = HashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
 
@@ -83,12 +85,28 @@ public:
         return *m_constructors;
     }
 
+    Zig::DOMGuardedObjectSet& guardedObjects() WTF_REQUIRES_LOCK(m_gcLock) { return m_guardedObjects; }
+
+    const Zig::DOMGuardedObjectSet& guardedObjects() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        ASSERT(!Thread::mayBeGCThread());
+        return m_guardedObjects;
+    }
+
+    Zig::DOMGuardedObjectSet& guardedObjects(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        ASSERT(!vm().heap.mutatorShouldBeFenced());
+        return m_guardedObjects;
+    }
+
     WebCore::DOMWrapperWorld& world() { return m_world.get(); }
 
     DECLARE_VISIT_CHILDREN;
 
     bool worldIsNormal() const { return m_worldIsNormal; }
     static ptrdiff_t offsetOfWorldIsNormal() { return OBJECT_OFFSETOF(GlobalObject, m_worldIsNormal); }
+
+    void clearDOMGuardedObjects();
 
     WebCore::ScriptExecutionContext* scriptExecutionContext();
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
@@ -134,6 +152,7 @@ private:
     Lock m_gcLock;
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
+    Zig::DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
 };
 
 class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {

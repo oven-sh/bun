@@ -407,9 +407,9 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForIdleDeadline;
     // std::unique_ptr<IsoSubspace> m_subspaceForInputEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForKeyboardEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForMessageChannel;
-    // std::unique_ptr<IsoSubspace> m_subspaceForMessageEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForMessagePort;
+    std::unique_ptr<IsoSubspace> m_subspaceForMessageChannel;
+    std::unique_ptr<IsoSubspace> m_subspaceForMessageEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForMessagePort;
     // std::unique_ptr<IsoSubspace> m_subspaceForMouseEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMutationEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMutationObserver;
@@ -425,7 +425,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForPopStateEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForProcessingInstruction;
     // std::unique_ptr<IsoSubspace> m_subspaceForProgressEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForPromiseRejectionEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForPromiseRejectionEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForRange;
     // std::unique_ptr<IsoSubspace> m_subspaceForSecurityPolicyViolationEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForShadowRoot;
@@ -662,7 +662,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForVisualViewport;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebKitNamespace;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebKitPoint;
-    // std::unique_ptr<IsoSubspace> m_subspaceForWorkerNavigator;
+    std::unique_ptr<IsoSubspace> m_subspaceForWorkerNavigator;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMMimeType;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMMimeTypeArray;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMPlugin;
@@ -826,7 +826,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForDedicatedWorkerGlobalScope;
     // std::unique_ptr<IsoSubspace> m_subspaceForWorker;
     std::unique_ptr<IsoSubspace> m_subspaceForWorkerGlobalScope;
-    // std::unique_ptr<IsoSubspace> m_subspaceForWorkerLocation;
+    std::unique_ptr<IsoSubspace> m_subspaceForWorkerLocation;
     // std::unique_ptr<IsoSubspace> m_subspaceForExtendableEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForExtendableMessageEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForFetchEvent;

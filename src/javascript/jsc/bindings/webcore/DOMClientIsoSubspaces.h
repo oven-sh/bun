@@ -416,9 +416,9 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForIdleDeadline;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInputEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForKeyboardEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageChannel;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessagePort;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageChannel;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessagePort;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMouseEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMutationEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMutationObserver;
@@ -434,7 +434,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPopStateEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProcessingInstruction;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProgressEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPromiseRejectionEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPromiseRejectionEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRange;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSecurityPolicyViolationEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForShadowRoot;
@@ -671,7 +671,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForVisualViewport;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebKitNamespace;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebKitPoint;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerNavigator;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerNavigator;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMMimeType;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMMimeTypeArray;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMPlugin;
@@ -835,7 +835,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDedicatedWorkerGlobalScope;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorker;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerGlobalScope;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerLocation;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerLocation;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExtendableEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExtendableMessageEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchEvent;

@@ -87,6 +87,7 @@
 #include "Process.h"
 
 #include "JavaScriptCore/RemoteInspectorServer.h"
+#include "JSDOMGuardedObject.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -287,6 +288,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
     , m_worldIsNormal(true)
+    , m_guardedObjects()
 
 {
     m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
@@ -480,6 +482,16 @@ JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
     JSC::gcProtect(JSC::JSValue(process));
 
     return JSC::JSValue::encode(JSC::JSValue(process));
+}
+
+void JSDOMGlobalObject::clearDOMGuardedObjects() const
+{
+    // No locking is necessary here since we are not directly modifying the returned container.
+    // Calling JSDOMGuardedObject::clear() will however modify the guarded objects container but
+    // it will grab the lock as needed.
+    auto guardedObjectsCopy = guardedObjects();
+    for (auto& guarded : guardedObjectsCopy)
+        guarded->clear();
 }
 
 static JSC_DECLARE_HOST_FUNCTION(functionQueueMicrotask);
@@ -896,8 +908,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         for (auto& structure : thisObject->m_structures.values())
             visitor.append(structure);
 
-        // for (auto& guarded : thisObject->m_guardedObjects)
-        //     guarded->visitAggregate(visitor);
+        for (auto& guarded : thisObject->m_guardedObjects)
+            guarded->visitAggregate(visitor);
     }
 
     for (auto& constructor : thisObject->constructors().array())

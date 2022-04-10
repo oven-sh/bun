@@ -262,13 +262,13 @@ pub const Linker = struct {
                         if (import_record.path.text.len > 5 and strings.eqlComptime(import_record.path.text[0.."node:".len], "node:")) {
                             const is_fs = strings.eqlComptime(import_record.path.text[5..], "fs");
                             const is_path = strings.eqlComptime(import_record.path.text[5..], "path");
-                            if (is_path) {
+                            if (is_fs) {
                                 import_record.path.text = "node:fs";
                                 externals.append(record_index) catch unreachable;
                                 continue;
                             }
 
-                            if (is_fs) {
+                            if (is_path) {
                                 import_record.path.text = "node:path";
                                 externals.append(record_index) catch unreachable;
                                 continue;

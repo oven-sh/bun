@@ -1066,7 +1066,6 @@ pub const Bundler = struct {
             }
 
             for (bundler.options.entry_points) |entry_point| {
-                if (bundler.options.platform.isBun()) continue;
                 defer this.bundler.resetStore();
 
                 const entry_point_path = bundler.normalizeEntryPointPath(entry_point);
@@ -1074,13 +1073,13 @@ pub const Bundler = struct {
                 try this.enqueueItem(resolved);
             }
 
-            if (bundler.options.platform != .bun) Analytics.enqueue(Analytics.EventName.bundle_start);
+            Analytics.enqueue(Analytics.EventName.bundle_start);
             this.bundler.resetStore();
             this.pool.wait(this) catch |err| {
                 Analytics.enqueue(Analytics.EventName.bundle_fail);
                 return err;
             };
-            if (bundler.options.platform != .bun) Analytics.enqueue(Analytics.EventName.bundle_success);
+            Analytics.enqueue(Analytics.EventName.bundle_success);
 
             estimated_input_lines_of_code.* = generator.estimated_input_lines_of_code;
 
@@ -2556,12 +2555,20 @@ pub const Bundler = struct {
                     false,
                 );
 
-                output_file.size = try bundler.print(
-                    result,
-                    js_printer.FileWriter,
-                    js_printer.NewFileWriter(file),
-                    .esm,
-                );
+                output_file.size = switch (bundler.options.platform) {
+                    .neutral, .browser, .node => try bundler.print(
+                        result,
+                        js_printer.FileWriter,
+                        js_printer.NewFileWriter(file),
+                        .esm,
+                    ),
+                    .bun, .bun_macro => try bundler.print(
+                        result,
+                        js_printer.FileWriter,
+                        js_printer.NewFileWriter(file),
+                        .esm_ascii,
+                    ),
+                };
 
                 var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
 

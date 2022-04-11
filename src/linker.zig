@@ -194,8 +194,9 @@ pub const Linker = struct {
         origin: URL,
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         comptime ignore_runtime: bool,
+        comptime is_bun: bool,
     ) !void {
-        return linkAllowImportingFromBundle(linker, file_path, result, origin, import_path_format, ignore_runtime, true);
+        return linkAllowImportingFromBundle(linker, file_path, result, origin, import_path_format, ignore_runtime, true, is_bun);
     }
 
     pub fn linkAllowImportingFromBundle(
@@ -206,6 +207,7 @@ pub const Linker = struct {
         comptime import_path_format: Options.BundleOptions.ImportPathFormat,
         comptime ignore_runtime: bool,
         comptime allow_import_from_bundle: bool,
+        comptime is_bun: bool,
     ) !void {
         const source_dir = file_path.sourceDir();
         var externals = std.ArrayList(u32).init(linker.allocator);
@@ -258,15 +260,17 @@ pub const Linker = struct {
                         }
                     }
 
-                    if (linker.options.platform.isBun()) {
+                    if (comptime is_bun) {
                         if (import_record.path.text.len > 5 and strings.eqlComptime(import_record.path.text[0.."node:".len], "node:")) {
                             const is_fs = strings.eqlComptime(import_record.path.text[5..], "fs");
-                            const is_path = strings.eqlComptime(import_record.path.text[5..], "path");
+
                             if (is_fs) {
                                 import_record.path.text = "node:fs";
                                 externals.append(record_index) catch unreachable;
                                 continue;
                             }
+
+                            const is_path = strings.eqlComptime(import_record.path.text[5..], "path");
 
                             if (is_path) {
                                 import_record.path.text = "node:path";

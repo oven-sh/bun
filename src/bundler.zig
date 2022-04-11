@@ -2434,9 +2434,8 @@ pub const Bundler = struct {
                     return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd, .empty = true };
                 }
 
-                try bundler.linker.link(file_path, &result, origin, import_path_format, false);
-
                 if (bundler.options.platform.isBun()) {
+                    try bundler.linker.link(file_path, &result, origin, import_path_format, false, true);
                     return BuildResolveResultPair{
                         .written = switch (result.ast.exports_kind) {
                             .esm => try bundler.printWithSourceMapMaybe(
@@ -2460,6 +2459,8 @@ pub const Bundler = struct {
                         .input_fd = result.input_fd,
                     };
                 }
+
+                try bundler.linker.link(file_path, &result, origin, import_path_format, false, false);
 
                 return BuildResolveResultPair{
                     .written = switch (result.ast.exports_kind) {
@@ -2546,14 +2547,24 @@ pub const Bundler = struct {
                 ) orelse {
                     return null;
                 };
-
-                try bundler.linker.link(
-                    file_path,
-                    &result,
-                    bundler.options.origin,
-                    import_path_format,
-                    false,
-                );
+                if (!bundler.options.platform.isBun())
+                    try bundler.linker.link(
+                        file_path,
+                        &result,
+                        bundler.options.origin,
+                        import_path_format,
+                        false,
+                        false,
+                    )
+                else
+                    try bundler.linker.link(
+                        file_path,
+                        &result,
+                        bundler.options.origin,
+                        import_path_format,
+                        false,
+                        true,
+                    );
 
                 output_file.size = switch (bundler.options.platform) {
                     .neutral, .browser, .node => try bundler.print(

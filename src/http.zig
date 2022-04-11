@@ -351,6 +351,7 @@ pub const RequestContext = struct {
                     .absolute_url,
                     false,
                     false,
+                    false,
                 );
 
                 var buffer_writer = try JSPrinter.BufferWriter.init(default_allocator);
@@ -1030,6 +1031,7 @@ pub const RequestContext = struct {
                             &parse_result,
                             this.origin,
                             .absolute_url,
+                            false,
                             false,
                         ) catch return WatchBuildResult{
                             .value = .{

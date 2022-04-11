@@ -1001,6 +1001,7 @@ pub const VirtualMachine = struct {
                 jsc_vm.origin,
                 .absolute_path,
                 false,
+                true,
             );
             var printer = source_code_printer.?.*;
             var written: usize = undefined;
@@ -1152,6 +1153,7 @@ pub const VirtualMachine = struct {
                     jsc_vm.origin,
                     .absolute_path,
                     false,
+                    true,
                 );
 
                 if (!jsc_vm.macro_mode)

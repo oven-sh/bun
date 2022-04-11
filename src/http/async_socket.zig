@@ -116,7 +116,7 @@ pub fn connect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!voi
     this.was_keepalive = false;
     return try this.doConnect(name, port);
 }
-
+const strings = @import("strings");
 fn doConnect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!void {
     this.was_keepalive = false;
 
@@ -129,7 +129,20 @@ fn doConnect(this: *AsyncSocket, name: []const u8, port: u16) ConnectError!void 
         // on macOS, getaddrinfo() is very slow
         // If you send ~200 network requests, about 1.5s is spent on getaddrinfo()
         // So, we cache this.
-        var list = NetworkThread.getAddressList(allocator, name, port) catch |err| {
+        var list = NetworkThread.getAddressList(
+            allocator,
+            // There is a bug where getAddressList always fails on localhost
+            // I don't understand why
+            // but 127.0.0.1 works
+            // so we can just use that
+            // this is technically incorrect – one could remap localhost to something other than 127.0.0.1
+            // but we will wait for someone to complain about it before addressing it
+            if (!strings.eqlComptime(name, "localhost"))
+                name
+            else
+                "127.0.0.1",
+            port,
+        ) catch |err| {
             return @errSetCast(ConnectError, err);
         };
 

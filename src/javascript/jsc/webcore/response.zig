@@ -667,8 +667,6 @@ pub const Fetch = struct {
         .{},
     );
 
-    const fetch_error_cant_fetch_same_origin = "fetch to same-origin on the server is not supported yet - sorry! (it would just hang forever)";
-
     pub const FetchTasklet = struct {
         promise: *JSInternalPromise = undefined,
         http: HTTPClient.AsyncHTTP = undefined,
@@ -972,11 +970,6 @@ pub const Fetch = struct {
             blob_store = blob.store;
         } else {
             const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
-            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
-        }
-
-        if (url.origin.len > 0 and strings.eql(url.origin, VirtualMachine.vm.bundler.options.origin.origin)) {
-            const fetch_error = fetch_error_cant_fetch_same_origin;
             return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
         }
 

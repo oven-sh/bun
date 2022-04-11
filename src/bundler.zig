@@ -3020,11 +3020,8 @@ pub const Bundler = struct {
     pub fn buildFile(
         bundler: *ThisBundler,
         log: *logger.Log,
-        _: std.mem.Allocator,
         path_to_use_: string,
-        _: string,
         comptime client_entry_point_enabled: bool,
-        comptime _: bool,
     ) !ServeResult {
         var old_log = bundler.log;
 

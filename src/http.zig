@@ -2965,8 +2965,7 @@ pub const RequestContext = struct {
         }
         if (input_path.len == 0) return ctx.sendNotFound();
 
-        const pathname = Fs.PathName.init(input_path);
-        const result = ctx.buildFile(input_path, pathname.ext) catch |err| {
+        const result = ctx.buildFile(input_path) catch |err| {
             if (err == error.ModuleNotFound) {
                 return try ctx.sendNotFound();
             }
@@ -3075,7 +3074,6 @@ pub const RequestContext = struct {
             .GET, .HEAD => {
                 const result = try ctx.buildFile(
                     ctx.url.path["abs:".len..],
-                    ctx.url.extname,
                 );
                 try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
             },
@@ -3129,53 +3127,24 @@ pub const RequestContext = struct {
         return false;
     }
 
-    pub inline fn buildFile(ctx: *RequestContext, path_name: string, extname: string) !bundler.ServeResult {
+    pub inline fn buildFile(ctx: *RequestContext, path_name: string) !bundler.ServeResult {
         if (ctx.bundler.options.isFrontendFrameworkEnabled()) {
-            if (serve_as_package_path) {
-                return try ctx.bundler.buildFile(
-                    &ctx.log,
-                    ctx.allocator,
-                    path_name,
-                    extname,
-                    true,
-                    true,
-                );
-            } else {
-                return try ctx.bundler.buildFile(
-                    &ctx.log,
-                    ctx.allocator,
-                    path_name,
-                    extname,
-                    true,
-                    false,
-                );
-            }
+            return try ctx.bundler.buildFile(
+                &ctx.log,
+                path_name,
+                true,
+            );
         } else {
-            if (serve_as_package_path) {
-                return try ctx.bundler.buildFile(
-                    &ctx.log,
-                    ctx.allocator,
-                    path_name,
-                    extname,
-                    false,
-                    true,
-                );
-            } else {
-                return try ctx.bundler.buildFile(
-                    &ctx.log,
-                    ctx.allocator,
-                    path_name,
-                    extname,
-                    false,
-                    false,
-                );
-            }
+            return try ctx.bundler.buildFile(
+                &ctx.log,
+                path_name,
+                false,
+            );
         }
     }
     pub fn handleGet(ctx: *RequestContext) !void {
         const result = try ctx.buildFile(
             ctx.url.pathWithoutAssetPrefix(ctx.bundler.options.routes.asset_prefix_path),
-            ctx.url.extname,
         );
         try @call(.{ .modifier = .always_inline }, RequestContext.renderServeResult, .{ ctx, result });
     }
@@ -3191,7 +3160,6 @@ pub const RequestContext = struct {
         }
     }
 };
-var serve_as_package_path = false;
 
 // // u32 == File ID from Watcher
 // pub const WatcherBuildChannel = sync.Channel(u32, .Dynamic);
@@ -3972,8 +3940,6 @@ pub const Server = struct {
 
         const tsconfig = dir_info.tsconfig_json orelse return;
         Analytics.Features.tsconfig = true;
-
-        serve_as_package_path = tsconfig.base_url_for_paths.len > 0 or tsconfig.base_url.len > 0;
         Analytics.Features.tsconfig_paths = tsconfig.paths.count() > 0;
     }
 

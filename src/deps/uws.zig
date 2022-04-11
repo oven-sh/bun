@@ -20,7 +20,8 @@ pub const Loop = opaque {
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
             pub fn callback(data: *anyopaque) callconv(.C) void {
-                deferCallback(@ptrCast(UserType, @alignCast(@alignOf(UserType), data)));
+                const std = @import("std");
+                deferCallback(@ptrCast(UserType, @alignCast(@alignOf(std.meta.Child(UserType)), data)));
             }
         };
         uws_loop_defer(this, user_data, Handler.callback);

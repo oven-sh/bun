@@ -2548,6 +2548,10 @@ const EndTag = JSC.Cloudflare.EndTag;
 const DocEnd = JSC.Cloudflare.DocEnd;
 const AttributeIterator = JSC.Cloudflare.AttributeIterator;
 const Blob = JSC.WebCore.Blob;
+const Server = JSC.API.Server;
+const SSLServer = JSC.API.SSLServer;
+const DebugServer = JSC.API.DebugServer;
+const DebugSSLServer = JSC.API.DebugSSLServer;
 
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     AttributeIterator,
@@ -2556,6 +2560,8 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Body,
     BuildError,
     Comment,
+    DebugServer,
+    DebugSSLServer,
     DescribeScope,
     DirEnt,
     DocEnd,
@@ -2575,6 +2581,8 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     ResolveError,
     Response,
     Router,
+    Server,
+    SSLServer,
     Stats,
     TextChunk,
     TextDecoder,
@@ -2605,6 +2613,7 @@ pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Co
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
         const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+        const ArgsTuple = std.meta.ArgsTuple(FunctionType);
 
         pub fn callback(
             this: *Container,
@@ -2613,7 +2622,12 @@ pub fn getterWrap(comptime Container: type, comptime name: string) GetterType(Co
             _: js.JSStringRef,
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
-            const result: JSValue = @call(.{}, @field(Container, name), .{ this, ctx.ptr() });
+            const result: JSValue = if (comptime std.meta.fields(ArgsTuple).len == 1)
+                @call(.{}, @field(Container, name), .{
+                    this,
+                })
+            else
+                @call(.{}, @field(Container, name), .{ this, ctx.ptr() });
             if (!result.isUndefinedOrNull() and result.isError()) {
                 exception.* = result.asObjectRef();
                 return null;

@@ -56,7 +56,7 @@ declare module "bun" {
    * });
    * ```
    */
-  export function serve(options: Serve): void;
+  export function serve(options: Serve): Server;
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
@@ -511,9 +511,10 @@ declare module "bun" {
      * Respond to {@link Request} objects with a {@link Response} object.
      *
      */
-    fetch(request: Request): Response | Promise<Response>;
+    fetch(this: Server, request: Request): Response | Promise<Response>;
 
     error?: (
+      this: Server,
       request: Errorlike
     ) => Response | Promise<Response> | undefined | Promise<undefined>;
   }
@@ -560,6 +561,23 @@ declare module "bun" {
        */
       serverNames: Record<string, SSLOptions & SSLAdvancedOptions>;
     };
+
+  interface Server {
+    /**
+     * Stop listening to prevent new connections from being accepted.
+     *
+     * It does not close existing connections.
+     */
+    stop(): void;
+
+    /**
+     * How many requests are in-flight right now?
+     */
+    readonly pendingRequests: number;
+    readonly port: number;
+    readonly hostname: string;
+    readonly development: boolean;
+  }
 
   export type Serve = SSLServeOptions | ServeOptions;
 

@@ -312,6 +312,7 @@ pub const Task = TaggedPointerUnion(.{
     OpenAndStatFileTask,
     CopyFilePromiseTask,
     WriteFileTask,
+    AnyTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -432,6 +433,30 @@ pub const SavedSourceMap = struct {
     }
 };
 const uws = @import("uws");
+
+pub const AnyTask = struct {
+    ctx: *anyopaque,
+    callback: fn (*anyopaque) void,
+
+    pub fn run(this: *AnyTask) void {
+        this.callback(this.ctx);
+    }
+
+    pub fn New(comptime Type: type, comptime Callback: anytype) type {
+        return struct {
+            pub fn init(ctx: *Type) AnyTask {
+                return AnyTask{
+                    .callback = wrap,
+                    .ctx = ctx,
+                };
+            }
+
+            pub fn wrap(this: *anyopaque) void {
+                Callback(@ptrCast(*Type, @alignCast(@alignOf(Type), this)));
+            }
+        };
+    }
+};
 
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
 // We can see that it's sort of like std.mem.Allocator but for JSGlobalContextRef, to support Automatic Reference Counting
@@ -580,6 +605,12 @@ pub const VirtualMachine = struct {
                         var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
                         transform_task.*.runFromJS();
                         transform_task.deinit();
+                        finished += 1;
+                        vm_.active_tasks -|= 1;
+                    },
+                    @field(Task.Tag, @typeName(AnyTask)) => {
+                        var any: *AnyTask = task.get(AnyTask).?;
+                        any.run();
                         finished += 1;
                         vm_.active_tasks -|= 1;
                     },
@@ -1677,12 +1708,7 @@ pub const VirtualMachine = struct {
         var promise: *JSInternalPromise = undefined;
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(entry_path));
-
-        this.tick();
-
-        while (promise.status(this.global.vm()) == JSPromise.Status.Pending) {
-            this.tick();
-        }
+        this.waitForPromise(promise);
 
         return promise;
     }

@@ -1191,25 +1191,67 @@ pub fn serve(
         return null;
     }
 
+    // Listen happens on the next tick!
+    // This is so we can return a Server object
     if (config.ssl_config != null) {
         if (config.development) {
             var server = JSC.API.DebugSSLServer.init(config, ctx.ptr());
             server.listen();
+            if (!server.thisObject.isEmpty()) {
+                exception.* = server.thisObject.asObjectRef();
+                server.thisObject = JSC.JSValue.zero;
+                server.deinit();
+                return null;
+            }
+            var obj = JSC.API.DebugSSLServer.Class.make(ctx, server);
+            JSC.C.JSValueProtect(ctx, obj);
+            server.thisObject = JSValue.c(obj);
+            return obj;
         } else {
             var server = JSC.API.SSLServer.init(config, ctx.ptr());
             server.listen();
+            if (!server.thisObject.isEmpty()) {
+                exception.* = server.thisObject.asObjectRef();
+                server.thisObject = JSC.JSValue.zero;
+                server.deinit();
+                return null;
+            }
+            var obj = JSC.API.SSLServer.Class.make(ctx, server);
+            JSC.C.JSValueProtect(ctx, obj);
+            server.thisObject = JSValue.c(obj);
+            return obj;
         }
     } else {
         if (config.development) {
             var server = JSC.API.DebugServer.init(config, ctx.ptr());
             server.listen();
+            if (!server.thisObject.isEmpty()) {
+                exception.* = server.thisObject.asObjectRef();
+                server.thisObject = JSC.JSValue.zero;
+                server.deinit();
+                return null;
+            }
+            var obj = JSC.API.DebugServer.Class.make(ctx, server);
+            JSC.C.JSValueProtect(ctx, obj);
+            server.thisObject = JSValue.c(obj);
+            return obj;
         } else {
             var server = JSC.API.Server.init(config, ctx.ptr());
             server.listen();
+            if (!server.thisObject.isEmpty()) {
+                exception.* = server.thisObject.asObjectRef();
+                server.thisObject = JSC.JSValue.zero;
+                server.deinit();
+                return null;
+            }
+            var obj = JSC.API.Server.Class.make(ctx, server);
+            JSC.C.JSValueProtect(ctx, obj);
+            server.thisObject = JSValue.c(obj);
+            return obj;
         }
     }
 
-    return JSC.JSValue.jsUndefined().asObjectRef();
+    unreachable;
 }
 
 pub fn allocUnsafe(

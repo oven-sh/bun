@@ -675,8 +675,6 @@ pub const RequestContext = struct {
 
     const AsyncIO = @import("io");
     pub fn writeSocket(ctx: *RequestContext, buf: anytype, _: anytype) !usize {
-        // ctx.conn.client.setWriteBufferSize(@intCast(u32, buf.len)) catch {};
-
         switch (Syscall.send(ctx.conn.client.socket.fd, buf, SOCKET_FLAGS)) {
             .err => |err| {
                 const erro = AsyncIO.asError(err.getErrno());

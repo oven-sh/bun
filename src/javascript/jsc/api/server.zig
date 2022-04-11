@@ -477,12 +477,21 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
-            if (arguments.len == 0 or arguments[0].isEmptyOrUndefinedOrNull()) {
+            if (arguments.len == 0) {
                 ctx.renderMissing();
                 return;
             }
 
-            var response = arguments[0].as(JSC.WebCore.Response) orelse {
+            handleResolve(ctx, arguments[0]);
+        }
+
+        fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
+            if (value.isEmptyOrUndefinedOrNull()) {
+                ctx.renderMissing();
+                return;
+            }
+
+            var response = value.as(JSC.WebCore.Response) orelse {
                 Output.prettyErrorln("Expected a Response object", .{});
                 Output.flush();
                 ctx.renderMissing();
@@ -501,8 +510,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             }
 
+            handleReject(ctx, if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined());
+        }
+
+        fn handleReject(ctx: *RequestContext, value: JSC.JSValue) void {
             ctx.runErrorHandler(
-                if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined(),
+                value,
             );
 
             if (ctx.aborted) {
@@ -516,7 +529,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderMissing(ctx: *RequestContext) void {
-            if (debug_mode) {
+            if (comptime !debug_mode) {
                 ctx.resp.writeStatus("204 No Content");
                 ctx.resp.endWithoutBody();
                 ctx.finalize();
@@ -646,9 +659,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.response_buf_owned.clearAndFree(bun.default_allocator);
         }
         pub fn finalize(this: *RequestContext) void {
+            var server = this.server;
             this.finalizeWithoutDeinit();
-
-            this.server.request_pool_allocator.destroy(this);
+            std.debug.assert(server.pending_requests > 0);
+            server.request_pool_allocator.destroy(this);
+            server.onRequestComplete();
         }
 
         fn writeHeaders(
@@ -671,7 +686,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        fn cleanupAfterSendfile(this: *RequestContext) void {
+        fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
             this.resp.setWriteOffset(this.sendfile.offset);
             this.resp.endWithoutBody();
             // use node syscall so that we don't segfault on BADF
@@ -686,6 +701,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }};
 
         pub fn onSendfile(this: *RequestContext) bool {
+            if (this.aborted) {
+                this.cleanupAndFinalizeAfterSendfile();
+                return false;
+            }
+
             const adjusted_count_temporary = @minimum(@as(u64, this.sendfile.remain), @as(u63, std.math.maxInt(u63)));
             // TODO we should not need this int cast; improve the return type of `@minimum`
             const adjusted_count = @intCast(u63, adjusted_count_temporary);
@@ -707,7 +727,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
                         Output.flush();
                     }
-                    this.cleanupAfterSendfile();
+                    this.cleanupAndFinalizeAfterSendfile();
                     return errcode != .SUCCESS;
                 }
             } else {
@@ -731,7 +751,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
                         Output.flush();
                     }
-                    this.cleanupAfterSendfile();
+                    this.cleanupAndFinalizeAfterSendfile();
                     return errcode == .SUCCESS;
                 }
             }
@@ -774,7 +794,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn onPrepareSendfile(this: *RequestContext, fd: i32, size: Blob.SizeType, err: ?JSC.SystemError, globalThis: *JSGlobalObject) void {
-            this.setAbortHandler();
+            if (this.aborted) {
+                this.finalize();
+                return;
+            }
 
             if (err) |system_error| {
                 if (system_error.errno == @enumToInt(std.os.E.NOENT)) {
@@ -796,7 +819,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             if (this.aborted) {
-                _ = JSC.Node.Syscall.close(this.sendfile.fd);
                 this.finalize();
                 return;
             }
@@ -804,11 +826,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.resp.runCorked(*RequestContext, renderMetadata, this);
 
             if (size == 0) {
-                this.cleanupAfterSendfile();
-                this.finalize();
-
+                this.cleanupAndFinalizeAfterSendfile();
                 return;
             }
+
+            this.setAbortHandler();
 
             // TODO: fix this to be MSGHDR
             _ = std.os.write(this.sendfile.socket_fd, "\r\n") catch 0;
@@ -828,6 +850,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn doSendfile(this: *RequestContext, blob: Blob) void {
             if (this.has_sendfile_ctx) return;
+            if (this.aborted) {
+                this.finalize();
+                return;
+            }
             this.has_sendfile_ctx = true;
             this.setAbortHandler();
 
@@ -947,7 +973,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
                 this.has_called_error_handler = true;
                 var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
-                const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis.ref(), this.server.config.onError.asObjectRef(), null, 1, &args);
+                const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis.ref(), this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
 
                 if (!result.isEmptyOrUndefinedOrNull()) {
                     if (result.isError() or result.isAggregateError(this.server.globalThis)) {
@@ -1152,13 +1178,124 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         pub const App = uws.NewApp(ssl_enabled);
 
         listener: ?*App.ListenSocket = null,
-
+        thisObject: JSC.JSValue = JSC.JSValue.zero,
         app: *App = undefined,
+        vm: *JSC.VirtualMachine = undefined,
         globalThis: *JSGlobalObject,
         base_url_string_for_joining: string = "",
         response_objects_pool: JSC.WebCore.Response.Pool = JSC.WebCore.Response.Pool{},
         config: ServerConfig = ServerConfig{},
+        next_tick_pending: bool = false,
+        pending_requests: usize = 0,
         request_pool_allocator: std.mem.Allocator = undefined,
+        has_js_deinited: bool = false,
+        listen_callback: JSC.AnyTask = undefined,
+
+        pub const Class = JSC.NewClass(
+            ThisServer,
+            .{ .name = "Server" },
+            .{
+                .stop = .{
+                    .rfn = JSC.wrapSync(ThisServer, "stopFromJS"),
+                },
+                .finalize = .{
+                    .rfn = finalize,
+                },
+            },
+            .{
+                .port = .{
+                    .get = JSC.getterWrap(ThisServer, "getPort"),
+                },
+                .hostname = .{
+                    .get = JSC.getterWrap(ThisServer, "getHostname"),
+                },
+                .development = .{
+                    .get = JSC.getterWrap(ThisServer, "getDevelopment"),
+                },
+                .pendingRequests = .{
+                    .get = JSC.getterWrap(ThisServer, "getPendingRequests"),
+                },
+            },
+        );
+
+        pub fn stopFromJS(this: *ThisServer) JSC.JSValue {
+            if (this.listener != null) {
+                JSC.C.JSValueUnprotect(this.globalThis.ref(), this.thisObject.asObjectRef());
+                this.thisObject = JSC.JSValue.jsUndefined();
+                this.stop();
+            }
+
+            return JSC.JSValue.jsUndefined();
+        }
+
+        pub fn getPort(this: *ThisServer) JSC.JSValue {
+            return JSC.JSValue.jsNumber(this.config.port);
+        }
+
+        pub fn getPendingRequests(this: *ThisServer) JSC.JSValue {
+            return JSC.JSValue.jsNumber(@intCast(i32, @truncate(u31, this.pending_requests)));
+        }
+
+        pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
+            return ZigString.init(this.config.base_uri).toValue(globalThis);
+        }
+
+        pub fn getDevelopment(
+            _: *ThisServer,
+        ) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(debug_mode);
+        }
+
+        pub fn onRequestComplete(this: *ThisServer) void {
+            this.pending_requests -= 1;
+            this.deinitIfWeCan();
+        }
+
+        pub fn finalize(this: *ThisServer) void {
+            this.has_js_deinited = true;
+            this.deinitIfWeCan();
+        }
+
+        pub fn deinitIfWeCan(this: *ThisServer) void {
+            if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited)
+                this.deinit();
+        }
+
+        pub fn stop(this: *ThisServer) void {
+            this.next_tick_pending = true;
+
+            if (this.listener) |listener| {
+                listener.close();
+                this.listener = null;
+            }
+
+            this.deinitIfWeCan();
+        }
+
+        pub fn deinit(this: *ThisServer) void {
+            if (this.vm.response_objects_pool) |pool| {
+                if (pool == &this.response_objects_pool) {
+                    this.vm.response_objects_pool = null;
+                }
+            }
+
+            this.app.destroy();
+            bun.default_allocator.destroy(this);
+        }
+
+        pub fn nextTick(this: *ThisServer) void {
+            std.debug.assert(this.next_tick_pending);
+
+            this.next_tick_pending = false;
+            this.vm.tick();
+        }
+
+        pub fn queueNextTick(this: *ThisServer) void {
+            std.debug.assert(!this.next_tick_pending);
+
+            this.next_tick_pending = true;
+            uws.Loop.get().?.nextTick(*ThisServer, this, nextTick);
+        }
 
         pub fn init(config: ServerConfig, globalThis: *JSGlobalObject) *ThisServer {
             var server = bun.default_allocator.create(ThisServer) catch @panic("Out of memory!");
@@ -1166,6 +1303,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .globalThis = globalThis,
                 .config = config,
                 .base_url_string_for_joining = strings.trim(config.base_url.href, "/"),
+                .vm = JSC.VirtualMachine.vm,
             };
             RequestContext.pool = bun.default_allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
             server.request_pool_allocator = RequestContext.pool.get();
@@ -1227,7 +1365,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     zig_str.withEncoding().mark();
                 }
             }
-            JSC.VirtualMachine.vm.defaultErrorHandler(zig_str.toErrorInstance(this.globalThis), null);
+            // store the exception in here
+            this.thisObject = zig_str.toErrorInstance(this.globalThis);
             return;
         }
 
@@ -1237,14 +1376,20 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             this.listener = socket;
-            VirtualMachine.vm.uws_event_loop = uws.Loop.get();
-            VirtualMachine.vm.response_objects_pool = &this.response_objects_pool;
+            this.vm.uws_event_loop = uws.Loop.get();
+            this.vm.response_objects_pool = &this.response_objects_pool;
+            this.listen_callback = JSC.AnyTask.New(ThisServer, run).init(this);
+            this.vm.eventLoop().enqueueTask(JSC.Task.init(&this.listen_callback));
+        }
 
+        pub fn run(this: *ThisServer) void {
             this.app.run();
         }
 
-        pub fn onBunInfoRequest(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+        pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             if (comptime JSC.is_bindgen) return undefined;
+            this.pending_requests += 1;
+            defer this.pending_requests -= 1;
             req.setYield(false);
             var stack_fallback = std.heap.stackFallback(8096, bun.default_allocator);
             var allocator = stack_fallback.get();
@@ -1268,8 +1413,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             resp.end(buffer, false);
         }
 
-        pub fn onSrcRequest(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+        pub fn onSrcRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             if (comptime JSC.is_bindgen) return undefined;
+            this.pending_requests += 1;
+            defer this.pending_requests -= 1;
             req.setYield(false);
             if (req.header("open-in-editor") == null) {
                 resp.writeStatus("501 Not Implemented");
@@ -1298,7 +1445,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             if (comptime JSC.is_bindgen) return undefined;
-
+            this.pending_requests += 1;
+            var vm = this.vm;
             req.setYield(false);
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
@@ -1321,11 +1469,16 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var args = [_]JSC.C.JSValueRef{JSC.WebCore.Request.Class.make(this.globalThis.ref(), request_object)};
             ctx.request_js_object = args[0];
             JSC.C.JSValueProtect(this.globalThis.ref(), args[0]);
-            ctx.response_jsvalue = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.config.onRequest.asObjectRef(), null, 1, &args);
-            defer JSC.VirtualMachine.vm.tick();
+            ctx.response_jsvalue = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
+            var needs_tick = false;
+
+            defer if (!this.next_tick_pending and (needs_tick or
+                // this is evaluated _after_ this function call
+                vm.eventLoop().pending_tasks_count.value > 0))
+                this.queueNextTick();
+
             if (ctx.aborted) {
                 ctx.finalize();
-
                 return;
             }
 
@@ -1340,17 +1493,48 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             JSC.C.JSValueProtect(this.globalThis.ref(), ctx.response_jsvalue.asObjectRef());
-
             if (ctx.response_jsvalue.as(JSC.WebCore.Response)) |response| {
                 ctx.render(response);
-
                 return;
             }
 
-            if (ctx.response_jsvalue.jsTypeLoose() == .JSPromise) {
-                ctx.setAbortHandler();
-                JSC.VirtualMachine.vm.tick();
+            var wait_for_promise = false;
 
+            if (ctx.response_jsvalue.asPromise()) |promise| {
+                // If we immediately have the value available, we can skip the extra event loop tick
+                switch (promise.status(vm.global.vm())) {
+                    .Pending => {},
+                    .Fulfilled => {
+                        ctx.handleResolve(promise.result(vm.global.vm()));
+                        return;
+                    },
+                    .Rejected => {
+                        ctx.handleReject(promise.result(vm.global.vm()));
+                        return;
+                    },
+                }
+                wait_for_promise = true;
+                needs_tick = true;
+                // I don't think this case should happen
+                // But I'm uncertain
+            } else if (ctx.response_jsvalue.asInternalPromise()) |promise| {
+                switch (promise.status(vm.global.vm())) {
+                    .Pending => {},
+                    .Fulfilled => {
+                        ctx.handleResolve(promise.result(vm.global.vm()));
+                        return;
+                    },
+                    .Rejected => {
+                        ctx.handleReject(promise.result(vm.global.vm()));
+                        return;
+                    },
+                }
+                wait_for_promise = true;
+                needs_tick = true;
+            }
+
+            if (wait_for_promise) {
+                ctx.setAbortHandler();
                 ctx.response_jsvalue.then(
                     this.globalThis,
                     RequestContext,
@@ -1361,11 +1545,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return;
             }
 
-            // switch (ctx.response_jsvalue.jsTypeLoose()) {
-            //     .JSPromise => {
-            //         JSPromise.
-            //     },
-            // }
+            // The user returned something that wasn't a promise or a promise with a response
+            if (!ctx.resp.hasResponded()) ctx.renderMissing();
         }
 
         pub fn listen(this: *ThisServer) void {
@@ -1404,8 +1585,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
     };
 }
 
-pub const Server = NewServer(false, true);
-pub const SSLServer = NewServer(true, true);
-
+pub const Server = NewServer(false, false);
+pub const SSLServer = NewServer(true, false);
 pub const DebugServer = NewServer(false, true);
 pub const DebugSSLServer = NewServer(true, true);

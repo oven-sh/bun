@@ -456,6 +456,7 @@ pub const AsyncHTTP = struct {
         outer: {
             this.err = null;
             this.state.store(.sending, .Monotonic);
+
             var timer = std.time.Timer.start() catch @panic("Timer failure");
             defer this.elapsed = timer.read();
 

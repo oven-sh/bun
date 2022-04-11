@@ -21,7 +21,6 @@ Bun.serve({
 
   port: 3000, // number or string
 });
-
 // Start a fast HTTP server from the main file's export
 // export default {
 //   fetch(req) {

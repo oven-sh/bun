@@ -85,6 +85,8 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
 
             comptime var i = len_indexes[len];
 
+            // This benchmarked faster for both small and large lists of strings than using a big switch statement
+            // But only so long as the keys are a sorted list.
             inline while (i < end) : (i += 1) {
                 if (strings.eqlComptimeCheckLenWithType(KeyType, str, kvs[i].key, false)) {
                     return kvs[i].value;

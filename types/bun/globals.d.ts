@@ -1326,6 +1326,8 @@ type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
  *
  * **Using this incorrectly will crash your application**.
  *
+ * This API may change any time JavaScriptCore is updated.
+ *
  * Bun may rewrite ESM import specifiers to point to bundled code. This will
  * be confusing when using this API, as it will return a string like
  * "/node_modules.server.bun".

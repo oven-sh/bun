@@ -567,6 +567,8 @@ declare module "bun" {
      * Stop listening to prevent new connections from being accepted.
      *
      * It does not close existing connections.
+     *
+     * It may take a second or two to actually stop.
      */
     stop(): void;
 

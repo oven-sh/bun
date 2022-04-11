@@ -1,6 +1,8 @@
-const server = Bun.serve({
-  fetch(req: Request) {
-    return new Response(`Pending requests: ${this.pendingRequests}`);
+import { serve } from "bun";
+
+const server = serve({
+  fetch(req) {
+    return new Response(`Pending requests count: ${this.pendingRequests}`);
   },
 });
 

@@ -165,7 +165,7 @@ interface Process {
   setuid(id: number | string): void;
 }
 
-declare let process: Process;
+declare var process: Process;
 
 interface BlobInterface {
   text(): Promise<string>;
@@ -206,7 +206,7 @@ interface Headers {
   ): void;
 }
 
-declare let Headers: {
+declare var Headers: {
   prototype: Headers;
   new (init?: HeadersInit): Headers;
 };
@@ -664,7 +664,7 @@ interface Crypto {
   randomUUID(): string;
 }
 
-declare let crypto: Crypto;
+declare var crypto: Crypto;
 
 /**
  * [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/atob) converts ascii text into base64.
@@ -1044,7 +1044,7 @@ interface EventTarget {
   ): void;
 }
 
-declare let EventTarget: {
+declare var EventTarget: {
   prototype: EventTarget;
   new (): EventTarget;
 };
@@ -1148,7 +1148,7 @@ interface Event {
   readonly NONE: number;
 }
 
-declare let Event: {
+declare var Event: {
   prototype: Event;
   new (type: string, eventInitDict?: EventInit): Event;
   readonly AT_TARGET: number;
@@ -1168,7 +1168,7 @@ interface ErrorEvent extends Event {
   readonly message: string;
 }
 
-declare let ErrorEvent: {
+declare var ErrorEvent: {
   prototype: ErrorEvent;
   new (type: string, eventInitDict?: ErrorEventInit): ErrorEvent;
 };
@@ -1216,7 +1216,7 @@ interface URLSearchParams {
   ): void;
 }
 
-declare let URLSearchParams: {
+declare var URLSearchParams: {
   prototype: URLSearchParams;
   new (
     init?: string[][] | Record<string, string> | string | URLSearchParams
@@ -1224,7 +1224,7 @@ declare let URLSearchParams: {
   toString(): string;
 };
 
-declare let URL: {
+declare var URL: {
   prototype: URL;
   new (url: string | URL, base?: string | URL): URL;
   /** Not implemented yet */
@@ -1243,7 +1243,7 @@ interface EventListenerObject {
   handleEvent(object: Event): void;
 }
 
-declare let AbortController: {
+declare var AbortController: {
   prototype: AbortController;
   new (): AbortController;
 };
@@ -1300,7 +1300,7 @@ interface AbortSignal extends EventTarget {
   ): void;
 }
 
-declare let AbortSignal: {
+declare var AbortSignal: {
   prototype: AbortSignal;
   new (): AbortSignal;
 };
@@ -1318,3 +1318,106 @@ type BufferSource = ArrayBufferView | ArrayBuffer;
 type DOMHighResTimeStamp = number;
 // type EpochTimeStamp = number;
 type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
+
+/**
+ * Low-level JavaScriptCore API for accessing the native ES Module loader (not a Bun API)
+ *
+ * Before using this, be aware of a few things:
+ *
+ * **Using this incorrectly will crash your application**.
+ *
+ * Bun may rewrite ESM import specifiers to point to bundled code. This will
+ * be confusing when using this API, as it will return a string like
+ * "/node_modules.server.bun".
+ *
+ * Bun may inject additional imports into your code. This usually has a `bun:` prefix.
+ *
+ */
+declare var Loader: {
+  /**
+   * ESM module registry
+   *
+   * This lets you implement live reload in Bun. If you
+   * delete a module specifier from this map, the next time it's imported, it
+   * will be re-transpiled and loaded again.
+   *
+   * The keys are the module specifiers and the
+   * values are metadata about the module.
+   *
+   * The keys are an implementation detail for Bun that will change between
+   * versions.
+   *
+   * - Userland modules are an absolute file path
+   * - Virtual modules have a `bun:` prefix or `node:` prefix
+   * - JS polyfills start with `"/bun-vfs/"`. `"buffer"` is an example of a JS polyfill
+   * - If you have a `node_modules.bun` file, many modules will point to that file
+   *
+   * Virtual modules and JS polyfills are embedded in bun's binary. They don't
+   * point to anywhere in your local filesystem.
+   *
+   *
+   */
+  registry: Map<
+    string,
+    {
+      /**
+       * This refers to the state the ESM module is in
+       *
+       * TODO: make an enum for this number
+       *
+       *
+       */
+      state: number;
+      dependencies: string[];
+      /**
+       * Your application will probably crash if you mess with this.
+       */
+      module: any;
+    }
+  >;
+  /**
+   * For an already-evaluated module, return the dependencies as module specifiers
+   *
+   * This list is already sorted and uniqued.
+   *
+   * @example
+   *
+   * For this code:
+   * ```js
+   * // /foo.js
+   * import classNames from 'classnames';
+   * import React from 'react';
+   * import {createElement} from 'react';
+   * ```
+   *
+   * This would return:
+   * ```js
+   * Loader.dependencyKeysIfEvaluated("/foo.js")
+   * ["bun:wrap", "/path/to/node_modules/classnames/index.js", "/path/to/node_modules/react/index.js"]
+   * ```
+   *
+   * @param specifier - module specifier as it appears in transpiled source code
+   *
+   */
+  dependencyKeysIfEvaluated: (specifier: string) => string[];
+  /**
+   * The function JavaScriptCore internally calls when you use an import statement.
+   *
+   * This may return a path to `node_modules.server.bun`, which will be confusing.
+   *
+   * Consider {@link Bun.resolve} or {@link ImportMeta.resolve}
+   * instead.
+   *
+   * @param specifier - module specifier as it appears in transpiled source code
+   */
+  resolve: (specifier: string) => Promise<string>;
+  /**
+   * Synchronously resolve a module specifier
+   *
+   * This may return a path to `node_modules.server.bun`, which will be confusing.
+   *
+   * Consider {@link Bun.resolveSync}
+   * instead.
+   */
+  resolveSync: (specifier: string, from: string) => string;
+};

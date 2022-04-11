@@ -7,6 +7,15 @@ inline.array = [1234, 4, 5, 6]
 [macros]
 react-relay = { "graphql" = "node_modules/bun-macro-relay/bun-macro-relay.tsx" }
 
+[install.scopes]
+"@mybigcompany2" = { "token" = "123456", "url" = "https://registry.mybigcompany.com" }
+"@mybigcompany3" = { "token" = "123456", "url" = "https://registry.mybigcompany.com", "three" = 4 }
+
+
+[install.scopes."@mybigcompany"]
+token = "123456"
+url = "https://registry.mybigcompany.com"
+
 [bundle.packages]
 "@emotion/react" = true
 

@@ -325,14 +325,13 @@ pub const TOML = struct {
             .t_open_brace => {
                 try p.lexer.next();
                 var is_single_line = !p.lexer.has_newline_before;
-                var properties = std.ArrayList(G.Property).init(p.allocator);
                 var stack = std.heap.stackFallback(@sizeOf(Rope) * 6, p.allocator);
                 var key_allocator = stack.get();
                 var expr = p.e(E.Object{}, loc);
                 var obj = expr.data.e_object;
 
                 while (p.lexer.token != .t_close_brace) {
-                    if (properties.items.len > 0) {
+                    if (obj.properties.len > 0) {
                         if (p.lexer.has_newline_before) {
                             is_single_line = false;
                         }

@@ -5,35 +5,44 @@
 	path = src/deps/picohttpparser
 	url = https://github.com/h2o/picohttpparser.git
 	ignore = dirty
+	depth = 1
 [submodule "src/javascript/jsc/WebKit"]
 	path = src/javascript/jsc/WebKit
 	url = https://github.com/Jarred-Sumner/WebKit.git
 	ignore = dirty
+	depth = 1
 [submodule "src/deps/mimalloc"]
 	path = src/deps/mimalloc
 	url = https://github.com/Jarred-Sumner/mimalloc.git
 	ignore = dirty
+	depth = 1
 [submodule "src/deps/zlib"]
 	path = src/deps/zlib
 	url = https://github.com/cloudflare/zlib.git
 	ignore = dirty
+	depth = 1
 [submodule "src/deps/libarchive"]
 	path = src/deps/libarchive
 	url = https://github.com/libarchive/libarchive.git
 	ignore = dirty
+	depth = 1
 [submodule "src/deps/boringssl"]
 	path = src/deps/boringssl
 	url = https://github.com/google/boringssl.git
 	ignore = dirty
+	depth = 1
 [submodule "src/deps/libbacktrace"]
 	path = src/deps/libbacktrace
 	url = https://github.com/ianlancetaylor/libbacktrace
 	ignore = dirty
+	depth = 1
 [submodule "src/deps/lol-html"]
 	path = src/deps/lol-html
 	url = https://github.com/cloudflare/lol-html
 	ignore = dirty
+	depth = 1
 [submodule "src/deps/uws"]
 	path = src/deps/uws
 	url = https://github.com/Jarred-Sumner/uWebSockets
 	ignore = dirty
+	depth = 1

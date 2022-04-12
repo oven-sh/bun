@@ -301,7 +301,6 @@ const AsyncTransformTask = @import("./api/transpiler.zig").TransformTask.AsyncTr
 const BunTimerTimeoutTask = Bun.Timer.Timeout.TimeoutTask;
 const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.Store.WriteFile.WriteFileTask;
-const OpenAndStatFileTask = WebCore.Blob.Store.OpenAndStatFile.OpenAndStatFileTask;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -309,7 +308,6 @@ pub const Task = TaggedPointerUnion(.{
     AsyncTransformTask,
     BunTimerTimeoutTask,
     ReadFileTask,
-    OpenAndStatFileTask,
     CopyFilePromiseTask,
     WriteFileTask,
     AnyTask,
@@ -589,13 +587,6 @@ pub const VirtualMachine = struct {
                     },
                     @field(Task.Tag, @typeName(ReadFileTask)) => {
                         var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
-                        transform_task.*.runFromJS();
-                        transform_task.deinit();
-                        finished += 1;
-                        vm_.active_tasks -|= 1;
-                    },
-                    @field(Task.Tag, @typeName(OpenAndStatFileTask)) => {
-                        var transform_task: *OpenAndStatFileTask = task.get(OpenAndStatFileTask).?;
                         transform_task.*.runFromJS();
                         transform_task.deinit();
                         finished += 1;

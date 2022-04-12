@@ -302,6 +302,8 @@ void uws_res_set_write_offset(int ssl, uws_res_t *res, size_t off);
 void us_socket_mark_needs_more_not_ssl(uws_res_t *res);
 bool uws_res_try_end(int ssl, uws_res_t *res, const char *bytes, size_t len,
                      size_t total_len);
+
+void uws_res_prepare_for_sendfile(int ssl, uws_res_t *res);
 #ifdef __cplusplus
 }
 #endif

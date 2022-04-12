@@ -89,7 +89,9 @@ const SendfileContext = struct {
     offset: Blob.SizeType = 0,
     has_listener: bool = false,
     has_set_on_writable: bool = false,
+    auto_close: bool = false,
 };
+const DateTime = @import("datetime");
 const linux = std.os.linux;
 
 pub const ServerConfig = struct {
@@ -769,7 +771,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.resp.setWriteOffset(this.sendfile.offset);
             this.resp.endWithoutBody();
             // use node syscall so that we don't segfault on BADF
-            _ = JSC.Node.Syscall.close(this.sendfile.fd);
+            if (this.sendfile.auto_close)
+                _ = JSC.Node.Syscall.close(this.sendfile.fd);
             this.sendfile = undefined;
             this.finalize();
         }
@@ -802,7 +805,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.sendfile.remain -= @intCast(Blob.SizeType, this.sendfile.offset - start);
 
                 if (errcode != .SUCCESS or this.aborted or this.sendfile.remain == 0 or val == 0) {
-                    if (errcode != .SUCCESS) {
+                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
                         Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
                         Output.flush();
                     }
@@ -826,7 +829,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.sendfile.offset += wrote;
                 this.sendfile.remain -= wrote;
                 if (errcode != .AGAIN or this.aborted or this.sendfile.remain == 0 or sbytes == 0) {
-                    if (errcode != .AGAIN and errcode != .SUCCESS) {
+                    if (errcode != .AGAIN and errcode != .SUCCESS and errcode != .PIPE) {
                         Output.prettyErrorln("Error: {s}", .{@tagName(errcode)});
                         Output.flush();
                     }
@@ -840,6 +843,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.resp.onWritable(*RequestContext, onWritableSendfile, this);
             }
 
+            this.setAbortHandler();
             this.resp.markNeedsMore();
 
             return true;
@@ -870,64 +874,99 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return this.onSendfile();
         }
 
-        pub fn onPrepareSendfileWrap(this: *anyopaque, fd: i32, size: Blob.SizeType, err: ?JSC.SystemError, globalThis: *JSGlobalObject) void {
-            onPrepareSendfile(bun.cast(*RequestContext, this), fd, size, err, globalThis);
-        }
+        // We tried open() in another thread for this
+        // it was not faster due to the mountain of syscalls
+        pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
+            this.blob = blob;
+            const file = &this.blob.store.?.data.file;
+            var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            const auto_close = file.pathlike != .fd;
+            const fd = if (!auto_close)
+                file.pathlike.fd
+            else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+                .result => |_fd| _fd,
+                .err => |err| return this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
+                    this.server.globalThis,
+                )),
+            };
 
-        fn onPrepareSendfile(this: *RequestContext, fd: i32, size: Blob.SizeType, err: ?JSC.SystemError, globalThis: *JSGlobalObject) void {
-            if (err) |system_error| {
-                if (this.aborted) {
-                    this.finalize();
+            // stat only blocks if the target is a file descriptor
+            const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+                .result => |result| result,
+                .err => |err| {
+                    this.runErrorHandler(err.withPath(file.pathlike.path.slice()).toSystemError().toErrorInstance(
+                        this.server.globalThis,
+                    ));
+                    if (auto_close) {
+                        _ = JSC.Node.Syscall.close(fd);
+                    }
+                    return;
+                },
+            };
+
+            if (Environment.isMac) {
+                if (!std.os.S.ISREG(stat.mode)) {
+                    if (auto_close) {
+                        _ = JSC.Node.Syscall.close(fd);
+                    }
+
+                    var err = JSC.Node.Syscall.Error{
+                        .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(std.os.E.INVAL)),
+                        .path = file.pathlike.path.slice(),
+                        .syscall = .sendfile,
+                    };
+                    var sys = err.toSystemError();
+                    sys.message = ZigString.init("MacOS does not support sending non-regular files");
+                    this.runErrorHandler(sys.toErrorInstance(
+                        this.server.globalThis,
+                    ));
                     return;
                 }
-
-                if (system_error.errno == @enumToInt(std.os.E.NOENT)) {
-                    this.runErrorHandlerWithStatusCode(system_error.toErrorInstance(globalThis), 404);
-                } else {
-                    this.runErrorHandlerWithStatusCode(system_error.toErrorInstance(globalThis), 500);
-                }
-
-                return;
             }
 
-            this.blob.size = size;
+            if (Environment.isLinux) {
+                if (!(std.os.S.ISREG(stat.mode) or std.os.S.ISFIFO(stat.mode))) {
+                    if (auto_close) {
+                        _ = JSC.Node.Syscall.close(fd);
+                    }
+
+                    var err = JSC.Node.Syscall.Error{
+                        .errno = @intCast(JSC.Node.Syscall.Error.Int, @enumToInt(std.os.E.INVAL)),
+                        .path = file.pathlike.path.slice(),
+                        .syscall = .sendfile,
+                    };
+                    var sys = err.toSystemError();
+                    sys.message = ZigString.init("File must be regular or FIFO");
+                    this.runErrorHandler(sys.toErrorInstance(
+                        this.server.globalThis,
+                    ));
+                    return;
+                }
+            }
+
+            this.blob.size = @intCast(Blob.SizeType, stat.size);
             this.needs_content_length = true;
 
             this.sendfile = .{
                 .fd = fd,
-                .remain = size,
+                .remain = this.blob.size,
+                .auto_close = auto_close,
                 .socket_fd = if (!this.aborted) this.resp.getNativeHandle() else -999,
             };
 
-            if (this.aborted) {
-                _ = JSC.Node.Syscall.close(fd);
-                this.finalize();
-                return;
-            }
+            this.resp.runCorked(*RequestContext, renderMetadataAndNewline, this);
 
-            this.resp.runCorked(*RequestContext, renderMetadata, this);
-
-            if (size == 0) {
+            if (this.blob.size == 0) {
                 this.cleanupAndFinalizeAfterSendfile();
                 return;
             }
 
-            this.setAbortHandler();
-
-            // TODO: fix this to be MSGHDR
-            _ = std.os.write(this.sendfile.socket_fd, "\r\n") catch 0;
-
             _ = this.onSendfile();
         }
 
-        pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
-            JSC.WebCore.Blob.doOpenAndStatFile(
-                &this.blob,
-                *RequestContext,
-                this,
-                onPrepareSendfileWrap,
-                blob.globalThis,
-            );
+        pub fn renderMetadataAndNewline(this: *RequestContext) void {
+            this.renderMetadata();
+            this.resp.prepareForSendfile();
         }
 
         pub fn doSendfile(this: *RequestContext, blob: Blob) void {
@@ -939,12 +978,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.has_sendfile_ctx) return;
 
             this.has_sendfile_ctx = true;
-            this.setAbortHandler();
 
             if (comptime can_sendfile) {
                 return this.renderSendFile(blob);
             }
 
+            this.setAbortHandler();
             this.blob.doReadFileInternal(*RequestContext, this, onReadFile, this.server.globalThis);
         }
 
@@ -996,7 +1035,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     if (this.blob.needsToReadFile()) {
                         this.req.setYield(false);
-                        this.setAbortHandler();
                         if (!this.has_sendfile_ctx)
                             this.doSendfile(this.blob);
                         return;

@@ -443,6 +443,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total);
             }
 
+            pub fn prepareForSendfile(res: *Response) void {
+                return uws_res_prepare_for_sendfile(ssl_flag, res.downcast());
+            }
+
             pub fn uncork(_: *Response) void {
                 // uws_res_uncork(
                 //     ssl_flag,
@@ -639,6 +643,7 @@ pub fn NewApp(comptime ssl: bool) type {
         };
     };
 }
+extern fn uws_res_prepare_for_sendfile(ssl: c_int, res: *uws_res) void;
 extern fn uws_res_get_native_handle(ssl: c_int, res: *uws_res) *us_socket_t;
 extern fn uws_create_app(ssl: c_int, options: us_socket_context_options_t) *uws_app_t;
 extern fn uws_app_destroy(ssl: c_int, app: *uws_app_t) void;

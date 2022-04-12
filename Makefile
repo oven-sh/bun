@@ -302,7 +302,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 
 ifeq ($(OS_NAME), darwin)
-	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/*.o) $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/**/*.o) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/**/*.bc) $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/*.bc) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 else
 	ARCHIVE_FILES += -lusockets $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 endif
@@ -485,7 +485,7 @@ usockets:
 			$(CXX) -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -emit-llvm -Isrc $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.cpp;
 
 		cd $(BUN_DEPS_DIR)/uws/uSockets && \
-			$(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a src/*.o src/eventing/*.o src/crypto/*.o
+			$(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/**/*.bc) $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/*.bc) 
 
 uws: usockets
 	$(CXX) -emit-llvm -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o

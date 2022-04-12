@@ -793,11 +793,17 @@ void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key,
 void uws_res_end_without_body(int ssl, uws_res_t *res) {
   if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-    uwsRes->endWithoutBody(0);
+    uwsRes->getHttpResponseData()->state |=
+        uWS::HttpResponseData<true>::HTTP_END_CALLED;
+    uwsRes->markDone(uwsRes->getHttpResponseData());
+    us_socket_timeout(true, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
   } else {
 
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    uwsRes->endWithoutBody(0);
+    uwsRes->getHttpResponseData()->state |=
+        uWS::HttpResponseData<false>::HTTP_END_CALLED;
+    uwsRes->markDone(uwsRes->getHttpResponseData());
+    us_socket_timeout(false, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
   }
 }
 
@@ -1002,15 +1008,13 @@ void uws_res_write_headers(int ssl, uws_res_t *res, const StringPointer *names,
 }
 
 void uws_res_uncork(int ssl, uws_res_t *res) {
-  // if (ssl) {
-  //   uWS::HttpResponse<true> *uwsRes =
-  //   (uWS::HttpResponse<true> *)res;
-  //   uwsRes->uncork();
-  // } else {
-  //   uWS::HttpResponse<false> *uwsRes =
-  //   (uWS::HttpResponse<false> *)res;
-  //   uwsRes->uncork();
-  // }
+  if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    uwsRes->uncork();
+  } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    uwsRes->uncork();
+  }
 }
 
 void us_socket_mark_needs_more_not_ssl(uws_res_t *res) {
@@ -1035,9 +1039,28 @@ void uws_res_cork(int ssl, uws_res_t *res, void *ctx,
   if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
     uwsRes->cork([ctx, corker]() { corker(ctx); });
+
   } else {
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
     uwsRes->cork([ctx, corker]() { corker(ctx); });
+  }
+}
+
+void uws_res_prepare_for_sendfile(int ssl, uws_res_t *res) {
+  if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    auto pair = uwsRes->getSendBuffer(2);
+    char *ptr = pair.first;
+    ptr[0] = '\r';
+    ptr[1] = '\n';
+    uwsRes->uncork();
+  } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    auto pair = uwsRes->getSendBuffer(2);
+    char *ptr = pair.first;
+    ptr[0] = '\r';
+    ptr[1] = '\n';
+    uwsRes->uncork();
   }
 }
 

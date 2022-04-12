@@ -1756,13 +1756,13 @@ pub const Blob = struct {
                 const system_error_ = this.system_error;
                 var store = this.store;
 
-                bun.default_allocator.destroy(this);
                 if (system_error_) |err| {
                     cb(cb_ctx, -1, 0, err, globalThis);
                 } else {
                     cb(cb_ctx, fd, _size, null, globalThis);
                 }
                 store.deref();
+                bun.default_allocator.destroy(this);
             }
 
             fn _runAsync(this: *OpenAndStatFile) void {
@@ -1770,12 +1770,15 @@ pub const Blob = struct {
                 if (this.file_store.pathlike == .fd) {
                     this.opened_fd = this.file_store.pathlike.fd;
                 }
-                const fd =
-                    if (this.opened_fd == null_fd)
+                const fd = if (this.opened_fd == null_fd)
                     this.getFd() catch return
                 else
                     this.opened_fd;
 
+                this.doWithFd(fd);
+            }
+
+            pub fn doWithFd(this: *OpenAndStatFile, fd: JSC.Node.FileDescriptor) void {
                 const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
                     .result => |result| result,
                     .err => |err| {

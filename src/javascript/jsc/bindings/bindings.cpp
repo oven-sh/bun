@@ -508,9 +508,14 @@ JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3))
 {
 
+    globalObject->vm().drainMicrotasks();
+    auto* cell = JSC::JSValue::decode(JSValue0).asCell();
+    JSC::Strong<JSC::Unknown> promiseValue = { globalObject->vm(), cell };
+
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), [ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        globalObject->vm(), globalObject, 1, String(), [&promiseValue, ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
             auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
+
             WTF::Vector<JSC::EncodedJSValue, 16> arguments;
             arguments.reserveInitialCapacity(argCount);
             if (argCount) {
@@ -520,11 +525,12 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObjec
             }
 
             ArgFn3(globalObject, ctx, reinterpret_cast<JSC__JSValue>(arguments.data()), argCount);
+
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
     JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
         globalObject->vm(), globalObject, 1, String(),
-        [ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        [&promiseValue, ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
             auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
             WTF::Vector<JSC::EncodedJSValue, 16> arguments;
             arguments.reserveInitialCapacity(argCount);
@@ -535,11 +541,10 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObjec
             }
 
             ArgFn4(globalObject, ctx, reinterpret_cast<JSC__JSValue>(arguments.data()), argCount);
+
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
 
-    globalObject->vm().drainMicrotasks();
-    auto* cell = JSC::JSValue::decode(JSValue0).asCell();
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(globalObject->vm(), cell)) {
         promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
     } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(globalObject->vm(), cell)) {

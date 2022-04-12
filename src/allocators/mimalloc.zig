@@ -63,7 +63,7 @@ pub extern fn mi_heap_new() ?*mi_heap_t;
 pub extern fn mi_heap_delete(heap: ?*mi_heap_t) void;
 pub extern fn mi_heap_destroy(heap: ?*mi_heap_t) void;
 pub extern fn mi_heap_set_default(heap: ?*mi_heap_t) ?*mi_heap_t;
-pub extern fn mi_heap_get_default() ?*mi_heap_t;
+pub extern fn mi_heap_get_default() *mi_heap_t;
 pub extern fn mi_heap_get_backing() *mi_heap_t;
 pub extern fn mi_heap_collect(heap: ?*mi_heap_t, force: bool) void;
 pub extern fn mi_heap_malloc(heap: ?*mi_heap_t, size: usize) ?*anyopaque;

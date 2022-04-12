@@ -11,6 +11,14 @@ const assert = std.debug.assert;
 pub const Arena = struct {
     heap: ?*mimalloc.mi_heap_t = null,
 
+    /// Internally, mimalloc calls mi_heap_get_default() 
+    /// to get the default heap.
+    /// It uses pthread_getspecific to do that. 
+    /// We can save those extra calls if we just do it once in here
+    pub fn getThreadlocalDefault() Allocator {
+        return Allocator{ .ptr = mimalloc.mi_heap_get_default(), .vtable = &c_allocator_vtable };
+    }
+
     pub fn backingAllocator(this: Arena) Allocator {
         var arena = Arena{ .heap = this.heap.?.backing() };
         return arena.allocator();

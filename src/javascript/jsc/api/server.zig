@@ -47,7 +47,6 @@ const FetchEvent = WebCore.FetchEvent;
 const js = @import("../../../jsc.zig").C;
 const JSC = @import("../../../jsc.zig");
 const JSError = @import("../base.zig").JSError;
-const d = @import("../base.zig").d;
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
 const JSValue = @import("../../../jsc.zig").JSValue;
@@ -82,6 +81,7 @@ const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
 const BoringSSL = @import("boringssl");
+const Arena = @import("../../../mimalloc_arena.zig").Arena;
 const SendfileContext = struct {
     fd: i32,
     socket_fd: i32 = 0,
@@ -431,13 +431,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
     return struct {
         const RequestContext = @This();
         const App = uws.NewApp(ssl_enabled);
+        pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
+        pub threadlocal var pool_allocator: std.mem.Allocator = undefined;
 
         server: *ThisServer,
         resp: *App.Response,
+        /// thread-local default heap allocator
+        /// this prevents an extra pthread_getspecific() call which shows up in profiling
+        allocator: std.mem.Allocator,
         req: *uws.Request,
         url: string,
         method: HTTP.Method,
         aborted: bool = false,
+
+        has_marked_complete: bool = false,
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
         response_ptr: ?*JSC.WebCore.Response = null,
         blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
@@ -454,12 +461,74 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// When the response body is a temporary value
         response_buf_owned: std.ArrayListUnmanaged(u8) = .{},
 
-        pub const RequestContextStackAllocator = std.heap.StackFallbackAllocator(@sizeOf(RequestContext) * 2048 + 4096);
+        // Pre-allocate up to 2048 requests
+        // use a bitset to track which ones are used
+        pub const RequestContextStackAllocator = struct {
+            buf: [2048]RequestContext = undefined,
+            unused: Set = undefined,
+            fallback_allocator: std.mem.Allocator = undefined,
+
+            pub const Set = std.bit_set.ArrayBitSet(usize, 2048);
+
+            pub fn get(this: *@This()) std.mem.Allocator {
+                this.unused = Set.initFull();
+                return std.mem.Allocator.init(this, alloc, resize, free);
+            }
+
+            fn alloc(self: *@This(), a: usize, b: u29, c: u29, d: usize) ![]u8 {
+                if (self.unused.findFirstSet()) |i| {
+                    self.unused.unset(i);
+                    return std.mem.asBytes(&self.buf[i]);
+                }
+
+                return try self.fallback_allocator.rawAlloc(a, b, c, d);
+            }
+
+            fn resize(
+                _: *@This(),
+                _: []u8,
+                _: u29,
+                _: usize,
+                _: u29,
+                _: usize,
+            ) ?usize {
+                unreachable;
+            }
+
+            fn sliceContainsSlice(container: []u8, slice: []u8) bool {
+                return @ptrToInt(slice.ptr) >= @ptrToInt(container.ptr) and
+                    (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(container.ptr) + container.len);
+            }
+
+            fn free(
+                self: *@This(),
+                buf: []u8,
+                buf_align: u29,
+                return_address: usize,
+            ) void {
+                _ = buf_align;
+                _ = return_address;
+                const bytes = std.mem.asBytes(&self.buf);
+                if (sliceContainsSlice(bytes, buf)) {
+                    const index = if (bytes[0..buf.len].ptr != buf.ptr)
+                        (@ptrToInt(buf.ptr) - @ptrToInt(bytes)) / @sizeOf(RequestContext)
+                    else
+                        @as(usize, 0);
+
+                    if (comptime Environment.allow_assert) {
+                        std.debug.assert(@intToPtr(*RequestContext, @ptrToInt(buf.ptr)) == &self.buf[index]);
+                        std.debug.assert(!self.unused.isSet(index));
+                    }
+
+                    self.unused.set(index);
+                } else {
+                    self.fallback_allocator.rawFree(buf, buf_align, return_address);
+                }
+            }
+        };
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled;
-
-        pub threadlocal var pool: *RequestContextStackAllocator = undefined;
 
         pub fn setAbortHandler(this: *RequestContext) void {
             if (this.has_abort_handler) return;
@@ -497,6 +566,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.renderMissing();
                 return;
             };
+            ctx.response_jsvalue = value;
+            JSC.C.JSValueProtect(ctx.server.globalThis.ref(), value.asObjectRef());
+
             ctx.render(response);
         }
 
@@ -551,7 +623,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.resp.writeStatus("500 Internal Server Error");
             this.resp.writeHeader("content-type", MimeType.html.value);
 
-            var allocator = bun.default_allocator;
+            const allocator = this.allocator;
 
             var fallback_container = allocator.create(Api.FallbackMessageContainer) catch unreachable;
             defer allocator.destroy(fallback_container);
@@ -596,6 +668,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onWritableResponseBuffer(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
             if (this.aborted) {
+                this.finalize();
                 return false;
             }
             return this.sendWritableBytes(this.response_buf_owned.items, write_offset, resp);
@@ -603,10 +676,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn create(this: *RequestContext, server: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             this.* = .{
+                .allocator = server.allocator,
                 .resp = resp,
                 .req = req,
                 // this memory is owned by the Request object
-                .url = strings.append(bun.default_allocator, server.base_url_string_for_joining, req.url()) catch
+                .url = strings.append(this.allocator, server.base_url_string_for_joining, req.url()) catch
                     @panic("Out of memory while joining the URL path?"),
                 .method = HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
@@ -616,13 +690,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onAbort(this: *RequestContext, _: *App.Response) void {
             this.aborted = true;
             this.finalizeWithoutDeinit();
+            this.markComplete();
+        }
+
+        pub fn markComplete(this: *RequestContext) void {
+            if (!this.has_marked_complete) this.server.onRequestComplete();
+            this.has_marked_complete = true;
         }
 
         // This function may be called multiple times
         // so it's important that we can safely do that
         pub fn finalizeWithoutDeinit(this: *RequestContext) void {
             this.blob.detach();
-            this.request_body_buf.clearAndFree(bun.default_allocator);
+            this.request_body_buf.clearAndFree(this.allocator);
 
             if (!this.response_jsvalue.isEmpty()) {
                 this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
@@ -656,14 +736,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.response_headers = null;
             }
 
-            this.response_buf_owned.clearAndFree(bun.default_allocator);
+            this.response_buf_owned.clearAndFree(this.allocator);
         }
         pub fn finalize(this: *RequestContext) void {
             var server = this.server;
             this.finalizeWithoutDeinit();
-            std.debug.assert(server.pending_requests > 0);
+            this.markComplete();
             server.request_pool_allocator.destroy(this);
-            server.onRequestComplete();
         }
 
         fn writeHeaders(
@@ -767,8 +846,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onWritableBytes(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
-            if (this.aborted)
+            if (this.aborted) {
+                this.finalize();
                 return false;
+            }
 
             var bytes = this.blob.sharedView();
             return this.sendWritableBytes(bytes, write_offset, resp);
@@ -794,12 +875,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn onPrepareSendfile(this: *RequestContext, fd: i32, size: Blob.SizeType, err: ?JSC.SystemError, globalThis: *JSGlobalObject) void {
-            if (this.aborted) {
-                this.finalize();
-                return;
-            }
-
             if (err) |system_error| {
+                if (this.aborted) {
+                    this.finalize();
+                    return;
+                }
+
                 if (system_error.errno == @enumToInt(std.os.E.NOENT)) {
                     this.runErrorHandlerWithStatusCode(system_error.toErrorInstance(globalThis), 404);
                 } else {
@@ -819,6 +900,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
 
             if (this.aborted) {
+                _ = JSC.Node.Syscall.close(fd);
                 this.finalize();
                 return;
             }
@@ -849,11 +931,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn doSendfile(this: *RequestContext, blob: Blob) void {
-            if (this.has_sendfile_ctx) return;
             if (this.aborted) {
                 this.finalize();
                 return;
             }
+
+            if (this.has_sendfile_ctx) return;
+
             this.has_sendfile_ctx = true;
             this.setAbortHandler();
 
@@ -865,6 +949,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onReadFile(this: *RequestContext, result: Blob.Store.ReadFile.ResultType) void {
+            if (this.aborted) {
+                this.finalize();
+                return;
+            }
+
             if (result == .err) {
                 this.runErrorHandler(result.err.toErrorInstance(this.server.globalThis));
                 return;
@@ -886,20 +975,24 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
-            if (this.aborted) {
-                this.finalize();
-                return;
-            }
-
             switch (value.*) {
                 .Error => {
                     const err = value.Error;
                     _ = value.use();
+                    if (this.aborted) {
+                        this.finalize();
+                        return;
+                    }
                     this.runErrorHandler(err);
                     return;
                 },
                 .Blob => {
                     this.blob = value.use();
+
+                    if (this.aborted) {
+                        this.finalize();
+                        return;
+                    }
 
                     if (this.blob.needsToReadFile()) {
                         this.req.setYield(false);
@@ -932,6 +1025,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn doRender(this: *RequestContext) void {
             if (this.aborted) {
+                this.finalize();
                 return;
             }
             var response = this.response_ptr.?;
@@ -968,7 +1062,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         ) void {
             if (this.resp.hasResponded()) return;
 
-            var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(bun.default_allocator);
+            var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(this.allocator);
             defer exception_list.deinit();
             if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
                 this.has_called_error_handler = true;
@@ -1094,14 +1188,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn resolveRequestBody(this: *RequestContext) void {
-            if (this.aborted)
+            if (this.aborted) {
+                this.finalize();
                 return;
+            }
+
             if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
-                var bytes = this.request_body_buf.toOwnedSlice(bun.default_allocator);
+                var bytes = this.request_body_buf.toOwnedSlice(this.allocator);
                 var old = req.body;
                 req.body = .{
                     .Blob = if (bytes.len > 0)
-                        Blob.init(bytes, bun.default_allocator, this.server.globalThis)
+                        Blob.init(bytes, this.allocator, this.server.globalThis)
                     else
                         Blob.initEmpty(this.server.globalThis),
                 };
@@ -1113,12 +1210,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onBodyChunk(this: *RequestContext, _: *App.Response, chunk: []const u8, last: bool) void {
             if (this.aborted) return;
-            this.request_body_buf.appendSlice(bun.default_allocator, chunk) catch @panic("Out of memory while allocating request body");
+            this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
             if (last) {
                 if (JSC.JSValue.fromRef(this.request_js_object).as(Request) != null) {
                     uws.Loop.get().?.nextTick(*RequestContext, this, resolveRequestBody);
                 } else {
-                    this.request_body_buf.deinit(bun.default_allocator);
+                    this.request_body_buf.deinit(this.allocator);
                     this.request_body_buf = .{};
                 }
             }
@@ -1154,7 +1251,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     return;
                 }
 
-                this.request_body_buf.ensureTotalCapacityPrecise(bun.default_allocator, len) catch @panic("Out of memory while allocating request body buffer");
+                this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, len) catch @panic("Out of memory while allocating request body buffer");
             }
             this.setAbortHandler();
 
@@ -1189,6 +1286,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         request_pool_allocator: std.mem.Allocator = undefined,
         has_js_deinited: bool = false,
         listen_callback: JSC.AnyTask = undefined,
+        allocator: std.mem.Allocator,
 
         pub const Class = JSC.NewClass(
             ThisServer,
@@ -1261,8 +1359,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn stop(this: *ThisServer) void {
-            this.next_tick_pending = true;
-
             if (this.listener) |listener| {
                 listener.close();
                 this.listener = null;
@@ -1284,7 +1380,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             this.app.destroy();
-            bun.default_allocator.destroy(this);
+            const allocator = this.allocator;
+            allocator.destroy(this);
         }
 
         pub fn init(config: ServerConfig, globalThis: *JSGlobalObject) *ThisServer {
@@ -1294,9 +1391,19 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .config = config,
                 .base_url_string_for_joining = strings.trim(config.base_url.href, "/"),
                 .vm = JSC.VirtualMachine.vm,
+                .allocator = Arena.getThreadlocalDefault(),
             };
-            RequestContext.pool = bun.default_allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
-            server.request_pool_allocator = RequestContext.pool.get();
+            if (RequestContext.pool == null) {
+                RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch @panic("Out of memory!");
+                RequestContext.pool.?.* = .{
+                    .fallback_allocator = server.allocator,
+                };
+                server.request_pool_allocator = RequestContext.pool.?.get();
+                RequestContext.pool_allocator = server.request_pool_allocator;
+            } else {
+                server.request_pool_allocator = RequestContext.pool_allocator;
+            }
+
             return server;
         }
 
@@ -1386,7 +1493,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
-            var stack_fallback = std.heap.stackFallback(8096, bun.default_allocator);
+            var stack_fallback = std.heap.stackFallback(8096, this.allocator);
             var allocator = stack_fallback.get();
 
             var buffer_writer = js_printer.BufferWriter.init(allocator) catch unreachable;
@@ -1431,7 +1538,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 if (strings.indexOfChar(url, ':')) |colon| {
                     url = url[0..colon];
                 }
-                editor.open(ctx.path, url, line, column, bun.default_allocator) catch Output.prettyErrorln("Failed to open editor", .{});
+                editor.open(ctx.path, url, line, column, this.allocator) catch Output.prettyErrorln("Failed to open editor", .{});
             } else {
                 resp.writeStatus("500 Missing Editor :(");
                 resp.end("Please set your editor in bunfig.toml", false);
@@ -1446,7 +1553,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var ctx = this.request_pool_allocator.create(RequestContext) catch @panic("ran out of memory");
             ctx.create(this, req, resp);
 
-            var request_object = bun.default_allocator.create(JSC.WebCore.Request) catch unreachable;
+            var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             request_object.* = .{
                 .url = JSC.ZigString.init(ctx.url),
                 .method = ctx.method,
@@ -1464,32 +1571,34 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             var args = [_]JSC.C.JSValueRef{JSC.WebCore.Request.Class.make(this.globalThis.ref(), request_object)};
             ctx.request_js_object = args[0];
             JSC.C.JSValueProtect(this.globalThis.ref(), args[0]);
-            ctx.response_jsvalue = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
+            const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
 
             if (ctx.aborted) {
                 ctx.finalize();
                 return;
             }
 
-            if (ctx.response_jsvalue.isEmptyOrUndefinedOrNull() and !ctx.resp.hasResponded()) {
+            if (response_value.isEmptyOrUndefinedOrNull() and !ctx.resp.hasResponded()) {
                 ctx.renderMissing();
                 return;
             }
 
-            if (ctx.response_jsvalue.isError() or ctx.response_jsvalue.isAggregateError(this.globalThis) or ctx.response_jsvalue.isException(this.globalThis.vm())) {
-                ctx.runErrorHandler(ctx.response_jsvalue);
+            if (response_value.isError() or response_value.isAggregateError(this.globalThis) or response_value.isException(this.globalThis.vm())) {
+                ctx.runErrorHandler(response_value);
                 return;
             }
 
-            JSC.C.JSValueProtect(this.globalThis.ref(), ctx.response_jsvalue.asObjectRef());
-            if (ctx.response_jsvalue.as(JSC.WebCore.Response)) |response| {
+            if (response_value.as(JSC.WebCore.Response)) |response| {
+                JSC.C.JSValueProtect(this.globalThis.ref(), response_value.asObjectRef());
+                ctx.response_jsvalue = response_value;
+
                 ctx.render(response);
                 return;
             }
 
             var wait_for_promise = false;
 
-            if (ctx.response_jsvalue.asPromise()) |promise| {
+            if (response_value.asPromise()) |promise| {
                 // If we immediately have the value available, we can skip the extra event loop tick
                 switch (promise.status(vm.global.vm())) {
                     .Pending => {},
@@ -1505,7 +1614,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 wait_for_promise = true;
                 // I don't think this case should happen
                 // But I'm uncertain
-            } else if (ctx.response_jsvalue.asInternalPromise()) |promise| {
+            } else if (response_value.asInternalPromise()) |promise| {
                 switch (promise.status(vm.global.vm())) {
                     .Pending => {},
                     .Fulfilled => {
@@ -1522,7 +1631,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             if (wait_for_promise) {
                 ctx.setAbortHandler();
-                ctx.response_jsvalue.then(
+                response_value.then(
                     this.globalThis,
                     RequestContext,
                     ctx,

@@ -635,10 +635,12 @@ pub const VirtualMachine = struct {
                 this.tasks.ensureUnusedCapacity(add) catch unreachable;
 
                 {
-                    @fence(.SeqCst);
-                    while (this.concurrent_tasks.readItem()) |task| {
-                        this.tasks.writeItemAssumeCapacity(task);
-                    }
+                    var writable = std.mem.sliceAsBytes(this.tasks.writableSlice(0));
+                    const readable = std.mem.sliceAsBytes(this.concurrent_tasks.readableSlice(0));
+                    @memcpy(writable.ptr, readable.ptr, @minimum(writable.len, readable.len));
+                    this.tasks.count += add;
+                    this.concurrent_tasks.head = 0;
+                    this.concurrent_tasks.count = 0;
                 }
 
                 _ = this.pending_tasks_count.fetchAdd(add, .Monotonic);

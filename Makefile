@@ -302,7 +302,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 
 ifeq ($(OS_NAME), darwin)
-	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/**/*.bc) $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/*.bc) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
+	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/*.bc) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 else
 	ARCHIVE_FILES += -lusockets $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 endif
@@ -311,7 +311,7 @@ STATIC_MUSL_FLAG ?=
 
 ifeq ($(OS_NAME), linux)
 PLATFORM_LINKER_FLAGS = $(CFLAGS) \
-	    -fuse-ld=lld \
+		-fuse-ld=lld \
 		-Wl,-z,now \
 		-Wl,--as-needed \
 		-Wl,--gc-sections \
@@ -472,21 +472,14 @@ build-obj-safe:
 UWS_CC_FLAGS = -pthread  -DLIBUS_USE_OPENSSL=1 -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion $(UWS_INCLUDE) -DUWS_WITH_PROXY
 UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=gnu++17 -fno-exceptions
 UWS_LDFLAGS = -I$(BUN_DEPS_DIR)/boringssl/include -I$(ZLIB_INCLUDE_DIR)
-
+USOCKETS_DIR = $(BUN_DEPS_DIR)/uws/uSockets/
+USOCKETS_SRC_DIR = $(BUN_DEPS_DIR)/uws/uSockets/src/
+		
 usockets:
 	rm -rf $(BUN_DEPS_DIR)/uws/uSockets/*.o $(BUN_DEPS_DIR)/uws/uSockets/**/*.o $(BUN_DEPS_DIR)/uws/uSockets/*.a
-
-		cd $(BUN_DEPS_DIR)/uws/uSockets/src && \
-			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -emit-llvm -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
-		cd $(BUN_DEPS_DIR)/uws/uSockets/src/eventing && \
-			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -emit-llvm  -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
-		cd $(BUN_DEPS_DIR)/uws/uSockets/src/crypto && \
-			$(CC) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -emit-llvm  -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g  $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.c && \
-			$(CXX) -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -emit-llvm -Isrc $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c *.cpp;
-
-		cd $(BUN_DEPS_DIR)/uws/uSockets && \
-			$(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/**/*.bc) $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/src/*.bc) 
-
+	cd $(USOCKETS_DIR) && $(CC)  $(MACOS_MIN_FLAG) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -save-temps -flto -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c $(wildcard $(USOCKETS_SRC_DIR)/*.c) $(wildcard $(USOCKETS_SRC_DIR)/**/*.c)
+	cd $(USOCKETS_DIR) && $(CXX) $(MACOS_MIN_FLAG)  -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -save-temps -flto -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c $(wildcard $(USOCKETS_SRC_DIR)/*.cpp) $(wildcard $(USOCKETS_SRC_DIR)/**/*.cpp)
+	cd $(USOCKETS_DIR) && $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a *.o *.ii *.bc *.i
 uws: usockets
 	$(CXX) -emit-llvm -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 

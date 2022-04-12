@@ -1305,18 +1305,31 @@ pub fn mmapFile(
     const file_flags: u32 = if (@hasDecl(std.os.MAP, "FILE")) std.os.MAP.FILE else 0;
 
     // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
+    var offset: u64 = 0;
     var flags = file_flags;
+    var map_size: ?i64 = null;
 
     if (args.nextEat()) |opts| {
         const sync = opts.get(ctx.ptr(), "sync") orelse JSC.JSValue.jsBoolean(false);
         const shared = opts.get(ctx.ptr(), "shared") orelse JSC.JSValue.jsBoolean(true);
         flags |= @as(u32, if (sync.toBoolean()) sync_flags else 0);
         flags |= @as(u32, if (shared.toBoolean()) std.os.MAP.SHARED else std.os.MAP.PRIVATE);
+
+        if (opts.get(ctx.ptr(), "size")) |value| {
+            map_size = value.toInt64();
+        }
+
+        if (opts.get(ctx.ptr(), "offset")) |value| {
+            offset = std.math.cast(u64, value.toInt64()) catch {
+                JSC.JSError(bun.default_allocator, "mmap: offset overflow", .{}, ctx, exception);
+                return null;
+            };
+        }
     } else {
         flags |= std.os.MAP.SHARED;
     }
 
-    const map = switch (JSC.Node.Syscall.mmapFile(buf_z, flags)) {
+    const map = switch (JSC.Node.Syscall.mmapFile(buf_z, flags, map_size, offset)) {
         .result => |map| map,
 
         .err => |err| {

@@ -486,13 +486,13 @@ fn mmap(
     return Maybe([]align(mem.page_size) u8){ .result = @ptrCast([*]align(mem.page_size) u8, @alignCast(mem.page_size, rc))[0..length] };
 }
 
-pub fn mmapFile(path: [:0]const u8, flags: u32) Maybe([]align(mem.page_size) u8) {
+pub fn mmapFile(path: [:0]const u8, flags: u32, wanted_size: ?i64, offset: u64) Maybe([]align(mem.page_size) u8) {
     const fd = switch (open(path, os.O.RDWR, 0)) {
         .result => |fd| fd,
         .err => |err| return .{ .err = err },
     };
 
-    const size = switch (fstat(fd)) {
+    const size = wanted_size orelse switch (fstat(fd)) {
         .result => |result| result.size,
         .err => |err| {
             _ = close(fd);
@@ -500,7 +500,7 @@ pub fn mmapFile(path: [:0]const u8, flags: u32) Maybe([]align(mem.page_size) u8)
         },
     };
 
-    const map = switch (mmap(null, @intCast(usize, size), os.PROT.READ | os.PROT.WRITE, flags, fd, 0)) {
+    const map = switch (mmap(null, @intCast(usize, size), os.PROT.READ | os.PROT.WRITE, flags, fd, offset)) {
         .result => |map| map,
 
         .err => |err| {

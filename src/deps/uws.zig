@@ -27,6 +27,28 @@ pub const Loop = opaque {
         uws_loop_defer(this, user_data, Handler.callback);
     }
 
+    fn NewHandler(comptime UserType: type, comptime callback: fn (UserType) void) type {
+        return struct {
+            loop: *Loop,
+            pub fn remove(handler: @This()) void {
+                return uws_loop_removePostHandler(handler.loop, callback);
+            }
+            pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
+                const std = @import("std");
+                callback(@ptrCast(UserType, @alignCast(@alignOf(std.meta.Child(UserType)), data)));
+            }
+        };
+    }
+
+    pub fn addPostHandler(this: *Loop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
+        const Handler = NewHandler(UserType, callback);
+
+        uws_loop_addPostHandler(this, ctx, Handler.callback);
+        return Handler{
+            .loop = this,
+        };
+    }
+
     extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: fn (ctx: *anyopaque) callconv(.C) void) void;
 
     extern fn uws_get_loop() ?*Loop;
@@ -37,6 +59,8 @@ pub const Loop = opaque {
     extern fn us_wakeup_loop(loop: ?*Loop) void;
     extern fn us_loop_integrate(loop: ?*Loop) void;
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
+    extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+    extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
 };
 const uintmax_t = c_ulong;
 

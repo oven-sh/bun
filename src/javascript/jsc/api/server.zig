@@ -1185,7 +1185,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         base_url_string_for_joining: string = "",
         response_objects_pool: JSC.WebCore.Response.Pool = JSC.WebCore.Response.Pool{},
         config: ServerConfig = ServerConfig{},
-        next_tick_pending: bool = false,
         pending_requests: usize = 0,
         request_pool_allocator: std.mem.Allocator = undefined,
         has_js_deinited: bool = false,
@@ -1279,22 +1278,13 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 }
             }
 
+            // if you run multiple servers simultaneously, this could break it
+            if (this.vm.uws_event_loop != null and uws.Loop.get().? == this.vm.uws_event_loop.?) {
+                this.vm.uws_event_loop = null;
+            }
+
             this.app.destroy();
             bun.default_allocator.destroy(this);
-        }
-
-        pub fn nextTick(this: *ThisServer) void {
-            std.debug.assert(this.next_tick_pending);
-
-            this.next_tick_pending = false;
-            this.vm.tick();
-        }
-
-        pub fn queueNextTick(this: *ThisServer) void {
-            std.debug.assert(!this.next_tick_pending);
-
-            this.next_tick_pending = true;
-            uws.Loop.get().?.nextTick(*ThisServer, this, nextTick);
         }
 
         pub fn init(config: ServerConfig, globalThis: *JSGlobalObject) *ThisServer {
@@ -1376,13 +1366,18 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             this.listener = socket;
+            const needs_post_handler = this.vm.uws_event_loop == null;
             this.vm.uws_event_loop = uws.Loop.get();
             this.vm.response_objects_pool = &this.response_objects_pool;
             this.listen_callback = JSC.AnyTask.New(ThisServer, run).init(this);
             this.vm.eventLoop().enqueueTask(JSC.Task.init(&this.listen_callback));
+            if (needs_post_handler) {
+                _ = this.vm.uws_event_loop.?.addPostHandler(*JSC.VirtualMachine.EventLoop, this.vm.eventLoop(), JSC.VirtualMachine.EventLoop.tick);
+            }
         }
 
         pub fn run(this: *ThisServer) void {
+            // this.app.addServerName(hostname_pattern: [*:0]const u8)
             this.app.run();
         }
 
@@ -1470,12 +1465,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             ctx.request_js_object = args[0];
             JSC.C.JSValueProtect(this.globalThis.ref(), args[0]);
             ctx.response_jsvalue = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
-            var needs_tick = false;
-
-            defer if (!this.next_tick_pending and (needs_tick or
-                // this is evaluated _after_ this function call
-                vm.eventLoop().pending_tasks_count.value > 0))
-                this.queueNextTick();
 
             if (ctx.aborted) {
                 ctx.finalize();
@@ -1514,7 +1503,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     },
                 }
                 wait_for_promise = true;
-                needs_tick = true;
                 // I don't think this case should happen
                 // But I'm uncertain
             } else if (ctx.response_jsvalue.asInternalPromise()) |promise| {
@@ -1530,7 +1518,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     },
                 }
                 wait_for_promise = true;
-                needs_tick = true;
             }
 
             if (wait_for_promise) {

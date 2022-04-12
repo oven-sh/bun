@@ -282,7 +282,7 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
                         idle_network_ticks = 0;
                     }
 
-                    var remaining_ticks: i32 = 5;
+                    var remaining_ticks: isize = 5;
 
                     while (remaining_ticks > 0 and HTTP.AsyncHTTP.active_requests_count.loadUnchecked() > HTTP.AsyncHTTP.max_simultaneous_requests) : (remaining_ticks -= 1) {
                         io.run_for_ns(std.time.ns_per_ms * 2) catch {};

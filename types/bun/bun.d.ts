@@ -562,6 +562,22 @@ declare module "bun" {
       serverNames: Record<string, SSLOptions & SSLAdvancedOptions>;
     };
 
+  /**
+   * HTTP & HTTPS Server
+   *
+   * To start the server, see {@link serve}
+   *
+   * Often, you don't need to interact with this object directly. It exists to help you with the following tasks:
+   * - Stop the server
+   * - How many requests are currently being handled?
+   *
+   * For performance, Bun pre-allocates most of the data for 2048 concurrent requests.
+   * That means starting a new server allocates about 500 KB of memory. Try to
+   * avoid starting and stopping the server often (unless it's a new instance of bun).
+   *
+   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
+   *
+   */
   interface Server {
     /**
      * Stop listening to prevent new connections from being accepted.

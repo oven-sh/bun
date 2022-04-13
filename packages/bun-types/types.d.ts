@@ -877,7 +877,7 @@ declare module "bun" {
    *
    * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
    *
-   * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
    *
    * The equivalent `openssl` command is:
    *
@@ -897,7 +897,7 @@ declare module "bun" {
    *
    * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
    *
-   * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
    *
    * The equivalent `openssl` command is:
    *
@@ -909,9 +909,14 @@ declare module "bun" {
   export function sha(input: StringOrBuffer, encoding: DigestEncoding): string;
 
   /**
-   * This is not the default because it's not cryptographically secure and it's slower than {@link SHA512}
    *
-   * Consider using the ugly-named {@link SHA512_256} instead
+   * Hashing functions for SHA-1
+   *
+   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   *
+   * SHA-1 is no longer cryptographically secure and it's slower than {@link SHA512}.
+   *
+   * Consider using the {@link SHA512_256} instead.
    */
   export class SHA1 extends CryptoHashInterface<SHA1> {
     constructor();
@@ -921,6 +926,18 @@ declare module "bun" {
      */
     static readonly byteLength: 20;
   }
+
+  /**
+   *
+   * Hashing functions for MD5
+   *
+   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   *
+   * If you're looking for a fast hashing function, consider {@link hash}
+   * instead. This is not cryptographically secure and it's slower than
+   * {@link hash}. The best reason to use it is compatibility.
+   *
+   */
   export class MD5 extends CryptoHashInterface<MD5> {
     constructor();
 
@@ -929,6 +946,18 @@ declare module "bun" {
      */
     static readonly byteLength: 16;
   }
+
+  /**
+   *
+   * Ancient hashing function. Bun maybe shouldn't have included this.
+   *
+   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   *
+   * If you're looking for a fast hashing function, consider {@link hash}
+   * instead. This is not cryptographically secure and it's slower than
+   * {@link hash}. The best reason to use it is compatibility.
+   *
+   */
   export class MD4 extends CryptoHashInterface<MD4> {
     constructor();
 
@@ -937,6 +966,11 @@ declare module "bun" {
      */
     static readonly byteLength: 16;
   }
+  /**
+   * Smaller variant of SHA-2
+   *
+   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   */
   export class SHA224 extends CryptoHashInterface<SHA224> {
     constructor();
 
@@ -945,6 +979,11 @@ declare module "bun" {
      */
     static readonly byteLength: 28;
   }
+  /**
+   * Faster variant of SHA-2, but with bigger output (64 bytes)
+   *
+   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   */
   export class SHA512 extends CryptoHashInterface<SHA512> {
     constructor();
 
@@ -961,6 +1000,13 @@ declare module "bun" {
      */
     static readonly byteLength: 48;
   }
+  /**
+   * SHA-2 (Secure Hash Algorithm 2) is a set of cryptographic hash functions
+   * designed by the United States National Security Agency (NSA) and first
+   * published in 2001
+   *
+   * {@link https://en.wikipedia.org/wiki/SHA-2}
+   */
   export class SHA256 extends CryptoHashInterface<SHA256> {
     constructor();
 
@@ -970,6 +1016,9 @@ declare module "bun" {
     static readonly byteLength: 32;
   }
   /**
+   *
+   * Fast variant of SHA-512, but with smaller output (32 bytes)
+   *
    * See also {@link sha}
    */
   export class SHA512_256 extends CryptoHashInterface<SHA512_256> {

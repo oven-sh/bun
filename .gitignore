@@ -89,3 +89,4 @@ src/deps/PLCrashReporter/
 
 *.dSYM
 *.crash
+misctools/sha

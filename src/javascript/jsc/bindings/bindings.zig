@@ -136,6 +136,7 @@ pub const ZigString = extern struct {
             return @intToPtr([*]u8, @ptrToInt(this.ptr))[0..this.len];
         }
 
+        /// Does nothing if the slice is not allocated
         pub fn deinit(this: *const Slice) void {
             if (!this.allocated) {
                 return;

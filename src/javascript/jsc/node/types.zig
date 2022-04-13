@@ -190,10 +190,9 @@ pub const Encoding = enum(u8) {
     const Eight = strings.ExactSizeMatcher(8);
     /// Caller must verify the value is a string
     pub fn fromStringValue(value: JSC.JSValue, global: *JSC.JSGlobalObject) ?Encoding {
-        var str = JSC.ZigString.Empty;
-        value.toZigString(&str, global);
-        const slice = str.slice();
-        return from(slice);
+        var sliced = value.toSlice(global, bun.default_allocator);
+        defer sliced.deinit();
+        return from(sliced.slice());
     }
 
     /// Caller must verify the value is a string

@@ -193,6 +193,11 @@ pub const Encoding = enum(u8) {
         var str = JSC.ZigString.Empty;
         value.toZigString(&str, global);
         const slice = str.slice();
+        return from(slice);
+    }
+
+    /// Caller must verify the value is a string
+    pub fn from(slice: []const u8) ?Encoding {
         return switch (slice.len) {
             0...2 => null,
             else => switch (Eight.matchLower(slice)) {
@@ -213,6 +218,34 @@ pub const Encoding = enum(u8) {
                 break :brk null;
             },
         };
+    }
+
+    pub fn encodeWithSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8, exception: JSC.C.ExceptionRef) JSC.JSValue {
+        switch (encoding) {
+            .base64 => {
+                var base64: [std.base64.standard.Encoder.calcSize(size)]u8 = undefined;
+                const result = JSC.ZigString.init(std.base64.standard.Encoder.encode(&base64, input)).toValueGC(globalThis);
+                return result;
+            },
+            .base64url => {
+                var buf: [std.base64.url_safe.Encoder.calcSize(size) + "data:;base64,".len]u8 = undefined;
+                var encoded = std.base64.url_safe.Encoder.encode(buf["data:;base64,".len..], input);
+                buf[0.."data:;base64,".len].* = "data:;base64,".*;
+
+                const result = JSC.ZigString.init(buf[0 .. "data:;base64,".len + encoded.len]).toValueGC(globalThis);
+                return result;
+            },
+            .hex => {
+                var buf: [size * 4]u8 = undefined;
+                var out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch unreachable;
+                const result = JSC.ZigString.init(out).toValueGC(globalThis);
+                return result;
+            },
+            else => {
+                JSC.throwInvalidArguments("Unexpected encoding", .{}, globalThis.ref(), exception);
+                return JSC.JSValue.zero;
+            },
+        }
     }
 };
 

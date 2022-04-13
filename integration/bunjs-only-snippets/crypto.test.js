@@ -1,28 +1,70 @@
-import { it, expect } from "bun:test";
+import {
+  sha,
+  MD5,
+  MD4,
+  SHA1,
+  SHA256,
+  SHA384,
+  SHA512,
+  SHA512_256,
+  gc,
+} from "bun";
+import { it, expect, describe } from "bun:test";
+import { readFileSync } from "fs";
 
-for (let Hasher of [
-  Bun.SHA1,
-  Bun.SHA256,
-  Bun.SHA384,
-  Bun.SHA512,
-  Bun.SHA512_256,
-]) {
-  it(`${Hasher.name} instance`, () => {
-    var buf = new Uint8Array(256);
-    const result = new Hasher();
-    result.update("hello world");
-    result.final(buf);
-  });
-}
+describe("crypto", () => {
+  for (let Hash of [MD5, MD4, SHA1, SHA256, SHA384, SHA512, SHA512_256]) {
+    for (let input of [
+      "hello world",
+      "hello world".repeat(20).slice(),
+      "",
+      "a",
+    ]) {
+      describe(input, () => {
+        gc(true);
 
-for (let HashFn of [
-  Bun.sha1,
-  Bun.sha256,
-  Bun.sha384,
-  Bun.sha512,
-  Bun.sha512_256,
-]) {
-  it(`${HashFn.name} instance`, () => {
-    HashFn("hello world");
-  });
-}
+        it(`${Hash.name} base64`, () => {
+          gc(true);
+          const result = new Hash();
+          result.update(input);
+          expect(typeof result.digest("base64")).toBe("string");
+          gc(true);
+        });
+
+        it(`${Hash.name} hash base64`, () => {
+          Hash.hash(input, "base64");
+          gc(true);
+        });
+
+        it(`${Hash.name} hex`, () => {
+          const result = new Hash();
+          result.update(input);
+          expect(typeof result.digest("hex")).toBe("string");
+          gc(true);
+        });
+
+        it(`${Hash.name} hash hex`, () => {
+          expect(typeof Hash.hash(input, "hex")).toBe("string");
+          gc(true);
+        });
+
+        it(`${Hash.name} buffer`, () => {
+          var buf = new Uint8Array(256);
+          const result = new Hash();
+
+          result.update(input);
+          expect(result.digest(buf)).toBe(buf);
+          expect(buf[0] != 0).toBe(true);
+          gc(true);
+        });
+
+        it(`${Hash.name} buffer`, () => {
+          var buf = new Uint8Array(256);
+
+          expect(Hash.hash(input, buf) instanceof Uint8Array).toBe(true);
+          gc(true);
+        });
+      });
+    }
+  }
+});

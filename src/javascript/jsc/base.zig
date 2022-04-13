@@ -2557,10 +2557,14 @@ const SSLServer = JSC.API.SSLServer;
 const DebugServer = JSC.API.DebugServer;
 const DebugSSLServer = JSC.API.DebugSSLServer;
 const SHA1 = JSC.API.Bun.Crypto.SHA1;
-const SHA256 = JSC.API.Bun.Crypto.SHA256;
-const SHA384 = JSC.API.Bun.Crypto.SHA384;
+const MD5 = JSC.API.Bun.Crypto.MD5;
+const MD4 = JSC.API.Bun.Crypto.MD4;
+const SHA224 = JSC.API.Bun.Crypto.SHA224;
 const SHA512 = JSC.API.Bun.Crypto.SHA512;
+const SHA384 = JSC.API.Bun.Crypto.SHA384;
+const SHA256 = JSC.API.Bun.Crypto.SHA256;
 const SHA512_256 = JSC.API.Bun.Crypto.SHA512_256;
+const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
 
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     AttributeIterator,
@@ -2584,6 +2588,9 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     HTMLRewriter,
     JSNode,
     LazyPropertiesObject,
+    MD4,
+    MD5_SHA1,
+    MD5,
     ModuleNamespace,
     NodeFS,
     Request,
@@ -2591,6 +2598,12 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Response,
     Router,
     Server,
+    SHA1,
+    SHA224,
+    SHA256,
+    SHA384,
+    SHA512_256,
+    SHA512,
     SSLServer,
     Stats,
     TextChunk,
@@ -2598,11 +2611,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     TextEncoder,
     TimeoutTask,
     Transpiler,
-    SHA1,
-    SHA256,
-    SHA384,
-    SHA512,
-    SHA512_256,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

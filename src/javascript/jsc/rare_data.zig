@@ -6,11 +6,20 @@ const RareData = @This();
 const Syscall = @import("./node/syscall.zig");
 const JSC = @import("javascript_core");
 const std = @import("std");
+const BoringSSL = @import("boringssl");
+boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 
 editor_context: EditorContext = EditorContext{},
 stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
+
+pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
+    return rare.boring_ssl_engine orelse brk: {
+        rare.boring_ssl_engine = BoringSSL.ENGINE_new();
+        break :brk rare.boring_ssl_engine.?;
+    };
+}
 
 pub fn stderr(rare: *RareData) *Blob.Store {
     return rare.stderr_store orelse brk: {

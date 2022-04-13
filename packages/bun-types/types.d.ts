@@ -577,6 +577,8 @@ declare module "bun" {
      * Stop listening to prevent new connections from being accepted.
      *
      * It does not close existing connections.
+     *
+     * It may take a second or two to actually stop.
      */
     stop(): void;
 
@@ -748,6 +750,8 @@ declare module "bun" {
   }
   export const unsafe: unsafe;
 
+  type DigestEncoding = "hex" | "base64";
+
   /**
    * Are ANSI colors enabled for stdin and stdout?
    *
@@ -819,6 +823,163 @@ declare module "bun" {
     line?: number;
     column?: number;
   }
+
+  /**
+   * This class only exists in types
+   */
+  abstract class CryptoHashInterface<T> {
+    /**
+     * Update the hash with data
+     *
+     * @param data
+     */
+    update(data: StringOrBuffer): T;
+
+    /**
+     * Finalize the hash
+     *
+     * @param encoding `DigestEncoding` to return the hash in. If none is provided, it will return a `Uint8Array`.
+     */
+    digest(encoding: DigestEncoding): string;
+
+    /**
+     * Finalize the hash
+     *
+     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
+     */
+    digest(hashInto?: TypedArray): TypedArray;
+
+    /**
+     * Run the hash over the given data
+     *
+     * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
+     *
+     * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
+     */
+    static hash(input: StringOrBuffer, hashInto?: TypedArray): TypedArray;
+
+    /**
+     * Run the hash over the given data
+     *
+     * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
+     *
+     * @param encoding `DigestEncoding` to return the hash in
+     */
+    static hash(input: StringOrBuffer, encoding: DigestEncoding): string;
+  }
+
+  /**
+   *
+   * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
+   *
+   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
+   * @param hashInto optional `Uint8Array` to write the hash to. 32 bytes minimum.
+   *
+   * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
+   *
+   * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   *
+   * The equivalent `openssl` command is:
+   *
+   * ```bash
+   * # You will need OpenSSL 3 or later
+   * openssl sha512-256 /path/to/file
+   *```
+   */
+  export function sha(input: StringOrBuffer, hashInto?: Uint8Array): Uint8Array;
+
+  /**
+   *
+   * Hash `input` using [SHA-2 512/256](https://en.wikipedia.org/wiki/SHA-2#Comparison_of_SHA_functions)
+   *
+   * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` will be faster
+   * @param encoding `DigestEncoding` to return the hash in
+   *
+   * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
+   *
+   * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   *
+   * The equivalent `openssl` command is:
+   *
+   * ```bash
+   * # You will need OpenSSL 3 or later
+   * openssl sha512-256 /path/to/file
+   *```
+   */
+  export function sha(input: StringOrBuffer, encoding: DigestEncoding): string;
+
+  /**
+   * This is not the default because it's not cryptographically secure and it's slower than {@link SHA512}
+   *
+   * Consider using the ugly-named {@link SHA512_256} instead
+   */
+  export class SHA1 extends CryptoHashInterface<SHA1> {
+    constructor();
+
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 20;
+  }
+  export class MD5 extends CryptoHashInterface<MD5> {
+    constructor();
+
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 16;
+  }
+  export class MD4 extends CryptoHashInterface<MD4> {
+    constructor();
+
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 16;
+  }
+  export class SHA224 extends CryptoHashInterface<SHA224> {
+    constructor();
+
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 28;
+  }
+  export class SHA512 extends CryptoHashInterface<SHA512> {
+    constructor();
+
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 64;
+  }
+  export class SHA384 extends CryptoHashInterface<SHA384> {
+    constructor();
+
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 48;
+  }
+  export class SHA256 extends CryptoHashInterface<SHA256> {
+    constructor();
+
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 32;
+  }
+  /**
+   * See also {@link sha}
+   */
+  export class SHA512_256 extends CryptoHashInterface<SHA512_256> {
+    constructor();
+
+    /**
+     * The number of bytes the hash will produce
+     */
+    static readonly byteLength: 32;
+  }
 }
 
 type TypedArray =
@@ -852,7 +1013,6 @@ interface BufferEncodingOption {
 }
 
 declare var Bun: typeof import("bun");
-
 
 // ./fs.d.ts
 
@@ -4455,7 +4615,6 @@ declare module "node:fs" {
   export = fs;
 }
 
-
 // ./html-rewriter.d.ts
 
 declare namespace HTMLRewriterTypes {
@@ -4571,7 +4730,6 @@ declare class HTMLRewriter {
    */
   transform(input: Response): Response;
 }
-
 
 // ./globals.d.ts
 
@@ -6001,7 +6159,6 @@ declare var Loader: {
   resolveSync: (specifier: string, from: string) => string;
 };
 
-
 // ./path.d.ts
 
 /**
@@ -6209,7 +6366,6 @@ declare module "node:path/win32" {
   export * from "path/win32";
 }
 
-
 // ./bun-test.d.ts
 
 /**
@@ -6248,4 +6404,3 @@ declare module "test" {
   import BunTestModule = require("bun:test");
   export = BunTestModule;
 }
-

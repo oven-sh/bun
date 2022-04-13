@@ -1305,9 +1305,9 @@ pub fn mmapFile(
     const file_flags: u32 = if (@hasDecl(std.os.MAP, "FILE")) std.os.MAP.FILE else 0;
 
     // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.
-    var offset: u64 = 0;
+    var offset: usize = 0;
     var flags = file_flags;
-    var map_size: ?i64 = null;
+    var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
         const sync = opts.get(ctx.ptr(), "sync") orelse JSC.JSValue.jsBoolean(false);
@@ -1316,14 +1316,12 @@ pub fn mmapFile(
         flags |= @as(u32, if (shared.toBoolean()) std.os.MAP.SHARED else std.os.MAP.PRIVATE);
 
         if (opts.get(ctx.ptr(), "size")) |value| {
-            map_size = value.toInt64();
+            map_size = @intCast(usize, value.toInt64());
         }
 
         if (opts.get(ctx.ptr(), "offset")) |value| {
-            offset = std.math.cast(u64, value.toInt64()) catch {
-                JSC.JSError(bun.default_allocator, "mmap: offset overflow", .{}, ctx, exception);
-                return null;
-            };
+            offset = @intCast(usize, value.toInt64());
+            offset = std.mem.alignBackwardAnyAlign(offset, std.mem.page_size);
         }
     } else {
         flags |= std.os.MAP.SHARED;

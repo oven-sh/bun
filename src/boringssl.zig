@@ -1,7 +1,8 @@
-const boring = @import("./boringssl.translated.zig");
+const boring = @import("./deps/boringssl.translated.zig");
 pub usingnamespace boring;
 const std = @import("std");
-const global = @import("../global.zig");
+
+const builtin = @import("builtin");
 var loaded = false;
 pub fn load() void {
     if (loaded) return;
@@ -52,16 +53,19 @@ pub fn initClient() *boring.SSL {
 // may result in deadlocks, crashes, or memory corruption.
 
 export fn OPENSSL_memory_alloc(size: usize) ?*anyopaque {
+    const global = @import("./global.zig");
     return global.Global.Mimalloc.mi_malloc(size);
 }
 
 // BoringSSL always expects memory to be zero'd
 export fn OPENSSL_memory_free(ptr: *anyopaque) void {
+    const global = @import("./global.zig");
     @memset(@ptrCast([*]u8, ptr), 0, global.Global.Mimalloc.mi_usable_size(ptr));
     global.Global.Mimalloc.mi_free(ptr);
 }
 
 export fn OPENSSL_memory_get_size(ptr: ?*const anyopaque) usize {
+    const global = @import("./global.zig");
     return global.Global.Mimalloc.mi_usable_size(ptr);
 }
 
@@ -70,7 +74,9 @@ test "load" {
 }
 
 comptime {
-    _ = OPENSSL_memory_alloc;
-    _ = OPENSSL_memory_free;
-    _ = OPENSSL_memory_get_size;
+    if (!builtin.is_test) {
+        _ = OPENSSL_memory_alloc;
+        _ = OPENSSL_memory_free;
+        _ = OPENSSL_memory_get_size;
+    }
 }

@@ -1118,6 +1118,21 @@ pub const Class = NewClass(
             .rfn = JSC.WebCore.Blob.writeFile,
             .ts = d.ts{},
         },
+        .sha1 = .{
+            .rfn = JSC.wrapWithHasContainer(Crypto.SHA1, "hash", false, false),
+        },
+        .sha256 = .{
+            .rfn = JSC.wrapWithHasContainer(Crypto.SHA256, "hash", false, false),
+        },
+        .sha384 = .{
+            .rfn = JSC.wrapWithHasContainer(Crypto.SHA384, "hash", false, false),
+        },
+        .sha512 = .{
+            .rfn = JSC.wrapWithHasContainer(Crypto.SHA512, "hash", false, false),
+        },
+        .sha512_256 = .{
+            .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash", false, false),
+        },
     },
     .{
         .main = .{
@@ -1174,8 +1189,207 @@ pub const Class = NewClass(
         .unsafe = .{
             .get = getUnsafe,
         },
+        .SHA1 = .{
+            .get = Crypto.SHA1.getter,
+        },
+        .SHA256 = .{
+            .get = Crypto.SHA256.getter,
+        },
+        .SHA384 = .{
+            .get = Crypto.SHA384.getter,
+        },
+        .SHA512 = .{
+            .get = Crypto.SHA512.getter,
+        },
+        .SHA512_256 = .{
+            .get = Crypto.SHA512_256.getter,
+        },
     },
 );
+
+pub const Crypto = struct {
+    const Hashers = @import("../../../sha.zig");
+
+    fn CryptoHasher(comptime Hasher: type, comptime name: [:0]const u8, cached_constructor_name: []const u8) type {
+        return struct {
+            hashing: Hasher = Hasher{},
+
+            pub fn byteLength(
+                _: void,
+                _: js.JSContextRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                _: js.ExceptionRef,
+            ) js.JSValueRef {
+                return JSC.JSValue.jsNumber(@as(u16, Hasher.digest)).asObjectRef();
+            }
+
+            pub fn byteLength2(
+                _: *@This(),
+                _: js.JSContextRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                _: js.ExceptionRef,
+            ) js.JSValueRef {
+                return JSC.JSValue.jsNumber(@as(u16, Hasher.digest)).asObjectRef();
+            }
+
+            pub const Constructor = JSC.NewConstructor(
+                @This(),
+                .{
+                    .hash = .{
+                        .rfn = JSC.wrapSync(@This(), "hash"),
+                    },
+                    .constructor = .{ .rfn = constructor },
+                },
+                .{
+                    .byteLength = .{
+                        .get = byteLength,
+                    },
+                },
+            );
+
+            pub const Class = JSC.NewClass(
+                @This(),
+                .{
+                    .name = name,
+                },
+                .{
+                    .update = .{
+                        .rfn = JSC.wrapSync(@This(), "update"),
+                    },
+                    .final = .{
+                        .rfn = JSC.wrapSync(@This(), "final"),
+                    },
+                    .finalize = finalize,
+                },
+                .{
+                    .byteLength = .{
+                        .get = byteLength2,
+                    },
+                },
+            );
+
+            pub fn hash(
+                globalThis: *JSGlobalObject,
+                input: JSC.Node.StringOrBuffer,
+                output: ?JSC.ArrayBuffer,
+                exception: JSC.C.ExceptionRef,
+            ) JSC.JSValue {
+                var output_digest_buf: Hasher.Digest = undefined;
+                var output_digest_slice: *Hasher.Digest = &output_digest_buf;
+                if (output) |output_buf| {
+                    var bytes = output_buf.byteSlice();
+                    if (bytes.len < Hasher.digest) {
+                        JSC.JSError(
+                            bun.default_allocator,
+                            comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{Hasher.digest}),
+                            .{},
+                            globalThis.ref(),
+                            exception,
+                        );
+                        return JSC.JSValue.zero;
+                    }
+                    output_digest_slice = bytes[0..Hasher.digest];
+                }
+
+                Hasher.hash(input.slice(), output_digest_slice);
+
+                if (output) |output_buf| {
+                    return output_buf.value;
+                } else {
+                    var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, output_digest_slice) catch unreachable, .Uint8Array);
+                    return array_buffer_out.toJSUnchecked(globalThis.ref(), exception);
+                }
+            }
+
+            pub fn constructor(
+                ctx: js.JSContextRef,
+                _: js.JSObjectRef,
+                _: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                var this = bun.default_allocator.create(@This()) catch {
+                    JSC.JSError(bun.default_allocator, "Failed to create new object", .{}, ctx, exception);
+                    return null;
+                };
+
+                this.* = .{ .hashing = Hasher.init() };
+                return @This().Class.make(ctx, this);
+            }
+
+            pub fn getter(
+                _: void,
+                ctx: js.JSContextRef,
+                _: js.JSValueRef,
+                _: js.JSStringRef,
+                _: js.ExceptionRef,
+            ) js.JSValueRef {
+                var existing = ctx.ptr().getCachedObject(&ZigString.init(cached_constructor_name));
+                if (existing.isEmpty()) {
+                    return ctx.ptr().putCachedObject(
+                        &ZigString.init(cached_constructor_name),
+                        JSC.JSValue.fromRef(@This().Constructor.constructor(ctx)),
+                    ).asObjectRef();
+                }
+
+                return existing.asObjectRef();
+            }
+
+            pub fn update(this: *@This(), buffer: JSC.Node.StringOrBuffer) JSC.JSValue {
+                this.hashing.update(buffer.slice());
+                return JSC.JSValue.jsUndefined();
+            }
+
+            pub fn final(this: *@This(), globalThis: *JSGlobalObject, exception: JSC.C.ExceptionRef, output: ?JSC.ArrayBuffer) JSC.JSValue {
+                var output_digest_buf: Hasher.Digest = undefined;
+                var output_digest_slice: *Hasher.Digest = &output_digest_buf;
+                if (output) |output_buf| {
+                    var bytes = output_buf.byteSlice();
+                    if (bytes.len < Hasher.digest) {
+                        JSC.JSError(
+                            bun.default_allocator,
+                            comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{@as(usize, Hasher.digest)}),
+                            .{},
+                            globalThis.ref(),
+                            exception,
+                        );
+                        return JSC.JSValue.zero;
+                    }
+                    output_digest_slice = bytes[0..Hasher.digest];
+                } else {
+                    output_digest_buf = comptime brk: {
+                        var bytes: Hasher.Digest = undefined;
+                        var i: usize = 0;
+                        while (i < Hasher.digest) {
+                            bytes[i] = 0;
+                            i += 1;
+                        }
+                        break :brk bytes;
+                    };
+                }
+
+                this.hashing.final(output_digest_slice);
+                if (output) |output_buf| {
+                    return output_buf.value;
+                } else {
+                    var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, &output_digest_buf) catch unreachable, .Uint8Array);
+                    return array_buffer_out.toJSUnchecked(globalThis.ref(), exception);
+                }
+            }
+
+            pub fn finalize(this: *@This()) void {
+                VirtualMachine.vm.allocator.destroy(this);
+            }
+        };
+    }
+
+    pub const SHA1 = CryptoHasher(Hashers.SHA1, "SHA1", "Bun_SHA1");
+    pub const SHA256 = CryptoHasher(Hashers.SHA256, "SHA256", "Bun_SHA256");
+    pub const SHA384 = CryptoHasher(Hashers.SHA384, "SHA384", "Bun_SHA384");
+    pub const SHA512 = CryptoHasher(Hashers.SHA512, "SHA512", "Bun_SHA512");
+    pub const SHA512_256 = CryptoHasher(Hashers.SHA512_256, "SHA512_256", "Bun_SHA512_256");
+};
 
 pub fn serve(
     _: void,

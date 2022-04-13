@@ -43,7 +43,7 @@ const color_map = std.ComptimeStringMap([]const u8, .{
 fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, target: anytype) !void {
     var boringssl: std.build.Pkg = .{
         .name = "boringssl",
-        .path = pkgPath("src/deps/boringssl.zig"),
+        .path = pkgPath("src/boringssl.zig"),
     };
 
     var datetime: std.build.Pkg = .{
@@ -400,6 +400,13 @@ pub fn build(b: *std.build.Builder) !void {
     {
         const headers_step = b.step("string-bench", "Build string bench");
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("string-bench", "src/bench/string-handling.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+    }
+
+    {
+        const headers_step = b.step("sha-bench-obj", "Build sha bench");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("sha", "src/sha.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
     }

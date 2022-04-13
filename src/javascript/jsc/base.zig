@@ -2248,6 +2248,29 @@ pub const ArrayBuffer = extern struct {
         return ArrayBuffer{ .offset = 0, .len = @intCast(u32, bytes.len), .byte_len = @intCast(u32, bytes.len), .typed_array_type = typed_array_type, .ptr = bytes.ptr };
     }
 
+    pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+        if (this.typed_array_type == .ArrayBuffer) {
+            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
+                ctx,
+                this.ptr,
+                this.byte_len,
+                MarkedArrayBuffer_deallocator,
+                @intToPtr(*anyopaque, @ptrToInt(&bun.default_allocator)),
+                exception,
+            ));
+        }
+
+        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
+            ctx,
+            this.typed_array_type.toC(),
+            this.ptr,
+            this.byte_len,
+            MarkedArrayBuffer_deallocator,
+            @intToPtr(*anyopaque, @ptrToInt(&bun.default_allocator)),
+            exception,
+        ));
+    }
+
     pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
         if (!this.value.isEmpty()) {
             return this.value;
@@ -2277,26 +2300,7 @@ pub const ArrayBuffer = extern struct {
             ));
         }
 
-        if (this.typed_array_type == .ArrayBuffer) {
-            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
-                ctx,
-                this.ptr,
-                this.byte_len,
-                MarkedArrayBuffer_deallocator,
-                @intToPtr(*anyopaque, @ptrToInt(&bun.default_allocator)),
-                exception,
-            ));
-        }
-
-        return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
-            ctx,
-            this.typed_array_type.toC(),
-            this.ptr,
-            this.byte_len,
-            MarkedArrayBuffer_deallocator,
-            @intToPtr(*anyopaque, @ptrToInt(&bun.default_allocator)),
-            exception,
-        ));
+        return this.toJSUnchecked(ctx, exception);
     }
 
     pub fn toJSWithContext(
@@ -2552,6 +2556,11 @@ const Server = JSC.API.Server;
 const SSLServer = JSC.API.SSLServer;
 const DebugServer = JSC.API.DebugServer;
 const DebugSSLServer = JSC.API.DebugSSLServer;
+const SHA1 = JSC.API.Bun.Crypto.SHA1;
+const SHA256 = JSC.API.Bun.Crypto.SHA256;
+const SHA384 = JSC.API.Bun.Crypto.SHA384;
+const SHA512 = JSC.API.Bun.Crypto.SHA512;
+const SHA512_256 = JSC.API.Bun.Crypto.SHA512_256;
 
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     AttributeIterator,
@@ -2589,6 +2598,11 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     TextEncoder,
     TimeoutTask,
     Transpiler,
+    SHA1,
+    SHA256,
+    SHA384,
+    SHA512,
+    SHA512_256,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {
@@ -2678,9 +2692,9 @@ fn SetterType(comptime Container: type) type {
     ) bool;
 }
 
-fn MethodType(comptime Container: type) type {
+fn MethodType(comptime Container: type, comptime has_container: bool) type {
     return fn (
-        this: *Container,
+        this: if (has_container) *Container else void,
         ctx: js.JSContextRef,
         thisObject: js.JSObjectRef,
         target: js.JSObjectRef,
@@ -2692,14 +2706,14 @@ fn MethodType(comptime Container: type) type {
 pub fn wrapSync(
     comptime Container: type,
     comptime name: string,
-) MethodType(Container) {
+) MethodType(Container, true) {
     return wrap(Container, name, false);
 }
 
 pub fn wrapAsync(
     comptime Container: type,
     comptime name: string,
-) MethodType(Container) {
+) MethodType(Container, true) {
     return wrap(Container, name, true);
 }
 
@@ -2707,13 +2721,23 @@ pub fn wrap(
     comptime Container: type,
     comptime name: string,
     comptime maybe_async: bool,
-) MethodType(Container) {
+) MethodType(Container, true) {
+    return wrapWithHasContainer(Container, name, maybe_async, true);
+}
+
+pub fn wrapWithHasContainer(
+    comptime Container: type,
+    comptime name: string,
+    comptime maybe_async: bool,
+    comptime has_container: bool,
+) MethodType(Container, has_container) {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
         const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+        const Args = std.meta.ArgsTuple(FunctionType);
 
         pub fn callback(
-            this: *Container,
+            this: if (has_container) *Container else void,
             ctx: js.JSContextRef,
             _: js.JSObjectRef,
             thisObject: js.JSObjectRef,
@@ -2721,12 +2745,11 @@ pub fn wrap(
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
             var iter = JSC.Node.ArgumentsSlice.from(arguments);
-            var args: std.meta.ArgsTuple(FunctionType) = undefined;
+            var args: Args = undefined;
 
             comptime var i: usize = 0;
             inline while (i < FunctionTypeInfo.args.len) : (i += 1) {
                 const ArgType = comptime FunctionTypeInfo.args[i].arg_type.?;
-
                 switch (comptime ArgType) {
                     *Container => {
                         args[i] = this;
@@ -2734,14 +2757,63 @@ pub fn wrap(
                     *JSC.JSGlobalObject => {
                         args[i] = ctx.ptr();
                     },
+                    JSC.Node.StringOrBuffer => {
+                        const arg = iter.nextEat() orelse {
+                            exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
+                            iter.deinit();
+                            return null;
+                        };
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
+                            exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
+                            iter.deinit();
+                            return null;
+                        };
+                    },
+                    ?JSC.Node.StringOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = JSC.Node.StringOrBuffer.fromJS(ctx.ptr(), iter.arena.allocator(), arg, exception) orelse {
+                                exception.* = JSC.toInvalidArguments("expected string or buffer", .{}, ctx).asObjectRef();
+                                iter.deinit();
+                                return null;
+                            };
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    JSC.ArrayBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = arg.asArrayBuffer(ctx.ptr()) orelse {
+                                exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
+                                iter.deinit();
+                                return null;
+                            };
+                        } else {
+                            exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
+                            iter.deinit();
+                            return null;
+                        }
+                    },
+                    ?JSC.ArrayBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = arg.asArrayBuffer(ctx.ptr()) orelse {
+                                exception.* = JSC.toInvalidArguments("expected TypedArray", .{}, ctx).asObjectRef();
+                                iter.deinit();
+                                return null;
+                            };
+                        } else {
+                            args[i] = null;
+                        }
+                    },
                     ZigString => {
                         var string_value = iter.protectEatNext() orelse {
                             JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
+                            iter.deinit();
                             return null;
                         };
 
                         if (string_value.isUndefinedOrNull()) {
                             JSC.throwInvalidArguments("Expected string", .{}, ctx, exception);
+                            iter.deinit();
                             return null;
                         }
 
@@ -2759,18 +2831,22 @@ pub fn wrap(
                     *Response => {
                         args[i] = (iter.protectEatNext() orelse {
                             JSC.throwInvalidArguments("Missing Response object", .{}, ctx, exception);
+                            iter.deinit();
                             return null;
                         }).as(Response) orelse {
                             JSC.throwInvalidArguments("Expected Response object", .{}, ctx, exception);
+                            iter.deinit();
                             return null;
                         };
                     },
                     *Request => {
                         args[i] = (iter.protectEatNext() orelse {
                             JSC.throwInvalidArguments("Missing Request object", .{}, ctx, exception);
+                            iter.deinit();
                             return null;
                         }).as(Request) orelse {
                             JSC.throwInvalidArguments("Expected Request object", .{}, ctx, exception);
+                            iter.deinit();
                             return null;
                         };
                     },
@@ -2778,6 +2854,7 @@ pub fn wrap(
                         args[i] = thisObject;
                         if (!JSValue.fromRef(thisObject).isCell() or !JSValue.fromRef(thisObject).isObject()) {
                             JSC.throwInvalidArguments("Expected object", .{}, ctx, exception);
+                            iter.deinit();
                             return null;
                         }
                     },
@@ -2787,6 +2864,7 @@ pub fn wrap(
                     JSValue => {
                         const val = iter.protectEatNext() orelse {
                             JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
+                            iter.deinit();
                             return null;
                         };
                         args[i] = val;
@@ -2796,7 +2874,7 @@ pub fn wrap(
             }
 
             var result: JSValue = @call(.{}, @field(Container, name), args);
-            if (result.isError()) {
+            if (!result.isEmptyOrUndefinedOrNull() and result.isError()) {
                 exception.* = result.asObjectRef();
                 iter.deinit();
                 return null;

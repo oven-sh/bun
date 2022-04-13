@@ -484,9 +484,10 @@ timeouts: FIFO(Completion) = .{},
 completed: FIFO(Completion) = .{},
 io_pending: FIFO(Completion) = .{},
 last_event_fd: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(32),
+pending_count: usize = 0,
 
 pub fn hasNoWork(this: *IO) bool {
-    return this.io_inflight == 0 and this.io_pending.peek() == null and this.completed.peek() == null and this.timeouts.peek() == null;
+    return this.pending_count == 0 and this.io_inflight == 0 and this.io_pending.peek() == null and this.completed.peek() == null and this.timeouts.peek() == null;
 }
 
 pub fn init(_: u12, _: u32) !IO {
@@ -523,7 +524,7 @@ pub fn run_for_ns(self: *IO, nanoseconds: u63) !void {
     }.callback;
 
     // Submit a timeout which sets the timed_out value to true to terminate the loop below.
-    self.timeout(
+    self.timeoutInternal(
         *bool,
         &timed_out,
         on_timeout,
@@ -756,6 +757,21 @@ fn submit(
     operation_data: anytype,
     comptime OperationImpl: type,
 ) void {
+    submitWithIncrementPending(self, context, callback, completion, operation_tag, operation_data, OperationImpl, true);
+}
+
+fn submitWithIncrementPending(
+    self: *IO,
+    context: anytype,
+    comptime callback: anytype,
+    completion: *Completion,
+    comptime operation_tag: std.meta.Tag(Operation),
+    operation_data: anytype,
+    comptime OperationImpl: type,
+    comptime increment_pending: bool,
+) void {
+    if (comptime increment_pending)
+        self.pending_count += 1;
     const Context = @TypeOf(context);
     const onCompleteFn = struct {
         fn onComplete(io: *IO, _completion: *Completion) void {
@@ -777,6 +793,9 @@ fn submit(
                 },
                 else => {},
             }
+
+            if (comptime increment_pending)
+                io.pending_count -= 1;
 
             // Complete the Completion
             return callback(
@@ -1331,6 +1350,35 @@ pub fn timeout(
                 return; // timeouts don't have errors for now
             }
         },
+    );
+}
+
+fn timeoutInternal(
+    self: *IO,
+    comptime Context: type,
+    context: Context,
+    comptime callback: fn (
+        context: Context,
+        completion: *Completion,
+        result: TimeoutError!void,
+    ) void,
+    completion: *Completion,
+    nanoseconds: u63,
+) void {
+    self.submitWithIncrementPending(
+        context,
+        callback,
+        completion,
+        .timeout,
+        .{
+            .expires = self.time.monotonic() + nanoseconds,
+        },
+        struct {
+            fn doOperation(_: anytype) TimeoutError!void {
+                return; // timeouts don't have errors for now
+            }
+        },
+        false,
     );
 }
 

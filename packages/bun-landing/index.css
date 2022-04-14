@@ -1,0 +1,356 @@
+:root {
+  --black: #0b0a08;
+  --blue: #00a6e1;
+  --orange: #f89b4b;
+  --orange-light: #d4d3d2;
+  --monospace-font: "Fira Code", "Hack", "Source Code Pro", monospace;
+}
+* {
+  box-sizing: border-box;
+}
+head,
+body,
+:root {
+  margin: 0 auto;
+  padding: 0;
+  font-family: Helvetica, Arial, sans-serif;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+  transition: transform 0.1s linear;
+}
+a:visited {
+  color: inherit;
+}
+a:hover {
+  text-decoration: underline;
+  transform: scale(1.06, 1.06);
+  transform-origin: middle center;
+}
+#header-wrap,
+#pitch {
+  background-color: var(--black);
+  color: #fbf0df;
+  width: 100%;
+}
+
+#logo-link {
+  width: fit-content;
+  display: flex;
+  gap: 24px;
+  align-items: center;
+}
+main {
+  width: auto;
+
+  margin: 0 auto;
+  max-width: 1152px;
+  display: grid;
+  grid-template-columns: auto auto;
+}
+
+main,
+header {
+  padding: 4rem 3rem;
+  margin: 0 auto;
+  max-width: 1152px;
+}
+
+#pitch-content {
+  max-width: 600px;
+}
+
+.tagline {
+  margin-top: 0;
+  line-height: 1;
+  font-size: 36pt;
+}
+
+.subtitle {
+  font-size: 1.2rem;
+}
+nav {
+  white-space: nowrap;
+  display: flex;
+  gap: 2rem;
+  list-style: none;
+}
+
+.NavText {
+  color: #fbf0df;
+  display: block;
+  font-weight: 500;
+  font-size: 1.2rem;
+}
+
+#HeaderInstallButton {
+  margin-left: 2.4rem;
+}
+
+#pitch main {
+  gap: 2rem;
+}
+
+#logo {
+  max-width: 70px;
+  margin: auto 0;
+}
+
+#logo-text {
+  max-width: 96px;
+}
+
+header {
+  display: grid;
+  grid-template-columns: auto max-content min-content;
+  background-color: var(--black);
+  padding: 1rem 3rem;
+  align-items: center;
+  color: white;
+}
+
+#HeaderInstallButton:hover {
+  cursor: pointer;
+  transform: scale(1.06);
+}
+#HeaderInstallButton {
+  transition: transform 0.1s linear;
+  background: #00a6e1;
+  padding: 8px 16px;
+  border-radius: 100px;
+  color: black;
+  font-weight: 500;
+}
+
+#install {
+  margin-top: 2rem;
+  background: #15140e;
+  padding: 24px 24px;
+  border-radius: 24px;
+}
+
+#install-label-heading {
+  font-size: 1.4rem;
+  margin-bottom: 1rem;
+  font-weight: 500;
+  font-weight: 500;
+}
+
+#install-label-subtitle {
+  font-size: 0.9rem;
+  color: var(--orange-light);
+}
+
+.unselectable {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  -moz-user-select: none;
+}
+
+#code-box {
+  background-color: rgb(37, 36, 32);
+  padding: 4px 16px;
+  position: relative;
+  border-radius: 8px;
+  text-align: center;
+  align-items: center;
+  border: 1px solid var(--orange);
+  margin-top: 1rem;
+  display: grid;
+  align-content: center;
+  white-space: nowrap;
+  margin-bottom: 1rem;
+}
+
+#code-box {
+  font-family: var(--monospace-font);
+}
+
+#curl:hover {
+  cursor: text;
+  pointer-events: auto;
+}
+
+#curl::before {
+  display: block;
+  content: "$";
+  color: var(--orange);
+  pointer-events: none;
+  width: 1ch;
+  height: 1ch;
+}
+
+#curl {
+  user-select: all;
+  -webkit-user-select: text;
+  pointer-events: auto;
+  white-space: nowrap;
+  cursor: text;
+  display: inline-flex;
+  padding: 12px 8px;
+  gap: 2ch;
+}
+
+#view-source-link {
+  color: var(--orange-light);
+}
+
+#code-box-copy {
+  position: absolute;
+  right: 16px;
+  top: 0;
+  bottom: 0;
+  height: 100%;
+
+  display: flex;
+  align-items: center;
+  z-index: 5;
+
+  color: var(--orange-light);
+  transition: transform 0.05s linear;
+  transition-property: color, transform;
+  transform-origin: center center;
+  cursor: pointer;
+}
+
+#code-box-copy:hover {
+  color: var(--blue);
+  transform: scale(1.06);
+}
+
+#code-box-copy:active {
+  transform: scale(1.12);
+}
+
+.Tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin-left: auto;
+  margin-right: auto;
+  justify-content: center;
+  align-items: center;
+  width: min-content;
+  white-space: nowrap;
+  gap: 2rem;
+}
+
+.Tab {
+  width: min-content;
+  font-family: var(--monospace-font);
+  text-align: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #ccc;
+}
+
+.Tab--active {
+  border-bottom-color: aquamarine;
+}
+
+.BarGraph {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+.BarGraph-heading {
+  font-weight: 500;
+  font-size: 1.5rem;
+}
+
+.BarGraphList {
+  flex: 1;
+  position: relative;
+}
+.BarGraph,
+.ActiveTab,
+.Graphs {
+  height: auto;
+}
+
+.BarGraph-subheading {
+  font-size: 0.9rem;
+  color: rgb(135, 134, 134);
+}
+
+.BarGraphList {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--monospace-font);
+  justify-content: center;
+  align-items: flex-start;
+  height: 100%;
+  background-color: #080808;
+}
+
+.BarGraphKey {
+  display: grid;
+  text-align: center;
+  margin-top: 1rem;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.BarGraph,
+.BarGraphBar-label,
+.BarGraphItem {
+  --level: calc(var(--amount) / 50000);
+  --inverse: calc(1 / var(--level));
+}
+
+.BarGraphBar {
+  margin: 0 auto;
+
+  width: 70px;
+  height: 100%;
+  min-height: 200px;
+  background-color: pink;
+  transform-origin: bottom center;
+  transform: scaleY(var(--level));
+  position: relative;
+}
+
+.BarGraphItem {
+  border-right: 1px dashed rgba(200, 200, 25, 0.2);
+  border-top: 1px dashed rgba(200, 200, 25, 0.2);
+  border-bottom: 1px dashed rgba(200, 200, 25, 0.2);
+}
+
+.BarGraphItem--deno {
+  border-right-color: transparent;
+}
+
+.BarGraphBar-label {
+  color: white;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--monospace-font);
+  width: 100%;
+  text-align: center;
+  transform: scaleY(var(--inverse));
+  position: relative;
+
+  top: calc(-20px * var(--inverse));
+}
+
+.BarGraphItem--bun .BarGraphBar {
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+  background-color: rgb(249, 241, 225);
+  box-shadow: inset 1px 1px 3px rgb(204, 198, 187);
+  background-image: url("/public/logo.png");
+  background-repeat: no-repeat;
+  background-size: 56px 48.8px;
+  background-position: 6px 20%;
+}
+
+.BarGraphBar {
+}
+
+.BarGraphKeyItem-label {
+  color: white;
+}
+.BarGraphKeyItem-value {
+  color: #666;
+  margin-top: 0.5rem;
+}

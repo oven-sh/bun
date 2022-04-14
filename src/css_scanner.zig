@@ -891,11 +891,14 @@ pub fn NewWriter(
             };
         }
 
+        /// The Source must not be empty
         pub fn scan(
             writer: *Writer,
             log: *logger.Log,
             allocator: std.mem.Allocator,
         ) !void {
+            std.debug.assert(writer.source.contents.len > 0);
+
             var scanner = Scanner.init(
                 log,
 
@@ -906,11 +909,14 @@ pub fn NewWriter(
             try scanner.next(.scan, @TypeOf(writer), writer, scanChunk);
         }
 
+        /// The Source must not be empty
         pub fn append(
             writer: *Writer,
             log: *logger.Log,
             allocator: std.mem.Allocator,
         ) !usize {
+            std.debug.assert(writer.source.contents.len > 0);
+
             var scanner = Scanner.init(
                 log,
 
@@ -923,11 +929,14 @@ pub fn NewWriter(
             return scanner.approximate_newline_count;
         }
 
+        /// The Source must not be empty
         pub fn run(
             writer: *Writer,
             log: *logger.Log,
             allocator: std.mem.Allocator,
         ) !void {
+            std.debug.assert(writer.source.contents.len > 0);
+
             var scanner = Scanner.init(
                 log,
 

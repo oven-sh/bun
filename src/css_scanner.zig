@@ -1112,7 +1112,6 @@ threadlocal var global_queued: QueuedList = undefined;
 threadlocal var global_import_queud: ImportQueueFifo = undefined;
 threadlocal var global_bundle_queud: QueuedList = undefined;
 threadlocal var has_set_global_queue = false;
-threadlocal var int_buf_print: [256]u8 = undefined;
 pub fn NewBundler(
     comptime Writer: type,
     comptime Linker: type,
@@ -1147,6 +1146,7 @@ pub fn NewBundler(
             linker: Linker,
             origin: URL,
         ) !CodeCount {
+            var int_buf_print: [256]u8 = undefined;
             const start_count = writer.written;
             if (!has_set_global_queue) {
                 global_queued = QueuedList.init(default_allocator);
@@ -1188,7 +1188,8 @@ pub fn NewBundler(
                 const watch_item = this.watcher.watchlist.get(watcher_id);
                 const source = try this.getSource(watch_item.file_path, if (watch_item.fd > 0) watch_item.fd else null);
                 css.source = &source;
-                try css.scan(log, allocator);
+                if (source.contents.len > 0)
+                    try css.scan(log, allocator);
             }
 
             // This exists to identify the entry point
@@ -1224,10 +1225,11 @@ pub fn NewBundler(
                 try this.writeAll("/* ");
                 try this.writeAll(file_path);
                 try this.writeAll("*/\n");
-                lines_of_code += try css.append(
-                    log,
-                    allocator,
-                );
+                if (source.contents.len > 0)
+                    lines_of_code += try css.append(
+                        log,
+                        allocator,
+                    );
             }
 
             try this.writer.done();

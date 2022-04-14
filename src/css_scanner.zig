@@ -874,7 +874,6 @@ pub fn NewWriter(
         ctx: WriterType,
         linker: LinkerType,
         source: *const logger.Source,
-        written: usize = 0,
         buildCtx: BuildContextType = undefined,
         log: *logger.Log,
 
@@ -888,7 +887,6 @@ pub fn NewWriter(
                 .ctx = ctx,
                 .linker = linker,
                 .source = source,
-                .written = 0,
                 .log = log,
             };
         }
@@ -944,24 +942,22 @@ pub fn NewWriter(
             switch (quote) {
                 .none => {
                     try writer.ctx.writeAll(str);
-                    writer.written += str.len;
+
                     return;
                 },
                 .single => {
                     try writer.ctx.writeAll("'");
-                    writer.written += 1;
+
                     try writer.ctx.writeAll(str);
-                    writer.written += str.len;
+
                     try writer.ctx.writeAll("'");
-                    writer.written += 1;
                 },
                 .double => {
                     try writer.ctx.writeAll("\"");
-                    writer.written += 1;
+
                     try writer.ctx.writeAll(str);
-                    writer.written += str.len;
+
                     try writer.ctx.writeAll("\"");
-                    writer.written += 1;
                 },
             }
         }
@@ -970,31 +966,25 @@ pub fn NewWriter(
             switch (text.quote) {
                 .none => {
                     try writer.ctx.writeAll("url(");
-                    writer.written += "url(".len;
                 },
                 .single => {
                     try writer.ctx.writeAll("url('");
-                    writer.written += "url('".len;
                 },
                 .double => {
                     try writer.ctx.writeAll("url(\"");
-                    writer.written += "url(\"".len;
                 },
             }
             try writer.ctx.writeAll(url_str);
-            writer.written += url_str.len;
+
             switch (text.quote) {
                 .none => {
                     try writer.ctx.writeAll(")");
-                    writer.written += ")".len;
                 },
                 .single => {
                     try writer.ctx.writeAll("')");
-                    writer.written += "')".len;
                 },
                 .double => {
                     try writer.ctx.writeAll("\")");
-                    writer.written += "\")".len;
                 },
             }
         }
@@ -1074,7 +1064,6 @@ pub fn NewWriter(
                         );
 
                         try writer.ctx.writeAll("@import ");
-                        writer.written += "@import ".len;
 
                         if (import.url) {
                             try writer.writeURL(url_str, import.text);
@@ -1083,14 +1072,10 @@ pub fn NewWriter(
                         }
 
                         try writer.ctx.writeAll(import.suffix);
-                        writer.written += import.suffix.len;
                         try writer.ctx.writeAll("\n");
-
-                        writer.written += 1;
                     }
                 },
                 .t_verbatim => {
-                    defer writer.written += @intCast(usize, chunk.range.len);
                     if (comptime std.meta.trait.hasFn("copyFileRange")(WriterType)) {
                         try writer.ctx.copyFileRange(
                             @intCast(usize, chunk.range.loc.start),
@@ -1162,6 +1147,7 @@ pub fn NewBundler(
             linker: Linker,
             origin: URL,
         ) !CodeCount {
+            const start_count = writer.written;
             if (!has_set_global_queue) {
                 global_queued = QueuedList.init(default_allocator);
                 global_import_queud = ImportQueueFifo.init(default_allocator);
@@ -1247,7 +1233,7 @@ pub fn NewBundler(
             try this.writer.done();
 
             return CodeCount{
-                .written = css.written,
+                .written = @intCast(usize, @maximum(this.writer.written - start_count, 0)),
                 .approximate_newline_count = lines_of_code,
             };
         }

@@ -2374,38 +2374,40 @@ pub const Bundler = struct {
                     import_path_format,
                 );
 
+                const written = brk: {
+                    if (bundler.options.hot_module_reloading) {
+                        break :brk (try CSSBundlerHMR.bundle(
+                            file_path.text,
+                            bundler.fs,
+                            writer,
+                            watcher,
+                            &bundler.resolver.caches.fs,
+                            filepath_hash,
+                            file_descriptor,
+                            allocator,
+                            bundler.log,
+                            &bundler.linker,
+                            origin,
+                        )).written;
+                    } else {
+                        break :brk (try CSSBundler.bundle(
+                            file_path.text,
+                            bundler.fs,
+                            writer,
+                            watcher,
+                            &bundler.resolver.caches.fs,
+                            filepath_hash,
+                            file_descriptor,
+                            allocator,
+                            bundler.log,
+                            &bundler.linker,
+                            origin,
+                        )).written;
+                    }
+                };
+
                 return BuildResolveResultPair{
-                    .written = brk: {
-                        if (bundler.options.hot_module_reloading) {
-                            break :brk (try CSSBundlerHMR.bundle(
-                                file_path.text,
-                                bundler.fs,
-                                writer,
-                                watcher,
-                                &bundler.resolver.caches.fs,
-                                filepath_hash,
-                                file_descriptor,
-                                allocator,
-                                bundler.log,
-                                &bundler.linker,
-                                origin,
-                            )).written;
-                        } else {
-                            break :brk (try CSSBundler.bundle(
-                                file_path.text,
-                                bundler.fs,
-                                writer,
-                                watcher,
-                                &bundler.resolver.caches.fs,
-                                filepath_hash,
-                                file_descriptor,
-                                allocator,
-                                bundler.log,
-                                &bundler.linker,
-                                origin,
-                            )).written;
-                        }
-                    },
+                    .written = written,
                     .input_fd = file_descriptor,
                 };
             },
@@ -2603,12 +2605,18 @@ pub const Bundler = struct {
                     origin: URL,
                 };
                 var build_ctx = CSSBuildContext{ .origin = bundler.options.origin };
+
+                const BufferedWriter = std.io.CountingWriter(std.io.BufferedWriter(8096, std.fs.File.Writer));
                 const CSSWriter = Css.NewWriter(
-                    std.fs.File,
+                    BufferedWriter.Writer,
                     @TypeOf(&bundler.linker),
                     import_path_format,
                     CSSBuildContext,
                 );
+                var buffered_writer = BufferedWriter{
+                    .child_stream = .{ .unbuffered_writer = file.writer() },
+                    .bytes_written = 0,
+                };
                 const entry = bundler.resolver.caches.fs.readFile(
                     bundler.fs,
                     file_path.text,
@@ -2620,16 +2628,19 @@ pub const Bundler = struct {
                 const _file = Fs.File{ .path = file_path, .contents = entry.contents };
                 var source = try logger.Source.initFile(_file, bundler.allocator);
                 source.contents_is_recycled = !cache_files;
+
                 var css_writer = CSSWriter.init(
                     &source,
-                    file,
+                    buffered_writer.writer(),
                     &bundler.linker,
                     bundler.log,
                 );
+
                 css_writer.buildCtx = build_ctx;
 
                 try css_writer.run(bundler.log, bundler.allocator);
-                output_file.size = css_writer.written;
+                try css_writer.ctx.context.child_stream.flush();
+                output_file.size = css_writer.ctx.context.bytes_written;
                 var file_op = options.OutputFile.FileOperation.fromFile(file.handle, file_path.pretty);
 
                 file_op.fd = file.handle;

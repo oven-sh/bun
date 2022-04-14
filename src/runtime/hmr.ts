@@ -7,6 +7,7 @@ if (typeof window !== "undefined") {
   // We add a scope here to minimize chances of namespace collisions
   var runOnce = false;
   var clientStartTime = 0;
+  var empty: Uint8Array;
 
   function formatDuration(duration: number) {
     return Math.round(duration * 1000) / 1000;
@@ -355,20 +356,14 @@ if (typeof window !== "undefined") {
     }
 
     handleBuildSuccess(
-      buffer: ByteBuffer,
+      bytes: Uint8Array,
       build: API.WebsocketMessageBuildSuccess,
       timestamp: number
     ) {
-      debugger;
       const start = performance.now();
       var update = this.findCSSLinkTag(build.id);
       // The last 4 bytes of the build message are the hash of the module
       // Currently, this hash is only used for ensuring we reload the source-map
-
-      let bytes = new Uint8Array(buffer.data.buffer, buffer.index);
-      if (bytes.length > 4) {
-        bytes = bytes.subarray(0, bytes.length - 4);
-      }
 
       if (update === null) {
         __hmrlog.debug("Skipping unused CSS.");
@@ -446,7 +441,6 @@ if (typeof window !== "undefined") {
         }
       }
 
-      buffer = null;
       bytes = null;
     }
 
@@ -834,6 +828,15 @@ if (typeof window !== "undefined") {
         }
         return;
       }
+      var bytes =
+        buffer.data.byteOffset + buffer.index + build.blob_length <=
+        buffer.data.buffer.byteLength
+          ? new Uint8Array(
+              buffer.data.buffer,
+              buffer.data.byteOffset + buffer.index,
+              build.blob_length
+            )
+          : (empty ||= new Uint8Array(0));
 
       if (build.loader === API.Loader.css) {
         BunError.clear();
@@ -841,7 +844,7 @@ if (typeof window !== "undefined") {
           console.clear();
           this.needsConsoleClear = false;
         }
-        return this.loaders.css.handleBuildSuccess(buffer, build, timestamp);
+        return this.loaders.css.handleBuildSuccess(bytes, build, timestamp);
       }
 
       const id = build.id;
@@ -879,20 +882,16 @@ if (typeof window !== "undefined") {
       }
 
       // These are the bytes!!
-      const fileBytes =
-        buffer.data.length > buffer.index
-          ? buffer.data.subarray(buffer.index, end)
-          : new Uint8Array(0);
 
       var reload = new HotReload(
         build.id,
         index,
         build,
-        fileBytes,
+        bytes,
         ReloadBehavior.hotReload,
         hash || 0
       );
-
+      bytes = null;
       reload.timings.notify = timestamp - build.from_timestamp;
 
       BunError.clear();

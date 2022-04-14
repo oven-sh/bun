@@ -186,6 +186,12 @@ pub const TSConfigJSON = struct {
                 }
             }
 
+            if (compiler_opts.expr.asProperty("moduleSuffixes")) |prefixes| {
+                if (!source.path.isNodeModule()) {
+                    log.addWarning(&source, prefixes.expr.loc, "moduleSuffixes is not supported yet") catch {};
+                }
+            }
+
             // Parse "paths"
             if (compiler_opts.expr.asProperty("paths")) |paths_prop| {
                 switch (paths_prop.expr.data) {

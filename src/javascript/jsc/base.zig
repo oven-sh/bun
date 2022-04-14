@@ -168,7 +168,7 @@ pub const To = struct {
                         }
                     }
 
-                    var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
+                    var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, value.len, clone).asObjectRef();
 
                     if (clone) {
                         for (value) |path_string| {

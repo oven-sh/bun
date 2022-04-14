@@ -1,14 +1,15 @@
-import { describe, it, expect } from "bun:test";
+import { gc } from "bun";
+import { describe, expect, it } from "bun:test";
 import {
-  mkdirSync,
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  readFile,
-  read,
-  openSync,
-  readSync,
   closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFile,
+  readFileSync,
+  readSync,
+  writeFileSync,
   writeSync,
 } from "node:fs";
 
@@ -27,6 +28,80 @@ describe("mkdirSync", () => {
     );
     expect(existsSync(tempdir)).toBe(true);
   });
+});
+
+it("readdirSync on import.meta.dir", () => {
+  const dirs = readdirSync(import.meta.dir);
+  expect(dirs.length > 0).toBe(true);
+  var match = false;
+  gc(true);
+  for (let i = 0; i < dirs.length; i++) {
+    if (dirs[i] === import.meta.file) {
+      match = true;
+    }
+  }
+  gc(true);
+  expect(match).toBe(true);
+});
+
+it("readdirSync on import.meta.dir with trailing slash", () => {
+  const dirs = readdirSync(import.meta.dir + "/");
+  expect(dirs.length > 0).toBe(true);
+  // this file should exist in it
+  var match = false;
+  for (let i = 0; i < dirs.length; i++) {
+    if (dirs[i] === import.meta.file) {
+      match = true;
+    }
+  }
+  expect(match).toBe(true);
+});
+
+it("readdirSync works on empty directories", () => {
+  const path = `/tmp/fs-test-empty-dir-${(
+    Math.random() * 100000 +
+    100
+  ).toString(32)}`;
+  mkdirSync(path, { recursive: true });
+  expect(readdirSync(path).length).toBe(0);
+});
+
+it("readdirSync works on directories with under 32 files", () => {
+  const path = `/tmp/fs-test-one-dir-${(Math.random() * 100000 + 100).toString(
+    32
+  )}`;
+  mkdirSync(path, { recursive: true });
+  writeFileSync(`${path}/a`, "a");
+  const results = readdirSync(path);
+  expect(results.length).toBe(1);
+  expect(results[0]).toBe("a");
+});
+
+it("readdirSync throws when given a file path", () => {
+  try {
+    readdirSync(import.meta.path);
+    throw new Error("should not get here");
+  } catch (exception) {
+    expect(exception.name).toBe("ENOTDIR");
+  }
+});
+
+it("readdirSync throws when given a path that doesn't exist", () => {
+  try {
+    readdirSync(import.meta.path + "/does-not-exist/really");
+    throw new Error("should not get here");
+  } catch (exception) {
+    expect(exception.name).toBe("ENOTDIR");
+  }
+});
+
+it("readdirSync throws when given a file path with trailing slash", () => {
+  try {
+    readdirSync(import.meta.path + "/");
+    throw new Error("should not get here");
+  } catch (exception) {
+    expect(exception.name).toBe("ENOTDIR");
+  }
 });
 
 describe("readSync", () => {

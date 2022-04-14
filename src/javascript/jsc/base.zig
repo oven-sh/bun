@@ -154,7 +154,7 @@ pub const To = struct {
                 []const PathString, []const []const u8, []const []u8, [][]const u8, [][:0]const u8, [][:0]u8 => {
                     var zig_strings_buf: [32]ZigString = undefined;
                     var zig_strings: []ZigString = if (value.len < 32)
-                        &zig_strings_buf
+                        zig_strings_buf[0..value.len]
                     else
                         (bun.default_allocator.alloc(ZigString, value.len) catch unreachable);
                     defer if (zig_strings.ptr != &zig_strings_buf)
@@ -168,7 +168,7 @@ pub const To = struct {
                         }
                     }
 
-                    var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, value.len, clone).asObjectRef();
+                    var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
 
                     if (clone) {
                         for (value) |path_string| {

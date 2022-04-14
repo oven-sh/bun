@@ -805,6 +805,9 @@ pub const Scanner = struct {
 
     inline fn nextCodepointSlice(it: *Scanner, comptime advance: bool) []const u8 {
         @setRuntimeSafety(false);
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(it.source.contents.len > 0);
+        }
 
         const cp_len = strings.utf8ByteSequenceLength(it.source.contents[it.current]);
         if (advance) {

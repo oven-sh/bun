@@ -3,7 +3,10 @@
   --blue: #00a6e1;
   --orange: #f89b4b;
   --orange-light: #d4d3d2;
+
   --monospace-font: "Fira Code", "Hack", "Source Code Pro", monospace;
+
+  --dark-border: rgba(200, 200, 25, 0.2);
 }
 * {
   box-sizing: border-box;
@@ -15,6 +18,11 @@ body,
   padding: 0;
   font-family: Helvetica, Arial, sans-serif;
 }
+
+body {
+  background-color: #fbf0df;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -50,6 +58,10 @@ main {
   grid-template-columns: auto auto;
 }
 
+#cards-wrap {
+}
+#cards-wrap,
+#usecases,
 main,
 header {
   padding: 4rem 3rem;
@@ -149,6 +161,49 @@ header {
   -moz-user-select: none;
 }
 
+#usecases-section {
+  background: linear-gradient(12deg, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.2)),
+    conic-gradient(
+      from 6.27deg at 46.95% 50.05%,
+      #ff8181 0deg,
+      #e5f067 75deg,
+      #6dd9ba 155.62deg,
+      #67f0ae 168.75deg,
+      #8b67f0 243.75deg,
+      #f067e2 300deg,
+      #e967e3 334.49deg,
+      #f06767 348.9deg,
+      #ff8181 360deg
+    );
+  color: white;
+  font-family: var(--monospace-font);
+  contain: paint;
+
+  font-size: 24pt;
+  font-weight: bold;
+}
+
+#usecases-section {
+  padding: 0;
+  margin: 0;
+}
+
+#usecases {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+#usecases-section h1 {
+  background: linear-gradient(90deg, #ff0000 0%, #faff00 50.52%, #0500ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0px 4px 4px rgba(0, 0, 0, 0.25);
+  font-family: Helvetica;
+  margin: 0;
+  padding: 0;
+}
+
 #code-box {
   background-color: rgb(37, 36, 32);
   padding: 4px 16px;
@@ -166,6 +221,7 @@ header {
 
 #code-box {
   font-family: var(--monospace-font);
+  position: relative;
 }
 
 #curl:hover {
@@ -253,6 +309,7 @@ header {
   display: flex;
   flex-direction: column;
 }
+
 .BarGraph-heading {
   font-weight: 500;
   font-size: 1.5rem;
@@ -276,7 +333,7 @@ header {
 .BarGraphList {
   margin-top: 1rem;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(var(--count), 1fr);
   font-variant-numeric: tabular-nums;
   font-family: var(--monospace-font);
   justify-content: center;
@@ -289,7 +346,12 @@ header {
   display: grid;
   text-align: center;
   margin-top: 1rem;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(var(--count), 1fr);
+}
+
+.BarGraphBar {
+  --primary: 70px;
+  --opposite: 100%;
 }
 
 .BarGraph,
@@ -302,9 +364,9 @@ header {
 .BarGraphBar {
   margin: 0 auto;
 
-  width: 70px;
-  height: 100%;
-  min-height: 200px;
+  width: var(--primary);
+  height: var(--opposite);
+
   background-color: pink;
   transform-origin: bottom center;
   transform: scaleY(var(--level));
@@ -312,13 +374,21 @@ header {
 }
 
 .BarGraphItem {
-  border-right: 1px dashed rgba(200, 200, 25, 0.2);
-  border-top: 1px dashed rgba(200, 200, 25, 0.2);
-  border-bottom: 1px dashed rgba(200, 200, 25, 0.2);
+  border-right: 1px dashed var(--dark-border);
+  border-top: 1px dashed var(--dark-border);
+  border-bottom: 1px dashed var(--dark-border);
 }
 
 .BarGraphItem--deno {
   border-right-color: transparent;
+}
+
+.BarGraph--horizontal .BarGraphBar {
+  min-height: 200px;
+}
+
+.BarGraph--vertical .BarGraphBar {
+  max-width: 90%;
 }
 
 .BarGraphBar-label {
@@ -327,15 +397,26 @@ header {
   font-family: var(--monospace-font);
   width: 100%;
   text-align: center;
-  transform: scaleY(var(--inverse));
-  position: relative;
 
+  position: relative;
+}
+
+.CardContent {
+  position: relative;
+}
+
+.BarGraph--vertical .BarGraphBar-label {
+  transform: scaleX(var(--inverse));
+  bottom: 0;
+  right: 0;
+}
+
+.BarGraph--horizontal .BarGraphBar-label {
+  transform: scaleY(var(--inverse));
   top: calc(-20px * var(--inverse));
 }
 
 .BarGraphItem--bun .BarGraphBar {
-  border-top-left-radius: 12px;
-  border-top-right-radius: 12px;
   background-color: rgb(249, 241, 225);
   box-shadow: inset 1px 1px 3px rgb(204, 198, 187);
   background-image: url("/public/logo.png");
@@ -344,7 +425,36 @@ header {
   background-position: 6px 20%;
 }
 
-.BarGraphBar {
+.BarGraph--vertical .BarGraphItem--bun {
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+
+.BarGraph--horizontal .BarGraphItem--bun {
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+}
+
+.BarGraph--vertical .BarGraphBar {
+  height: var(--primary);
+  width: var(--opposite);
+
+  transform: scaleX(var(--level));
+  transform-origin: bottom left;
+
+  max-height: 40px;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+}
+
+.BarGraph--vertical .BarGraphList,
+.BarGraph--vertical .BarGraphKey--vertical {
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(var(--count), 1fr);
+}
+
+.BarGraph--vertical .BarGraphList {
+  direction: rtl;
 }
 
 .BarGraphKeyItem-label {
@@ -353,4 +463,35 @@ header {
 .BarGraphKeyItem-value {
   color: #666;
   margin-top: 0.5rem;
+}
+
+.DemphasizedLabel {
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+#frameworks {
+  display: flex;
+}
+
+.FrameworksGroup {
+  display: grid;
+  grid-template-rows: auto 40px;
+  gap: 0.5rem;
+}
+
+.DemphasizedLabel {
+  color: #666;
+  font-weight: 300;
+}
+
+.FrameworksList {
+  display: grid;
+  grid-template-columns: repeat(2, 40px);
+  gap: 3.5rem;
+  align-items: center;
+}
+
+#cards {
+  display: grid;
 }

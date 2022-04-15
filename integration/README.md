@@ -129,35 +129,6 @@ make test-bun-install
 make test-bun-dev
 ```
 
-### CLI tests
-
-These run the bash files in the `apps` directory.
-
-They check end-to-end that the CLI works as expected.
-
-```bash
-# Install dependencies for running tests
-# Does not run tests
-make test-install
-
-# Check a Create React App returns HTML
-make test-create-react
-
-# Check a Next.js app SSRs successfully
-make test-create-next
-
-# Check that bun run works for the same CLI args passed to npm run
-make test-bun-run
-
-# Check that "react" installed via bun install loads successfully
-# and that deleting/adding updates the lockfile as expected
-make test-bun-install
-
-# Check that serving public paths works correctly
-# and that files which should be transpiled are transpiled and files which shouldn't be aren't
-make test-bun-dev
-```
-
 ### Zig tests
 
 These tests live in various `.zig` files throughout Bun's codebase, leveraging Zig's builtin `test` keyword.

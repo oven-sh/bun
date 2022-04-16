@@ -152,13 +152,14 @@ pub const To = struct {
                     break :brk val.asObjectRef();
                 },
                 []const PathString, []const []const u8, []const []u8, [][]const u8, [][:0]const u8, [][:0]u8 => {
-                    var zig_strings_buf: [32]ZigString = undefined;
-                    var zig_strings: []ZigString = if (value.len < 32)
-                        zig_strings_buf[0..value.len]
-                    else
-                        (bun.default_allocator.alloc(ZigString, value.len) catch unreachable);
-                    defer if (zig_strings.ptr != &zig_strings_buf)
-                        bun.default_allocator.free(zig_strings);
+                    if (value.len == 0)
+                        return JSC.C.JSObjectMakeArray(context, 0, null, exception);
+
+                    var stack_fallback = std.heap.stackFallback(512, bun.default_allocator);
+                    var allocator = stack_fallback.get();
+
+                    var zig_strings = allocator.alloc(ZigString, value.len) catch unreachable;
+                    defer if (stack_fallback.fixed_buffer_allocator.end_index >= 511) allocator.free(zig_strings);
 
                     for (value) |path_string, i| {
                         if (comptime Type == []const PathString) {
@@ -167,10 +168,12 @@ pub const To = struct {
                             zig_strings[i] = ZigString.init(path_string);
                         }
                     }
-
+                    // there is a possible C ABI bug or something here when the ptr is null
+                    // it should not be segfaulting but it is
+                    // that's why we check at the top of this function
                     var array = JSC.JSValue.createStringArray(context.ptr(), zig_strings.ptr, zig_strings.len, clone).asObjectRef();
 
-                    if (clone) {
+                    if (clone and value.len > 0) {
                         for (value) |path_string| {
                             if (comptime Type == []const PathString) {
                                 bun.default_allocator.free(path_string.slice());

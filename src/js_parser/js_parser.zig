@@ -492,9 +492,8 @@ pub const ImportScanner = struct {
                     //     user is expecting the output to be as small as possible. So we
                     //     should omit unused imports.
                     //
-                    // const keep_unused_imports = !p.options.trim_unused_imports;
                     var did_remove_star_loc = false;
-                    const keep_unused_imports = !is_typescript_enabled;
+                    const keep_unused_imports = !p.options.features.trim_unused_imports;
 
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
@@ -537,6 +536,7 @@ pub const ImportScanner = struct {
                                 if (p.import_items_for_namespace.get(st.namespace_ref)) |entry| {
                                     if (entry.count() > 0) {
                                         has_any = true;
+                                        break;
                                     }
                                 }
 
@@ -595,7 +595,9 @@ pub const ImportScanner = struct {
                         // e.g. `import 'fancy-stylesheet-thing/style.css';`
                         // This is a breaking change though. We can make it an option with some guardrail
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
-                        if (is_typescript_enabled and found_imports and is_unused_in_typescript and !p.options.preserve_unused_imports_ts) {
+                        if ((is_typescript_enabled and found_imports and is_unused_in_typescript and !p.options.preserve_unused_imports_ts) or
+                            (!is_typescript_enabled and p.options.features.trim_unused_imports and found_imports and st.star_name_loc == null and st.items.len == 0 and st.default_name == null))
+                        {
                             // internal imports are presumed to be always used
                             // require statements cannot be stripped
                             if (!record.is_internal and !record.was_originally_require) {
@@ -1929,6 +1931,8 @@ const RefCtx = @import("../ast/base.zig").RefCtx;
 const SymbolUseMap = std.HashMapUnmanaged(Ref, js_ast.Symbol.Use, RefCtx, 80);
 const StringBoolMap = std.StringHashMapUnmanaged(bool);
 const RefMap = std.HashMapUnmanaged(Ref, void, RefCtx, 80);
+const RefArrayMap = std.ArrayHashMapUnmanaged(Ref, void, @import("../ast/base.zig").RefHashCtx, false);
+
 const RefRefMap = std.HashMapUnmanaged(Ref, Ref, RefCtx, 80);
 const ImportRecord = importRecord.ImportRecord;
 const Flags = js_ast.Flags;
@@ -2162,7 +2166,6 @@ pub const Parser = struct {
         transform_require_to_import: bool = true,
 
         moduleType: ModuleType = ModuleType.esm,
-        trim_unused_imports: bool = true,
 
         pub fn init(jsx: options.JSX.Pragma, loader: options.Loader) Options {
             var opts = Options{
@@ -3266,6 +3269,7 @@ fn NewParser_(
         injected_define_symbols: List(Ref) = .{},
         symbol_uses: js_ast.Part.SymbolUseMap = .{},
         declared_symbols: List(js_ast.DeclaredSymbol) = .{},
+        declared_symbols_for_reuse: List(js_ast.DeclaredSymbol) = .{},
         runtime_imports: RuntimeImports = RuntimeImports{},
 
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
@@ -3469,6 +3473,8 @@ fn NewParser_(
 
         scope_order_to_visit: []ScopeOrder = &([_]ScopeOrder{}),
 
+        import_refs_to_always_trim_if_unused: RefArrayMap = .{},
+
         pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
             // The argument must be a string
             if (@as(Expr.Tag, arg.data) == .e_string) {
@@ -3667,7 +3673,8 @@ fn NewParser_(
                                 .s_local => |local| {
                                     if (local.is_export) break :can_remove_part false;
                                     for (local.decls) |decl| {
-                                        if (isBindingUsed(p, decl.binding, default_export_ref)) break :can_remove_part false;
+                                        if (isBindingUsed(p, decl.binding, default_export_ref))
+                                            break :can_remove_part false;
                                     }
                                 },
                                 .s_if => |if_statement| {
@@ -3734,17 +3741,7 @@ fn NewParser_(
                     };
 
                     if (is_dead) {
-                        var symbol_use_refs = part.symbol_uses.keys();
-                        var symbol_use_values = part.symbol_uses.values();
-
-                        for (symbol_use_refs) |ref, i| {
-                            p.symbols.items[ref.innerIndex()].use_count_estimate -|= symbol_use_values[i].count_estimate;
-                        }
-
-                        for (part.declared_symbols) |declared| {
-                            p.symbols.items[declared.ref.innerIndex()].use_count_estimate = 0;
-                            // }
-                        }
+                        p.clearSymbolUsagesFromDeadPart(part);
 
                         continue;
                     }
@@ -3752,6 +3749,7 @@ fn NewParser_(
                     parts_[parts_end] = part;
                     parts_end += 1;
                 }
+
                 parts_.len = parts_end;
                 if (last_end == parts_.len) {
                     break;
@@ -3767,6 +3765,21 @@ fn NewParser_(
             pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace);
             pub const Hoisted = Binding.ToExpr(P, P.wrapIdentifierHoisting);
         };
+
+        fn clearSymbolUsagesFromDeadPart(p: *P, part: js_ast.Part) void {
+            var symbol_use_refs = part.symbol_uses.keys();
+            var symbol_use_values = part.symbol_uses.values();
+            var symbols = p.symbols.items;
+
+            for (symbol_use_refs) |ref, i| {
+                symbols[ref.innerIndex()].use_count_estimate -|= symbol_use_values[i].count_estimate;
+            }
+
+            for (part.declared_symbols) |declared| {
+                symbols[declared.ref.innerIndex()].use_count_estimate = 0;
+                // }
+            }
+        }
 
         pub fn s(_: *P, t: anytype, loc: logger.Loc) Stmt {
             const Type = @TypeOf(t);
@@ -11600,16 +11613,14 @@ fn NewParser_(
         }
 
         fn appendPart(p: *P, parts: *ListManaged(js_ast.Part), stmts: []Stmt) !void {
-            p.symbol_uses = js_ast.Part.SymbolUseMap{};
+            // Reuse the memory if possible
+            // This is reusable if the last part turned out to be dead
+            p.symbol_uses.clearRetainingCapacity();
+            p.declared_symbols.clearRetainingCapacity();
+            p.scopes_for_current_part.clearRetainingCapacity();
+            p.import_records_for_current_part.clearRetainingCapacity();
+
             const allocator = p.allocator;
-            p.declared_symbols.deinit(
-                allocator,
-            );
-            p.declared_symbols = @TypeOf(p.declared_symbols){};
-            p.import_records_for_current_part.deinit(allocator);
-            p.import_records_for_current_part = @TypeOf(p.import_records_for_current_part){};
-            p.scopes_for_current_part.deinit(allocator);
-            p.scopes_for_current_part = @TypeOf(p.scopes_for_current_part){};
             var opts = PrependTempRefsOpts{};
             var partStmts = ListManaged(Stmt).fromOwnedSlice(allocator, stmts);
             try p.visitStmtsAndPrependTempRefs(&partStmts, &opts);
@@ -11617,6 +11628,9 @@ fn NewParser_(
             // Insert any relocated variable statements now
             if (p.relocated_top_level_vars.items.len > 0) {
                 var already_declared = RefMap{};
+                var already_declared_allocator_stack = std.heap.stackFallback(1024, allocator);
+                var already_declared_allocator = already_declared_allocator_stack.get();
+                defer if (already_declared_allocator_stack.fixed_buffer_allocator.end_index >= 1023) already_declared.deinit(already_declared_allocator);
 
                 for (p.relocated_top_level_vars.items) |*local| {
                     // Follow links because "var" declarations may be merged due to hoisting
@@ -11628,10 +11642,8 @@ fn NewParser_(
                         local.ref = link;
                     }
                     const ref = local.ref orelse continue;
-                    var declaration_entry = try already_declared.getOrPut(allocator, ref);
+                    var declaration_entry = try already_declared.getOrPut(already_declared_allocator, ref);
                     if (!declaration_entry.found_existing) {
-                        try already_declared.put(allocator, ref, .{});
-
                         const decls = try allocator.alloc(G.Decl, 1);
                         decls[0] = Decl{
                             .binding = p.b(B.Identifier{ .ref = ref }, local.loc),
@@ -11639,8 +11651,7 @@ fn NewParser_(
                         try partStmts.append(p.s(S.Local{ .decls = decls }, local.loc));
                     }
                 }
-                p.relocated_top_level_vars.deinit(allocator);
-                p.relocated_top_level_vars = @TypeOf(p.relocated_top_level_vars){};
+                p.relocated_top_level_vars.clearRetainingCapacity();
 
                 // Follow links because "var" declarations may be merged due to hoisting
 
@@ -11664,6 +11675,10 @@ fn NewParser_(
                     .scopes = p.scopes_for_current_part.toOwnedSlice(p.allocator),
                     .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(_stmts),
                 });
+                p.symbol_uses = .{};
+            } else if (p.declared_symbols.items.len > 0 or p.symbol_uses.count() > 0) {
+                // if the part is dead, invalidate all the usage counts
+                p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols.items, .symbol_uses = p.symbol_uses });
             }
         }
 
@@ -13934,33 +13949,68 @@ fn NewParser_(
                     }
                 },
                 .s_export_clause => |data| {
-
                     // "export {foo}"
                     var end: usize = 0;
-                    for (data.items) |*item| {
-                        const name = p.loadNameFromRef(item.name.ref.?);
-                        const symbol = try p.findSymbol(item.alias_loc, name);
-                        const ref = symbol.ref;
+                    var any_replaced = false;
+                    if (p.options.features.replace_exports.count() > 0) {
+                        for (data.items) |*item| {
+                            const name = p.loadNameFromRef(item.name.ref.?);
 
-                        if (p.symbols.items[ref.innerIndex()].kind == .unbound) {
-                            // Silently strip exports of non-local symbols in TypeScript, since
-                            // those likely correspond to type-only exports. But report exports of
-                            // non-local symbols as errors in JavaScript.
-                            if (!is_typescript_enabled) {
-                                const r = js_lexer.rangeOfIdentifier(p.source, item.name.loc);
-                                try p.log.addRangeErrorFmt(p.source, r, p.allocator, "\"{s}\" is not declared in this file", .{name});
+                            const symbol = try p.findSymbol(item.alias_loc, name);
+                            const ref = symbol.ref;
+
+                            if (p.options.features.replace_exports.getPtr(name)) |entry| {
+                                if (entry.* != .replace) p.ignoreUsage(symbol.ref);
+                                _ = p.injectReplacementExport(stmts, symbol.ref, stmt.loc, entry);
+                                any_replaced = true;
                                 continue;
                             }
-                            continue;
-                        }
 
-                        item.name.ref = ref;
-                        data.items[end] = item.*;
-                        end += 1;
+                            if (p.symbols.items[ref.innerIndex()].kind == .unbound) {
+                                // Silently strip exports of non-local symbols in TypeScript, since
+                                // those likely correspond to type-only exports. But report exports of
+                                // non-local symbols as errors in JavaScript.
+                                if (!is_typescript_enabled) {
+                                    const r = js_lexer.rangeOfIdentifier(p.source, item.name.loc);
+                                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "\"{s}\" is not declared in this file", .{name});
+                                }
+                                continue;
+                            }
+
+                            item.name.ref = ref;
+                            data.items[end] = item.*;
+                            end += 1;
+                        }
+                    } else {
+                        for (data.items) |*item| {
+                            const name = p.loadNameFromRef(item.name.ref.?);
+                            const symbol = try p.findSymbol(item.alias_loc, name);
+                            const ref = symbol.ref;
+
+                            if (p.symbols.items[ref.innerIndex()].kind == .unbound) {
+                                // Silently strip exports of non-local symbols in TypeScript, since
+                                // those likely correspond to type-only exports. But report exports of
+                                // non-local symbols as errors in JavaScript.
+                                if (!is_typescript_enabled) {
+                                    const r = js_lexer.rangeOfIdentifier(p.source, item.name.loc);
+                                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "\"{s}\" is not declared in this file", .{name});
+                                    continue;
+                                }
+                                continue;
+                            }
+
+                            item.name.ref = ref;
+                            data.items[end] = item.*;
+                            end += 1;
+                        }
                     }
-                    // esbuild: "Note: do not remove empty export statements since TypeScript uses them as module markers"
-                    // jarred: does that mean we can remove them here, since we're not bundling for production?
-                    data.items = data.items[0..end];
+
+                    const remove_for_tree_shaking = any_replaced and end == 0 and data.items.len > 0 and p.options.tree_shaking;
+                    data.items.len = end;
+
+                    if (remove_for_tree_shaking) {
+                        return;
+                    }
                 },
                 .s_export_from => |data| {
                     // When HMR is enabled, we need to transform this into
@@ -13980,13 +14030,45 @@ fn NewParser_(
                     try p.current_scope.generated.append(p.allocator, data.namespace_ref);
                     try p.recordDeclaredSymbol(data.namespace_ref);
 
-                    // This is a re-export and the symbols created here are used to reference
-                    for (data.items) |*item| {
-                        const _name = p.loadNameFromRef(item.name.ref.?);
-                        const ref = try p.newSymbol(.other, _name);
-                        try p.current_scope.generated.append(p.allocator, data.namespace_ref);
-                        try p.recordDeclaredSymbol(data.namespace_ref);
-                        item.name.ref = ref;
+                    if (p.options.features.replace_exports.count() > 0) {
+                        var j: usize = 0;
+                        // This is a re-export and the symbols created here are used to reference
+                        for (data.items) |item| {
+                            const old_ref = item.name.ref.?;
+
+                            if (p.options.features.replace_exports.count() > 0) {
+                                if (p.options.features.replace_exports.getPtr(item.alias)) |entry| {
+                                    _ = p.injectReplacementExport(stmts, old_ref, logger.Loc.Empty, entry);
+
+                                    continue;
+                                }
+                            }
+
+                            const _name = p.loadNameFromRef(old_ref);
+
+                            const ref = try p.newSymbol(.other, _name);
+                            try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                            try p.recordDeclaredSymbol(data.namespace_ref);
+                            data.items[j] = item;
+                            data.items[j].name.ref = ref;
+                            j += 1;
+                        }
+
+                        data.items.len = j;
+
+                        if (j == 0 and data.items.len > 0) {
+                            return;
+                        }
+                    } else {
+
+                        // This is a re-export and the symbols created here are used to reference
+                        for (data.items) |*item| {
+                            const _name = p.loadNameFromRef(item.name.ref.?);
+                            const ref = try p.newSymbol(.other, _name);
+                            try p.current_scope.generated.append(p.allocator, data.namespace_ref);
+                            try p.recordDeclaredSymbol(data.namespace_ref);
+                            item.name.ref = ref;
+                        }
                     }
                 },
                 .s_export_star => |data| {
@@ -13999,6 +14081,12 @@ fn NewParser_(
 
                     // "export * as ns from 'path'"
                     if (data.alias) |alias| {
+                        if (p.options.features.replace_exports.count() > 0) {
+                            if (p.options.features.replace_exports.getPtr(alias.original_name)) |entry| {
+                                _ = p.injectReplacementExport(stmts, p.declareSymbol(.other, logger.Loc.Empty, alias.original_name) catch unreachable, logger.Loc.Empty, entry);
+                                return;
+                            }
+                        }
                         // "import * as ns from 'path'"
                         // "export {ns}"
 
@@ -14020,12 +14108,31 @@ fn NewParser_(
                         try p.recordDeclaredSymbol(ref);
                     }
 
+                    var mark_for_replace: bool = false;
+
+                    const orig_dead = p.is_control_flow_dead;
+                    if (p.options.features.replace_exports.count() > 0) {
+                        if (p.options.features.replace_exports.getPtr("default")) |entry| {
+                            p.is_control_flow_dead = entry.* != .replace;
+                            mark_for_replace = true;
+                        }
+                    }
+
+                    defer {
+                        p.is_control_flow_dead = orig_dead;
+                    }
+
                     switch (data.value) {
                         .expr => |expr| {
                             const was_anonymous_named_expr = p.isAnonymousNamedExpr(expr);
+
                             data.value.expr = p.visitExpr(expr);
 
-                            // // Optionally preserve the name
+                            if (p.is_control_flow_dead) {
+                                return;
+                            }
+
+                            // Optionally preserve the name
 
                             data.value.expr = p.maybeKeepExprSymbolName(data.value.expr, js_ast.ClauseItem.default_alias, was_anonymous_named_expr);
 
@@ -14045,6 +14152,16 @@ fn NewParser_(
                                         }
                                     },
                                     else => {},
+                                }
+                            }
+
+                            if (mark_for_replace) {
+                                var entry = p.options.features.replace_exports.getPtr("default").?;
+                                if (entry.* == .replace) {
+                                    data.value.expr = entry.replace;
+                                } else {
+                                    _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
+                                    return;
                                 }
                             }
 
@@ -14072,7 +14189,28 @@ fn NewParser_(
 
                                     func.func = p.visitFunc(func.func, func.func.open_parens_loc);
 
-                                    if (p.options.enable_bundling) {
+                                    if (p.is_control_flow_dead) {
+                                        return;
+                                    }
+
+                                    if (mark_for_replace) {
+                                        var entry = p.options.features.replace_exports.getPtr("default").?;
+                                        if (entry.* == .replace) {
+                                            data.value = .{ .expr = entry.replace };
+                                        } else {
+                                            _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
+                                            return;
+                                        }
+
+                                        // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
+                                        if (p.options.enable_bundling) {
+                                            var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                            export_default_args[0] = p.@"module.exports"(data.value.expr.loc);
+                                            export_default_args[1] = data.value.expr;
+                                            stmts.append(p.s(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
+                                            return;
+                                        }
+                                    } else if (p.options.enable_bundling) {
                                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                         export_default_args[0] = p.@"module.exports"(s2.loc);
 
@@ -14101,7 +14239,27 @@ fn NewParser_(
                                     // TODO: https://github.com/Jarred-Sumner/bun/issues/51
                                     _ = p.visitClass(s2.loc, &class.class);
 
-                                    if (p.options.enable_bundling) {
+                                    if (p.is_control_flow_dead)
+                                        return;
+
+                                    if (mark_for_replace) {
+                                        var entry = p.options.features.replace_exports.getPtr("default").?;
+                                        if (entry.* == .replace) {
+                                            data.value = .{ .expr = entry.replace };
+                                        } else {
+                                            _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
+                                            return;
+                                        }
+
+                                        // When bundling, replace ExportDefault with __exportDefault(exportsRef, expr);
+                                        if (p.options.enable_bundling) {
+                                            var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                            export_default_args[0] = p.@"module.exports"(data.value.expr.loc);
+                                            export_default_args[1] = data.value.expr;
+                                            stmts.append(p.s(S.SExpr{ .value = p.callRuntime(data.value.expr.loc, "__exportDefault", export_default_args) }, data.value.expr.loc)) catch unreachable;
+                                            return;
+                                        }
+                                    } else if (p.options.enable_bundling) {
                                         var export_default_args = p.allocator.alloc(Expr, 2) catch unreachable;
                                         export_default_args[0] = p.@"module.exports"(s2.loc);
 
@@ -14200,28 +14358,17 @@ fn NewParser_(
                     p.popScope();
                 },
                 .s_local => |data| {
-                    var i: usize = 0;
-                    while (i < data.decls.len) : (i += 1) {
-                        p.visitBinding(data.decls[i].binding, null);
+                    const decls_len = if (!(data.is_export and p.options.features.replace_exports.entries.len > 0))
+                        p.visitDecls(data.decls, false)
+                    else
+                        p.visitDecls(data.decls, true);
 
-                        if (data.decls[i].value != null) {
-                            var val = data.decls[i].value.?;
-                            const was_anonymous_named_expr = p.isAnonymousNamedExpr(val);
-
-                            const prev_macro_call_count = p.macro_call_count;
-
-                            data.decls[i].value = p.visitExpr(val);
-
-                            p.visitDecl(
-                                &data.decls[i],
-                                was_anonymous_named_expr,
-                                if (comptime allow_macros)
-                                    prev_macro_call_count != p.macro_call_count
-                                else
-                                    false,
-                            );
-                        }
+                    const is_now_dead = data.decls.len > 0 and decls_len == 0;
+                    if (is_now_dead) {
+                        return;
                     }
+
+                    data.decls.len = decls_len;
 
                     // Handle being exported inside a namespace
                     if (data.is_export and p.enclosing_namespace_arg_ref != null) {
@@ -14533,6 +14680,20 @@ fn NewParser_(
 
                 },
                 .s_function => |data| {
+                    // We mark it as dead, but the value may not actually be dead
+                    // We just want to be sure to not increment the usage counts for anything in the function
+                    const mark_as_dead = data.func.flags.contains(.is_export) and p.options.features.replace_exports.count() > 0 and p.isExportToEliminate(data.func.name.?.ref.?);
+                    const original_is_dead = p.is_control_flow_dead;
+
+                    if (mark_as_dead) {
+                        p.is_control_flow_dead = true;
+                    }
+                    defer {
+                        if (mark_as_dead) {
+                            p.is_control_flow_dead = original_is_dead;
+                        }
+                    }
+
                     data.func = p.visitFunc(data.func, data.func.open_parens_loc);
 
                     // Handle exporting this function from a namespace
@@ -14547,9 +14708,13 @@ fn NewParser_(
                             .name = p.loadNameFromRef(data.func.name.?.ref.?),
                             .name_loc = data.func.name.?.loc,
                         }, stmt.loc), p.e(E.Identifier{ .ref = data.func.name.?.ref.? }, data.func.name.?.loc), p.allocator));
-                    } else {
-                        stmts.ensureUnusedCapacity(2) catch unreachable;
-                        stmts.appendAssumeCapacity(stmt.*);
+                    } else if (!mark_as_dead) {
+                        stmts.append(stmt.*) catch unreachable;
+                    } else if (mark_as_dead) {
+                        const name = data.func.name.?.ref.?;
+                        if (p.options.features.replace_exports.getPtr(p.loadNameFromRef(name))) |replacement| {
+                            _ = p.injectReplacementExport(stmts, name, data.func.name.?.loc, replacement);
+                        }
                     }
 
                     // stmts.appendAssumeCapacity(
@@ -14563,6 +14728,18 @@ fn NewParser_(
                     return;
                 },
                 .s_class => |data| {
+                    const mark_as_dead = data.is_export and p.options.features.replace_exports.count() > 0 and p.isExportToEliminate(data.class.class_name.?.ref.?);
+                    const original_is_dead = p.is_control_flow_dead;
+
+                    if (mark_as_dead) {
+                        p.is_control_flow_dead = true;
+                    }
+                    defer {
+                        if (mark_as_dead) {
+                            p.is_control_flow_dead = original_is_dead;
+                        }
+                    }
+
                     const shadow_ref = p.visitClass(stmt.loc, &data.class);
 
                     // Remove the export flag inside a namespace
@@ -14571,8 +14748,19 @@ fn NewParser_(
                         data.is_export = false;
                     }
 
-                    // Lower class field syntax for browsers that don't support it
-                    stmts.appendSlice(p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref)) catch unreachable;
+                    const lowered = p.lowerClass(js_ast.StmtOrExpr{ .stmt = stmt.* }, shadow_ref);
+
+                    if (!mark_as_dead or was_export_inside_namespace)
+                        // Lower class field syntax for browsers that don't support it
+                        stmts.appendSlice(lowered) catch unreachable
+                    else {
+                        const ref = data.class.class_name.?.ref.?;
+                        if (p.options.features.replace_exports.getPtr(p.loadNameFromRef(ref))) |replacement| {
+                            if (p.injectReplacementExport(stmts, ref, data.class.class_name.?.loc, replacement)) {
+                                p.is_control_flow_dead = original_is_dead;
+                            }
+                        }
+                    }
 
                     // Handle exporting this class from a namespace
                     if (was_export_inside_namespace) {
@@ -14752,6 +14940,151 @@ fn NewParser_(
 
             // if we get this far, it stays
             try stmts.append(stmt.*);
+        }
+
+        fn isExportToEliminate(p: *P, ref: Ref) bool {
+            const symbol_name = p.loadNameFromRef(ref);
+            return p.options.features.replace_exports.contains(symbol_name);
+        }
+
+        fn visitDecls(p: *P, decls: []G.Decl, comptime is_possibly_decl_to_remove: bool) usize {
+            var i: usize = 0;
+            const count = decls.len;
+            var j: usize = 0;
+            var out_decls = decls;
+            while (i < count) : (i += 1) {
+                p.visitBinding(decls[i].binding, null);
+
+                if (decls[i].value != null) {
+                    var val = decls[i].value.?;
+                    const was_anonymous_named_expr = p.isAnonymousNamedExpr(val);
+                    var replacement: ?*const RuntimeFeatures.ReplaceableExport = null;
+
+                    const prev_macro_call_count = p.macro_call_count;
+                    const orig_dead = p.is_control_flow_dead;
+                    if (comptime is_possibly_decl_to_remove) {
+                        if (decls[i].binding.data == .b_identifier) {
+                            if (p.options.features.replace_exports.getPtr(p.loadNameFromRef(decls[i].binding.data.b_identifier.ref))) |replacer| {
+                                replacement = replacer;
+                                if (replacer.* != .replace) {
+                                    p.is_control_flow_dead = true;
+                                }
+                            }
+                        }
+                    }
+
+                    decls[i].value = p.visitExpr(val);
+
+                    if (comptime is_possibly_decl_to_remove) {
+                        p.is_control_flow_dead = orig_dead;
+                    }
+                    if (comptime is_possibly_decl_to_remove) {
+                        if (decls[i].binding.data == .b_identifier) {
+                            if (replacement) |ptr| {
+                                if (!p.replaceDeclAndPossiblyRemove(&decls[i], ptr)) {
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    p.visitDecl(
+                        &decls[i],
+                        was_anonymous_named_expr,
+                        if (comptime allow_macros)
+                            prev_macro_call_count != p.macro_call_count
+                        else
+                            false,
+                    );
+                } else if (comptime is_possibly_decl_to_remove) {
+                    if (decls[i].binding.data == .b_identifier) {
+                        if (p.options.features.replace_exports.getPtr(p.loadNameFromRef(decls[i].binding.data.b_identifier.ref))) |ptr| {
+                            if (!p.replaceDeclAndPossiblyRemove(&decls[i], ptr)) {
+                                p.visitDecl(
+                                    &decls[i],
+                                    false,
+                                    false,
+                                );
+                            } else {
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                if (comptime is_possibly_decl_to_remove) {
+                    out_decls[j] = decls[i];
+                    j += 1;
+                }
+            }
+
+            if (comptime is_possibly_decl_to_remove) {
+                return j;
+            }
+
+            return decls.len;
+        }
+
+        fn injectReplacementExport(p: *P, stmts: *StmtList, name_ref: Ref, loc: logger.Loc, replacement: *const RuntimeFeatures.ReplaceableExport) bool {
+            switch (replacement.*) {
+                .delete => return false,
+                .replace => |value| {
+                    const count = stmts.items.len;
+                    var decls = p.allocator.alloc(G.Decl, 1) catch unreachable;
+
+                    decls[0] = .{ .binding = p.b(B.Identifier{ .ref = name_ref }, loc), .value = value };
+                    var local = p.s(
+                        S.Local{
+                            .is_export = true,
+                            .decls = decls,
+                        },
+                        loc,
+                    );
+                    p.visitAndAppendStmt(stmts, &local) catch unreachable;
+                    return count != stmts.items.len;
+                },
+                .inject => |with| {
+                    const count = stmts.items.len;
+                    var decls = p.allocator.alloc(G.Decl, 1) catch unreachable;
+                    decls[0] = .{
+                        .binding = p.b(
+                            B.Identifier{ .ref = p.declareSymbol(.other, loc, with.name) catch unreachable },
+                            loc,
+                        ),
+                        .value = with.value,
+                    };
+
+                    var local = p.s(
+                        S.Local{
+                            .is_export = true,
+                            .decls = decls,
+                        },
+                        loc,
+                    );
+                    p.visitAndAppendStmt(stmts, &local) catch unreachable;
+                    return count != stmts.items.len;
+                },
+            }
+        }
+
+        fn replaceDeclAndPossiblyRemove(p: *P, decl: *G.Decl, replacement: *const RuntimeFeatures.ReplaceableExport) bool {
+            switch (replacement.*) {
+                .delete => return false,
+                .replace => |value| {
+                    decl.*.value = p.visitExpr(value);
+                    return true;
+                },
+                .inject => |with| {
+                    decl.* = .{
+                        .binding = p.b(
+                            B.Identifier{ .ref = p.declareSymbol(.other, decl.binding.loc, with.name) catch unreachable },
+                            decl.binding.loc,
+                        ),
+                        .value = p.visitExpr(Expr{ .data = with.value.data, .loc = if (decl.value != null) decl.value.?.loc else decl.binding.loc }),
+                    };
+                    return true;
+                },
+            }
         }
 
         fn visitBindingAndExprForMacro(p: *P, binding: Binding, expr: Expr) void {
@@ -15959,6 +16292,10 @@ fn NewParser_(
             const allocator = p.allocator;
             var parts = _parts;
             // Insert an import statement for any runtime imports we generated
+
+            if (p.options.tree_shaking and p.options.features.trim_unused_imports) {
+                p.treeShake(&parts, false);
+            }
 
             var parts_end: usize = 0;
             // Handle import paths after the whole file has been visited because we need

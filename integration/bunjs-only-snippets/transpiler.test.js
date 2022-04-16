@@ -1,6 +1,79 @@
 import { expect, it, describe } from "bun:test";
 
 describe("Bun.Transpiler", () => {
+  describe("replaceExports", () => {
+    const transpiler = new Bun.Transpiler({
+      exports: {
+        replace: {
+          // Next.js does this
+          getStaticProps: ["__N_SSG", true],
+          localVarToReplace: 2,
+        },
+        // Remix could possibly do this when building for browsers
+        // to automatically remove imports only referenced within the loader
+        // For Remix, it probably is less impactful due to .client and .server conventions in place
+        eliminate: ["loader", "localVarToRemove"],
+      },
+      treeShaking: true,
+      trimUnusedImports: true,
+    });
+    it("deletes dead exports and any imports only referenced in dead regions", () => {
+      const output = transpiler.transformSync(`
+        import deadFS from 'fs';
+        import liveFS from 'fs';
+
+        export function loader() {
+          deadFS.readFileSync("/etc/passwd");
+          liveFS.readFileSync("/etc/passwd");
+        }
+
+        export function action() {
+          require("foo");
+          liveFS.readFileSync("/etc/passwd");
+        }
+
+        export default function() {
+          require("bar");
+        }
+      `);
+      expect(output.includes("loader")).toBe(false);
+      expect(output.includes("react")).toBe(false);
+      expect(output.includes("action")).toBe(true);
+      expect(output.includes("deadFS")).toBe(false);
+      expect(output.includes("liveFS")).toBe(true);
+    });
+
+    it("supports replacing exports", () => {
+      const output = transpiler.transformSync(`
+        import deadFS from 'fs';
+        import anotherDeadFS from 'fs';
+        import liveFS from 'fs';
+
+        export var localVarToRemove = deadFS.readFileSync("/etc/passwd");
+        export var localVarToReplace = 1;
+
+        var getStaticProps = function () {
+          deadFS.readFileSync("/etc/passwd")
+        };
+
+        export {getStaticProps}
+
+        export default function() {
+          liveFS.readFileSync("/etc/passwd");
+          require("bar");
+        }
+      `);
+      expect(output.includes("loader")).toBe(false);
+      expect(output.includes("react")).toBe(false);
+      expect(output.includes("deadFS")).toBe(false);
+      expect(output.includes("anotherDeadFS")).toBe(false);
+      expect(output.includes("liveFS")).toBe(true);
+      expect(output.includes("__N_SSG")).toBe(true);
+      expect(output.includes("localVarToReplace")).toBe(true);
+      expect(output.includes("localVarToRemove")).toBe(false);
+    });
+  });
+
   const transpiler = new Bun.Transpiler({
     loader: "tsx",
     define: {

@@ -1,26 +1,66 @@
 import { expect, it, describe } from "bun:test";
 
 describe("Bun.Transpiler", () => {
-  describe("replaceExports", () => {
+  describe("exports.replace", () => {
     const transpiler = new Bun.Transpiler({
       exports: {
         replace: {
-          // Next.js does this
+          // export var foo = function() { }
+          // =>
+          // export var foo = "bar";
+          foo: "bar",
+
+          // export const getStaticProps = /* code */
+          // =>
+          // export var __N_SSG = true;
           getStaticProps: ["__N_SSG", true],
-          localVarToReplace: 2,
+          getStaticPaths: ["__N_SSG", true],
+          // export function getStaticProps(ctx) { /* code */ }
+          // =>
+          // export var __N_SSP = true;
+          getServerSideProps: ["__N_SSP", true],
         },
-        // Remix could possibly do this when building for browsers
-        // to automatically remove imports only referenced within the loader
-        // For Remix, it probably is less impactful due to .client and .server conventions in place
-        eliminate: ["loader", "localVarToRemove"],
+
+        // Explicitly remove the top-level export, even if it is in use by
+        // another part of the file
+        eliminate: ["loader"],
       },
+      /* only per-file for now, so this isn't good yet */
       treeShaking: true,
+
+      // remove non-bare unused exports, even if they may have side effects
+      // Consistent with tsc & esbuild, this is enabled by default for TypeScript files
+      // this flag lets you enable it for JavaScript files
+      // this already existed, just wasn't exposed in the API
       trimUnusedImports: true,
     });
+
+    it("a deletes dead exports and any imports only referenced in dead regions", () => {
+      console.log("b");
+
+      const out = transpiler.transformSync(`
+    import {getUserById} from './my-database';
+
+    export async function getStaticProps(ctx){
+      return { props: { user: await getUserById(ctx.params.id)  } };
+    }
+
+    export default function MyComponent({user}) {
+      getStaticProps();
+      return <div id='user'>{user.name}</div>;
+    }
+  `);
+
+      // when all three flags are set, it means
+      console.log(out);
+    });
+
     it("deletes dead exports and any imports only referenced in dead regions", () => {
       const output = transpiler.transformSync(`
         import deadFS from 'fs';
         import liveFS from 'fs';
+
+        export var deleteMe = 100;
 
         export function loader() {
           deadFS.readFileSync("/etc/passwd");
@@ -29,10 +69,11 @@ describe("Bun.Transpiler", () => {
 
         export function action() {
           require("foo");
-          liveFS.readFileSync("/etc/passwd");
+          liveFS.readFileSync("/etc/passwd")
+          deleteMe = 101;
         }
 
-        export default function() {
+        export function baz() {
           require("bar");
         }
       `);
@@ -58,14 +99,16 @@ describe("Bun.Transpiler", () => {
 
         export {getStaticProps}
 
-        export default function() {
+        export function baz() {
           liveFS.readFileSync("/etc/passwd");
           require("bar");
         }
       `);
+      console.log(output);
       expect(output.includes("loader")).toBe(false);
       expect(output.includes("react")).toBe(false);
       expect(output.includes("deadFS")).toBe(false);
+      expect(output.includes("default")).toBe(false);
       expect(output.includes("anotherDeadFS")).toBe(false);
       expect(output.includes("liveFS")).toBe(true);
       expect(output.includes("__N_SSG")).toBe(true);

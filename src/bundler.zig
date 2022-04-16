@@ -207,7 +207,7 @@ pub const Bundler = struct {
             existing_bundle,
         );
 
-        var env_loader = env_loader_ orelse brk: {
+        var env_loader = env_loader_ orelse DotEnv.instance orelse brk: {
             var map = try allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(allocator);
 
@@ -215,7 +215,10 @@ pub const Bundler = struct {
             loader.* = DotEnv.Loader.init(map, allocator);
             break :brk loader;
         };
-        DotEnv.instance = env_loader;
+
+        if (DotEnv.instance == null) {
+            DotEnv.instance = env_loader;
+        }
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
         //     .allocator = allocator,
@@ -1717,7 +1720,8 @@ pub const Bundler = struct {
                             opts.warn_about_unbundled_modules = false;
                             opts.macro_context = &worker.data.macro_context;
                             opts.features.auto_import_jsx = jsx.parse;
-
+                            opts.features.trim_unused_imports = this.bundler.options.trim_unused_imports orelse loader.isTypeScript();
+                            opts.tree_shaking = this.bundler.options.tree_shaking;
                             ast = (bundler.resolver.caches.js.parse(
                                 bundler.allocator,
                                 opts,
@@ -2128,6 +2132,7 @@ pub const Bundler = struct {
                         jsx.parse = loader.isJSX();
                         var opts = js_parser.Parser.Options.init(jsx, loader);
                         opts.macro_context = &worker.data.macro_context;
+                        opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
 
                         try bundler.resolver.caches.js.scan(
                             bundler.allocator,
@@ -2819,6 +2824,7 @@ pub const Bundler = struct {
         jsx: options.JSX.Pragma,
         macro_remappings: MacroRemap,
         virtual_source: ?*const logger.Source = null,
+        replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
     };
 
     pub fn parse(
@@ -2905,6 +2911,7 @@ pub const Bundler = struct {
                 opts.enable_bundling = false;
                 opts.transform_require_to_import = bundler.options.allow_runtime;
                 opts.features.allow_runtime = bundler.options.allow_runtime;
+                opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
 
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
 
@@ -2936,6 +2943,7 @@ pub const Bundler = struct {
                 opts.macro_context = &bundler.macro_context.?;
 
                 opts.features.is_macro_runtime = bundler.options.platform == .bun_macro;
+                opts.features.replace_exports = this_parse.replace_exports;
 
                 const value = (bundler.resolver.caches.js.parse(
                     allocator,

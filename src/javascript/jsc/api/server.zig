@@ -254,7 +254,7 @@ pub const ServerConfig = struct {
             args.development = false;
         }
 
-        const PORT_ENV = .{ "PORT", "BUN_PORT" };
+        const PORT_ENV = .{ "PORT", "BUN_PORT", "NODE_PORT" };
 
         inline for (PORT_ENV) |PORT| {
             if (env.get(PORT)) |port| {
@@ -428,6 +428,74 @@ pub const ServerConfig = struct {
     }
 };
 
+pub fn NewRequestContextStackAllocator(comptime RequestContext: type, comptime count: usize) type {
+    // Pre-allocate up to 2048 requests
+    // use a bitset to track which ones are used
+    return struct {
+        buf: [count]RequestContext = undefined,
+        unused: Set = undefined,
+        fallback_allocator: std.mem.Allocator = undefined,
+
+        pub const Set = std.bit_set.ArrayBitSet(usize, count);
+
+        pub fn get(this: *@This()) std.mem.Allocator {
+            this.unused = Set.initFull();
+            return std.mem.Allocator.init(this, alloc, resize, free);
+        }
+
+        fn alloc(self: *@This(), a: usize, b: u29, c: u29, d: usize) ![]u8 {
+            if (self.unused.findFirstSet()) |i| {
+                self.unused.unset(i);
+                return std.mem.asBytes(&self.buf[i]);
+            }
+
+            return try self.fallback_allocator.rawAlloc(a, b, c, d);
+        }
+
+        fn resize(
+            _: *@This(),
+            _: []u8,
+            _: u29,
+            _: usize,
+            _: u29,
+            _: usize,
+        ) ?usize {
+            unreachable;
+        }
+
+        fn sliceContainsSlice(container: []u8, slice: []u8) bool {
+            return @ptrToInt(slice.ptr) >= @ptrToInt(container.ptr) and
+                (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(container.ptr) + container.len);
+        }
+
+        fn free(
+            self: *@This(),
+            buf: []u8,
+            buf_align: u29,
+            return_address: usize,
+        ) void {
+            _ = buf_align;
+            _ = return_address;
+            const bytes = std.mem.asBytes(&self.buf);
+            if (sliceContainsSlice(bytes, buf)) {
+                const index = if (bytes[0..buf.len].ptr != buf.ptr)
+                    (@ptrToInt(buf.ptr) - @ptrToInt(bytes)) / @sizeOf(RequestContext)
+                else
+                    @as(usize, 0);
+
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(@intToPtr(*RequestContext, @ptrToInt(buf.ptr)) == &self.buf[index]);
+                    std.debug.assert(!self.unused.isSet(index));
+                }
+
+                self.unused.set(index);
+            } else {
+                self.fallback_allocator.rawFree(buf, buf_align, return_address);
+            }
+        }
+    };
+}
+
 // This is defined separately partially to work-around an LLVM debugger bug.
 fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
     return struct {
@@ -435,6 +503,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         const App = uws.NewApp(ssl_enabled);
         pub threadlocal var pool: ?*RequestContext.RequestContextStackAllocator = null;
         pub threadlocal var pool_allocator: std.mem.Allocator = undefined;
+
+        pub const RequestContextStackAllocator = NewRequestContextStackAllocator(RequestContext, 2048);
 
         server: *ThisServer,
         resp: *App.Response,
@@ -459,75 +529,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         sendfile: SendfileContext = undefined,
         request_js_object: JSC.C.JSObjectRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
+
         /// Used either for temporary blob data or fallback
         /// When the response body is a temporary value
         response_buf_owned: std.ArrayListUnmanaged(u8) = .{},
-
-        // Pre-allocate up to 2048 requests
-        // use a bitset to track which ones are used
-        pub const RequestContextStackAllocator = struct {
-            buf: [2048]RequestContext = undefined,
-            unused: Set = undefined,
-            fallback_allocator: std.mem.Allocator = undefined,
-
-            pub const Set = std.bit_set.ArrayBitSet(usize, 2048);
-
-            pub fn get(this: *@This()) std.mem.Allocator {
-                this.unused = Set.initFull();
-                return std.mem.Allocator.init(this, alloc, resize, free);
-            }
-
-            fn alloc(self: *@This(), a: usize, b: u29, c: u29, d: usize) ![]u8 {
-                if (self.unused.findFirstSet()) |i| {
-                    self.unused.unset(i);
-                    return std.mem.asBytes(&self.buf[i]);
-                }
-
-                return try self.fallback_allocator.rawAlloc(a, b, c, d);
-            }
-
-            fn resize(
-                _: *@This(),
-                _: []u8,
-                _: u29,
-                _: usize,
-                _: u29,
-                _: usize,
-            ) ?usize {
-                unreachable;
-            }
-
-            fn sliceContainsSlice(container: []u8, slice: []u8) bool {
-                return @ptrToInt(slice.ptr) >= @ptrToInt(container.ptr) and
-                    (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(container.ptr) + container.len);
-            }
-
-            fn free(
-                self: *@This(),
-                buf: []u8,
-                buf_align: u29,
-                return_address: usize,
-            ) void {
-                _ = buf_align;
-                _ = return_address;
-                const bytes = std.mem.asBytes(&self.buf);
-                if (sliceContainsSlice(bytes, buf)) {
-                    const index = if (bytes[0..buf.len].ptr != buf.ptr)
-                        (@ptrToInt(buf.ptr) - @ptrToInt(bytes)) / @sizeOf(RequestContext)
-                    else
-                        @as(usize, 0);
-
-                    if (comptime Environment.allow_assert) {
-                        std.debug.assert(@intToPtr(*RequestContext, @ptrToInt(buf.ptr)) == &self.buf[index]);
-                        std.debug.assert(!self.unused.isSet(index));
-                    }
-
-                    self.unused.set(index);
-                } else {
-                    self.fallback_allocator.rawFree(buf, buf_align, return_address);
-                }
-            }
-        };
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled;

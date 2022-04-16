@@ -1120,6 +1120,8 @@ pub const BundleOptions = struct {
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
 
+    trim_unused_imports: ?bool = null,
+
     hot_module_reloading: bool = false,
     inject: ?[]string = null,
     origin: URL = URL{},

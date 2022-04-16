@@ -1335,7 +1335,7 @@ pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
         else if ((first_byte & 0xF8) == 0xF0)
             @as(u3, 4)
         else
-            @as(u3, 0),
+            @as(u3, 1),
     };
 }
 

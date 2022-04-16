@@ -119,6 +119,15 @@ pub const ZigString = extern struct {
             return Slice{ .allocator = allocator, .ptr = duped.ptr, .len = this.len, .allocated = true };
         }
 
+        pub fn cloneIfNeeded(this: Slice) !Slice {
+            if (this.allocated) {
+                return this;
+            }
+
+            var duped = try this.allocator.dupe(u8, this.ptr[0..this.len]);
+            return Slice{ .allocator = this.allocator, .ptr = duped.ptr, .len = this.len, .allocated = true };
+        }
+
         pub fn cloneZ(this: Slice, allocator: std.mem.Allocator) !Slice {
             if (this.allocated or this.len == 0) {
                 return this;

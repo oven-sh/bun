@@ -14,7 +14,7 @@ const resolve_path = @import("./resolver/resolve_path.zig");
 const Fs = @import("./fs.zig");
 const Schema = @import("./api/schema.zig");
 const Ref = @import("ast/base.zig").Ref;
-
+const JSAst = @import("./js_ast.zig");
 // packages/bun-cli-*/bun
 const BUN_ROOT = "../../";
 
@@ -273,6 +273,21 @@ pub const Runtime = struct {
         top_level_await: bool = false,
         auto_import_jsx: bool = false,
         allow_runtime: bool = true,
+
+        trim_unused_imports: bool = false,
+
+        replace_exports: ReplaceableExport.Map = .{},
+
+        pub const ReplaceableExport = union(enum) {
+            delete: void,
+            replace: JSAst.Expr,
+            inject: struct {
+                name: string,
+                value: JSAst.Expr,
+            },
+
+            pub const Map = std.StringArrayHashMapUnmanaged(ReplaceableExport);
+        };
     };
 
     pub const Names = struct {

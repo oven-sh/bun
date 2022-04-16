@@ -41,6 +41,8 @@ const JSPrinter = @import("../../../js_printer.zig");
 const ScanPassResult = JSParser.ScanPassResult;
 const Mimalloc = @import("../../../mimalloc_arena.zig");
 const Runtime = @import("../../../runtime.zig").Runtime;
+const JSLexer = @import("../../../js_lexer.zig");
+const Expr = JSAst.Expr;
 
 bundler: Bundler.Bundler,
 arena: std.heap.ArenaAllocator,
@@ -64,6 +66,12 @@ pub const Class = NewClass(
         .transformSync = .{
             .rfn = transformSync,
         },
+        // .resolve = .{
+        //     .rfn = resolve,
+        // },
+        // .buildSync = .{
+        //     .rfn = buildSync,
+        // },
         .finalize = finalize,
     },
     .{},
@@ -82,7 +90,6 @@ const default_transform_options: Api.TransformOptions = brk: {
     opts.disable_hmr = true;
     opts.platform = Api.Platform.browser;
     opts.serve = false;
-
     break :brk opts;
 };
 
@@ -94,8 +101,9 @@ const TranspilerOptions = struct {
     tsconfig_buf: []const u8 = "",
     macros_buf: []const u8 = "",
     log: logger.Log,
-    pending_tasks: u32 = 0,
     runtime: Runtime.Features = Runtime.Features{ .top_level_await = true },
+    tree_shaking: bool = false,
+    trim_unused_imports: ?bool = null,
 };
 
 // Mimalloc gets unstable if we try to move this to a different thread
@@ -114,6 +122,7 @@ pub const TransformTask = struct {
     tsconfig: ?*TSConfigJSON = null,
     loader: Loader,
     global: *JSGlobalObject,
+    replace_exports: Runtime.Features.ReplaceableExport.Map = .{},
 
     pub const AsyncTransformTask = JSC.ConcurrentPromiseTask(TransformTask);
     pub const AsyncTransformEventLoopTask = AsyncTransformTask.EventLoopTask;
@@ -129,6 +138,7 @@ pub const TransformTask = struct {
             .tsconfig = transpiler.transpiler_options.tsconfig,
             .log = logger.Log.init(bun.default_allocator),
             .loader = loader,
+            .replace_exports = transpiler.transpiler_options.runtime.replace_exports,
         };
         transform_task.bundler = transpiler.bundler;
         transform_task.bundler.linker.resolver = &transform_task.bundler.resolver;
@@ -170,6 +180,7 @@ pub const TransformTask = struct {
             .jsx = jsx,
             .path = source.path,
             .virtual_source = &source,
+            .replace_exports = this.replace_exports,
             // .allocator = this.
         };
 
@@ -265,7 +276,63 @@ pub const TransformTask = struct {
     }
 };
 
-fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) TranspilerOptions {
+fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Expr {
+    if (value.isBoolean()) {
+        return Expr{
+            .data = .{
+                .e_boolean = .{
+                    .value = value.toBoolean(),
+                },
+            },
+            .loc = logger.Loc.Empty,
+        };
+    }
+
+    if (value.isNumber()) {
+        return Expr{
+            .data = .{
+                .e_number = .{ .value = value.asNumber() },
+            },
+            .loc = logger.Loc.Empty,
+        };
+    }
+
+    if (value.isNull()) {
+        return Expr{
+            .data = .{
+                .e_null = .{},
+            },
+            .loc = logger.Loc.Empty,
+        };
+    }
+
+    if (value.isUndefined()) {
+        return Expr{
+            .data = .{
+                .e_undefined = .{},
+            },
+            .loc = logger.Loc.Empty,
+        };
+    }
+
+    if (value.isString()) {
+        var str = JSAst.E.String{
+            .utf8 = std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis)}) catch unreachable,
+        };
+        var out = bun.default_allocator.create(JSAst.E.String) catch unreachable;
+        out.* = str;
+        return Expr{
+            .data = .{
+                .e_string = out,
+            },
+            .loc = logger.Loc.Empty,
+        };
+    }
+
+    return null;
+}
+
+fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) !TranspilerOptions {
     var globalThis = ctx.ptr();
     const object = args.next() orelse return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
     if (object.isUndefinedOrNull()) return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
@@ -498,6 +565,168 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
         }
     }
 
+    var tree_shaking: ?bool = null;
+    if (object.get(globalThis, "treeShaking")) |treeShaking| {
+        tree_shaking = treeShaking.toBoolean();
+    }
+
+    var trim_unused_imports: ?bool = null;
+    if (object.get(globalThis, "trimUnusedImports")) |trimUnusedImports| {
+        trim_unused_imports = trimUnusedImports.toBoolean();
+    }
+
+    if (object.getTruthy(globalThis, "exports")) |exports| {
+        if (!exports.isObject()) {
+            JSC.throwInvalidArguments("exports must be an object", .{}, ctx, exception);
+            return transpiler;
+        }
+
+        var replacements = Runtime.Features.ReplaceableExport.Map{};
+        errdefer replacements.clearAndFree(bun.default_allocator);
+
+        if (exports.getTruthy(globalThis, "eliminate")) |eliminate| {
+            if (!eliminate.jsType().isArray()) {
+                JSC.throwInvalidArguments("exports.eliminate must be an array", .{}, ctx, exception);
+                return transpiler;
+            }
+
+            var total_name_buf_len: u32 = 0;
+            var string_count: u32 = 0;
+            var iter = JSC.JSArrayIterator.init(eliminate, globalThis);
+            {
+                var length_iter = iter;
+                while (length_iter.next()) |value| {
+                    if (value.isString()) {
+                        const length = value.getLengthOfArray(globalThis);
+                        string_count += @as(u32, @boolToInt(length > 0));
+                        total_name_buf_len += length;
+                    }
+                }
+            }
+
+            if (total_name_buf_len > 0) {
+                var buf = try std.ArrayListUnmanaged(u8).initCapacity(bun.default_allocator, total_name_buf_len);
+                try replacements.ensureUnusedCapacity(bun.default_allocator, string_count);
+                {
+                    var length_iter = iter;
+                    while (length_iter.next()) |value| {
+                        if (!value.isString()) continue;
+                        var str = value.getZigString(globalThis);
+                        if (str.len == 0) continue;
+                        const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{}", .{str}) catch {
+                            JSC.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{}, ctx, exception);
+                            return transpiler;
+                        };
+                        buf.items.len += name.len;
+                        if (name.len > 0) {
+                            replacements.putAssumeCapacity(name, .{ .delete = .{} });
+                        }
+                    }
+                }
+            }
+        }
+
+        if (exports.getTruthy(globalThis, "replace")) |replace| {
+            if (!replace.isObject()) {
+                JSC.throwInvalidArguments("replace must be an object", .{}, ctx, exception);
+                return transpiler;
+            }
+
+            var total_name_buf_len: usize = 0;
+
+            var array = js.JSObjectCopyPropertyNames(ctx, replace.asObjectRef());
+            defer js.JSPropertyNameArrayRelease(array);
+            const property_names_count = @intCast(u32, js.JSPropertyNameArrayGetCount(array));
+            var iter = JSC.JSPropertyNameIterator{
+                .array = array,
+                .count = @intCast(u32, property_names_count),
+            };
+
+            {
+                var key_iter = iter;
+                while (key_iter.next()) |item| {
+                    total_name_buf_len += JSC.C.JSStringGetLength(item);
+                }
+            }
+
+            if (total_name_buf_len > 0) {
+                var total_name_buf = try std.ArrayList(u8).initCapacity(bun.default_allocator, total_name_buf_len);
+                errdefer total_name_buf.clearAndFree();
+
+                try replacements.ensureUnusedCapacity(bun.default_allocator, property_names_count);
+                defer {
+                    if (exception.* != null) {
+                        total_name_buf.clearAndFree();
+                        replacements.clearAndFree(bun.default_allocator);
+                    }
+                }
+
+                while (iter.next()) |item| {
+                    const start = total_name_buf.items.len;
+                    total_name_buf.items.len += @maximum(
+                        // this returns a null terminated string
+                        JSC.C.JSStringGetUTF8CString(item, total_name_buf.items.ptr + start, total_name_buf.capacity - start),
+                        1,
+                    ) - 1;
+                    JSC.C.JSStringRelease(item);
+                    const key = total_name_buf.items[start..total_name_buf.items.len];
+                    // if somehow the string is empty, skip it
+                    if (key.len == 0)
+                        continue;
+
+                    const value = replace.get(globalThis, key).?;
+                    if (value.isEmpty()) continue;
+
+                    if (!JSLexer.isIdentifier(key)) {
+                        JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key}, ctx, exception);
+                        total_name_buf.deinit();
+                        return transpiler;
+                    }
+
+                    var entry = replacements.getOrPutAssumeCapacity(key);
+
+                    if (exportReplacementValue(value, globalThis)) |expr| {
+                        entry.value_ptr.* = .{ .replace = expr };
+                        continue;
+                    }
+
+                    if (value.isObject() and value.getLengthOfArray(ctx.ptr()) == 2) {
+                        const replacementValue = JSC.JSObject.getIndex(value, globalThis, 1);
+                        if (exportReplacementValue(replacementValue, globalThis)) |to_replace| {
+                            const replacementKey = JSC.JSObject.getIndex(value, globalThis, 0);
+                            var slice = (try replacementKey.toSlice(globalThis, bun.default_allocator).cloneIfNeeded());
+                            var replacement_name = slice.slice();
+
+                            if (!JSLexer.isIdentifier(replacement_name)) {
+                                JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{replacement_name}, ctx, exception);
+                                total_name_buf.deinit();
+                                slice.deinit();
+                                return transpiler;
+                            }
+
+                            entry.value_ptr.* = .{
+                                .inject = .{
+                                    .name = replacement_name,
+                                    .value = to_replace,
+                                },
+                            };
+                            continue;
+                        }
+                    }
+
+                    JSC.throwInvalidArguments("exports.replace values can only be string, null, undefined, number or boolean", .{}, ctx, exception);
+                    return transpiler;
+                }
+            }
+        }
+
+        tree_shaking = tree_shaking orelse (replacements.count() > 0);
+        transpiler.runtime.replace_exports = replacements;
+    }
+
+    transpiler.tree_shaking = tree_shaking orelse false;
+    transpiler.trim_unused_imports = trim_unused_imports orelse transpiler.tree_shaking;
+
     return transpiler;
 }
 
@@ -511,7 +740,10 @@ pub fn constructor(
     var args = JSC.Node.ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     defer temp.deinit();
     const transpiler_options: TranspilerOptions = if (arguments.len > 0)
-        transformOptionsFromJSC(ctx, temp.allocator(), &args, exception)
+        transformOptionsFromJSC(ctx, temp.allocator(), &args, exception) catch {
+            JSC.throwInvalidArguments("Failed to create transpiler", .{}, ctx, exception);
+            return null;
+        }
     else
         TranspilerOptions{ .log = logger.Log.init(getAllocator(ctx)) };
 
@@ -561,6 +793,8 @@ pub fn constructor(
         bundler.options.macro_remap = transpiler_options.macro_map;
     }
 
+    bundler.options.tree_shaking = transpiler_options.tree_shaking;
+    bundler.options.trim_unused_imports = transpiler_options.trim_unused_imports;
     bundler.options.allow_runtime = transpiler_options.runtime.allow_runtime;
     bundler.options.auto_import_jsx = transpiler_options.runtime.auto_import_jsx;
     bundler.options.hot_module_reloading = transpiler_options.runtime.hot_module_reloading;
@@ -612,6 +846,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
         .jsx = jsx,
         .path = source.path,
         .virtual_source = &source,
+        .replace_exports = this.transpiler_options.runtime.replace_exports,
         // .allocator = this.
     };
 

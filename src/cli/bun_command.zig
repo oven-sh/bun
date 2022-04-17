@@ -27,6 +27,7 @@ const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../javascript/jsc/config.zig").configureTransformOptionsForBun;
 const bundler = @import("../bundler.zig");
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
+const GenerateNodeModuleBundle = @import("../bundler/generate_node_modules_bundle.zig");
 const DotEnv = @import("../env_loader.zig");
 
 const fs = @import("../fs.zig");
@@ -65,7 +66,7 @@ const ServerBundleGeneratorThread = struct {
         }
 
         var estimated_input_lines_of_code: usize = 0;
-        _ = try bundler.Bundler.GenerateNodeModuleBundle.generate(
+        _ = try GenerateNodeModuleBundle.generate(
             &server_bundler,
             allocator_,
             server_conf,
@@ -177,7 +178,7 @@ pub const BunCommand = struct {
 
             // Always generate the client-only bundle
             // we can revisit this decision if people ask
-            var node_modules_ = try bundler.Bundler.GenerateNodeModuleBundle.generate(
+            var node_modules_ = try GenerateNodeModuleBundle.generate(
                 &this_bundler,
                 allocator,
                 loaded_framework,

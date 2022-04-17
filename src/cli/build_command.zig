@@ -34,13 +34,6 @@ pub const BuildCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
         var result: options.TransformResult = undefined;
         switch (ctx.args.resolve orelse Api.ResolveMode.dev) {
-            Api.ResolveMode.disable => {
-                result = try bundler.Transformer.transform(
-                    ctx.allocator,
-                    ctx.log,
-                    ctx.args,
-                );
-            },
             .lazy => {
                 result = try bundler.Bundler.bundle(
                     ctx.allocator,

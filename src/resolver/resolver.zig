@@ -84,6 +84,29 @@ pub const PathPair = struct {
     }
 };
 
+// this is ripped from esbuild, comments included
+pub const SideEffects = enum {
+    /// The default value conservatively considers all files to have side effects.
+    has_side_effects,
+
+    /// This file was listed as not having side effects by a "package.json"
+    /// file in one of our containing directories with a "sideEffects" field.
+    no_side_effects__package_json,
+
+    /// This file is considered to have no side effects because the AST was empty
+    /// after parsing finished. This should be the case for ".d.ts" files.
+    no_side_effects__empty_ast,
+
+    /// This file was loaded using a data-oriented loader (e.g. "text") that is
+    /// known to not have side effects.
+    no_side_effects__pure_data,
+
+    // / Same as above but it came from a plugin. We don't want to warn about
+    // / unused imports to these files since running the plugin is a side effect.
+    // / Removing the import would not call the plugin which is observable.
+    // no_side_effects__pure_data_from_plugin,
+};
+
 pub const Result = struct {
     path_pair: PathPair,
 
@@ -100,7 +123,7 @@ pub const Result = struct {
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
-    primary_side_effects_data: ?SideEffectsData = null,
+    primary_side_effects_data: SideEffects = SideEffects.has_side_effects,
 
     // If true, unused imports are retained in TypeScript code. This matches the
     // behavior of the "importsNotUsedAsValues" field in "tsconfig.json" when the

@@ -15,7 +15,7 @@ const C = bun.C;
 const JSC = @import("javascript_core");
 const fs = @import("fs.zig");
 const unicode = std.unicode;
-
+const Ref = @import("./ast/base.zig").Ref;
 const expect = std.testing.expect;
 const assert = std.debug.assert;
 const ArrayList = std.ArrayList;
@@ -1013,7 +1013,7 @@ pub inline fn usize2Loc(loc: usize) Loc {
 pub const Source = struct {
     path: fs.Path,
     key_path: fs.Path,
-    index: u32 = 0,
+    index: Ref.Int = 0,
     contents: string,
     contents_is_recycled: bool = false,
 

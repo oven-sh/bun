@@ -28,6 +28,7 @@ const StringHashMapUnmanaged = _hash_map.StringHashMapUnmanaged;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
+const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -142,20 +143,21 @@ pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
 
         fn deinit() void {
             var sliced = _self.overflow.slice();
+            var allocator = _self.overflow.allocator;
 
             if (sliced.len > 1) {
                 var i: usize = 1;
                 const end = sliced.len;
                 while (i < end) {
                     var ptrs = @ptrCast(*[2]Block, sliced[i]);
-                    default_allocator.free(ptrs);
+                    allocator.free(ptrs);
                     i += 2;
                 }
                 _self.overflow.allocated = 1;
             }
             var base_store = @fieldParentPtr(WithBase, "store", _self);
             if (_self.overflow.ptrs[0] == &base_store.head) {
-                default_allocator.destroy(base_store);
+                allocator.destroy(base_store);
             }
             _self = undefined;
         }
@@ -4375,6 +4377,32 @@ pub const Ast = struct {
         } };
         try std.json.stringify(self.parts, opts, stream);
     }
+
+    pub const OwnedAst = struct {
+        ast: Ast,
+
+        source_code: logger.Source,
+
+        allocator: std.mem.Allocator,
+
+        expr_blocks: []*Expr.Data.Store.All.Block,
+        stmt_blocks: []*Stmt.Data.Store.All.Block,
+
+        pub fn init(arena: ThreadlocalArena, ast: Ast, source_code: logger.Source) OwnedAst {
+            return .{
+                .expr_blocks = Expr.Data.Store.toOwnedSlice(),
+                .stmt_blocks = Stmt.Data.Store.toOwnedSlice(),
+                .arena = arena,
+                .ast = ast,
+                .allocator = arena.allocator(),
+                .source_code = source_code,
+            };
+        }
+
+        pub fn deinit(this: *OwnedAst) void {
+            this.arena.deinit();
+        }
+    };
 };
 
 pub const Span = struct {

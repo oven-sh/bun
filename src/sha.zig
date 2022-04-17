@@ -205,6 +205,22 @@ pub fn main() anyerror!void {
         evp_in.final(&digest4);
         const evp_in_time = clock4.read();
 
+        var clock5 = try std.time.Timer.start();
+        _ = std.hash.Wyhash.hash(0, bytes);
+        const wyhash_time = clock5.read();
+
+        var clock6 = try std.time.Timer.start();
+        _ = std.hash.Crc32.hash(bytes);
+        const crc32 = clock6.read();
+
+        std.debug.print(
+            "  wyhash: {}\n",
+            .{std.fmt.fmtDuration(wyhash_time)},
+        );
+        std.debug.print(
+            "   crc32: {}\n",
+            .{std.fmt.fmtDuration(crc32)},
+        );
         std.debug.print(
             "     zig: {}\n",
             .{std.fmt.fmtDuration(zig_time)},

@@ -132,6 +132,8 @@ pub const Ref = enum(TotalSize) {
 
     pub const TotalSize = u62;
 
+    pub const ArrayHashCtx = RefHashCtx;
+
     pub fn format(ref: Ref, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         try std.fmt.format(
             writer,

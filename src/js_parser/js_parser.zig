@@ -3899,7 +3899,11 @@ fn NewParser_(
             parser.relocated_top_level_vars.deinit();
         }
 
-        pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
+        pub fn findSymbol(p: *P, loc: logger.Loc, name: string) FindSymbolResult {
+            return p.findSymbolMaybeRecordUsage(loc, name, true);
+        }
+
+        fn findSymbolMaybeRecordUsage(p: *P, loc: logger.Loc, name: string, record_usage: bool) FindSymbolResult {
             var declare_loc: logger.Loc = undefined;
             var is_inside_with_scope = false;
             // This function can show up in profiling.
@@ -3952,7 +3956,7 @@ fn NewParser_(
             }
 
             // Track how many times we've referenced this symbol
-            p.recordUsage(ref);
+            if (record_usage) p.recordUsage(ref);
 
             return FindSymbolResult{
                 .ref = ref,
@@ -4100,7 +4104,7 @@ fn NewParser_(
             }
 
             if (_original_name) |original_name| {
-                const result = p.findSymbol(loc, original_name) catch unreachable;
+                const result = p.findSymbol(loc, original_name);
                 var _ident = ident;
                 _ident.ref = result.ref;
                 return p.e(_ident, loc);
@@ -12008,7 +12012,7 @@ fn NewParser_(
                         p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, expr.loc), name) catch unreachable;
                     }
 
-                    const result = p.findSymbol(expr.loc, name) catch unreachable;
+                    const result = p.findSymbol(expr.loc, name);
 
                     e_.must_keep_due_to_with_stmt = result.is_inside_with_scope;
                     e_.ref = result.ref;
@@ -12360,7 +12364,7 @@ fn NewParser_(
                             if (e_.op == .bin_in) {
                                 var private = _private;
                                 const name = p.loadNameFromRef(private.ref);
-                                const result = p.findSymbol(e_.left.loc, name) catch unreachable;
+                                const result = p.findSymbol(e_.left.loc, name);
                                 private.ref = result.ref;
 
                                 // Unlike regular identifiers, there are no unbound private identifiers
@@ -12797,7 +12801,7 @@ fn NewParser_(
                         .e_private_identifier => |_private| {
                             var private = _private;
                             const name = p.loadNameFromRef(private.ref);
-                            const result = p.findSymbol(e_.index.loc, name) catch unreachable;
+                            const result = p.findSymbol(e_.index.loc, name);
                             private.ref = result.ref;
 
                             // Unlike regular identifiers, there are no unbound private identifiers
@@ -13962,7 +13966,7 @@ fn NewParser_(
                         for (data.items) |*item| {
                             const name = p.loadNameFromRef(item.name.ref.?);
 
-                            const symbol = try p.findSymbol(item.alias_loc, name);
+                            const symbol = p.findSymbol(item.alias_loc, name);
                             const ref = symbol.ref;
 
                             if (p.options.features.replace_exports.getPtr(name)) |entry| {
@@ -13990,7 +13994,7 @@ fn NewParser_(
                     } else {
                         for (data.items) |*item| {
                             const name = p.loadNameFromRef(item.name.ref.?);
-                            const symbol = try p.findSymbol(item.alias_loc, name);
+                            const symbol = p.findSymbol(item.alias_loc, name);
                             const ref = symbol.ref;
 
                             if (p.symbols.items[ref.innerIndex()].kind == .unbound) {
@@ -15532,7 +15536,12 @@ fn NewParser_(
                             return false;
                         }
 
-                        const result = p.findSymbol(expr.loc, name) catch return false;
+                        // The "findSymbol" function also marks this symbol as used. But that's
+                        // never what we want here because we're just peeking to see what kind of
+                        // symbol it is to see if it's a match. If it's not a match, it will be
+                        // re-resolved again later and marked as used there. So we don't want to
+                        // mark it as used twice.
+                        const result = p.findSymbolMaybeRecordUsage(expr.loc, name, false);
 
                         // We must not be in a "with" statement scope
                         if (result.is_inside_with_scope) {

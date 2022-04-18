@@ -1165,6 +1165,7 @@ pub const BundleOptions = struct {
 
     conditions: ESMConditions = undefined,
     tree_shaking: bool = false,
+    code_splitting: bool = false,
     sourcemap: SourceMapOption = SourceMapOption.none,
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {

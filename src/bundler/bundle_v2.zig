@@ -916,6 +916,8 @@ pub const Graph = struct {
     meta: std.MultiArrayList(JSMeta) = .{},
     input_files: InputFile.List = .{},
 
+    code_splitting: bool = false,
+
     pool: *ThreadPool = undefined,
 
     heap: ThreadlocalArena = ThreadlocalArena{},
@@ -954,9 +956,9 @@ pub const Graph = struct {
         // then this may not be the result of a single chain but may instead form
         // a diamond shape if this same symbol was re-exported multiple times from
         // different files.
-        re_exports: []Dependency = &[_]Dependency{},
+        re_exports: Dependency.List = Dependency.List{},
 
-        name_loc: Logger.Loc = Logger.Loc.Empty, // Optional, goes with sourceIndex, ignore if zero
+        name_loc: Logger.Loc = Logger.Loc.Empty, // Optional, goes with sourceIndex, ignore if empty
         ref: Ref = Ref.None,
         source_index: Ref.Int = invalid_part_index,
     };
@@ -1044,7 +1046,7 @@ pub const Graph = struct {
         /// Re-exports come from other files and are the result of resolving export
         /// star statements (i.e. "export * from 'foo'").
         resolved_exports: RefExportData = .{},
-        resolved_export_star: ?*ExportData = null,
+        resolved_export_star: ?ExportData = null,
 
         /// Never iterate over "resolvedExports" directly. Instead, iterate over this
         /// array. Some exports in that map aren't meant to end up in generated code.
@@ -1108,8 +1110,195 @@ pub const Graph = struct {
     };
 };
 
+const EntryPoint = struct {
+    // This may be an absolute path or a relative path. If absolute, it will
+    // eventually be turned into a relative path by computing the path relative
+    // to the "outbase" directory. Then this relative path will be joined onto
+    // the "outdir" directory to form the final output path for this entry point.
+    output_path: bun.PathString = bun.PathString.empty,
+
+    // This is the source index of the entry point. This file must have a valid
+    // entry point kind (i.e. not "none").
+    source_index: u32 = 0,
+
+    // Manually specified output paths are ignored when computing the default
+    // "outbase" directory, which is computed as the lowest common ancestor of
+    // all automatically generated output paths.
+    output_path_was_auto_generated: bool = false,
+
+    pub const List = std.MultiArrayList(EntryPoint);
+
+    pub const Kind = enum(u2) {
+        none = 0,
+        user_specified = 1,
+        dynamic_import = 2,
+
+        pub inline fn isEntryPoint(this: Kind) bool {
+            return this.kind != .none;
+        }
+
+        pub inline fn isUserSpecifiedEntryPoint(this: Kind) bool {
+            return this.kind == .user_specified;
+        }
+    };
+};
+
+/// Two-dimensional bitset
+/// Quickly lets us know which files are visible for which entry points
+const Bitmap = struct {
+    bitset: std.DynamicBitSetUnmanaged = undefined,
+    file_count: usize = 0,
+
+    pub fn init(file_count: usize, entry_point_count: usize, allocator: std.mem.Allocator) !Bitmap {
+        return Bitmap{
+            .file_count = file_count,
+            .bitset = try std.DynamicBitSetUnmanaged.initEmpty(file_count * entry_point_count, allocator),
+        };
+    }
+
+    pub fn isSet(this: *Bitmap, file_id: usize, entry_point_count: usize) bool {
+        return this.bitset.isSet(file_id * this.file_count + entry_point_count);
+    }
+
+    pub fn set(this: *Bitmap, file_id: usize, entry_point_count: usize) void {
+        this.bitset.set(file_id * this.file_count + entry_point_count);
+    }
+
+    pub fn setter(this: *Bitmap, file_id: usize) Setter {
+        return Setter{
+            .offset = file_id * this.file_count,
+            .bitset = this.bitset,
+        };
+    }
+
+    // turn add add and a multiply into an add
+    pub const Setter = struct {
+        offset: usize = 0,
+        bitset: std.DynamicBitSetUnmanaged,
+
+        pub fn isSet(this: Bitmap.Setter, x: usize) bool {
+            return this.bitset.isSet(this.offset + x);
+        }
+
+        pub fn set(this: Bitmap.Setter, x: usize) void {
+            this.bitset.set(this.offset + x);
+        }
+    };
+};
+
+const LinkerGraph = struct {
+    files: File.List = .{},
+    entry_points: EntryPoint.List = .{},
+    symbols: js_ast.Symbol.Map = .{},
+
+    allocator: std.mem.Allocator,
+
+    code_splitting: bool = false,
+
+    // This is an alias from Graph
+    // it is not a clone!
+    asts: std.MultiArrayList(js_ast.Ast) = .{},
+
+    reachable_files: []Ref.Int = &[_]Ref.Int{},
+
+    stable_source_indices: []const u32 = &[_]u32{},
+
+    // This holds all entry points that can reach a file
+    //
+    file_entry_bits: Bitmap,
+
+    pub fn load(this: *LinkerGraph, entry_points: []const Ref.Int, sources: []const Logger.Source) !void {
+        this.file_entry_bits = try Bitmap.init(sources.len, entry_points.len, this.allocator());
+
+        try this.files.ensureTotalCapacity(this.allocator(), sources.len);
+        this.files.len = sources.len;
+        var files = this.files.slice();
+
+        var entry_point_kinds = files.items(.entry_point_kind);
+        {
+            var kinds = std.mem.sliceAsBytes(entry_point_kinds);
+            @memset(kinds.ptr, 0, kinds.len);
+        }
+
+        // Setup entry points
+        {
+            try this.entry_points.ensureTotalCapacity(this.allocator(), entry_points.len);
+            this.entry_points.len = entry_points.len;
+            var path_strings: []bun.PathString = this.entry_points.items(.output_path);
+            {
+                var output_was_auto_generated = std.mem.sliceAsBytes(this.entry_points.items(.output_path_was_auto_generated));
+                @memset(output_was_auto_generated.ptr, 0, output_was_auto_generated.len);
+            }
+
+            for (entry_points) |i, j| {
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(sources[i].index == i);
+                }
+                entry_point_kinds[sources[i].index] = EntryPoint.Kind.user_specified;
+                path_strings[j] = bun.PathString.init(sources[i].path.text);
+            }
+        }
+
+        // Setup files
+        {
+            var stable_source_indices = try this.allocator.alloc(Ref.Int, sources.len);
+            for (this.reachable_files) |reachable, i| {
+                stable_source_indices[i] = reachable;
+            }
+
+            const file = comptime LinkerGraph.File{};
+            // TODO: verify this outputs efficient code
+            std.mem.set(
+                @TypeOf(file.distance_from_entry_point),
+                files.items(.distance_from_entry_point),
+                comptime file.distance_from_entry_point,
+            );
+            var is_live = std.mem.sliceAsBytes(files.items(.is_live));
+            @memset(is_live.ptr, 0, is_live.len);
+        }
+
+        this.symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.parse_graph.ast.items(.symbols)));
+    }
+
+    pub const File = struct {
+        input_file: u32 = 0,
+
+        /// The minimum number of links in the module graph to get from an entry point
+        /// to this file
+        distance_from_entry_point: u32 = std.math.maxInt(u32),
+
+        /// If "entryPointKind" is not "entryPointNone", this is the index of the
+        /// corresponding entry point chunk.
+        entry_point_chunk_index: u32 = 0,
+
+        /// This file is an entry point if and only if this is not "entryPointNone".
+        /// Note that dynamically-imported files are allowed to also be specified by
+        /// the user as top-level entry points, so some dynamically-imported files
+        /// may be "entryPointUserSpecified" instead of "entryPointDynamicImport".
+        entry_point_kind: EntryPoint.Kind = .none,
+
+        /// This is true if this file has been marked as live by the tree shaking
+        /// algorithm.
+        is_live: bool = false,
+
+        pub fn isEntryPoint(this: *const File) bool {
+            return this.entry_point_kind.isEntryPoint();
+        }
+
+        pub fn isUserSpecifiedEntryPoint(this: *const File) bool {
+            return this.entry_point_kind.isUserSpecifiedEntryPoint();
+        }
+
+        pub const List = std.MultiArrayList(File);
+    };
+};
+
 const LinkerContext = struct {
-    graph: *Graph = undefined,
+    parse_graph: *Graph = undefined,
+    graph: LinkerGraph = undefined,
+    allocator: std.mem.Allocator = undefined,
+    log: *Logger.Log = undefined,
+
     resolver: *Resolver = undefined,
     cycle_detector: std.ArrayList(ImportTracker) = undefined,
 
@@ -1120,13 +1309,51 @@ const LinkerContext = struct {
     // We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
 
-    pub fn link(this: *LinkerContext, bundle: *BundleV2, reachable: []Ref.Int) !void {
-        this.graph = &bundle.graph;
+    fn load(this: *LinkerContext, bundle: *BundleV2, entry_points: []Ref.Int, reachable: []Ref.Int) !void {
+        this.parse_graph = &bundle.graph;
+        this.graph = .{
+            .allocator = bundle.allocator,
+            .bitmap = undefined,
+        };
+
+        this.graph.code_splitting = bundle.bundler.options.code_splitting;
+        this.graph.allocator = bundle.allocator;
+        this.log = bundle.bundler.log;
+
         this.resolver = &bundle.bundler.resolver;
         this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator());
 
-        // this.
-        _ = reachable;
+        this.graph.reachable_files = reachable;
+
+        const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
+
+        try this.graph.load(entry_points, sources);
+    }
+
+    pub fn link(this: *LinkerContext, bundle: *BundleV2, entry_points: []Ref.Int, reachable: []Ref.Int) !void {
+        try this.load(bundle, entry_points, reachable);
+
+        try this.scanImportsAndExports();
+
+        // Stop now if there were errors
+        if (this.log.hasErrors()) {
+            return;
+        }
+    }
+
+    pub fn scanImportsAndExports(this: *LinkerContext) !void {
+        var import_records_list: []ImportRecord.List = this.graph.asts.items(.import_records);
+        var asts = this.parse_graph.input_files.items(.ast);
+
+        for (this.graph.reachable_files) |source_index| {
+            const id = asts[source_index];
+            if (id < import_records_list.len) {
+                const import_records = import_records_list[id].slice();
+                for (import_records) |import_record| {
+                    this.scanImport(source_index, import_record);
+                }
+            }
+        }
     }
 
     pub inline fn allocator(this: *const LinkerContext) std.mem.Allocator {

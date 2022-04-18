@@ -4460,7 +4460,7 @@ fn NewParser_(
                 }
             }
 
-            for (scope.children.items) |_, i| {
+            for (scope.children.slice) |_, i| {
                 p.hoistSymbols(scope.children.items[i]);
             }
         }
@@ -4839,14 +4839,18 @@ fn NewParser_(
             // Truncate the scope order where we started to pretend we never saw this scope
             p.scopes_in_order.shrinkRetainingCapacity(scope_index);
 
-            var children = parent.children;
+            var children = parent.children.list();
             // Remove the last child from the parent scope
             var last = children.items.len - 1;
             if (children.items[last] != to_discard) {
                 p.panic("Internal error", .{});
             }
 
+            // TODO: before shipping bundler changes, does this cause bugs?
+            // or does this fix them?
+            // why didn't this array mutation cause things to break before?
             _ = children.popOrNull();
+            parent.children.update(children);
         }
 
         fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) anyerror!G.Fn {
@@ -5631,7 +5635,9 @@ fn NewParser_(
                 const name = try path_name.nonUniqueNameString(p.allocator);
                 stmt.namespace_ref = try p.newSymbol(.other, name);
                 var scope: *Scope = p.current_scope;
-                try scope.generated.append(p.allocator, stmt.namespace_ref);
+                var generated = scope.generated.list();
+                try generated.append(p.allocator, stmt.namespace_ref);
+                scope.generated.update(generated);
             }
 
             var item_refs = ImportItemForNamespaceMap.init(p.allocator);
@@ -7204,15 +7210,16 @@ fn NewParser_(
         fn discardScopesUpTo(p: *P, scope_index: usize) void {
             // Remove any direct children from their parent
             var scope = p.current_scope;
-            var children = scope.children;
+            var children = scope.children.list();
+            defer scope.children.update(children);
 
             for (p.scopes_in_order.items[scope_index..]) |_child| {
                 const child = _child orelse continue;
 
                 if (child.scope.parent == p.current_scope) {
-                    var i: usize = children.items.len - 1;
+                    var i: usize = children.len - 1;
                     while (i >= 0) {
-                        if (children.items[i] == child.scope) {
+                        if (children.ptr[i] == child.scope) {
                             _ = children.orderedRemove(i);
                             break;
                         }

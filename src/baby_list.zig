@@ -13,6 +13,20 @@ pub fn BabyList(comptime Type: type) type {
         len: u32 = 0,
         cap: u32 = 0,
 
+        pub fn append(this: *@This(), allocator: std.mem.Allocator, value: Type) !void {
+            if (this.len + 1 < this.cap) {
+                var list_ = listManaged(allocator);
+                try list_.ensureUnusedCapacity(1);
+                this.update(list_);
+            }
+            this.appendAssumeCapacity(value);
+        }
+
+        pub inline fn appendAssumeCapacity(this: *@This(), value: Type) void {
+            this.ptr[this.len] = value;
+            this.len += 1;
+        }
+
         pub inline fn init(items: []const Type) ListType {
             @setRuntimeSafety(false);
             return ListType{

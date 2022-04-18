@@ -4445,7 +4445,7 @@ pub const NamedExport = struct {
     alias_loc: logger.Loc,
 };
 
-pub const StrictModeKind = enum(u7) {
+pub const StrictModeKind = enum(u4) {
     sloppy_mode,
     explicit_strict_mode,
     implicit_strict_mode_import,
@@ -4458,13 +4458,12 @@ pub const StrictModeKind = enum(u7) {
 };
 
 pub const Scope = struct {
-    id: usize = 0,
     kind: Kind = Kind.block,
     parent: ?*Scope,
-    children: std.ArrayListUnmanaged(*Scope) = .{},
+    children: BabyList(*Scope) = .{},
     // This is a special hash table that allows us to pass in the hash directly
     members: StringHashMapUnmanaged(Member) = .{},
-    generated: std.ArrayListUnmanaged(Ref) = .{},
+    generated: BabyList(Ref) = .{},
 
     // This is used to store the ref of the label symbol for ScopeLabel scopes.
     label_ref: ?Ref = null,
@@ -4615,7 +4614,7 @@ pub const Scope = struct {
     pub fn recursiveSetStrictMode(s: *Scope, kind: StrictModeKind) void {
         if (s.strict_mode == .sloppy_mode) {
             s.strict_mode = kind;
-            for (s.children.items) |child| {
+            for (s.children.slice()) |child| {
                 child.recursiveSetStrictMode(kind);
             }
         }

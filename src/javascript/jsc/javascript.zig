@@ -1065,7 +1065,7 @@ pub const VirtualMachine = struct {
         } else if (strings.eqlComptime(_specifier, "node:fs")) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = ZigString.init(@embedFile("fs.exports.js")),
+                .source_code = ZigString.init(@embedFile("fs.exports.js") ++ JSC.Node.fs.constants_string),
                 .specifier = ZigString.init("node:fs"),
                 .source_url = ZigString.init("node:fs"),
                 .hash = 0,

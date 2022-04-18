@@ -35,4 +35,5 @@ pub const Node = struct {
     pub usingnamespace @import("./javascript/jsc/node/node_fs.zig");
     pub usingnamespace @import("./javascript/jsc/node/node_fs_binding.zig");
     pub const Syscall = @import("./javascript/jsc/node/syscall.zig");
+    pub const fs = @import("./javascript/jsc/node/node_fs_constant.zig");
 };

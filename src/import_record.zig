@@ -144,6 +144,8 @@ pub const ImportRecord = struct {
 
     tag: Tag = Tag.none,
 
+    pub const List = @import("./baby_list.zig").BabyList(ImportRecord);
+
     pub const Tag = enum {
         none,
         react_refresh,

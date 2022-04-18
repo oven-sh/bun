@@ -216,18 +216,18 @@ pub const Linker = struct {
         var needs_require = false;
         var node_module_bundle_import_path: ?string = null;
 
-        var import_records = result.ast.import_records;
+        var import_records = result.ast.import_records.listManaged(result.ast.allocator);
         defer {
-            result.ast.import_records = import_records;
+            result.ast.import_records = ImportRecord.List.fromList(import_records);
         }
         // Step 1. Resolve imports & requires
         switch (result.loader) {
             .jsx, .js, .ts, .tsx => {
                 var record_i: u32 = 0;
-                const record_count = @truncate(u32, import_records.len);
+                const record_count = @truncate(u32, import_records.items.len);
 
                 outer: while (record_i < record_count) : (record_i += 1) {
-                    var import_record = &import_records[record_i];
+                    var import_record = &import_records.items[record_i];
                     if (import_record.is_unused) continue;
 
                     const record_index = record_i;
@@ -591,10 +591,7 @@ pub const Linker = struct {
         result.ast.externals = externals.toOwnedSlice();
 
         if (result.ast.needs_runtime and result.ast.runtime_import_record_id == null) {
-            var new_import_records = try linker.allocator.alloc(ImportRecord, import_records.len + 1);
-            std.mem.copy(ImportRecord, new_import_records, import_records);
-
-            new_import_records[new_import_records.len - 1] = ImportRecord{
+            try import_records.append(ImportRecord{
                 .kind = .stmt,
                 .path = if (linker.options.node_modules_bundle != null)
                     Fs.Path.init(node_module_bundle_import_path orelse linker.nodeModuleBundleImportPath(origin))
@@ -604,9 +601,8 @@ pub const Linker = struct {
                     try linker.generateImportPath(source_dir, Linker.runtime_source_path, false, "bun", origin, import_path_format),
 
                 .range = logger.Range{ .loc = logger.Loc{ .start = 0 }, .len = 0 },
-            };
-            result.ast.runtime_import_record_id = @truncate(u32, new_import_records.len - 1);
-            import_records = new_import_records;
+            });
+            result.ast.runtime_import_record_id = @truncate(u32, import_records.items.len - 1);
         }
 
         // We _assume_ you're importing ESM.

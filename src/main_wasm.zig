@@ -314,7 +314,7 @@ export fn scan(opts_array: u64) u64 {
     if (result.ok) {
         var scanned_imports = allocator.alloc(Api.ScannedImport, result.ast.import_records.len) catch unreachable;
         var scanned_i: usize = 0;
-        for (result.ast.import_records) |import_record| {
+        for (result.ast.import_records.slice()) |import_record| {
             if (import_record.kind == .internal) continue;
             scanned_imports[scanned_i] = Api.ScannedImport{ .path = import_record.path.text, .kind = import_record.kind.toAPI() };
             scanned_i += 1;

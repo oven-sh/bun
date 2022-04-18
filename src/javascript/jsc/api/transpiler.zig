@@ -854,7 +854,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
 
     // necessary because we don't run the linker
     if (parse_result) |*res| {
-        for (res.ast.import_records) |*import| {
+        for (res.ast.import_records.slice()) |*import| {
             if (import.kind.isCommonJS()) {
                 import.wrap_with_to_module = true;
                 import.module_id = @truncate(u32, std.hash.Wyhash.hash(0, import.path.pretty));
@@ -936,7 +936,7 @@ pub fn scan(
     const imports_label = JSC.ZigString.init("imports");
     const named_imports_value = namedImportsToJS(
         ctx.ptr(),
-        parse_result.ast.import_records,
+        parse_result.ast.import_records.slice(),
         exception,
     );
     if (exception.* != null) return null;

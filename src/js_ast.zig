@@ -29,6 +29,14 @@ const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+
+/// This is the index to the automatically-generated part containing code that
+/// calls "__export(exports, { ... getters ... })". This is used to generate
+/// getters on an exports object for ES6 export statements, and is both for
+/// ES6 star imports and CommonJS-style modules. All files have one of these,
+/// although it may contain no statements if there is nothing to export.
+pub const namespace_export_part_index = 0;
+
 pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
     var max_size = 0;
     var max_align = 1;
@@ -214,107 +222,7 @@ pub const BindingNodeIndex = Binding;
 pub const StmtNodeIndex = Stmt;
 pub const ExprNodeIndex = Expr;
 
-/// This is like ArrayList except it stores the length and capacity as u32
-/// In practice, it is very unusual to have lengths above 4 GB
-///
-/// This lets us have array lists which occupy the same amount of space as a slice
-pub fn BabyList(comptime Type: type) type {
-    return struct {
-        const ListType = @This();
-        ptr: [*]Type = undefined,
-        len: u32 = 0,
-        cap: u32 = 0,
-
-        pub inline fn init(items: []const Type) ListType {
-            @setRuntimeSafety(false);
-            return ListType{
-                // Remove the const qualifier from the items
-                .ptr = @intToPtr([*]Type, @ptrToInt(items.ptr)),
-
-                .len = @truncate(u32, items.len),
-                .cap = @truncate(u32, items.len),
-            };
-        }
-
-        pub inline fn fromList(list_: anytype) ListType {
-            @setRuntimeSafety(false);
-
-            if (comptime Environment.allow_assert) {
-                std.debug.assert(list_.items.len <= list_.capacity);
-            }
-
-            return ListType{
-                .ptr = list_.items.ptr,
-                .len = @truncate(u32, list_.items.len),
-                .cap = @truncate(u32, list_.capacity),
-            };
-        }
-
-        pub fn update(this: *ListType, list_: anytype) void {
-            @setRuntimeSafety(false);
-            this.ptr = list_.items.ptr;
-            this.len = @truncate(u32, list_.items.len);
-            this.cap = @truncate(u32, list_.capacity);
-
-            if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap);
-            }
-        }
-
-        pub fn list(this: ListType) std.ArrayListUnmanaged(Type) {
-            return std.ArrayListUnmanaged(Type){
-                .items = this.ptr[0..this.len],
-                .capacity = this.cap,
-            };
-        }
-
-        pub fn listManaged(this: ListType, allocator: std.mem.Allocator) std.ArrayList(Type) {
-            return std.ArrayList(Type){
-                .items = this.ptr[0..this.len],
-                .capacity = this.cap,
-                .allocator = allocator,
-            };
-        }
-
-        pub inline fn first(this: ListType) ?*Type {
-            return if (this.len > 0) this.ptr[0] else @as(?*Type, null);
-        }
-
-        pub inline fn last(this: ListType) ?*Type {
-            return if (this.len > 0) &this.ptr[this.len - 1] else @as(?*Type, null);
-        }
-
-        pub inline fn first_(this: ListType) Type {
-            return this.ptr[0];
-        }
-
-        pub fn one(allocator: std.mem.Allocator, value: Type) !ListType {
-            var items = try allocator.alloc(Type, 1);
-            items[0] = value;
-            return ListType{
-                .ptr = @ptrCast([*]Type, items.ptr),
-                .len = 1,
-                .cap = 1,
-            };
-        }
-
-        pub inline fn @"[0]"(this: ListType) Type {
-            return this.ptr[0];
-        }
-        const OOM = error{OutOfMemory};
-
-        pub fn push(this: *ListType, allocator: std.mem.Allocator, value: Type) OOM!void {
-            var list_ = this.list();
-            try list_.append(allocator, value);
-            this.update(list_);
-        }
-
-        pub inline fn slice(this: ListType) []Type {
-            @setRuntimeSafety(false);
-            return this.ptr[0..this.len];
-        }
-    };
-}
+const BabyList = @import("./baby_list.zig").BabyList;
 
 /// Slice that stores capacity and length in the same space as a regular slice.
 pub const ExprNodeList = BabyList(Expr);
@@ -928,6 +836,9 @@ pub const Symbol = struct {
         count_estimate: u32 = 0,
     };
 
+    pub const List = BabyList(Symbol);
+    pub const NestedList = BabyList(List);
+
     pub const Map = struct {
         // This could be represented as a "map[Ref]Symbol" but a two-level array was
         // more efficient in profiles. This appears to be because it doesn't involve
@@ -936,30 +847,30 @@ pub const Symbol = struct {
         // single inner array, so you can join the maps together by just make a
         // single outer array containing all of the inner arrays. See the comment on
         // "Ref" for more detail.
-        symbols_for_source: [][]Symbol,
+        symbols_for_source: NestedList = NestedList{},
 
         pub fn get(self: *Map, ref: Ref) ?*Symbol {
             if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
                 return null;
             }
 
-            return &self.symbols_for_source[ref.sourceIndex()][ref.innerIndex()];
+            return self.symbols_for_source.at(ref.sourceIndex()).mut(ref.innerIndex());
         }
 
-        pub fn getConst(self: *Map, ref: Ref) ?*const Symbol {
+        pub fn getConst(self: *const Map, ref: Ref) ?*const Symbol {
             if (Ref.isSourceIndexNull(ref.sourceIndex()) or ref.isSourceContentsSlice()) {
                 return null;
             }
 
-            return &self.symbols_for_source[ref.sourceIndex()][ref.innerIndex()];
+            return self.symbols_for_source.at(ref.sourceIndex()).at(ref.innerIndex());
         }
 
         pub fn init(sourceCount: usize, allocator: std.mem.Allocator) !Map {
-            var symbols_for_source: [][]Symbol = try allocator.alloc([]Symbol, sourceCount);
+            var symbols_for_source: NestedList = NestedList.init(try allocator.alloc([]Symbol, sourceCount));
             return Map{ .symbols_for_source = symbols_for_source };
         }
 
-        pub fn initList(list: [][]Symbol) Map {
+        pub fn initList(list: NestedList) Map {
             return Map{ .symbols_for_source = list };
         }
 
@@ -4309,6 +4220,8 @@ pub const ArrayBinding = struct {
 };
 
 pub const Ast = struct {
+    pub const TopLevelSymbolToParts = std.ArrayHashMapUnmanaged(Ref, BabyList(u32), Ref.ArrayHashCtx, false);
+
     approximate_newline_count: usize = 0,
     has_lazy_export: bool = false,
     runtime_imports: Runtime.Imports,
@@ -4329,19 +4242,20 @@ pub const Ast = struct {
 
     // This is a list of ES6 features. They are ranges instead of booleans so
     // that they can be used in log messages. Check to see if "Len > 0".
-    import_keyword: ?logger.Range = null, // Does not include TypeScript-specific syntax or "import()"
-    export_keyword: ?logger.Range = null, // Does not include TypeScript-specific syntax
-    top_level_await_keyword: ?logger.Range = null,
+    import_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax or "import()"
+    export_keyword: logger.Range = logger.Range.None, // Does not include TypeScript-specific syntax
+    top_level_await_keyword: logger.Range = logger.Range.None,
 
     // These are stored at the AST level instead of on individual AST nodes so
     // they can be manipulated efficiently without a full AST traversal
-    import_records: []ImportRecord = &([_]ImportRecord{}),
+    import_records: ImportRecord.List = .{},
 
     hashbang: ?string = null,
     directive: ?string = null,
     url_for_css: ?string = null,
-    parts: []Part,
-    symbols: []Symbol = &([_]Symbol{}),
+    parts: Part.List = Part.List{},
+    // This list may be mutated later, so we should store the capacity
+    symbols: Symbol.List = Symbol.List{},
     module_scope: ?Scope = null,
     // char_freq:    *CharFreq,
     exports_ref: ?Ref = null,
@@ -4359,17 +4273,21 @@ pub const Ast = struct {
     named_exports: NamedExports = undefined,
     export_star_import_records: []u32 = &([_]u32{}),
 
+    allocator: std.mem.Allocator,
+    top_level_symbols_to_parts: TopLevelSymbolToParts = .{},
+
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = std.StringArrayHashMap(NamedExport);
 
     pub fn initTest(parts: []Part) Ast {
         return Ast{
-            .parts = parts,
+            .parts = Part.List.init(parts),
+            .allocator = bun.default_allocator,
             .runtime_imports = .{},
         };
     }
 
-    pub const empty = Ast{ .parts = &[_]Part{}, .runtime_imports = undefined };
+    pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = undefined, .allocator = undefined };
 
     pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
         const opts = std.json.StringifyOptions{ .whitespace = std.json.StringifyOptions.Whitespace{
@@ -4377,32 +4295,6 @@ pub const Ast = struct {
         } };
         try std.json.stringify(self.parts, opts, stream);
     }
-
-    pub const OwnedAst = struct {
-        ast: Ast,
-
-        source_code: logger.Source,
-
-        allocator: std.mem.Allocator,
-
-        expr_blocks: []*Expr.Data.Store.All.Block,
-        stmt_blocks: []*Stmt.Data.Store.All.Block,
-
-        pub fn init(arena: ThreadlocalArena, ast: Ast, source_code: logger.Source) OwnedAst {
-            return .{
-                .expr_blocks = Expr.Data.Store.toOwnedSlice(),
-                .stmt_blocks = Stmt.Data.Store.toOwnedSlice(),
-                .arena = arena,
-                .ast = ast,
-                .allocator = arena.allocator(),
-                .source_code = source_code,
-            };
-        }
-
-        pub fn deinit(this: *OwnedAst) void {
-            this.arena.deinit();
-        }
-    };
 };
 
 pub const Span = struct {
@@ -4445,11 +4337,15 @@ pub const ExportsKind = enum {
 pub const DeclaredSymbol = struct {
     ref: Ref,
     is_top_level: bool = false,
+
+    pub const List = std.MultiArrayList(DeclaredSymbol);
 };
 
-pub const Dependency = packed struct {
-    source_index: u32 = 0,
+pub const Dependency = struct {
+    source_index: Ref.Int = 0,
     part_index: u32 = 0,
+
+    pub const List = BabyList(Dependency);
 };
 
 pub const ExprList = std.ArrayList(Expr);
@@ -4462,24 +4358,27 @@ pub const BindingList = std.ArrayList(Binding);
 // shaking and can be assigned to separate chunks (i.e. output files) by code
 // splitting.
 pub const Part = struct {
+    pub const ImportRecordIndices = BabyList(u32);
+    pub const List = BabyList(Part);
+
     stmts: []Stmt,
     scopes: []*Scope = &([_]*Scope{}),
 
     // Each is an index into the file-level import record list
-    import_record_indices: []u32 = &([_]u32{}),
+    import_record_indices: ImportRecordIndices = .{},
 
     // All symbols that are declared in this part. Note that a given symbol may
     // have multiple declarations, and so may end up being declared in multiple
     // parts (e.g. multiple "var" declarations with the same name). Also note
     // that this list isn't deduplicated and may contain duplicates.
-    declared_symbols: []DeclaredSymbol = &([_]DeclaredSymbol{}),
+    declared_symbols: DeclaredSymbol.List = .{},
 
     // An estimate of the number of uses of all symbols used within this part.
     symbol_uses: SymbolUseMap = SymbolUseMap{},
 
     // The indices of the other parts in this file that are needed if this part
     // is needed.
-    dependencies: []Dependency = &([_]Dependency{}),
+    dependencies: Dependency.List = .{},
 
     // If true, this part can be removed if none of the declared symbols are
     // used. If the file containing this part is imported, then all parts that
@@ -4523,7 +4422,7 @@ pub const StmtOrExpr = union(enum) {
 
 pub const NamedImport = struct {
     // Parts within this file that use this import
-    local_parts_with_uses: []u32 = &([_]u32{}),
+    local_parts_with_uses: BabyList(u32) = BabyList(u32){},
 
     alias: ?string,
     alias_loc: ?logger.Loc,
@@ -8275,3 +8174,4 @@ pub const Macro = struct {
 // Stmt               | 192
 // STry               | 384
 // -- ESBuild bit sizes
+

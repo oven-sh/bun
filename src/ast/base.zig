@@ -130,7 +130,7 @@ pub const Ref = enum(TotalSize) {
     default = std.math.maxInt(TotalSize),
     _,
 
-    pub const TotalSize = u62;
+    pub const TotalSize = u61;
 
     pub const ArrayHashCtx = RefHashCtx;
 

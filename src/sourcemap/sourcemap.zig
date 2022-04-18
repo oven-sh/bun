@@ -5,7 +5,6 @@ pub const VLQ_CONTINUATION_BIT: u32 = VLQ_BASE;
 pub const VLQ_CONTINUATION_MASK: u32 = 1 << VLQ_CONTINUATION_BIT;
 const std = @import("std");
 const JSAst = @import("../js_ast.zig");
-const BabyList = JSAst.BabyList;
 const Logger = @import("../logger.zig");
 const strings = @import("../string_immutable.zig");
 const MutableString = @import("../string_mutable.zig").MutableString;
@@ -13,7 +12,7 @@ const Joiner = @import("../string_joiner.zig");
 const JSPrinter = @import("../js_printer.zig");
 const URL = @import("../url.zig").URL;
 const FileSystem = @import("../fs.zig").FileSystem;
-
+const BabyList = @import("../baby_list.zig").BabyList;
 const SourceMap = @This();
 
 /// Coordinates in source maps are stored using relative offsets for size

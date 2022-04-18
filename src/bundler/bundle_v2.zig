@@ -149,7 +149,7 @@ pub const ThreadPool = struct {
                         // schedule as early as possible
                         this.pool.schedule(batch);
 
-                        var import_records = result.ast.import_records;
+                        var import_records = result.ast.import_records.slice();
                         for (import_records) |*record| {
                             if (record.is_unused or record.is_internal) {
                                 continue;
@@ -526,7 +526,7 @@ pub fn generate(
     this.graph.pool.pool.schedule(batch);
     try this.graph.pool.waitForParse(this);
 
-    try this.link(try this.findReachableFiles());
+    try this.linker.link(this, try this.findReachableFiles());
 
     return null;
 }
@@ -674,7 +674,7 @@ const ParseTask = struct {
 
                 step.* = .resolve;
                 var estimated_resolve_queue_count: usize = 0;
-                for (ast.import_records) |*import_record| {
+                for (ast.import_records.slice()) |*import_record| {
                     // Don't resolve the runtime
                     if (import_record.is_internal or import_record.is_unused) {
                         continue;
@@ -684,7 +684,7 @@ const ParseTask = struct {
 
                 try resolve_queue.ensureUnusedCapacity(estimated_resolve_queue_count);
                 var last_error: ?anyerror = null;
-                for (ast.import_records) |*import_record| {
+                for (ast.import_records.slice()) |*import_record| {
                     // Don't resolve the runtime
                     if (import_record.is_internal or import_record.is_unused) {
                         continue;
@@ -842,11 +842,13 @@ const ParseTask = struct {
     }
 };
 
+pub const invalid_part_index = std.math.maxInt(Ref.Int);
+
 const Visitor = struct {
     reachable: std.ArrayList(Ref.Int),
     visited: std.DynamicBitSet = undefined,
     input_file_asts: []Ref.Int,
-    all_import_records: [][]ImportRecord,
+    all_import_records: []ImportRecord.List,
 
     // Find all files reachable from all entry points. This order should be
     // deterministic given that the entry point order is deterministic, since the
@@ -860,9 +862,9 @@ const Visitor = struct {
         this.visited.set(source_index);
 
         const import_record_list_id = this.input_file_asts[source_index];
-        // no import records
+        // when there are no import records, this index will be invalid
         if (import_record_list_id < this.all_import_records.len) {
-            for (this.all_import_records[import_record_list_id]) |*import_record| {
+            for (this.all_import_records[import_record_list_id].slice()) |*import_record| {
                 const other_source = import_record.source_index;
                 if (other_source != std.math.maxInt(Ref.Int)) {
                     this.visit(other_source);
@@ -895,13 +897,9 @@ pub fn findReachableFiles(this: *BundleV2) ![]Ref.Int {
     return visitor.reachable.toOwnedSlice();
 }
 
-pub fn link(this: *BundleV2, reachable_files: []Ref.Int) !void {
-    _ = this;
-    _ = reachable_files;
-}
-
 bundler: *Bundler,
 graph: Graph = Graph{},
+linker: LinkerContext = LinkerContext{},
 tmpfile: std.fs.File = undefined,
 tmpfile_byte_offset: u32 = 0,
 
@@ -999,7 +997,6 @@ pub const Graph = struct {
     pub const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
     pub const RefExportData = std.ArrayHashMapUnmanaged(Ref, ExportData, Ref.ArrayHashCtx, false);
     pub const TopLevelSymbolToParts = std.ArrayHashMapUnmanaged(Ref, u32, Ref.ArrayHashCtx, false);
-    pub const invalid_part_index = std.math.maxInt(Ref.Int);
 
     pub const JSMeta = struct {
 
@@ -1108,5 +1105,37 @@ pub const Graph = struct {
         /// flag is used during the traversal that enforces this invariant, and is used
         /// to detect when the fixed point has been reached.
         did_wrap_dependencies: bool = false,
+    };
+};
+
+const LinkerContext = struct {
+    graph: *Graph = undefined,
+    resolver: *Resolver = undefined,
+    cycle_detector: std.ArrayList(ImportTracker) = undefined,
+
+    // We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
+    cjs_runtime_ref: Ref = Ref.None,
+    esm_runtime_ref: Ref = Ref.None,
+
+    // We may need to refer to the CommonJS "module" symbol for exports
+    unbound_module_ref: Ref = Ref.None,
+
+    pub fn link(this: *LinkerContext, bundle: *BundleV2, reachable: []Ref.Int) !void {
+        this.graph = &bundle.graph;
+        this.resolver = &bundle.bundler.resolver;
+        this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator());
+
+        // this.
+        _ = reachable;
+    }
+
+    pub inline fn allocator(this: *const LinkerContext) std.mem.Allocator {
+        return this.graph.allocator;
+    }
+
+    pub const ImportTracker = struct {
+        source_index: Ref.Int = invalid_part_index,
+        part_index_begin: u32 = 0,
+        part_index_end: u32 = 0,
     };
 };

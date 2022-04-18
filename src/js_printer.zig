@@ -4410,7 +4410,7 @@ pub fn NewPrinter(
             }
 
             return Printer{
-                .import_records = tree.import_records,
+                .import_records = tree.import_records.slice(),
                 .options = opts,
                 .symbols = symbols,
                 .writer = writer,
@@ -4827,7 +4827,7 @@ pub fn printAst(
         }
     }
 
-    for (tree.parts) |part| {
+    for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
@@ -4866,7 +4866,7 @@ pub fn printJSON(
         writer,
         &ast,
         source,
-        std.mem.zeroes(Symbol.Map),
+        Symbol.Map{},
         .{},
         null,
         undefined,
@@ -4916,7 +4916,7 @@ pub fn printCommonJS(
             }
         }
     }
-    for (tree.parts) |part| {
+    for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {
@@ -4985,7 +4985,7 @@ pub fn printCommonJSThreaded(
         }
     }
 
-    for (tree.parts) |part| {
+    for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);
             if (printer.writer.getError()) {} else |err| {

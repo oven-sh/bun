@@ -8,13 +8,24 @@
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
   "[zig]": {
-    "editor.defaultFormatter": "AugusteRame.zls-vscode"
+    "editor.defaultFormatter": "AugusteRame.zls-vscode",
+    "editor.formatOnSave": true
   },
   "[ts]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[js]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
+  },
+  "[jsx]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
   },
   "[tsx]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "editor.formatOnSave": true
   },
   "zig.beforeDebugCmd": "make build-unit ${file} ${filter} ${bin}",
   "zig.testCmd": "make test ${file} ${filter} ${bin}",
@@ -31,6 +42,7 @@
     "**/*.xcscheme": true,
     "**/*.pem": true,
     "**/*.xcodeproj": true,
+    "packages/bun-types/*.d.ts": true,
 
     "integration/snapshots": true,
     "integration/snapshots-no-hmr": true,

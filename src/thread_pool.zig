@@ -104,7 +104,65 @@ pub const Batch = struct {
     }
 };
 
-pub fn ConcurrentFunction(comptime Function: anytype) type {
+pub const WaitGroup = struct {
+    mutex: std.Thread.Mutex = .{},
+    counter: u32 = 0,
+    event: std.Thread.ResetEvent,
+
+    pub fn init(self: *WaitGroup) !void {
+        self.* = .{
+            .mutex = .{},
+            .counter = 0,
+            .event = undefined,
+        };
+        try self.event.init();
+    }
+
+    pub fn deinit(self: *WaitGroup) void {
+        self.event.deinit();
+        self.* = undefined;
+    }
+
+    pub fn start(self: *WaitGroup) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        self.counter += 1;
+    }
+
+    pub fn finish(self: *WaitGroup) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        self.counter -= 1;
+
+        if (self.counter == 0) {
+            self.event.set();
+        }
+    }
+
+    pub fn wait(self: *WaitGroup) void {
+        while (true) {
+            self.mutex.lock();
+
+            if (self.counter == 0) {
+                self.mutex.unlock();
+                return;
+            }
+
+            self.mutex.unlock();
+            self.event.wait();
+        }
+    }
+
+    pub fn reset(self: *WaitGroup) void {
+        self.event.reset();
+    }
+};
+
+pub fn ConcurrentFunction(
+    comptime Function: anytype,
+) type {
     return struct {
         const Fn = Function;
         const Args = std.meta.ArgsTuple(@TypeOf(Fn));
@@ -150,6 +208,15 @@ pub fn ConcurrentFunction(comptime Function: anytype) type {
     };
 }
 
+/// kind of like a goroutine but with worse DX and without the small stack sizes
+pub fn go(
+    this: *ThreadPool,
+    allocator: std.mem.Allocator,
+    comptime Function: anytype,
+) !ConcurrentFunction(Function) {
+    return try ConcurrentFunction(Function).init(allocator, this);
+}
+
 /// Schedule a batch of tasks to be executed by some thread on the thread pool.
 pub fn schedule(self: *ThreadPool, batch: Batch) void {
     // Sanity check
@@ -171,14 +238,6 @@ pub fn schedule(self: *ThreadPool, batch: Batch) void {
     }
 
     forceSpawn(self);
-}
-
-pub fn go(self: *ThreadPool, comptime TaskContext: type, comptime callback: fn (*TaskContext) void) void {
-    var task = Task{
-        .callback = callback,
-    };
-    var batch = Batch.from(&task);
-    schedule(self, batch);
 }
 
 pub fn forceSpawn(self: *ThreadPool) void {

@@ -78,6 +78,10 @@ pub const ThreadPool = struct {
 
     v2: *BundleV2 = undefined,
 
+    pub fn go(this: *ThreadPool, allocator: std.mem.Allocator, comptime Function: anytype) !ThreadPoolLib.ConcurrentFunction(Function) {
+        return this.pool.go(allocator, Function);
+    }
+
     pub fn start(this: *ThreadPool, v2: *BundleV2) !void {
         v2.bundler.env.loadProcess();
         this.v2 = v2;
@@ -1312,6 +1316,8 @@ const LinkerContext = struct {
 
     options: LinkerOptions = LinkerOptions{},
 
+    wait_group: ThreadPoolLib.WaitGroup = undefined,
+
     pub const LinkerOptions = struct {
         output_format: options.OutputFormat = .esm,
     };
@@ -1335,6 +1341,7 @@ const LinkerContext = struct {
         const sources: []const Logger.Source = this.parse_graph.input_files.items(.source);
 
         try this.graph.load(entry_points, sources);
+        this.wait_group = try ThreadPoolLib.WaitGroup.init();
     }
 
     pub fn link(this: *LinkerContext, bundle: *BundleV2, entry_points: []Ref.Int, reachable: []Ref.Int) !void {
@@ -1354,6 +1361,7 @@ const LinkerContext = struct {
         var asts = this.parse_graph.input_files.items(.ast);
         var export_kinds: []js_ast.ExportsKind = this.parse_graph.ast.items(.export_kinds);
         var entry_point_kinds: []EntryPoint.Kind = this.graph.files.items(.entry_point_kind);
+        var named_imports: []js_ast.Ast.NamedImports = this.graph.asts.items(.named_imports);
         var wraps: []WrapKind = this.parse_graph.meta.items(.wrap);
         const reachable = this.graph.reachable_files;
         const output_format = this.options.output_format;
@@ -1497,8 +1505,7 @@ const LinkerContext = struct {
         // discover all modules that can have dynamic exports because export stars
         // are ignored for those modules.
         {
-            var export_star_stack = std.ArrayList(u32).initCapacity(this.allocator(), 32) catch unreachable;
-            defer export_star_stack.deinit();
+            var export_star_ctx: ?ExportStarContext = null;
             var resolved_exports: []RefExportData = this.parse_graph.meta.items(.resolved_exports);
             var resolved_export_stars: []ExportData = this.parse_graph.meta.items(.resolved_export_star);
 
@@ -1513,7 +1520,19 @@ const LinkerContext = struct {
                 // Propagate exports for export star statements
                 var export_star_ids = export_star_import_records[id];
                 if (export_star_ids.len > 0) {
-                    export_star_stack = this.addExportsForExportStar(&resolved_exports[id], source_index, id, export_star_stack);
+                    if (export_star_ctx == null) {
+                        export_star_ctx = ExportStarContext{
+                            .resolved_exports = resolved_exports,
+                            .import_records_list = import_records_list,
+                            .export_star_records = export_star_import_records,
+                            .source_index_stack = std.ArrayList(u32).initCapacity(this.allocator, 32) catch unreachable,
+                            .export_kinds = export_kinds,
+                            .named_exports = this.parse_graph.ast.items(.named_exports),
+                        };
+                    } else {
+                        export_star_ctx.?.source_index_stack.clearRetainingCapacity();
+                    }
+                    export_star_ctx.?.addExports(&resolved_exports[id], source_index);
                 }
 
                 // Also add a special export so import stars can bind to it. This must be
@@ -1525,7 +1544,116 @@ const LinkerContext = struct {
                 };
             }
         }
+
+        // Step 4: Match imports with exports. This must be done after we process all
+        // export stars because imports can bind to export star re-exports.
+        {
+            for (reachable) |source_index| {
+                if (asts.len < @as(usize, source_index)) continue;
+                const ast = asts[source_index];
+                // not a JS ast or empty
+                if (ast > named_imports.len) {
+                    continue;
+                }
+
+                var named_imports_ = &named_imports[ast];
+                if (named_imports_.count() > 0) {
+                    this.matchImportsWithExportsForFile(named_imports_);
+                }
+            }
+        }
     }
+
+    const ExportStarContext = struct {
+        import_records_list: []const ImportRecord.List,
+        source_index_stack: std.ArrayList(u32),
+        export_kinds: []js_ast.ExportKind,
+        named_exports: []js_ast.Ast.NamedExports,
+        imports_to_bind: []RefImportData,
+        asts: []const u32,
+        export_star_records: []const []const u32,
+        allocator: std.mem.Allocator,
+
+        pub fn addExports(
+            this: *ExportStarContext,
+            resolved_exports: *RefExportData,
+            source_index: u32,
+        ) void {
+            // Avoid infinite loops due to cycles in the export star graph
+            for (this.source_index_stack.items) |i| {
+                if (i == source_index)
+                    return;
+            }
+
+            this.source_index_stack.append(source_index) catch unreachable;
+            const id = this.asts[source_index];
+
+            const import_records = this.import_records_list[id].slice();
+
+            for (this.export_star_records[id]) |import_id| {
+                const other_source_index = import_records[import_id].source_index;
+                if (other_source_index >= this.asts.len)
+                    // This will be resolved at run time instead
+                    continue;
+
+                const other_id = this.asts[other_source_index];
+                if (other_id >= this.named_exports.len)
+                    // this AST was empty or it wasn't a JS AST
+                    continue;
+
+                // Export stars from a CommonJS module don't work because they can't be
+                // statically discovered. Just silently ignore them in this case.
+                //
+                // We could attempt to check whether the imported file still has ES6
+                // exports even though it still uses CommonJS features. However, when
+                // doing this we'd also have to rewrite any imports of these export star
+                // re-exports as property accesses off of a generated require() call.
+                if (this.export_kinds[other_id] == .cjs)
+                    continue;
+                var iter = this.named_exports[other_id].iterator();
+                next_export: while (iter.next()) |entry| {
+                    const alias = entry.key_ptr.*;
+
+                    // ES6 export star statements ignore exports named "default"
+                    if (strings.eqlComptime(alias, "default"))
+                        continue;
+
+                    // This export star is shadowed if any file in the stack has a matching real named export
+                    for (this.source_index_stack.items) |prev| {
+                        if (this.named_exports[this.asts[prev]].contains(alias)) {
+                            continue :next_export;
+                        }
+                    }
+
+                    var resolved = resolved_exports.getOrPut(this, alias) catch unreachable;
+                    if (!resolved.found_existing) {
+                        resolved.value_ptr.* = .{
+                            .ref = entry.value_ptr.ref,
+                            .source_index = other_source_index,
+                            .name_loc = entry.value_ptr.alias_loc,
+                        };
+
+                        // Make sure the symbol is marked as imported so that code splitting
+                        // imports it correctly if it ends up being shared with another chunk
+                        this.imports_to_bind[id].put(this.allocator, entry.value_ptr.*, .{
+                            .ref = entry.value_ptr.ref,
+                            .source_index = other_source_index,
+                        }) catch unreachable;
+                    } else if (resolved.value_ptr.*.source_index != other_source_index) {
+                        // Two different re-exports colliding makes it potentially ambiguous
+                        resolved.value_ptr.potentially_ambiguous_export_star_refs.append(this.allocator, .{
+                            .source_index = other_source_index,
+                            .ref = entry.value_ptr.ref,
+                            .name_loc = entry.value_ptr.alias_loc,
+                        }) catch unreachable;
+                    }
+                }
+
+                // Search further through this file's export stars
+                this.addExports(resolved_exports, other_source_index);
+            }
+        }
+    };
 
     const DependencyWrapper = struct {
         linker: *LinkerContext,

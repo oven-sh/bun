@@ -4782,7 +4782,7 @@ declare class HTMLRewriter {
 
 // ./globals.d.ts
 
-type Encoding = "utf-8" | "windows-1252" | "utf-16";
+type Encoding = "utf8" | "utf-8" | "windows-1252" | "utf-16";
 
 interface console {
   assert(condition?: boolean, ...data: any[]): void;

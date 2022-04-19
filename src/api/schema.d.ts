@@ -1,4 +1,4 @@
-import type { ByteBuffer } from "peechy";
+import type { ByteBuffer } from "peechy/bb";
 
 type byte = number;
 type float = number;
@@ -6,13 +6,14 @@ type int = number;
 type alphanumeric = string;
 type uint = number;
 type int8 = number;
+type uint8 = number;
 type lowp = number;
 type int16 = number;
 type int32 = number;
 type float32 = number;
 type uint16 = number;
 type uint32 = number;
-export enum Loader {
+export const enum Loader {
   jsx = 1,
   js = 2,
   ts = 3,
@@ -23,40 +24,40 @@ export enum Loader {
   toml = 8,
   wasm = 9,
 }
-export const LoaderKeys = {
-  1: "jsx",
-  jsx: "jsx",
-  2: "js",
-  js: "js",
-  3: "ts",
-  ts: "ts",
-  4: "tsx",
-  tsx: "tsx",
-  5: "css",
-  css: "css",
-  6: "file",
-  file: "file",
-  7: "json",
-  json: "json",
-  8: "toml",
-  toml: "toml",
-  9: "wasm",
-  wasm: "wasm",
+export const LoaderKeys: {
+  1: "jsx";
+  jsx: "jsx";
+  2: "js";
+  js: "js";
+  3: "ts";
+  ts: "ts";
+  4: "tsx";
+  tsx: "tsx";
+  5: "css";
+  css: "css";
+  6: "file";
+  file: "file";
+  7: "json";
+  json: "json";
+  8: "toml";
+  toml: "toml";
+  9: "wasm";
+  wasm: "wasm";
 };
-export enum FrameworkEntryPointType {
+export const enum FrameworkEntryPointType {
   client = 1,
   server = 2,
   fallback = 3,
 }
-export const FrameworkEntryPointTypeKeys = {
-  1: "client",
-  client: "client",
-  2: "server",
-  server: "server",
-  3: "fallback",
-  fallback: "fallback",
+export const FrameworkEntryPointTypeKeys: {
+  1: "client";
+  client: "client";
+  2: "server";
+  server: "server";
+  3: "fallback";
+  fallback: "fallback";
 };
-export enum StackFrameScope {
+export const enum StackFrameScope {
   Eval = 1,
   Module = 2,
   Function = 3,
@@ -64,21 +65,21 @@ export enum StackFrameScope {
   Wasm = 5,
   Constructor = 6,
 }
-export const StackFrameScopeKeys = {
-  1: "Eval",
-  Eval: "Eval",
-  2: "Module",
-  Module: "Module",
-  3: "Function",
-  Function: "Function",
-  4: "Global",
-  Global: "Global",
-  5: "Wasm",
-  Wasm: "Wasm",
-  6: "Constructor",
-  Constructor: "Constructor",
+export const StackFrameScopeKeys: {
+  1: "Eval";
+  Eval: "Eval";
+  2: "Module";
+  Module: "Module";
+  3: "Function";
+  Function: "Function";
+  4: "Global";
+  Global: "Global";
+  5: "Wasm";
+  Wasm: "Wasm";
+  6: "Constructor";
+  Constructor: "Constructor";
 };
-export enum FallbackStep {
+export const enum FallbackStep {
   ssr_disabled = 1,
   create_vm = 2,
   configure_router = 3,
@@ -88,123 +89,123 @@ export enum FallbackStep {
   eval_entry_point = 7,
   fetch_event_handler = 8,
 }
-export const FallbackStepKeys = {
-  1: "ssr_disabled",
-  ssr_disabled: "ssr_disabled",
-  2: "create_vm",
-  create_vm: "create_vm",
-  3: "configure_router",
-  configure_router: "configure_router",
-  4: "configure_defines",
-  configure_defines: "configure_defines",
-  5: "resolve_entry_point",
-  resolve_entry_point: "resolve_entry_point",
-  6: "load_entry_point",
-  load_entry_point: "load_entry_point",
-  7: "eval_entry_point",
-  eval_entry_point: "eval_entry_point",
-  8: "fetch_event_handler",
-  fetch_event_handler: "fetch_event_handler",
+export const FallbackStepKeys: {
+  1: "ssr_disabled";
+  ssr_disabled: "ssr_disabled";
+  2: "create_vm";
+  create_vm: "create_vm";
+  3: "configure_router";
+  configure_router: "configure_router";
+  4: "configure_defines";
+  configure_defines: "configure_defines";
+  5: "resolve_entry_point";
+  resolve_entry_point: "resolve_entry_point";
+  6: "load_entry_point";
+  load_entry_point: "load_entry_point";
+  7: "eval_entry_point";
+  eval_entry_point: "eval_entry_point";
+  8: "fetch_event_handler";
+  fetch_event_handler: "fetch_event_handler";
 };
-export enum ResolveMode {
+export const enum ResolveMode {
   disable = 1,
   lazy = 2,
   dev = 3,
   bundle = 4,
 }
-export const ResolveModeKeys = {
-  1: "disable",
-  disable: "disable",
-  2: "lazy",
-  lazy: "lazy",
-  3: "dev",
-  dev: "dev",
-  4: "bundle",
-  bundle: "bundle",
+export const ResolveModeKeys: {
+  1: "disable";
+  disable: "disable";
+  2: "lazy";
+  lazy: "lazy";
+  3: "dev";
+  dev: "dev";
+  4: "bundle";
+  bundle: "bundle";
 };
-export enum Platform {
+export const enum Platform {
   browser = 1,
   node = 2,
   bun = 3,
   bun_macro = 4,
 }
-export const PlatformKeys = {
-  1: "browser",
-  browser: "browser",
-  2: "node",
-  node: "node",
-  3: "bun",
-  bun: "bun",
-  4: "bun_macro",
-  bun_macro: "bun_macro",
+export const PlatformKeys: {
+  1: "browser";
+  browser: "browser";
+  2: "node";
+  node: "node";
+  3: "bun";
+  bun: "bun";
+  4: "bun_macro";
+  bun_macro: "bun_macro";
 };
-export enum CSSInJSBehavior {
+export const enum CSSInJSBehavior {
   facade = 1,
   facade_onimportcss = 2,
   auto_onimportcss = 3,
 }
-export const CSSInJSBehaviorKeys = {
-  1: "facade",
-  facade: "facade",
-  2: "facade_onimportcss",
-  facade_onimportcss: "facade_onimportcss",
-  3: "auto_onimportcss",
-  auto_onimportcss: "auto_onimportcss",
+export const CSSInJSBehaviorKeys: {
+  1: "facade";
+  facade: "facade";
+  2: "facade_onimportcss";
+  facade_onimportcss: "facade_onimportcss";
+  3: "auto_onimportcss";
+  auto_onimportcss: "auto_onimportcss";
 };
-export enum JSXRuntime {
+export const enum JSXRuntime {
   automatic = 1,
   classic = 2,
 }
-export const JSXRuntimeKeys = {
-  1: "automatic",
-  automatic: "automatic",
-  2: "classic",
-  classic: "classic",
+export const JSXRuntimeKeys: {
+  1: "automatic";
+  automatic: "automatic";
+  2: "classic";
+  classic: "classic";
 };
-export enum ScanDependencyMode {
+export const enum ScanDependencyMode {
   app = 1,
   all = 2,
 }
-export const ScanDependencyModeKeys = {
-  1: "app",
-  app: "app",
-  2: "all",
-  all: "all",
+export const ScanDependencyModeKeys: {
+  1: "app";
+  app: "app";
+  2: "all";
+  all: "all";
 };
-export enum ModuleImportType {
+export const enum ModuleImportType {
   import = 1,
   require = 2,
 }
-export const ModuleImportTypeKeys = {
-  1: "import",
-  import: "import",
-  2: "require",
-  require: "require",
+export const ModuleImportTypeKeys: {
+  1: "import";
+  import: "import";
+  2: "require";
+  require: "require";
 };
-export enum DotEnvBehavior {
+export const enum DotEnvBehavior {
   disable = 1,
   prefix = 2,
   load_all = 3,
 }
-export const DotEnvBehaviorKeys = {
-  1: "disable",
-  disable: "disable",
-  2: "prefix",
-  prefix: "prefix",
-  3: "load_all",
-  load_all: "load_all",
+export const DotEnvBehaviorKeys: {
+  1: "disable";
+  disable: "disable";
+  2: "prefix";
+  prefix: "prefix";
+  3: "load_all";
+  load_all: "load_all";
 };
-export enum SourceMapMode {
+export const enum SourceMapMode {
   inline_into_file = 1,
   external = 2,
 }
-export const SourceMapModeKeys = {
-  1: "inline_into_file",
-  inline_into_file: "inline_into_file",
-  2: "external",
-  external: "external",
+export const SourceMapModeKeys: {
+  1: "inline_into_file";
+  inline_into_file: "inline_into_file";
+  2: "external";
+  external: "external";
 };
-export enum ImportKind {
+export const enum ImportKind {
   entry_point = 1,
   stmt = 2,
   require = 3,
@@ -214,67 +215,67 @@ export enum ImportKind {
   url = 7,
   internal = 8,
 }
-export const ImportKindKeys = {
-  1: "entry_point",
-  entry_point: "entry_point",
-  2: "stmt",
-  stmt: "stmt",
-  3: "require",
-  require: "require",
-  4: "dynamic",
-  dynamic: "dynamic",
-  5: "require_resolve",
-  require_resolve: "require_resolve",
-  6: "at",
-  at: "at",
-  7: "url",
-  url: "url",
-  8: "internal",
-  internal: "internal",
+export const ImportKindKeys: {
+  1: "entry_point";
+  entry_point: "entry_point";
+  2: "stmt";
+  stmt: "stmt";
+  3: "require";
+  require: "require";
+  4: "dynamic";
+  dynamic: "dynamic";
+  5: "require_resolve";
+  require_resolve: "require_resolve";
+  6: "at";
+  at: "at";
+  7: "url";
+  url: "url";
+  8: "internal";
+  internal: "internal";
 };
-export enum TransformResponseStatus {
+export const enum TransformResponseStatus {
   success = 1,
   fail = 2,
 }
-export const TransformResponseStatusKeys = {
-  1: "success",
-  success: "success",
-  2: "fail",
-  fail: "fail",
+export const TransformResponseStatusKeys: {
+  1: "success";
+  success: "success";
+  2: "fail";
+  fail: "fail";
 };
-export enum MessageLevel {
+export const enum MessageLevel {
   err = 1,
   warn = 2,
   note = 3,
   info = 4,
   debug = 5,
 }
-export const MessageLevelKeys = {
-  1: "err",
-  err: "err",
-  2: "warn",
-  warn: "warn",
-  3: "note",
-  note: "note",
-  4: "info",
-  info: "info",
-  5: "debug",
-  debug: "debug",
+export const MessageLevelKeys: {
+  1: "err";
+  err: "err";
+  2: "warn";
+  warn: "warn";
+  3: "note";
+  note: "note";
+  4: "info";
+  info: "info";
+  5: "debug";
+  debug: "debug";
 };
-export enum Reloader {
+export const enum Reloader {
   disable = 1,
   live = 2,
   fast_refresh = 3,
 }
-export const ReloaderKeys = {
-  1: "disable",
-  disable: "disable",
-  2: "live",
-  live: "live",
-  3: "fast_refresh",
-  fast_refresh: "fast_refresh",
+export const ReloaderKeys: {
+  1: "disable";
+  disable: "disable";
+  2: "live";
+  live: "live";
+  3: "fast_refresh";
+  fast_refresh: "fast_refresh";
 };
-export enum WebsocketMessageKind {
+export const enum WebsocketMessageKind {
   welcome = 1,
   file_change_notification = 2,
   build_success = 3,
@@ -284,36 +285,36 @@ export enum WebsocketMessageKind {
   resolve_file = 7,
   file_change_notification_with_hint = 8,
 }
-export const WebsocketMessageKindKeys = {
-  1: "welcome",
-  welcome: "welcome",
-  2: "file_change_notification",
-  file_change_notification: "file_change_notification",
-  3: "build_success",
-  build_success: "build_success",
-  4: "build_fail",
-  build_fail: "build_fail",
-  5: "manifest_success",
-  manifest_success: "manifest_success",
-  6: "manifest_fail",
-  manifest_fail: "manifest_fail",
-  7: "resolve_file",
-  resolve_file: "resolve_file",
-  8: "file_change_notification_with_hint",
-  file_change_notification_with_hint: "file_change_notification_with_hint",
+export const WebsocketMessageKindKeys: {
+  1: "welcome";
+  welcome: "welcome";
+  2: "file_change_notification";
+  file_change_notification: "file_change_notification";
+  3: "build_success";
+  build_success: "build_success";
+  4: "build_fail";
+  build_fail: "build_fail";
+  5: "manifest_success";
+  manifest_success: "manifest_success";
+  6: "manifest_fail";
+  manifest_fail: "manifest_fail";
+  7: "resolve_file";
+  resolve_file: "resolve_file";
+  8: "file_change_notification_with_hint";
+  file_change_notification_with_hint: "file_change_notification_with_hint";
 };
-export enum WebsocketCommandKind {
+export const enum WebsocketCommandKind {
   build = 1,
   manifest = 2,
   build_with_file_path = 3,
 }
-export const WebsocketCommandKindKeys = {
-  1: "build",
-  build: "build",
-  2: "manifest",
-  manifest: "manifest",
-  3: "build_with_file_path",
-  build_with_file_path: "build_with_file_path",
+export const WebsocketCommandKindKeys: {
+  1: "build";
+  build: "build";
+  2: "manifest";
+  manifest: "manifest";
+  3: "build_with_file_path";
+  build_with_file_path: "build_with_file_path";
 };
 export interface StackFrame {
   function_name: string;

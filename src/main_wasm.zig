@@ -261,7 +261,7 @@ export fn transform(opts_array: u64) u64 {
     transform_response = Api.TransformResponse{
         .status = if (result.ok) Api.TransformResponseStatus.success else Api.TransformResponseStatus.fail,
         .files = &output_files,
-        .errors = &[_]Api.Message{}, //(log.toAPI(allocator) catch unreachable).msgs,
+        .errors = (log.toAPI(allocator) catch unreachable).msgs,
     };
 
     var output = std.ArrayList(u8).init(default_allocator);

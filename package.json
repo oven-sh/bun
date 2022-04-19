@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "peechy": "0.4.24",
+    "peechy": "0.4.32",
     "react": "^17.0.2"
   },
   "scripts": {

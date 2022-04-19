@@ -465,6 +465,19 @@ build-obj-wasm-small:
 		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
 
+wasm: api build-obj-wasm-small
+	@rm -rf packages/bun-wasm/*.{d.ts,js,wasm,cjs,mjs,tsbuildinfo}
+	@cp packages/bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
+	@cp src/api/schema.d.ts packages/bun-wasm/schema.d.ts
+	@cp src/api/schema.js packages/bun-wasm/schema.js
+	@cd packages/bun-wasm && $(NPM_CLIENT) run tsc -- -p .
+	@esbuild --sourcemap=external --external:fs --define:process.env.NODE_ENV="production" --outdir=packages/bun-wasm --target=esnext --bundle packages/bun-wasm/index.ts --format=esm --minify > /dev/null
+	@mv packages/bun-wasm/index.js packages/bun-wasm/index.mjs
+	@mv packages/bun-wasm/index.js.map packages/bun-wasm/index.mjs.map
+	@esbuild --sourcemap=external --external:fs --define:process.env.NODE_ENV="production" --outdir=packages/bun-wasm --target=esnext --bundle packages/bun-wasm/index.ts --format=cjs --minify --platform=node > /dev/null
+	@mv packages/bun-wasm/index.js packages/bun-wasm/index.cjs
+	@mv packages/bun-wasm/index.js.map packages/bun-wasm/index.cjs.map
+	@rm -rf packages/bun-wasm/*.tsbuildinfo
 
 build-obj-safe: 
 	$(ZIG) build obj -Drelease-safe

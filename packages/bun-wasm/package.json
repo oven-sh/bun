@@ -1,0 +1,30 @@
+{
+  "name": "bun-wasm",
+  "version": "0.0.79",
+  "devDependencies": {
+    "peechy": "0.4.32",
+    "typescript": "latest"
+  },
+  "files": [
+    "bun.wasm",
+    "schema.d.ts",
+    "index.mjs",
+    "index.cjs",
+    "index.mjs.map",
+    "index.cjs.map",
+    "index.d.ts",
+    "schema.js"
+  ],
+  "type": "module",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./index.mjs",
+      "require": "./index.cjs",
+      "default": "./index.mjs"
+    },
+    "./schema": "./schema.js",
+    "./wasm": "./bun.wasm",
+    "./bun.wasm": "./bun.wasm"
+  }
+}

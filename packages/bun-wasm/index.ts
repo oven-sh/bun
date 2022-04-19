@@ -45,12 +45,6 @@ interface WebAssemblyModule {
   scan(a: number): number;
 }
 
-const wasm_imports_sym: symbol | string =
-  //@ts-ignore
-  process.env.NODE_ENV === "development"
-    ? "wasm_imports"
-    : Symbol("wasm_imports");
-
 const ptr_converter = new ArrayBuffer(16);
 const ptr_float = new BigUint64Array(ptr_converter);
 const slice = new Uint32Array(ptr_converter);
@@ -85,28 +79,97 @@ const Wasi = {
 var scratch: Uint8Array;
 var scratch2: Uint8Array;
 
-export class Bun {
-  static has_initialized = false;
+const env = {
+  console_log(slice: number) {
+    //@ts-ignore
+    console.log(Bun._wasmPtrLenToString(slice));
+  },
+  console_error(slice: number) {
+    //@ts-ignore
+    console.error(Bun._wasmPtrLenToString(slice));
+  },
+  console_warn(slice: number) {
+    //@ts-ignore
+    console.warn(Bun._wasmPtrLenToString(slice));
+  },
+  console_info(slice: number) {
+    //@ts-ignore
+    console.info(Bun._wasmPtrLenToString(slice));
+  },
   // @ts-ignore-line
-  static wasm_source: WebAssembly.WebAssemblyInstantiatedSource = null;
-  static get wasm_exports(): WebAssemblyModule {
+  __indirect_function_table: new WebAssembly.Table({
+    initial: 0,
+    element: "anyfunc",
+  }),
+  // @ts-ignore-line
+  __stack_pointer: new WebAssembly.Global({
+    mutable: true,
+    value: "i32",
+  }),
+  __multi3(one: number, two: number) {
+    return Math.imul(one | 0, two | 0);
+  },
+  fmod(one: number, two: number) {
+    return one % two;
+  },
+  memset(ptr: number, value: number, len: number) {
+    //@ts-ignore
+    Bun.memory_array.fill(value, ptr, ptr + len);
+  },
+  memcpy(ptr: number, value: number, len: number) {
+    //@ts-ignore
+    Bun.memory_array.copyWithin(ptr, value, value + len);
+  },
+  // These functions convert a to an unsigned long long, rounding toward zero. Negative values all become zero.
+  __fixunsdfti(a: number) {
+    return Math.floor(a);
+  },
+  // These functions return the remainder of the unsigned division of a and b.
+  __umodti3(a: number, b: number) {
+    return (a | 0) % (b | 0);
+  },
+  // These functions return the quotient of the unsigned division of a and b.
+  __udivti3(a: number, b: number) {
+    return (a | 0) / (b | 0);
+  },
+  // These functions return the result of shifting a left by b bits.
+  __ashlti3(a: number, b: number) {
+    return (a | 0) >> (b | 0);
+  },
+  /* Returns: convert a to a double, rounding toward even. */
+  __floatuntidf(a: number) {
+    const mod = a % 2;
+    if (mod === 0) {
+      return Math.ceil(a);
+    } else if (mod === 1) {
+      return Math.floor(a);
+    }
+  },
+  emscripten_notify_memory_growth() {},
+};
+
+export class Bun {
+  private static has_initialized = false;
+  // @ts-ignore-line
+  private static wasm_source: WebAssembly.WebAssemblyInstantiatedSource = null;
+  private static get wasm_exports(): WebAssemblyModule {
     return Bun.wasm_source.instance.exports as any;
   }
   // @ts-ignore-line
-  static get memory(): WebAssembly.Memory {
+  private static get memory(): WebAssembly.Memory {
     return Bun.wasm_source.instance.exports.memory as any;
   }
 
-  static memory_array: Uint8Array;
+  private static memory_array: Uint8Array;
 
-  static _decoder: TextDecoder;
+  private static _decoder: TextDecoder;
 
-  static _wasmPtrToSlice(offset: number | bigint) {
+  private static _wasmPtrToSlice(offset: number | bigint) {
     ptr_float[0] = typeof offset === "number" ? BigInt(offset) : offset;
     return new Uint8Array(Bun.memory.buffer, slice[0], slice[1]);
   }
 
-  static _wasmPtrLenToString(slice: number) {
+  private static _wasmPtrLenToString(slice: number) {
     if (!Bun._decoder) {
       Bun._decoder = new TextDecoder("utf8");
     }
@@ -114,71 +177,6 @@ export class Bun {
     const region = Bun._wasmPtrToSlice(slice);
     return Bun._decoder.decode(region);
   }
-
-  // We don't want people to be calling these manually
-  // @ts-ignore-line
-  static [wasm_imports_sym as symbol] = {
-    console_log(slice: number) {
-      console.log(Bun._wasmPtrLenToString(slice));
-    },
-    console_error(slice: number) {
-      console.error(Bun._wasmPtrLenToString(slice));
-    },
-    console_warn(slice: number) {
-      console.warn(Bun._wasmPtrLenToString(slice));
-    },
-    console_info(slice: number) {
-      console.info(Bun._wasmPtrLenToString(slice));
-    },
-    // @ts-ignore-line
-    __indirect_function_table: new WebAssembly.Table({
-      initial: 0,
-      element: "anyfunc",
-    }),
-    // @ts-ignore-line
-    __stack_pointer: new WebAssembly.Global({
-      mutable: true,
-      value: "i32",
-    }),
-    __multi3(one: number, two: number) {
-      return Math.imul(one | 0, two | 0);
-    },
-    fmod(one: number, two: number) {
-      return one % two;
-    },
-    memset(ptr: number, value: number, len: number) {
-      Bun.memory_array.fill(value, ptr, ptr + len);
-    },
-    memcpy(ptr: number, value: number, len: number) {
-      Bun.memory_array.copyWithin(ptr, value, value + len);
-    },
-    // These functions convert a to an unsigned long long, rounding toward zero. Negative values all become zero.
-    __fixunsdfti(a: number) {
-      return Math.floor(a);
-    },
-    // These functions return the remainder of the unsigned division of a and b.
-    __umodti3(a: number, b: number) {
-      return (a | 0) % (b | 0);
-    },
-    // These functions return the quotient of the unsigned division of a and b.
-    __udivti3(a: number, b: number) {
-      return (a | 0) / (b | 0);
-    },
-    // These functions return the result of shifting a left by b bits.
-    __ashlti3(a: number, b: number) {
-      return (a | 0) >> (b | 0);
-    },
-    /* Returns: convert a to a double, rounding toward even. */
-    __floatuntidf(a: number) {
-      const mod = a % 2;
-      if (mod === 0) {
-        return Math.ceil(a);
-      } else if (mod === 1) {
-        return Math.floor(a);
-      }
-    },
-    emscripten_notify_memory_growth() {},
-  };
 
   static async init(url, fetch = globalThis.fetch) {
     // globalThis.sucraseTransform = sucraseTransform;
@@ -191,14 +189,14 @@ export class Bun {
     if (globalThis?.WebAssembly?.instantiateStreaming) {
       Bun.wasm_source = await globalThis.WebAssembly.instantiateStreaming(
         fetch(url),
-        { env: Bun[wasm_imports_sym], wasi_snapshot_preview1: Wasi }
+        { env: env, wasi_snapshot_preview1: Wasi }
       );
     } else if (typeof window !== "undefined") {
       const resp = await fetch(url);
       Bun.wasm_source = await globalThis.WebAssembly.instantiate(
         await resp.arrayBuffer(),
         {
-          env: Bun[wasm_imports_sym],
+          env: env,
           wasi_snapshot_preview1: Wasi,
         }
       );
@@ -210,7 +208,7 @@ export class Bun {
       Bun.wasm_source = await globalThis.WebAssembly.instantiate(
         fs.readFileSync(url),
         {
-          env: Bun[wasm_imports_sym],
+          env: env,
           wasi_snapshot_preview1: Wasi,
         }
       );
@@ -343,4 +341,10 @@ export default Bun;
 if ("window" in globalThis && !("Bun" in globalThis)) {
   // @ts-ignore-line
   globalThis.Bun = Bun;
+}
+
+//@ts-ignore
+if (process.env.NODE_ENV === "development") {
+  //@ts-ignore
+  Bun.env = env;
 }

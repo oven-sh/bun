@@ -1,17 +1,25 @@
 import * as Bun from "../index.mjs";
+import process from "process";
 
 await Bun.init(new URL("../bun.wasm", import.meta.url));
 
-const hey = Bun.transformSync(
-  `
+const buf =
+  (process.argv.length > 2 ? process.argv.at(-1) : "") ||
+  new TextEncoder().encode(`
 
 export function hi() {
-    return true;
+    return  <div>Hey</div>;
 }
 
-`,
-  "hi.js",
-  "js"
-);
+`);
+const result = Bun.transformSync(buf, "hi.jsx", "jsx");
+if (result.errors?.length) {
+  console.log(JSON.stringify(result.errors, null, 2));
+  throw new Error("Failed");
+}
 
-console.log(JSON.stringify(hey, null, 2));
+if (!result.files.length) {
+  throw new Error("unexpectedly empty");
+}
+
+process.stdout.write(result.files[0].data);

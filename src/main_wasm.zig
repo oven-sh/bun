@@ -232,6 +232,7 @@ export fn transform(opts_array: u64) u64 {
     }, &log, &code, define, allocator) catch unreachable;
     parser.options.jsx.parse = loader.isJSX();
     parser.options.ts = loader.isTypeScript();
+    parser.options.tree_shaking = false;
     parser.options.features.top_level_await = true;
     const result = parser.parse() catch unreachable;
     if (result.ok) {

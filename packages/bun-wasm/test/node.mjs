@@ -1,5 +1,8 @@
+// This is not released yet because there are some memory bugs with the WASM build
+// It causes syntax errors which don't make any sense
+// Most likely, this is an issue with some code expecting 64 bit pointers
+// That's also why this test just prints instead of using a test runner
 import * as Bun from "../index.mjs";
-import process from "process";
 
 await Bun.init(new URL("../bun.wasm", import.meta.url));
 

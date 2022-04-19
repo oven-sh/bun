@@ -187,6 +187,22 @@ pub const GlobalDefinesKey = [_][]const string{
     &[_]string{"setTimeout"},
     &[_]string{"unescape"},
 
+    // Reflect: Static methods
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Reflect#static_methods
+    &[_]string{ "Reflect", "apply" },
+    &[_]string{ "Reflect", "construct" },
+    &[_]string{ "Reflect", "defineProperty" },
+    &[_]string{ "Reflect", "deleteProperty" },
+    &[_]string{ "Reflect", "get" },
+    &[_]string{ "Reflect", "getOwnPropertyDescriptor" },
+    &[_]string{ "Reflect", "getPrototypeOf" },
+    &[_]string{ "Reflect", "has" },
+    &[_]string{ "Reflect", "isExtensible" },
+    &[_]string{ "Reflect", "ownKeys" },
+    &[_]string{ "Reflect", "preventExtensions" },
+    &[_]string{ "Reflect", "set" },
+    &[_]string{ "Reflect", "setPrototypeOf" },
+
     // Console method references are assumed to have no side effects
     // https://developer.mozilla.org/en-US/docs/Web/API/console
     &[_]string{ "console", "assert" },

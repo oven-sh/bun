@@ -1108,6 +1108,23 @@ pub const SourceMapOption = enum {
     });
 };
 
+pub const OutputFormat = enum {
+    /// ES module format
+    /// This is the default format
+    esm,
+    /// Immediately-invoked function expression
+    /// (
+    ///   function(){}
+    /// )();
+    iife,
+    /// CommonJS
+    cjs,
+
+    pub fn keepES6ImportExportSyntax(this: OutputFormat) bool {
+        return this == .esm;
+    }
+};
+
 /// BundleOptions is used when ResolveMode is not set to "disable".
 /// BundleOptions is effectively webpack + babel
 pub const BundleOptions = struct {
@@ -1138,6 +1155,9 @@ pub const BundleOptions = struct {
     node_modules_bundle: ?*NodeModuleBundle = null,
     production: bool = false,
     serve: bool = false,
+
+    // only used by bundle_v2
+    output_format: OutputFormat = .esm,
 
     append_package_version_in_query_string: bool = false,
 

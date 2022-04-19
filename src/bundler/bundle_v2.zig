@@ -26,7 +26,7 @@ const Define = @import("../defines.zig").Define;
 const DebugOptions = @import("../cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("../thread_pool.zig");
 const ThreadlocalArena = @import("../mimalloc_arena.zig").Arena;
-
+const BabyList = @import("../baby_list.zig").BabyList;
 const panicky = @import("../panic_handler.zig");
 const Fs = @import("../fs.zig");
 const schema = @import("../api/schema.zig");
@@ -34,6 +34,7 @@ const Api = schema.Api;
 const _resolver = @import("../resolver/resolver.zig");
 const sync = @import("../sync.zig");
 const ImportRecord = @import("../import_record.zig").ImportRecord;
+const ImportKind = @import("../import_record.zig").ImportKind;
 const allocators = @import("../allocators.zig");
 const MimeType = @import("../http/mime_type.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
@@ -910,6 +911,63 @@ pub fn appendBytes(generator: *BundleV2, bytes: anytype) !void {
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
+const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
+const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
+const RefExportData = std.ArrayHashMapUnmanaged(Ref, ExportData, Ref.ArrayHashCtx, false);
+const TopLevelSymbolToParts = std.ArrayHashMapUnmanaged(Ref, u32, Ref.ArrayHashCtx, false);
+
+pub const WrapKind = enum {
+    none,
+    cjs,
+    esm,
+};
+
+pub const ImportData = struct {
+    // This is an array of intermediate statements that re-exported this symbol
+    // in a chain before getting to the final symbol. This can be done either with
+    // "export * from" or "export {} from". If this is done with "export * from"
+    // then this may not be the result of a single chain but may instead form
+    // a diamond shape if this same symbol was re-exported multiple times from
+    // different files.
+    re_exports: Dependency.List = Dependency.List{},
+
+    name_loc: Logger.Loc = Logger.Loc.Empty, // Optional, goes with sourceIndex, ignore if empty
+    ref: Ref = Ref.None,
+    source_index: Ref.Int = invalid_part_index,
+};
+
+pub const ExportData = struct {
+    // Export star resolution happens first before import resolution. That means
+    // it cannot yet determine if duplicate names from export star resolution are
+    // ambiguous (point to different symbols) or not (point to the same symbol).
+    // This issue can happen in the following scenario:
+    //
+    //   // entry.js
+    //   export * from './a'
+    //   export * from './b'
+    //
+    //   // a.js
+    //   export * from './c'
+    //
+    //   // b.js
+    //   export {x} from './c'
+    //
+    //   // c.js
+    //   export let x = 1, y = 2
+    //
+    // In this case "entry.js" should have two exports "x" and "y", neither of
+    // which are ambiguous. To handle this case, ambiguity resolution must be
+    // deferred until import resolution time. That is done using this array.
+    potentially_ambiguous_export_star_refs: BabyList(ImportData) = .{},
+
+    ref: Ref = Ref.None,
+
+    // This is the file that the named export above came from. This will be
+    // different from the file that contains this object if this is a re-export.
+    name_loc: Logger.Loc = Logger.Loc.Empty, // Optional, goes with sourceIndex, ignore if zero,
+    source_index: Ref.Int = invalid_part_index,
+};
+
 pub const Graph = struct {
     entry_points: std.ArrayListUnmanaged(Ref.Int) = .{},
     ast: std.MultiArrayList(JSAst) = .{},
@@ -942,63 +1000,6 @@ pub const Graph = struct {
 
         pub const List = std.MultiArrayList(InputFile);
     };
-
-    pub const WrapKind = enum {
-        none,
-        cjs,
-        esm,
-    };
-
-    pub const ImportData = struct {
-        // This is an array of intermediate statements that re-exported this symbol
-        // in a chain before getting to the final symbol. This can be done either with
-        // "export * from" or "export {} from". If this is done with "export * from"
-        // then this may not be the result of a single chain but may instead form
-        // a diamond shape if this same symbol was re-exported multiple times from
-        // different files.
-        re_exports: Dependency.List = Dependency.List{},
-
-        name_loc: Logger.Loc = Logger.Loc.Empty, // Optional, goes with sourceIndex, ignore if empty
-        ref: Ref = Ref.None,
-        source_index: Ref.Int = invalid_part_index,
-    };
-
-    pub const ExportData = struct {
-        // Export star resolution happens first before import resolution. That means
-        // it cannot yet determine if duplicate names from export star resolution are
-        // ambiguous (point to different symbols) or not (point to the same symbol).
-        // This issue can happen in the following scenario:
-        //
-        //   // entry.js
-        //   export * from './a'
-        //   export * from './b'
-        //
-        //   // a.js
-        //   export * from './c'
-        //
-        //   // b.js
-        //   export {x} from './c'
-        //
-        //   // c.js
-        //   export let x = 1, y = 2
-        //
-        // In this case "entry.js" should have two exports "x" and "y", neither of
-        // which are ambiguous. To handle this case, ambiguity resolution must be
-        // deferred until import resolution time. That is done using this array.
-        potentially_ambiguous_export_star_refs: []ImportData,
-
-        ref: Ref = Ref.None,
-
-        // This is the file that the named export above came from. This will be
-        // different from the file that contains this object if this is a re-export.
-        name_loc: Logger.Loc = Logger.Loc.Empty, // Optional, goes with sourceIndex, ignore if zero,
-        source_index: Ref.Int = invalid_part_index,
-    };
-
-    pub const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
-    pub const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
-    pub const RefExportData = std.ArrayHashMapUnmanaged(Ref, ExportData, Ref.ArrayHashCtx, false);
-    pub const TopLevelSymbolToParts = std.ArrayHashMapUnmanaged(Ref, u32, Ref.ArrayHashCtx, false);
 
     pub const JSMeta = struct {
 
@@ -1046,7 +1047,7 @@ pub const Graph = struct {
         /// Re-exports come from other files and are the result of resolving export
         /// star statements (i.e. "export * from 'foo'").
         resolved_exports: RefExportData = .{},
-        resolved_export_star: ?ExportData = null,
+        resolved_export_star: ExportData = ExportData{},
 
         /// Never iterate over "resolvedExports" directly. Instead, iterate over this
         /// array. Some exports in that map aren't meant to end up in generated code.
@@ -1204,7 +1205,7 @@ const LinkerGraph = struct {
     stable_source_indices: []const u32 = &[_]u32{},
 
     // This holds all entry points that can reach a file
-    //
+    // it is a 2 dimensional bitset
     file_entry_bits: Bitmap,
 
     pub fn load(this: *LinkerGraph, entry_points: []const Ref.Int, sources: []const Logger.Source) !void {
@@ -1309,6 +1310,12 @@ const LinkerContext = struct {
     // We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
 
+    options: LinkerOptions = LinkerOptions{},
+
+    pub const LinkerOptions = struct {
+        output_format: options.OutputFormat = .esm,
+    };
+
     fn load(this: *LinkerContext, bundle: *BundleV2, entry_points: []Ref.Int, reachable: []Ref.Int) !void {
         this.parse_graph = &bundle.graph;
         this.graph = .{
@@ -1343,18 +1350,252 @@ const LinkerContext = struct {
 
     pub fn scanImportsAndExports(this: *LinkerContext) !void {
         var import_records_list: []ImportRecord.List = this.graph.asts.items(.import_records);
+        // var parts_list: [][]js_ast.Part = this.graph.asts.items(.parts);
         var asts = this.parse_graph.input_files.items(.ast);
+        var export_kinds: []js_ast.ExportsKind = this.parse_graph.ast.items(.export_kinds);
+        var entry_point_kinds: []EntryPoint.Kind = this.graph.files.items(.entry_point_kind);
+        var wraps: []WrapKind = this.parse_graph.meta.items(.wrap);
+        const reachable = this.graph.reachable_files;
+        const output_format = this.options.output_format;
+        var export_star_import_records: [][]u32 = this.parse_graph.ast.items(.export_star_import_records);
+        var exports_refs: []Ref = this.parse_graph.ast.items(.exports_ref);
 
-        for (this.graph.reachable_files) |source_index| {
+        // Step 1: Figure out what modules must be CommonJS
+        for (reachable) |source_index| {
             const id = asts[source_index];
-            if (id < import_records_list.len) {
-                const import_records = import_records_list[id].slice();
-                for (import_records) |import_record| {
-                    this.scanImport(source_index, import_record);
+
+            // does it have a JS AST?
+            if (!(id < import_records_list.len)) continue;
+
+            var import_records: []ImportRecord = import_records_list[id].slice();
+            for (import_records) |record| {
+                if (record.source_index == invalid_part_index) {
+                    continue;
+                }
+
+                const other_file = asts[record.source_index];
+                // other file is empty
+                if (other_file >= export_kinds.len) continue;
+                const other_kind = export_kinds[other_file];
+                const other_wrap = wraps[other_file];
+
+                switch (record.kind) {
+                    ImportKind.stmt => {
+                        // Importing using ES6 syntax from a file without any ES6 syntax
+                        // causes that module to be considered CommonJS-style, even if it
+                        // doesn't have any CommonJS exports.
+                        //
+                        // That means the ES6 imports will become undefined instead of
+                        // causing errors. This is for compatibility with older CommonJS-
+                        // style bundlers.
+                        //
+                        // We emit a warning in this case but try to avoid turning the module
+                        // into a CommonJS module if possible. This is possible with named
+                        // imports (the module stays an ECMAScript module but the imports are
+                        // rewritten with undefined) but is not possible with star or default
+                        // imports:
+                        //
+                        //   import * as ns from './empty-file'
+                        //   import defVal from './empty-file'
+                        //   console.log(ns, defVal)
+                        //
+                        // In that case the module *is* considered a CommonJS module because
+                        // the namespace object must be created.
+                        if ((record.contains_import_star or record.contains_default_alias) and
+                            // TODO: hasLazyExport
+                            (other_wrap == .none))
+                        {
+                            export_kinds[other_file] = .cjs;
+                            wraps[other_file] = .cjs;
+                        }
+                    },
+                    ImportKind.require =>
+                    // Files that are imported with require() must be CommonJS modules
+                    {
+                        if (other_kind == .esm) {
+                            wraps[other_file] = .esm;
+                        } else {
+                            wraps[other_file] = .cjs;
+                            export_kinds[other_file] = .cjs;
+                        }
+                    },
+                    ImportKind.dynamic => {
+                        if (!this.graph.code_splitting) {
+                            // If we're not splitting, then import() is just a require() that
+                            // returns a promise, so the imported file must be a CommonJS module
+                            if (export_kinds[other_file] == .esm) {
+                                wraps[other_file] = .esm;
+                            } else {
+                                wraps[other_file] = .cjs;
+                                export_kinds[other_file] = .cjs;
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+
+            const kind = export_kinds[id];
+
+            // If the output format doesn't have an implicit CommonJS wrapper, any file
+            // that uses CommonJS features will need to be wrapped, even though the
+            // resulting wrapper won't be invoked by other files. An exception is made
+            // for entry point files in CommonJS format (or when in pass-through mode).
+            if (kind == .cjs and (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm)) {
+                wraps[id] = .cjs;
+            }
+        }
+
+        // Step 2: Propagate dynamic export status for export star statements that
+        // are re-exports from a module whose exports are not statically analyzable.
+        // In this case the export star must be evaluated at run time instead of at
+        // bundle time.
+        {
+            var dependency_wrapper = DependencyWrapper{
+                .linker = this,
+                .did_wrap_dependencies = this.parse_graph.meta.items(.did_wrap_dependencies),
+                .wraps = wraps,
+                .import_records = import_records_list,
+                .export_kinds = export_kinds,
+                .export_star_map = std.AutoHashMap(u32, void).init(this.allocator()),
+                .export_star_records = export_star_import_records,
+            };
+            defer dependency_wrapper.export_star_map.deinit();
+
+            for (reachable) |source_index| {
+                const id = asts[source_index];
+
+                // does it have a JS AST?
+                if (!(id < import_records_list.len)) continue;
+
+                if (wraps[id] != .none) {
+                    dependency_wrapper.wrap(id);
+                }
+
+                if (export_star_import_records[id].len > 0) {
+                    dependency_wrapper.export_star_map.clearRetainingCapacity();
+                    _ = dependency_wrapper.hasDynamicExportsDueToExportStar(id);
+                }
+
+                // Even if the output file is CommonJS-like, we may still need to wrap
+                // CommonJS-style files. Any file that imports a CommonJS-style file will
+                // cause that file to need to be wrapped. This is because the import
+                // method, whatever it is, will need to invoke the wrapper. Note that
+                // this can include entry points (e.g. an entry point that imports a file
+                // that imports that entry point).
+                for (import_records_list[id].slice()) |record| {
+                    if (record.source_index < import_records_list.len) {
+                        if (export_kinds[record.source_index] == .cjs) {
+                            dependency_wrapper.wrap(record.source_index);
+                        }
+                    }
                 }
             }
         }
+
+        // Step 3: Resolve "export * from" statements. This must be done after we
+        // discover all modules that can have dynamic exports because export stars
+        // are ignored for those modules.
+        {
+            var export_star_stack = std.ArrayList(u32).initCapacity(this.allocator(), 32) catch unreachable;
+            defer export_star_stack.deinit();
+            var resolved_exports: []RefExportData = this.parse_graph.meta.items(.resolved_exports);
+            var resolved_export_stars: []ExportData = this.parse_graph.meta.items(.resolved_export_star);
+
+            for (reachable) |source_index| {
+                if (asts.len < @as(usize, source_index)) continue;
+                const id = asts[source_index];
+
+                // --
+                // TODO: generateCodeForLazyExport here!
+                // --
+
+                // Propagate exports for export star statements
+                var export_star_ids = export_star_import_records[id];
+                if (export_star_ids.len > 0) {
+                    export_star_stack = this.addExportsForExportStar(&resolved_exports[id], source_index, id, export_star_stack);
+                }
+
+                // Also add a special export so import stars can bind to it. This must be
+                // done in this step because it must come after CommonJS module discovery
+                // but before matching imports with exports.
+                resolved_export_stars[id] = ExportData{
+                    .source_index = source_index,
+                    .ref = exports_refs[id],
+                };
+            }
+        }
     }
+
+    const DependencyWrapper = struct {
+        linker: *LinkerContext,
+        did_wrap_dependencies: []bool,
+        wraps: []WrapKind,
+        export_kinds: []js_ast.ExportsKind,
+        import_records: []ImportRecord.List,
+        export_star_map: std.AutoHashMap(u32, void),
+        entry_point_kinds: []EntryPoint.Kind,
+        export_star_records: [][]u32,
+        output_format: options.OutputFormat,
+
+        pub fn hasDynamicExportsDueToExportStar(this: *DependencyWrapper, source_index: u32) bool {
+            // Terminate the traversal now if this file already has dynamic exports
+            const export_kind = this.export_kinds[source_index];
+            switch (export_kind) {
+                .cjs, .esm_with_dynamic_fallback => return true,
+            }
+
+            // Avoid infinite loops due to cycles in the export star graph
+            const has_visited = this.export_star_map.getOrPut(source_index) catch unreachable;
+            if (has_visited.found_existing) {
+                return false;
+            }
+
+            for (this.export_star_records[source_index]) |id| {
+                const records: []const ImportRecord = this.import_records[id].slice();
+                for (records) |record| {
+                    // This file has dynamic exports if the exported imports are from a file
+                    // that either has dynamic exports directly or transitively by itself
+                    // having an export star from a file with dynamic exports.
+                    const kind = this.entry_point_kinds[record.source_index];
+                    if ((record.source_index >= this.import_records.len and (!kind.isEntryPoint() or !this.output_format.keepES6ImportExportSyntax())) or
+                        (record.source_index < this.import_records.len and record.source_index != source_index and this.hasDynamicExportsDueToExportStar(record.source_index)))
+                    {
+                        this.export_kinds[source_index] = .esm_with_dynamic_fallback;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        pub fn wrap(this: *DependencyWrapper, source_index: u32) void {
+
+            // Never wrap the runtime file since it always comes first
+            if (source_index == Ref.RuntimeRef.sourceIndex()) {
+                return;
+            }
+
+            if (this.did_wrap_dependencies[source_index]) return;
+
+            // This module must be wrapped
+            if (this.wraps[source_index] == .none) {
+                this.wraps[source_index] = switch (this.export_kinds[source_index]) {
+                    .cjs => .cjs,
+                    else => .esm,
+                };
+            }
+
+            const records = this.import_records[source_index].slice();
+            for (records) |record| {
+                if (record.source_index == invalid_part_index) {
+                    continue;
+                }
+                this.wrap(record.source_index);
+            }
+        }
+    };
 
     pub inline fn allocator(this: *const LinkerContext) std.mem.Allocator {
         return this.graph.allocator;

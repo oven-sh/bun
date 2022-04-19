@@ -236,7 +236,7 @@ export fn transform(opts_array: u64) u64 {
     parser.options.features.top_level_await = true;
     const result = parser.parse() catch unreachable;
     if (result.ok) {
-        var symbols: [][]JSAst.Symbol = &([_][]JSAst.Symbol{result.ast.symbols});
+        var symbols: JSAst.Symbol.NestedList = JSAst.Symbol.NestedList.init(&.{result.ast.symbols});
 
         _ = JSPrinter.printAst(
             @TypeOf(&writer),

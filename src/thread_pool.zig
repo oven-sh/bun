@@ -104,6 +104,52 @@ pub const Batch = struct {
     }
 };
 
+pub fn ConcurrentFunction(comptime Function: anytype) type {
+    return struct {
+        const Fn = Function;
+        const Args = std.meta.ArgsTuple(@TypeOf(Fn));
+        const Runner = @This();
+        thread_pool: *ThreadPool,
+        states: []Routine = undefined,
+        batch: Batch = .{},
+
+        pub fn init(allocator: std.mem.Allocator, thread_pool: *ThreadPool, count: usize) !Runner {
+            return .{
+                .allocator = allocator,
+                .thread_pool = thread_pool,
+                .states = try allocator.alloc(Routine, count),
+                .batch = .{},
+                .i = 0,
+            };
+        }
+
+        pub fn call(this: *@This(), args: Args) void {
+            this.states[this.batch.len] = .{
+                .args = args,
+            };
+            this.batch.push(Batch.from(&this.states[this.batch.len].task));
+        }
+
+        pub fn go(this: *@This()) void {
+            this.thread_pool.schedule(this.batch);
+        }
+
+        pub const Routine = struct {
+            args: Args,
+            task: Task = .{ .callback = callback },
+
+            pub fn callback(task: *Task) void {
+                var routine = @fieldParentPtr(@This(), "task", task);
+                @call(.{ .modifier = .always_inline }, Fn, routine.args);
+            }
+        };
+
+        pub fn deinit(this: *@This()) void {
+            this.allocator.free(this.states);
+        }
+    };
+}
+
 /// Schedule a batch of tasks to be executed by some thread on the thread pool.
 pub fn schedule(self: *ThreadPool, batch: Batch) void {
     // Sanity check
@@ -125,6 +171,14 @@ pub fn schedule(self: *ThreadPool, batch: Batch) void {
     }
 
     forceSpawn(self);
+}
+
+pub fn go(self: *ThreadPool, comptime TaskContext: type, comptime callback: fn (*TaskContext) void) void {
+    var task = Task{
+        .callback = callback,
+    };
+    var batch = Batch.from(&task);
+    schedule(self, batch);
 }
 
 pub fn forceSpawn(self: *ThreadPool) void {

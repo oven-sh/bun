@@ -9,6 +9,8 @@ const Global = @import("./global.zig").Global;
 const ComptimeStringMap = @import("./global.zig").ComptimeStringMap;
 const use_mimalloc = @import("./global.zig").use_mimalloc;
 
+const SystemTimer = @import("./system_timer.zig");
+
 // These are threadlocal so we don't have stdout/stderr writing on top of each other
 threadlocal var source: Source = undefined;
 threadlocal var source_set: bool = false;
@@ -282,7 +284,8 @@ pub fn printStartEndStdout(start: i128, end: i128) void {
     printElapsedStdout(@intToFloat(f64, elapsed));
 }
 
-pub fn printTimer(timer: *std.time.Timer) void {
+pub fn printTimer(timer: *SystemTimer) void {
+    if (comptime Environment.isWasm) return;
     const elapsed = @divTrunc(timer.read(), @as(u64, std.time.ns_per_ms));
     printElapsed(@intToFloat(f64, elapsed));
 }

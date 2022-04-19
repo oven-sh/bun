@@ -26,7 +26,7 @@ const BrowserMap = @import("./package_json.zig").BrowserMap;
 const CacheSet = cache.Set;
 const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
-const HTTPWatcher = if (Environment.isTest) void else @import("../http.zig").Watcher;
+const HTTPWatcher = if (Environment.isTest or Environment.isWasm) void else @import("../http.zig").Watcher;
 const Wyhash = std.hash.Wyhash;
 const ResolvePath = @import("./resolve_path.zig");
 const NodeFallbackModules = @import("../node_fallbacks.zig");
@@ -302,6 +302,18 @@ var bin_folders: BinFolderArray = undefined;
 var bin_folders_lock: Mutex = Mutex.init();
 var bin_folders_loaded: bool = false;
 
+const Timer = @import("../timer.zig");
+pub fn ResolveWatcher(comptime Context: type) type {
+    return struct {
+        context: *Context,
+        callback: fn (*Context, dir_path: string, dir_fd: StoredFileDescriptorType) void = undefined,
+
+        pub fn watch(this: @This(), dir_path: string, fd: StoredFileDescriptorType) void {
+            return this.callback(this.context, dir_path, fd);
+        }
+    };
+}
+
 pub const Resolver = struct {
     const ThisResolver = @This();
     opts: options.BundleOptions,
@@ -310,7 +322,7 @@ pub const Resolver = struct {
     allocator: std.mem.Allocator,
     node_module_bundle: ?*NodeModuleBundle,
     extension_order: []const string = undefined,
-    timer: std.time.Timer = undefined,
+    timer: Timer = undefined,
 
     care_about_bin_folder: bool = false,
     care_about_scripts: bool = false,
@@ -318,8 +330,7 @@ pub const Resolver = struct {
     debug_logs: ?DebugLogs = null,
     elapsed: u64 = 0, // tracing
 
-    onStartWatchingDirectory: ?fn (*HTTPWatcher, dir_path: string, dir_fd: StoredFileDescriptorType) void = null,
-    onStartWatchingDirectoryCtx: ?*HTTPWatcher = null,
+    watcher: ?ResolveWatcher(HTTPWatcher) = null,
 
     caches: CacheSet,
 
@@ -384,7 +395,7 @@ pub const Resolver = struct {
             .mutex = &resolver_Mutex,
             .caches = CacheSet.init(allocator),
             .opts = opts,
-            .timer = std.time.Timer.start() catch @panic("Timer error!"),
+            .timer = if (comptime Timer != void) Timer.start() catch @panic("Timer error!") else Timer{},
             .fs = _fs,
             .node_module_bundle = opts.node_modules_bundle,
             .log = log,
@@ -568,9 +579,9 @@ pub const Resolver = struct {
             else => r.opts.extension_order,
         };
 
-        var timer: ?std.time.Timer = null;
+        var timer: Timer = undefined;
         if (FeatureFlags.tracing) {
-            timer = std.time.Timer.start() catch null;
+            timer = Timer.start() catch null;
         }
 
         defer {

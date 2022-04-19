@@ -247,6 +247,7 @@ export fn transform(opts_array: u64) u64 {
             .{},
             void,
             null,
+            false,
         ) catch 0;
 
         output_files[0] = .{ .data = writer.ctx.written, .path = path };

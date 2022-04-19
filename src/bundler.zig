@@ -56,6 +56,7 @@ const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 
 const EntryPoints = @import("./bundler/entry_points.zig");
+const SystemTimer = @import("./system_timer.zig");
 pub usingnamespace EntryPoints;
 // How it works end-to-end
 // 1. Resolve a file path from input using the resolver
@@ -133,7 +134,7 @@ pub const Bundler = struct {
     router: ?Router = null,
 
     linker: Linker,
-    timer: std.time.Timer = undefined,
+    timer: SystemTimer = undefined,
     env: *DotEnv.Loader,
 
     macro_context: ?js_ast.Macro.MacroContext = null,
@@ -229,7 +230,7 @@ pub const Bundler = struct {
             .options = bundle_options,
             .fs = fs,
             .allocator = allocator,
-            .timer = std.time.Timer.start() catch @panic("Timer fail"),
+            .timer = SystemTimer.start() catch @panic("Timer fail"),
             .resolver = Resolver.init1(allocator, log, fs, bundle_options),
             .log = log,
             // .thread_pool = pool,

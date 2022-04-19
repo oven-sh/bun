@@ -43,7 +43,7 @@ const SourceMap = @import("./sourcemap/sourcemap.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const Lock = @import("./lock.zig").Lock;
 const RequestDataPool = ObjectPool([32_000]u8, null, false, 1);
-
+const ResolveWatcher = @import("./resolver/resolver.zig").ResolveWatcher;
 pub fn constStrToU8(s: string) []u8 {
     return @intToPtr([*]u8, @ptrToInt(s.ptr))[0..s.len];
 }
@@ -3887,8 +3887,10 @@ pub const Server = struct {
         server.watcher = try Watcher.init(server, server.bundler.fs, server.allocator);
 
         if (comptime FeatureFlags.watch_directories and !Environment.isTest) {
-            server.bundler.resolver.onStartWatchingDirectoryCtx = server.watcher;
-            server.bundler.resolver.onStartWatchingDirectory = onMaybeWatchDirectory;
+            server.bundler.resolver.watcher = ResolveWatcher(Watcher){
+                .context = server.watcher,
+                .callback = onMaybeWatchDirectory,
+            };
         }
     }
 

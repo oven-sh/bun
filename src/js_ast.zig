@@ -4258,7 +4258,7 @@ pub const Ast = struct {
     symbols: Symbol.List = Symbol.List{},
     module_scope: ?Scope = null,
     // char_freq:    *CharFreq,
-    exports_ref: ?Ref = null,
+    exports_ref: Ref = Ref.None,
     module_ref: ?Ref = null,
     wrapper_ref: ?Ref = null,
     require_ref: Ref = Ref.None,
@@ -4327,7 +4327,7 @@ pub const ExportsKind = enum {
     // "exports") with getters for the export names. All named imports to this
     // module are allowed. Direct named imports reference the corresponding export
     // directly. Other imports go through property accesses on "exports".
-    esm_with_dyn,
+    esm_with_dynamic_fallback,
 
     pub fn jsonStringify(self: @This(), opts: anytype, o: anytype) !void {
         return try std.json.stringify(@tagName(self), opts, o);

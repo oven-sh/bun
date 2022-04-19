@@ -4460,8 +4460,8 @@ fn NewParser_(
                 }
             }
 
-            for (scope.children.slice) |_, i| {
-                p.hoistSymbols(scope.children.items[i]);
+            for (scope.children.slice()) |_, i| {
+                p.hoistSymbols(scope.children.ptr[i]);
             }
         }
 
@@ -7217,9 +7217,9 @@ fn NewParser_(
                 const child = _child orelse continue;
 
                 if (child.scope.parent == p.current_scope) {
-                    var i: usize = children.len - 1;
+                    var i: usize = children.items.len - 1;
                     while (i >= 0) {
-                        if (children.ptr[i] == child.scope) {
+                        if (children.items[i] == child.scope) {
                             _ = children.orderedRemove(i);
                             break;
                         }
@@ -16293,11 +16293,11 @@ fn NewParser_(
             // by the time we get here.
             p.scopes_in_order.items[scope_index] = null;
             // Remove the last child from the parent scope
-            const last = parent.children.items.len - 1;
-            if (comptime Environment.allow_assert) assert(parent.children.items[last] == to_flatten);
-            _ = parent.children.popOrNull();
+            const last = parent.children.len - 1;
+            if (comptime Environment.allow_assert) assert(parent.children.ptr[last] == to_flatten);
+            parent.children.len -|= 1;
 
-            for (to_flatten.children.items) |item| {
+            for (to_flatten.children.slice()) |item| {
                 item.parent = parent;
                 parent.children.append(p.allocator, item) catch unreachable;
             }

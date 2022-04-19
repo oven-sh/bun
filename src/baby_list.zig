@@ -13,9 +13,15 @@ pub fn BabyList(comptime Type: type) type {
         len: u32 = 0,
         cap: u32 = 0,
 
+        pub fn ensureUnusedCapacity(this: *@This(), allocator: std.mem.Allocator, count: usize) !void {
+            var list_ = this.listManaged(allocator);
+            try list_.ensureUnusedCapacity(count);
+            this.update(list_);
+        }
+
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: Type) !void {
             if (this.len + 1 < this.cap) {
-                var list_ = listManaged(allocator);
+                var list_ = this.listManaged(allocator);
                 try list_.ensureUnusedCapacity(1);
                 this.update(list_);
             }

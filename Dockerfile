@@ -144,8 +144,8 @@ ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/picohttpparser ${BUN_DIR}/src/deps/picohttpparser
-COPY src/deps/*.c ${BUN_DIR}/src/deps
-COPY src/deps/*.h ${BUN_DIR}/src/deps
+COPY src/deps/*.c ${BUN_DIR}/src/deps/
+COPY src/deps/*.h ${BUN_DIR}/src/deps/
 
 WORKDIR $BUN_DIR
 
@@ -223,7 +223,7 @@ COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=libbacktrace ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
-COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer
+COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
 
 WORKDIR ${BUN_DIR}

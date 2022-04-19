@@ -56,8 +56,8 @@
 # FROM bun_base as picohttp
 
 # COPY src/deps/picohttpparser /bun/src/deps/picohttpparser
-# COPY src/deps/*.c /bun/src/deps
-# COPY src/deps/*.h /bun/src/deps
+# COPY src/deps/*.c /bun/src/deps/
+# COPY src/deps/*.h /bun/src/deps/
 
 # RUN make picohttp
 

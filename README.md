@@ -1876,6 +1876,9 @@ make devcontainer
 # Build bun for development
 make dev
 
+# setup husky commit hooks
+npm run prepare
+
 # Run bun
 bun-debug
 ```
@@ -1922,6 +1925,8 @@ In `bun`:
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1
 make vendor jsc identifier-cache dev
+# setup husky commit hooks
+npm run prepare
 ```
 
 #### Verify it worked (macOS)

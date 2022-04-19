@@ -1,0 +1,4 @@
+{
+    "*.{js,jsx,ts,tsx,md,html,css}": ["prettier --write"],
+    "*.zig": ["zig fmt"]
+}

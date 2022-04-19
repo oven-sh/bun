@@ -35,7 +35,6 @@ const allocators = @import("./allocators.zig");
 const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const runtime = @import("./runtime.zig");
-const Timer = @import("./timer.zig");
 const hash_map = @import("hash_map.zig");
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
@@ -56,7 +55,7 @@ const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
 
 const EntryPoints = @import("./bundler/entry_points.zig");
-const SystemTimer = @import("./system_timer.zig");
+const SystemTimer = @import("./system_timer.zig").Timer;
 pub usingnamespace EntryPoints;
 // How it works end-to-end
 // 1. Resolve a file path from input using the resolver

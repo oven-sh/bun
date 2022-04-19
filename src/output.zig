@@ -9,7 +9,7 @@ const Global = @import("./global.zig").Global;
 const ComptimeStringMap = @import("./global.zig").ComptimeStringMap;
 const use_mimalloc = @import("./global.zig").use_mimalloc;
 
-const SystemTimer = @import("./system_timer.zig");
+const SystemTimer = @import("./system_timer.zig").Timer;
 
 // These are threadlocal so we don't have stdout/stderr writing on top of each other
 threadlocal var source: Source = undefined;

@@ -24,4 +24,4 @@ fn NewTimer() type {
 
     return std.time.Timer;
 }
-pub usingnamespace NewTimer();
+pub const Timer = NewTimer();

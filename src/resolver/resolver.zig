@@ -302,7 +302,7 @@ var bin_folders: BinFolderArray = undefined;
 var bin_folders_lock: Mutex = Mutex.init();
 var bin_folders_loaded: bool = false;
 
-const Timer = @import("../timer.zig");
+const Timer = @import("../system_timer.zig").Timer;
 pub fn ResolveWatcher(comptime Context: type) type {
     return struct {
         context: *Context,
@@ -395,7 +395,7 @@ pub const Resolver = struct {
             .mutex = &resolver_Mutex,
             .caches = CacheSet.init(allocator),
             .opts = opts,
-            .timer = if (comptime Timer != void) Timer.start() catch @panic("Timer error!") else Timer{},
+            .timer = Timer.start() catch @panic("Timer fail"),
             .fs = _fs,
             .node_module_bundle = opts.node_modules_bundle,
             .log = log,
@@ -579,17 +579,13 @@ pub const Resolver = struct {
             else => r.opts.extension_order,
         };
 
-        var timer: Timer = undefined;
         if (FeatureFlags.tracing) {
-            timer = Timer.start() catch null;
+            r.timer.reset();
         }
 
         defer {
             if (FeatureFlags.tracing) {
-                if (timer) |*time| {
-                    // technically, this should be an atomic op
-                    r.elapsed += time.read();
-                }
+                r.elapsed += r.timer.read();
             }
         }
         if (r.log.level == .verbose) {

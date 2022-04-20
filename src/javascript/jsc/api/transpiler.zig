@@ -1141,7 +1141,7 @@ fn namedImportsToJS(
     defer allocator.free(array_items);
 
     for (import_records) |record| {
-        if (record.is_internal) continue;
+        if (record.isInternal()) continue;
 
         const path = JSC.ZigString.init(record.path.text).toValueGC(global);
         const kind = JSC.ZigString.init(record.kind.label()).toValue(global);

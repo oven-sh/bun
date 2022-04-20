@@ -1560,14 +1560,14 @@ pub fn NewPrinter(
                     }
                 },
                 .e_require => |e| {
-                    if (rewrite_esm_to_cjs and p.import_records[e.import_record_index].is_bundled) {
+                    if (rewrite_esm_to_cjs and p.import_records[e.import_record_index].isBundled()) {
                         p.printIndent();
                         p.printBundledRequire(e);
                         p.printSemicolonIfNeeded();
                         return;
                     }
 
-                    if (!rewrite_esm_to_cjs or !p.import_records[e.import_record_index].is_bundled) {
+                    if (!rewrite_esm_to_cjs or !p.import_records[e.import_record_index].isBundled()) {
                         p.printRequireOrImportExpr(e.import_record_index, &([_]G.Comment{}), level, flags);
                     }
                 },
@@ -2053,7 +2053,7 @@ pub fn NewPrinter(
                             didPrint = true;
                         } else if (symbol.namespace_alias) |namespace| {
                             const import_record = p.import_records[namespace.import_record_index];
-                            if ((comptime is_inside_bundle) or import_record.is_bundled or namespace.was_originally_property_access) {
+                            if ((comptime is_inside_bundle) or import_record.isBundled() or namespace.was_originally_property_access) {
                                 var wrap = false;
                                 didPrint = true;
 
@@ -2349,7 +2349,7 @@ pub fn NewPrinter(
         }
 
         pub fn printNamespaceAlias(p: *Printer, import_record: ImportRecord, namespace: G.NamespaceAlias) void {
-            if (import_record.module_id > 0 and !import_record.contains_import_star) {
+            if (import_record.isBundled() and !import_record.contains_import_star) {
                 p.print("$");
                 p.printModuleId(import_record.module_id);
             } else {
@@ -3070,7 +3070,7 @@ pub fn NewPrinter(
 
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.import_records[namespace.import_record_index];
-                                        if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
+                                        if (import_record.isBundled() or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.printIdentifier(name);
                                             p.print(": () => ");
                                             p.printNamespaceAlias(import_record, namespace);
@@ -3141,7 +3141,7 @@ pub fn NewPrinter(
                                 if (p.symbols.get(item.name.ref.?)) |symbol| {
                                     if (symbol.namespace_alias) |namespace| {
                                         const import_record = p.import_records[namespace.import_record_index];
-                                        if (import_record.is_bundled or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
+                                        if (import_record.isBundled() or (comptime is_inside_bundle) or namespace.was_originally_property_access) {
                                             p.print("var ");
                                             p.printSymbol(item.name.ref.?);
                                             p.print(" = ");
@@ -3703,7 +3703,7 @@ pub fn NewPrinter(
                                         // We could use a map but we want to avoid allocating
                                         // and this should be pretty quick since it's just comparing a uint32
                                         for (p.import_records[i + 1 ..]) |_record2| {
-                                            if (_record2.is_bundled and _record2.module_id > 0 and _record2.module_id == _record.module_id) {
+                                            if (_record2.isBundled() and _record2.module_id == _record.module_id) {
                                                 continue :skip;
                                             }
                                         }
@@ -3894,7 +3894,7 @@ pub fn NewPrinter(
         }
 
         pub fn printBundledImport(p: *Printer, record: importRecord.ImportRecord, s: *S.Import) void {
-            if (record.is_internal) {
+            if (record.isInternal()) {
                 return;
             }
 
@@ -4028,7 +4028,7 @@ pub fn NewPrinter(
         }
 
         pub fn printBundledRequire(p: *Printer, require: E.Require) void {
-            if (p.import_records[require.import_record_index].is_internal) {
+            if (p.import_records[require.import_record_index].isInternal()) {
                 return;
             }
 

@@ -879,7 +879,6 @@ pub const Bundler = struct {
                 &result.source,
                 false,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -899,7 +898,6 @@ pub const Bundler = struct {
                 &result.source,
                 false,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -918,7 +916,6 @@ pub const Bundler = struct {
                 &result.source,
                 true,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,
@@ -937,7 +934,6 @@ pub const Bundler = struct {
                 &result.source,
                 true,
                 js_printer.Options{
-                    .to_module_ref = Ref.RuntimeRef,
                     .externals = ast.externals,
                     .runtime_imports = ast.runtime_imports,
                     .require_ref = ast.require_ref,

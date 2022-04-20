@@ -13,6 +13,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const Ref = @import("ast/base.zig").Ref;
+const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
@@ -1093,7 +1094,7 @@ pub const E = struct {
         target: ExprNodeIndex,
         optional_chain: ?OptionalChain = null,
 
-        pub fn hasSameFlagsAs(a: *Index, b: *Index) bool {
+        pub fn hasSameFlagsAs(a: *E.Index, b: *E.Index) bool {
             return (a.optional_chain == b.optional_chain);
         }
     };
@@ -4342,7 +4343,7 @@ pub const DeclaredSymbol = struct {
 };
 
 pub const Dependency = struct {
-    source_index: Ref.Int = 0,
+    source_index: Index = Index.invalid,
     part_index: u32 = 0,
 
     pub const List = BabyList(Dependency);

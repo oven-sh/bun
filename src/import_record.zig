@@ -2,6 +2,7 @@ const fs = @import("fs.zig");
 const logger = @import("logger.zig");
 const std = @import("std");
 const Ref = @import("ast/base.zig").Ref;
+const Index = @import("ast/base.zig").Index;
 const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
@@ -30,11 +31,9 @@ pub const ImportKind = enum(u8) {
     /// A CSS "url(...)" token
     url,
 
-    internal,
-
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
-        var labels = Label.initFill("internal");
+        var labels = Label.initFill("");
         labels.set(ImportKind.entry_point, "entry-point");
         labels.set(ImportKind.stmt, "import-statement");
         labels.set(ImportKind.require, "require-call");
@@ -85,7 +84,7 @@ pub const ImportRecord = struct {
     /// 0 is invalid
     module_id: u32 = 0,
 
-    source_index: Ref.Int = std.math.maxInt(Ref.Int),
+    source_index: Index = Index.invalid,
 
     print_mode: PrintMode = .normal,
 
@@ -100,12 +99,6 @@ pub const ImportRecord = struct {
     /// In these cases we shouldn't generate an error if the path could not be
     /// resolved.
     handles_import_errors: bool = false,
-
-    is_internal: bool = false,
-
-    /// This tells the printer that we should print as export var $moduleID = ...
-    /// Instead of using the path.
-    is_bundled: bool = false,
 
     /// Sometimes the parser creates an import record and decides it isn't needed.
     /// For example, TypeScript code may have import statements that later turn
@@ -137,22 +130,41 @@ pub const ImportRecord = struct {
 
     was_originally_require: bool = false,
 
-    /// If a macro used <import>, it will be tracked here.
-    was_injected_by_macro: bool = false,
-
     kind: ImportKind,
 
     tag: Tag = Tag.none,
 
+    pub inline fn isRuntime(this: *const ImportRecord) bool {
+        return this.tag.isRuntime();
+    }
+
+    pub inline fn isInternal(this: *const ImportRecord) bool {
+        return this.tag.isInternal();
+    }
+
+    pub inline fn isBundled(this: *const ImportRecord) bool {
+        return this.module_id > 0;
+    }
+
     pub const List = @import("./baby_list.zig").BabyList(ImportRecord);
 
-    pub const Tag = enum {
+    pub const Tag = enum(u3) {
         none,
         react_refresh,
         jsx_import,
         jsx_classic,
         bun,
         bun_test,
+        runtime,
+        macro,
+
+        pub inline fn isRuntime(this: Tag) bool {
+            return this == .runtime;
+        }
+
+        pub inline fn isInternal(this: Tag) bool {
+            return @enumToInt(this) >= @enumToInt(Tag.runtime);
+        }
     };
 
     pub const PrintMode = enum {

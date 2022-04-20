@@ -6,20 +6,6 @@ var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 
-// We're disabling Object.freeze because it breaks CJS => ESM and can cause
-// issues with Suspense and other things that expect the CJS module namespace
-// to be mutable when the ESM module namespace is NOT mutable
-var __objectFreezePolyfill = new WeakSet();
-
-globalThis.Object.freeze = function freeze(obj) {
-  __objectFreezePolyfill.add(obj);
-  return obj;
-};
-
-globalThis.Object.isFrozen = function isFrozen(obj) {
-  return __objectFreezePolyfill.has(obj);
-};
-
 export var __markAsModule = (target) =>
   __defProp(target, "__esModule", { value: true, configurable: true });
 

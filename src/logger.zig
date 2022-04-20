@@ -20,7 +20,7 @@ const expect = std.testing.expect;
 const assert = std.debug.assert;
 const ArrayList = std.ArrayList;
 const StringBuilder = @import("./string_builder.zig");
-
+const Index = @import("./ast/base.zig").Index;
 pub const Kind = enum(i8) {
     err,
     warn,
@@ -1017,9 +1017,16 @@ pub inline fn usize2Loc(loc: usize) Loc {
 pub const Source = struct {
     path: fs.Path,
     key_path: fs.Path,
-    index: Ref.Int = 0,
+
     contents: string,
     contents_is_recycled: bool = false,
+
+    index: Index = Index.invalid,
+
+    pub fn rangeOfIdentifier(this: *const Source, loc: Loc) Range {
+        const js_lexer = @import("./js_lexer.zig");
+        return js_lexer.rangeOfIdentifier(this.contents, loc);
+    }
 
     pub const ErrorPosition = struct {
         line_start: usize,

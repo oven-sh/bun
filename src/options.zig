@@ -1109,6 +1109,8 @@ pub const SourceMapOption = enum {
 };
 
 pub const OutputFormat = enum {
+    preserve,
+
     /// ES module format
     /// This is the default format
     esm,

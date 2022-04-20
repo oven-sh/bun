@@ -355,7 +355,6 @@ pub const Linker = struct {
                                     if (node_modules_bundle.getPackage(package_name)) |pkg| {
                                         const import_path = text[@minimum(text.len, package_name.len + 1)..];
                                         if (node_modules_bundle.findModuleIDInPackageIgnoringExtension(pkg, import_path)) |found_module| {
-                                            import_record.is_bundled = true;
                                             node_module_bundle_import_path = node_module_bundle_import_path orelse
                                                 linker.nodeModuleBundleImportPath(origin);
 
@@ -383,7 +382,6 @@ pub const Linker = struct {
                                         if (node_modules_bundle.getPackage(package_name)) |pkg| {
                                             const import_path = runtime[@minimum(runtime.len, package_name.len + 1)..];
                                             if (node_modules_bundle.findModuleInPackage(pkg, import_path)) |found_module| {
-                                                import_record.is_bundled = true;
                                                 node_module_bundle_import_path = node_module_bundle_import_path orelse
                                                     linker.nodeModuleBundleImportPath(origin);
 
@@ -477,7 +475,6 @@ pub const Linker = struct {
                                                 );
                                             }
 
-                                            import_record.is_bundled = true;
                                             node_module_bundle_import_path = node_module_bundle_import_path orelse
                                                 linker.nodeModuleBundleImportPath(origin);
                                             import_record.path.text = node_module_bundle_import_path.?;

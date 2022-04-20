@@ -431,7 +431,7 @@ pub const ImportScanner = struct {
 
                     var record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
-                    if (record.path.isMacro()) {
+                    if (record.tag == .macro) {
                         record.is_unused = true;
                         record.path.is_disabled = true;
                         continue;
@@ -601,7 +601,7 @@ pub const ImportScanner = struct {
                         {
                             // internal imports are presumed to be always used
                             // require statements cannot be stripped
-                            if (!record.is_internal and !record.was_originally_require) {
+                            if (!record.isInternal() and !record.was_originally_require) {
                                 record.is_unused = true;
                                 continue;
                             }
@@ -2325,7 +2325,7 @@ pub const Parser = struct {
         // We don't need to worry about "use strict" directives because this only
         // happens when bundling, in which case we are flatting the module scopes of
         // all modules together anyway so such directives are meaningless.
-        // if (!p.import_meta_ref.isSourceIndexNull()) {
+        // if (!p.import_meta_ref.isIndexNull()) {
         //     // heap so it lives beyond this function call
         //     var decls = try p.allocator.alloc(G.Decl, 1);
         //     decls[0] = Decl{ .binding = p.b(B.Identifier{
@@ -2493,7 +2493,6 @@ pub const Parser = struct {
                             logger.Loc.Empty,
                         ),
                         "import_",
-                        true,
                     ) catch unreachable;
                 }
             }
@@ -2508,7 +2507,6 @@ pub const Parser = struct {
                     p.runtime_imports,
                     null,
                     "import_",
-                    true,
                 ) catch unreachable;
             }
             // If we import JSX, we might call require.
@@ -4121,13 +4119,12 @@ fn NewParser_(
             symbols: anytype,
             additional_stmt: ?Stmt,
             comptime suffix: string,
-            comptime is_internal: bool,
         ) !void {
             const allocator = p.allocator;
             const import_record_i = p.addImportRecordByRange(.stmt, logger.Range.None, import_path);
             var import_record: *ImportRecord = &p.import_records.items[import_record_i];
             import_record.path.namespace = "runtime";
-            import_record.is_internal = is_internal;
+            import_record.tag = .runtime;
             var import_path_identifier = try import_record.path.name.nonUniqueNameString(allocator);
             var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + suffix.len);
             var clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
@@ -5666,7 +5663,7 @@ fn NewParser_(
                             p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
                             p.import_records.items[new_import_id].is_unused = true;
                             if (comptime only_scan_imports_and_do_not_visit) {
-                                p.import_records.items[new_import_id].is_internal = true;
+                                p.import_records.items[new_import_id].tag = .macro;
                                 p.import_records.items[new_import_id].path.is_disabled = true;
                             }
                             stmt.default_name = null;
@@ -5717,8 +5714,9 @@ fn NewParser_(
 
                         p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
                         p.import_records.items[new_import_id].is_unused = true;
+                        p.import_records.items[new_import_id].tag = .macro;
+
                         if (comptime only_scan_imports_and_do_not_visit) {
-                            p.import_records.items[new_import_id].is_internal = true;
                             p.import_records.items[new_import_id].path.is_disabled = true;
                         }
                         remap_count += 1;
@@ -5745,10 +5743,10 @@ fn NewParser_(
             if (remap_count > 0 and stmt.items.len == 0 and stmt.default_name == null) {
                 p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
                 p.import_records.items[stmt.import_record_index].is_unused = true;
+                p.import_records.items[stmt.import_record_index].tag = .macro;
 
                 if (comptime only_scan_imports_and_do_not_visit) {
                     p.import_records.items[stmt.import_record_index].path.is_disabled = true;
-                    p.import_records.items[stmt.import_record_index].is_internal = true;
                 }
 
                 return p.s(S.Empty{}, loc);
@@ -10565,7 +10563,6 @@ fn NewParser_(
 
                 const record_id = p.addImportRecord(.stmt, this.loc, import_data.path);
                 var record: *ImportRecord = &p.import_records.items[record_id];
-                record.was_injected_by_macro = true;
                 p.macro.imports.ensureUnusedCapacity(import_data.import.items.len) catch unreachable;
                 var import = import_data.import;
                 import.import_record_index = record_id;

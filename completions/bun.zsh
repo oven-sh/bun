@@ -7,9 +7,10 @@ local _bun_generic_options=(
 
 # Helper's definitions
 function _bun_env_completion() {
-    local -a _node_env _regex _envs
+    local -a _node_env_describe _node_env _envs
+    local _regex
 
-    _regex=' -(d|-define) process\.env\.NODE_ENV:(.+) '
+    _regex=' -(d|-define) process\.env\.NODE_ENV:.+ '
     if [[ ! ${words[@]} =~ $_regex ]]; then
         _node_env_describe=(
             'development -- Define mode as development'
@@ -31,17 +32,29 @@ function _bun_env_completion() {
     # Since the values are parsed as json, append a double quote in string values
     # and replace single quotes with double quotes
     # ${(f)} convert lines to array. because when processed with
-    # sed it must be converted
+    # sed it must be converted.
+    #
+    # Environment variables can have any value.
+    # for example line breaks. by processing it with '${(f)}'
+    # we make sure that when autocompleting they are treated as a string.
+    #
+    # In my case this environment variable:
+    #   "FZF_DEFAULT_OPTS=$'\n--color fg:7,hl:12,fg+:234,bg+:248,hl+:1\n'"
+    # broke the autocomplete and with '${(f)}' I solved it
     _envs=(
-        ${(f)"$(export | sed -r "/^\w+=(true|false|null|[0-9]+)$/! s/='?(.*?)('|$)/=\"\1\"/")"}
+        #${(f)"$(export | sed -r "/^\w+=(true|false|null|[0-9]+)$/! s/='?(.*?)('|$)/=\"\1\"/")"}
+        # Don't use PERL regExp because is not supported by MacOS and BSD
+        ${(f)"$(export | sed "/^\w\+=\(true\|false\|null\|[0-9]\+\)$/! s/='\?\(.*\)\('\|$\)/=\"\1\"/")"}
     )
     compadd -Q -J envs -a -- _envs
 }
 
 function _bun_add_package_completion() {
     local -a _recent _popular
-    #_recent=($(history -n bun | grep -oP '(?<=^bun add ).+' | sed -E 's/(-?-\w+\s*(.*))//; s/\s+/\n/' | sed -E '/^\s*$/d'))
-    _recent=($(history -n | grep -oP '(?<=^bun add ).+'))
+    #_recent=($(history -n | grep -oP '(?<=^bun add ).+'))
+    # Don't use PERL regExp because is not supported by MacOS and BSD
+    _recent=($(history -n | sed -n 's/^\(bun[[:space:]]\+add[[:space:]]\+\)\(.\+\)/\2/p'))
+
     _popular=($(SHELL=zsh bun getcompletes a))
 
     if [ ${#_recent[@]} -gt 0 ]; then
@@ -55,6 +68,11 @@ function _bun_add_package_completion() {
 
 function _bun_remove_package_completion() {
     local -a _dependencies _dev_dependencies _peer_dependencies _optional_dependencies
+
+    if ! command -v jq >/dev/null 2>&1; then
+        _message 'jq is required to complete bun remove command'
+        return
+    fi
 
     _dependencies=($(jq -r '.dependencies | keys[]' package.json 2>/dev/null))
 
@@ -152,7 +170,7 @@ function _bun_loader_completion() {
         'css  -- Define loader as css'
     )
     if ! [[ "$cur" =~ ^\..+: ]]; then
-        compadd -P '.' -S ':'  -a _popular_extensions
+        compadd -P '.' -S ':' -a _popular_extensions
     else
         compadd -l -P "${cur%%:*}:" -d _loaders_describe -a _loaders
     fi

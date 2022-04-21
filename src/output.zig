@@ -328,7 +328,8 @@ pub fn print(comptime fmt: string, args: anytype) void {
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        std.debug.assert(source_set);
+        if (comptime Environment.allow_assert)
+            std.debug.assert(source_set);
 
         if (enable_buffering) {
             std.fmt.format(source.buffered_stream.writer(), fmt, args) catch unreachable;

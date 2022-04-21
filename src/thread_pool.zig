@@ -219,7 +219,7 @@ pub fn runner(
 
 /// Loop over an array of tasks and invoke `Run` on each one in a different thread
 /// **Blocks the calling thread** until all tasks are completed.
-pub fn doAndWait(
+pub fn do(
     this: *ThreadPool,
     allocator: std.mem.Allocator,
     wg: ?*WaitGroup,
@@ -227,25 +227,13 @@ pub fn doAndWait(
     comptime Run: anytype,
     values: anytype,
 ) !void {
-    return try Do(this, allocator, wg, true, @TypeOf(ctx), ctx, Run, @TypeOf(values), values);
-}
-
-/// Loop over an array of tasks and invoke `Run` on each one in a different thread
-pub fn do(
-    this: *ThreadPool,
-    allocator: std.mem.Allocator,
-    ctx: anytype,
-    comptime Run: anytype,
-    values: anytype,
-) !void {
-    return try Do(this, allocator, null, false, @TypeOf(ctx), ctx, Run, @TypeOf(values), values);
+    return try Do(this, allocator, wg, @TypeOf(ctx), ctx, Run, @TypeOf(values), values);
 }
 
 pub fn Do(
     this: *ThreadPool,
     allocator: std.mem.Allocator,
     wg: ?*WaitGroup,
-    comptime block: bool,
     comptime Context: type,
     ctx: Context,
     comptime Function: anytype,
@@ -256,29 +244,19 @@ pub fn Do(
         return;
     var allocated_wait_group: ?*WaitGroup = null;
     defer {
-        if (comptime block) {
-            if (allocated_wait_group) |group| {
-                group.deinit();
-                allocator.destroy(group);
-            }
+        if (allocated_wait_group) |group| {
+            group.deinit();
+            allocator.destroy(group);
         }
     }
 
-    const WaitGroupType = comptime if (block) *WaitGroup else void;
-    var wait_group: WaitGroupType = undefined;
-
-    if (comptime block) {
-        if (wg) |wg_| {
-            wait_group = wg_;
-        } else {
-            allocated_wait_group = try allocator.create(WaitGroup);
-            try allocated_wait_group.?.init();
-            wait_group = allocated_wait_group.?;
-        }
-    }
-
+    var wait_group = wg orelse brk: {
+        allocated_wait_group = try allocator.create(WaitGroup);
+        try allocated_wait_group.?.init();
+        break :brk allocated_wait_group.?;
+    };
     const WaitContext = struct {
-        wait_group: WaitGroupType = undefined,
+        wait_group: *WaitGroup = undefined,
         ctx: Context,
     };
 
@@ -287,7 +265,7 @@ pub fn Do(
             for (values_) |v, j| {
                 Function(ctx_.ctx, v, i + j);
             }
-            if (comptime block) ctx_.wait_group.finish();
+            ctx_.wait_group.finish();
         }
     };
 
@@ -299,7 +277,7 @@ pub fn Do(
     var i: usize = 0;
     const context_ = WaitContext{
         .ctx = ctx,
-        .wait_group = if (comptime block) wait_group else void{},
+        .wait_group = wait_group,
     };
     var remain = values;
     while (remain.len > 0) {
@@ -312,11 +290,10 @@ pub fn Do(
         });
         i += slice.len;
         remain = remain[slice.len..];
-        if (comptime block) wait_group.counter += 1;
+        wait_group.counter += 1;
     }
     runny.run();
-    if (comptime block)
-        wait_group.wait();
+    wait_group.wait();
 }
 
 test "parallel for loop" {
@@ -324,26 +301,26 @@ test "parallel for loop" {
     var thread_pool = ThreadPool.init(.{ .max_threads = 12 });
     var sleepy_time: u32 = 100;
     var huge_array = &[_]u32{
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
-        sleepy_time,
+        sleepy_time + std.rand.DefaultPrng.init(1).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(2).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(3).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(4).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(5).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(6).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(7).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(8).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(9).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(10).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(11).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(12).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(13).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(14).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(15).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(16).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(17).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(18).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(19).random().uintAtMost(u32, 20),
+        sleepy_time + std.rand.DefaultPrng.init(20).random().uintAtMost(u32, 20),
     };
     const Runner = struct {
         completed: usize = 0,

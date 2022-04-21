@@ -2477,8 +2477,8 @@ pub const Resolver = struct {
             // For existent directories which don't find a match
             // Start watching it automatically,
             // onStartWatchingDirectory fn decides whether to actually watch.
-            if (r.onStartWatchingDirectoryCtx) |ctx| {
-                r.onStartWatchingDirectory.?(ctx, entries.dir, entries.fd);
+            if (r.watcher) |watcher| {
+                watcher.watch(entries.dir, entries.fd);
             }
         }
         return null;

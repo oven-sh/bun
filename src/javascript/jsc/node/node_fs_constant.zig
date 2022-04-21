@@ -2,6 +2,12 @@ const bun = @import("../../../global.zig");
 const Environment = bun.Environment;
 const std = @import("std");
 
+fn get(comptime name: []const u8) comptime_int {
+    return if (@hasDecl(std.os.O, name))
+        return @field(std.os.O, name)
+    else
+        return 0;
+}
 pub const Constants = struct {
     // File Access Constants
     /// Constant for fs.access(). File is visible to the calling process.
@@ -74,7 +80,7 @@ pub const Constants = struct {
     /// Flag indicating reading accesses to the file system will no longer result in
     /// an update to the atime information associated with the file.
     /// This flag is available on Linux operating systems only.
-    pub const O_NOATIME = std.os.O.NOATIME;
+    pub const O_NOATIME = get("NOATIME");
     /// Constant for fs.open(). Flag indicating that the open should fail if the path is a symbolic link.
     pub const O_NOFOLLOW = std.os.O.NOFOLLOW;
     /// Constant for fs.open(). Flag indicating that the file is opened for synchronous I/O.
@@ -82,9 +88,9 @@ pub const Constants = struct {
     /// Constant for fs.open(). Flag indicating that the file is opened for synchronous I/O with write operations waiting for data integrity.
     pub const O_DSYNC = std.os.O.DSYNC;
     /// Constant for fs.open(). Flag indicating to open the symbolic link itself rather than the resource it is pointing to.
-    pub const O_SYMLINK = if (Environment.isMac) std.os.O.O_SYMLINK;
+    pub const O_SYMLINK = get("SYMLINK");
     /// Constant for fs.open(). When set, an attempt will be made to minimize caching effects of file I/O.
-    pub const O_DIRECT = std.os.O.DIRECT;
+    pub const O_DIRECT = get("DIRECT");
     /// Constant for fs.open(). Flag indicating to open the file in nonblocking mode when possible.
     pub const O_NONBLOCK = std.os.O.NONBLOCK;
     // File Type Constants

@@ -4344,7 +4344,7 @@ pub const DeclaredSymbol = struct {
 
 pub const Dependency = struct {
     source_index: Index = Index.invalid,
-    part_index: u32 = 0,
+    part_index: Index.Int = 0,
 
     pub const List = BabyList(Dependency);
 };

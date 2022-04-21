@@ -16983,7 +16983,17 @@ fn NewParser_(
 
             return js_ast.Ast{
                 .runtime_imports = p.runtime_imports,
-                .parts = BabyList(js_ast.Part).init(parts),
+                .parts = .{
+                    .ptr = parts.ptr,
+                    .len = @truncate(u32, parts.len),
+                    .cap = @intCast(
+                        u32,
+                        if (parts.len > 0)
+                            (std.mem.sliceAsBytes(_parts).len - std.mem.sliceAsBytes(parts).len) / @sizeOf(js_ast.Part)
+                        else
+                            0,
+                    ),
+                },
                 .module_scope = p.module_scope.*,
                 .allocator = p.allocator,
                 .symbols = Symbol.List.fromList(p.symbols),

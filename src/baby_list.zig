@@ -1,5 +1,6 @@
 const std = @import("std");
 const Environment = @import("env.zig");
+const util = @import("./util.zig");
 
 /// This is like ArrayList except it stores the length and capacity as u32
 /// In practice, it is very unusual to have lengths above 4 GB
@@ -82,6 +83,10 @@ pub fn BabyList(comptime Type: type) type {
                 .capacity = this.cap,
                 .allocator = allocator,
             };
+        }
+
+        pub fn from(allocator: std.mem.Allocator, default: anytype) !ListType {
+            return util.from(ListType, allocator, default);
         }
 
         pub inline fn first(this: ListType) ?*Type {

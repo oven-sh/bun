@@ -1012,6 +1012,10 @@ You can disable that with `--silent`
 bun run --silent clean
 ```
 
+`bun run ${script-name}` runs the equivalent of `npm run script-name`. For example, `bun run dev` runs the `dev` script in `package.json`, which may sometimes spin up non-bun processes.
+
+`bun run ${javascript-file.js}` will run it with bun, as long as the file doesn't have a node shebang.
+
 To print a list of `scripts`, `bun run` without additional args:
 
 ```bash

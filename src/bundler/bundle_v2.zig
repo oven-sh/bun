@@ -39,7 +39,7 @@ const allocators = @import("../allocators.zig");
 const MimeType = @import("../http/mime_type.zig");
 const resolve_path = @import("../resolver/resolve_path.zig");
 const runtime = @import("../runtime.zig");
-const Timer = @import("../timer.zig");
+const Timer = @import("../system_timer.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const DebugLogs = _resolver.DebugLogs;
@@ -726,9 +726,11 @@ const ParseTask = struct {
                 var opts = js_parser.Parser.Options.init(task.jsx, loader);
                 opts.transform_require_to_import = false;
                 opts.enable_bundling = true;
+                opts.can_import_from_bundle = false;
+                opts.features.allow_runtime = source.index != .runtime;
                 opts.warn_about_unbundled_modules = false;
                 opts.macro_context = &this.data.macro_context;
-                opts.features.auto_import_jsx = task.jsx.parse;
+                opts.features.auto_import_jsx = task.jsx.parse and bundler.options.auto_import_jsx;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.tree_shaking = bundler.options.tree_shaking;
 
@@ -744,7 +746,7 @@ const ParseTask = struct {
                 var estimated_resolve_queue_count: usize = 0;
                 for (ast.import_records.slice()) |*import_record| {
                     // Don't resolve the runtime
-                    if (import_record.isRuntime() or import_record.is_unused) {
+                    if (import_record.isInternal() or import_record.is_unused) {
                         continue;
                     }
                     estimated_resolve_queue_count += 1;
@@ -754,7 +756,7 @@ const ParseTask = struct {
                 var last_error: ?anyerror = null;
                 for (ast.import_records.slice()) |*import_record| {
                     // Don't resolve the runtime
-                    if (import_record.isRuntime() or import_record.is_unused) {
+                    if (import_record.isInternal() or import_record.is_unused) {
                         continue;
                     }
 
@@ -1251,6 +1253,11 @@ const Bitmap = struct {
     };
 };
 
+const AstSourceIDMapping = struct {
+    id: Index.Int,
+    source_index: Index.Int,
+};
+
 const LinkerGraph = struct {
     files: File.List = .{},
     entry_points: EntryPoint.List = .{},
@@ -1522,7 +1529,7 @@ const LinkerContext = struct {
         var export_star_import_records: [][]u32 = this.parse_graph.ast.items(.export_star_import_records);
         var exports_refs: []Ref = this.parse_graph.ast.items(.exports_ref);
         var module_refs: []Ref = this.parse_graph.ast.items(.module_ref);
-        var symbols = this.graph.symbols;
+        var symbols = &this.graph.symbols;
         defer this.graph.symbols = symbols;
         var force_include_exports_for_entry_points: []bool = this.graph.meta.items(.force_include_exports_for_entry_point);
         var needs_exports_variable: []bool = this.graph.meta.items(.needs_exports_variable);
@@ -1746,6 +1753,169 @@ const LinkerContext = struct {
                     source_index,
                     id,
                 );
+            }
+        }
+
+        // Step 5: Create namespace exports for every file. This is always necessary
+        // for CommonJS files, and is also necessary for other files if they are
+        // imported using an import star statement.
+        {
+            try this.parse_graph.pool.pool.do(this.allocator(), &this.wait_group, this, doStep5, this.graph.reachable_files);
+        }
+    }
+
+    pub fn createExportsForFile(
+        c: *LinkerContext,
+        allocator_: std.mem.Allocator,
+        source_index: Index.Int,
+        id: u32,
+        ids: []u32,
+        resolved_exports: *RefExportData,
+        imports_to_bind: []*RefImportData,
+        export_aliases: []const string,
+    ) void {
+        ////////////////////////////////////////////////////////////////////////////////
+        // WARNING: This method is run in parallel over all files. Do not mutate data
+        // for other files within this method or you will create a data race.
+        ////////////////////////////////////////////////////////////////////////////////
+
+        var properties = std.ArrayList(js_ast.G.Property)
+            .initCapacity(allocator_, export_aliases.len) catch unreachable;
+        var ns_export_dependencies = std.ArrayList(js_ast.Dependency).init(allocator_);
+        var ns_export_symbol_uses = js_ast.Part.SymbolUseMap{};
+        for (export_aliases) |alias| {
+            var export_ = resolved_exports.getPtr(alias).?;
+
+            const other_id = ids[export_.source_index];
+
+            // If this is an export of an import, reference the symbol that the import
+            // was eventually resolved to. We need to do this because imports have
+            // already been resolved by this point, so we can't generate a new import
+            // and have that be resolved later.
+            if (imports_to_bind[other_id].get(export_.ref)) |import_data| {
+                export_.ref = import_data.ref;
+                export_.source_index = import_data.source_index;
+                ns_export_dependencies.appendSlice(import_data.re_exports.slice()) catch unreachable;
+            }
+
+            // Exports of imports need EImportIdentifier in case they need to be re-
+            // written to a property access later on
+            var value: js_ast.Expr = undefined;
+            if (c.graph.symbols.getConst(export_.ref).?.namespace_alias != null) {
+                value = js_ast.Expr.init(
+                    js_ast.E.ImportIdentifier,
+                    js_ast.E.ImportIdentifier{
+                        .ref = export_.ref,
+                    },
+                    Logger.Loc.Empty,
+                );
+            }
+        }
+    }
+
+    pub fn doStep5(c: *LinkerContext, source_index: Index.Int, _: usize) void {
+        const ids = c.parse_graph.input_files.items(.ast);
+        const id = ids[source_index];
+        if (@as(usize, id) > c.graph.meta.len) return;
+
+        var worker: *ThreadPool.Worker = @ptrCast(
+            *ThreadPool.Worker,
+            @alignCast(
+                @alignOf(*ThreadPool.Worker),
+                ThreadPoolLib.Thread.current.?.ctx.?,
+            ),
+        );
+        // we must use this allocator here
+        const allocator_ = worker.allocator;
+
+        var resolved_exports: *RefExportData = &c.graph.meta.items(.resolved_exports)[id];
+
+        // Now that all exports have been resolved, sort and filter them to create
+        // something we can iterate over later.
+        var aliases = std.ArrayList(string).initCapacity(allocator_, resolved_exports.count()) catch unreachable;
+        var alias_iter = resolved_exports.iterator();
+        var imports_to_bind = c.graph.meta.items(.imports_to_bind);
+        var is_probably_typescript_type = c.graph.meta.items(.is_probably_typescript_type);
+
+        next_alias: while (alias_iter.next()) |entry| {
+            var export_ = entry.value_ptr.*;
+            var alias = entry.key_ptr.*;
+            const this_id = ids[export_.source_index];
+            // Re-exporting multiple symbols with the same name causes an ambiguous
+            // export. These names cannot be used and should not end up in generated code.
+            if (export_.potentially_ambiguous_export_star_refs.len > 0) {
+                var main_ref = imports_to_bind[this_id].get(export_.ref) orelse export_.ref;
+                for (export_.potentially_ambiguous_export_star_refs.slice()) |ambig| {
+                    const _id = ids[ambig.source_index];
+                    const ambig_ref = imports_to_bind[_id].get(ambig.ref) orelse ambig.ref;
+                    if (!main_ref.eql(ambig_ref)) {
+                        continue :next_alias;
+                    }
+                }
+            }
+
+            // Ignore re-exported imports in TypeScript files that failed to be
+            // resolved. These are probably just type-only imports so the best thing to
+            // do is to silently omit them from the export list.
+            if (is_probably_typescript_type[this_id].contains(export_.ref)) {
+                continue;
+            }
+
+            aliases.appendAssumeCapacity(alias);
+        }
+        // TODO: can this be u32 instead of a string?
+        // if yes, we could just move all the hidden exports to the end of the array
+        // and only store a count instead of an array
+        strings.sortDesc(aliases);
+        const export_aliases = aliases.toOwnedSlice();
+        c.graph.meta.items(.sorted_and_filtered_export_aliases)[id] = export_aliases;
+
+        // Export creation uses "sortedAndFilteredExportAliases" so this must
+        // come second after we fill in that array
+        c.createExportsForFile(allocator_, source_index, id, ids, resolved_exports, imports_to_bind, export_aliases);
+
+        // Each part tracks the other parts it depends on within this file
+        var local_dependencies = std.AutoHashMap(u32, u32).init(allocator);
+        defer local_dependencies.deinit();
+        var parts = &c.graph.ast.items(.parts)[id];
+        var parts_slice: []js_ast.Part = parts.slice();
+        var named_imports: *js_ast.Ast.NamedImports = &c.graph.meta.items(.named_imports)[id];
+        for (parts_slice) |*part, part_index| {
+
+            // TODO: inline const TypeScript enum here
+
+            // TODO: inline function calls here
+
+            // note: if we crash on append, it is due to threadlocal heaps in mimalloc
+            const symbol_uses = part.symbol_uses.keys();
+            for (symbol_uses) |ref, j| {
+                if (comptime Environment.allow_assert) {
+                    std.debug.assert(part.symbol_uses.values()[j].count_estimate > 0);
+                }
+
+                // TODO: inline const values from an import
+
+                const other_parts = c.topLevelSymbolsToParts(id, ref);
+
+                for (other_parts) |other_part_index| {
+                    var local = local_dependencies.getOrPutValue(@intCast(u32, other_part_index), @intCast(u32, part_index)) catch unreachable;
+                    if (local.value_ptr.* != @intCast(u32, part_index)) {
+                        local.value_ptr.* = @intCast(u32, part_index);
+                        // note: if we crash on append, it is due to threadlocal heaps in mimalloc
+                        part.dependencies.append(
+                            allocator_,
+                            .{
+                                .source_index = Index.init(source_index),
+                                .part_index = other_part_index,
+                            },
+                        ) catch unreachable;
+                    }
+                }
+
+                // Also map from imports to parts that use them
+                if (named_imports.getPtr(ref)) |existing| {
+                    existing.local_parts_with_uses.append(allocator_, @intCast(u32, part_index)) catch unreachable;
+                }
             }
         }
     }
@@ -2158,7 +2328,7 @@ const LinkerContext = struct {
     }
 
     pub fn advanceImportTracker(c: *LinkerContext, tracker: ImportTracker) ImportTracker.Iterator {
-        const ids = c.graph.input_files.items(.ast);
+        const ids = c.parse_graph.input_files.items(.ast);
         const id = ids[tracker.source_index.get()];
         var named_imports: JSAst.NamedImports = c.graph.ast.items(.named_imports)[id];
         var import_records: []ImportRecord = c.graph.ast.items(.import_records)[id];

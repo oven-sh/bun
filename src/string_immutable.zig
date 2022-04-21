@@ -2077,10 +2077,12 @@ const sort_asc = std.sort.asc(u8);
 const sort_desc = std.sort.desc(u8);
 
 pub fn sortAsc(in: []string) void {
+    // TODO: experiment with simd to see if it's faster
     std.sort.sort([]const u8, in, {}, cmpStringsAsc);
 }
 
 pub fn sortDesc(in: []string) void {
+    // TODO: experiment with simd to see if it's faster
     std.sort.sort([]const u8, in, {}, cmpStringsDesc);
 }
 

@@ -134,6 +134,15 @@ pub const Index = enum(Index.Int) {
     pub const Int = u32;
 
     pub fn init(num: anytype) Index {
+        const NumType = @TypeOf(num);
+        if (comptime @typeInfo(NumType) == .Pointer) {
+            return init(num.*);
+        }
+
+        if (comptime @typeInfo(NumType) == .Enum) {
+            return init(@enumToInt(num));
+        }
+
         return @intToEnum(Index, @intCast(Index.Int, num));
     }
 

@@ -978,7 +978,7 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const RefVoidMap = std.ArrayHashMapUnmanaged(Ref, void, Ref.ArrayHashCtx, false);
 const RefImportData = std.ArrayHashMapUnmanaged(Ref, ImportData, Ref.ArrayHashCtx, false);
 const RefExportData = std.ArrayHashMapUnmanaged(Ref, ExportData, Ref.ArrayHashCtx, false);
-const TopLevelSymbolToParts = std.ArrayHashMapUnmanaged(Ref, u32, Ref.ArrayHashCtx, false);
+const TopLevelSymbolToParts = js_ast.Ast.TopLevelSymbolToParts;
 
 pub const WrapKind = enum {
     none,
@@ -1032,10 +1032,119 @@ pub const ExportData = struct {
     source_index: Index.Int = Index.invalid.get(),
 };
 
+pub const JSMeta = struct {
+
+    /// This is only for TypeScript files. If an import symbol is in this map, it
+    /// means the import couldn't be found and doesn't actually exist. This is not
+    /// an error in TypeScript because the import is probably just a type.
+    ///
+    /// Normally we remove all unused imports for TypeScript files during parsing,
+    /// which automatically removes type-only imports. But there are certain re-
+    /// export situations where it's impossible to tell if an import is a type or
+    /// not:
+    ///
+    ///   import {typeOrNotTypeWhoKnows} from 'path';
+    ///   export {typeOrNotTypeWhoKnows};
+    ///
+    /// Really people should be using the TypeScript "isolatedModules" flag with
+    /// bundlers like this one that compile TypeScript files independently without
+    /// type checking. That causes the TypeScript type checker to emit the error
+    /// "Re-exporting a type when the '--isolatedModules' flag is provided requires
+    /// using 'export type'." But we try to be robust to such code anyway.
+    is_probably_typescript_type: RefVoidMap = .{},
+
+    /// Imports are matched with exports in a separate pass from when the matched
+    /// exports are actually bound to the imports. Here "binding" means adding non-
+    /// local dependencies on the parts in the exporting file that declare the
+    /// exported symbol to all parts in the importing file that use the imported
+    /// symbol.
+    ///
+    /// This must be a separate pass because of the "probably TypeScript type"
+    /// check above. We can't generate the part for the export namespace until
+    /// we've matched imports with exports because the generated code must omit
+    /// type-only imports in the export namespace code. And we can't bind exports
+    /// to imports until the part for the export namespace is generated since that
+    /// part needs to participate in the binding.
+    ///
+    /// This array holds the deferred imports to bind so the pass can be split
+    /// into two separate passes.
+    imports_to_bind: RefImportData = .{},
+
+    /// This includes both named exports and re-exports.
+    ///
+    /// Named exports come from explicit export statements in the original file,
+    /// and are copied from the "NamedExports" field in the AST.
+    ///
+    /// Re-exports come from other files and are the result of resolving export
+    /// star statements (i.e. "export * from 'foo'").
+    resolved_exports: RefExportData = .{},
+    resolved_export_star: ExportData = ExportData{},
+
+    /// Never iterate over "resolvedExports" directly. Instead, iterate over this
+    /// array. Some exports in that map aren't meant to end up in generated code.
+    /// This array excludes these exports and is also sorted, which avoids non-
+    /// determinism due to random map iteration order.
+    sorted_and_filtered_export_aliases: []const string = &[_]string{},
+
+    /// This is merged on top of the corresponding map from the parser in the AST.
+    /// You should call "TopLevelSymbolToParts" to access this instead of accessing
+    /// it directly.
+    top_level_symbol_to_parts_overlay: TopLevelSymbolToParts = .{},
+
+    /// If this is an entry point, this array holds a reference to one free
+    /// temporary symbol for each entry in "sortedAndFilteredExportAliases".
+    /// These may be needed to store copies of CommonJS re-exports in ESM.
+    cjs_export_copies: []const Ref = &[_]Ref{},
+
+    /// The index of the automatically-generated part used to represent the
+    /// CommonJS or ESM wrapper. This part is empty and is only useful for tree
+    /// shaking and code splitting. The wrapper can't be inserted into the part
+    /// because the wrapper contains other parts, which can't be represented by
+    /// the current part system. Only wrapped files have one of these.
+    wrapper_part_index: Index = Index.invalid,
+
+    /// The index of the automatically-generated part used to handle entry point
+    /// specific stuff. If a certain part is needed by the entry point, it's added
+    /// as a dependency of this part. This is important for parts that are marked
+    /// as removable when unused and that are not used by anything else. Only
+    /// entry point files have one of these.
+    entry_point_part_index: Index = Index.invalid,
+
+    /// This is true if this file is affected by top-level await, either by having
+    /// a top-level await inside this file or by having an import/export statement
+    /// that transitively imports such a file. It is forbidden to call "require()"
+    /// on these files since they are evaluated asynchronously.
+    is_async_or_has_async_dependency: bool = false,
+
+    wrap: WrapKind = WrapKind.none,
+
+    /// If true, we need to insert "var exports = {};". This is the case for ESM
+    /// files when the import namespace is captured via "import * as" and also
+    /// when they are the target of a "require()" call.
+    needs_exports_variable: bool = false,
+
+    /// If true, the "__export(exports, { ... })" call will be force-included even
+    /// if there are no parts that reference "exports". Otherwise this call will
+    /// be removed due to the tree shaking pass. This is used when for entry point
+    /// files when code related to the current output format needs to reference
+    /// the "exports" variable.
+    force_include_exports_for_entry_point: bool = false,
+
+    /// This is set when we need to pull in the "__export" symbol in to the part
+    /// at "nsExportPartIndex". This can't be done in "createExportsForFile"
+    /// because of concurrent map hazards. Instead, it must be done later.
+    needs_export_symbol_from_runtime: bool = false,
+
+    /// Wrapped files must also ensure that their dependencies are wrapped. This
+    /// flag is used during the traversal that enforces this invariant, and is used
+    /// to detect when the fixed point has been reached.
+    did_wrap_dependencies: bool = false,
+};
+
 pub const Graph = struct {
     entry_points: std.ArrayListUnmanaged(Index.Int) = .{},
     ast: std.MultiArrayList(JSAst) = .{},
-    meta: std.MultiArrayList(JSMeta) = .{},
+
     input_files: InputFile.List = .{},
 
     code_splitting: bool = false,
@@ -1063,115 +1172,6 @@ pub const Graph = struct {
         side_effects: _resolver.SideEffects = _resolver.SideEffects.has_side_effects,
 
         pub const List = std.MultiArrayList(InputFile);
-    };
-
-    pub const JSMeta = struct {
-
-        /// This is only for TypeScript files. If an import symbol is in this map, it
-        /// means the import couldn't be found and doesn't actually exist. This is not
-        /// an error in TypeScript because the import is probably just a type.
-        ///
-        /// Normally we remove all unused imports for TypeScript files during parsing,
-        /// which automatically removes type-only imports. But there are certain re-
-        /// export situations where it's impossible to tell if an import is a type or
-        /// not:
-        ///
-        ///   import {typeOrNotTypeWhoKnows} from 'path';
-        ///   export {typeOrNotTypeWhoKnows};
-        ///
-        /// Really people should be using the TypeScript "isolatedModules" flag with
-        /// bundlers like this one that compile TypeScript files independently without
-        /// type checking. That causes the TypeScript type checker to emit the error
-        /// "Re-exporting a type when the '--isolatedModules' flag is provided requires
-        /// using 'export type'." But we try to be robust to such code anyway.
-        is_probably_typescript_type: RefVoidMap = .{},
-
-        /// Imports are matched with exports in a separate pass from when the matched
-        /// exports are actually bound to the imports. Here "binding" means adding non-
-        /// local dependencies on the parts in the exporting file that declare the
-        /// exported symbol to all parts in the importing file that use the imported
-        /// symbol.
-        ///
-        /// This must be a separate pass because of the "probably TypeScript type"
-        /// check above. We can't generate the part for the export namespace until
-        /// we've matched imports with exports because the generated code must omit
-        /// type-only imports in the export namespace code. And we can't bind exports
-        /// to imports until the part for the export namespace is generated since that
-        /// part needs to participate in the binding.
-        ///
-        /// This array holds the deferred imports to bind so the pass can be split
-        /// into two separate passes.
-        imports_to_bind: RefImportData = .{},
-
-        /// This includes both named exports and re-exports.
-        ///
-        /// Named exports come from explicit export statements in the original file,
-        /// and are copied from the "NamedExports" field in the AST.
-        ///
-        /// Re-exports come from other files and are the result of resolving export
-        /// star statements (i.e. "export * from 'foo'").
-        resolved_exports: RefExportData = .{},
-        resolved_export_star: ExportData = ExportData{},
-
-        /// Never iterate over "resolvedExports" directly. Instead, iterate over this
-        /// array. Some exports in that map aren't meant to end up in generated code.
-        /// This array excludes these exports and is also sorted, which avoids non-
-        /// determinism due to random map iteration order.
-        sorted_and_filtered_export_aliases: []const string = &[_]string{},
-
-        /// This is merged on top of the corresponding map from the parser in the AST.
-        /// You should call "TopLevelSymbolToParts" to access this instead of accessing
-        /// it directly.
-        top_level_symbol_to_parts_overlay: TopLevelSymbolToParts = .{},
-
-        /// If this is an entry point, this array holds a reference to one free
-        /// temporary symbol for each entry in "sortedAndFilteredExportAliases".
-        /// These may be needed to store copies of CommonJS re-exports in ESM.
-        cjs_export_copies: []const Ref = &[_]Ref{},
-
-        /// The index of the automatically-generated part used to represent the
-        /// CommonJS or ESM wrapper. This part is empty and is only useful for tree
-        /// shaking and code splitting. The wrapper can't be inserted into the part
-        /// because the wrapper contains other parts, which can't be represented by
-        /// the current part system. Only wrapped files have one of these.
-        wrapper_part_index: Index = Index.invalid,
-
-        /// The index of the automatically-generated part used to handle entry point
-        /// specific stuff. If a certain part is needed by the entry point, it's added
-        /// as a dependency of this part. This is important for parts that are marked
-        /// as removable when unused and that are not used by anything else. Only
-        /// entry point files have one of these.
-        entry_point_part_index: Index = Index.invalid,
-
-        /// This is true if this file is affected by top-level await, either by having
-        /// a top-level await inside this file or by having an import/export statement
-        /// that transitively imports such a file. It is forbidden to call "require()"
-        /// on these files since they are evaluated asynchronously.
-        is_async_or_has_async_dependency: bool = false,
-
-        wrap: WrapKind = WrapKind.none,
-
-        /// If true, we need to insert "var exports = {};". This is the case for ESM
-        /// files when the import namespace is captured via "import * as" and also
-        /// when they are the target of a "require()" call.
-        needs_exports_variable: bool = false,
-
-        /// If true, the "__export(exports, { ... })" call will be force-included even
-        /// if there are no parts that reference "exports". Otherwise this call will
-        /// be removed due to the tree shaking pass. This is used when for entry point
-        /// files when code related to the current output format needs to reference
-        /// the "exports" variable.
-        force_include_exports_for_entry_point: bool = false,
-
-        /// This is set when we need to pull in the "__export" symbol in to the part
-        /// at "nsExportPartIndex". This can't be done in "createExportsForFile"
-        /// because of concurrent map hazards. Instead, it must be done later.
-        needs_export_symbol_from_runtime: bool = false,
-
-        /// Wrapped files must also ensure that their dependencies are wrapped. This
-        /// flag is used during the traversal that enforces this invariant, and is used
-        /// to detect when the fixed point has been reached.
-        did_wrap_dependencies: bool = false,
     };
 };
 

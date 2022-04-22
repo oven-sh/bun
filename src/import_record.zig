@@ -88,57 +88,141 @@ pub const ImportRecord = struct {
 
     print_mode: PrintMode = .normal,
 
+    kind: ImportKind,
+
+    tag: Tag = Tag.none,
+
+    flags: Flags.Set = Flags.None,
+
+    pub inline fn set(this: *ImportRecord, flag: Flags, value: bool) void {
+        this.flags.setPresent(flag, value);
+    }
+
+    pub inline fn enable(this: *ImportRecord, flag: Flags) void {
+        this.set(flag, true);
+    }
+
     /// True for the following cases:
     ///
-    ///   try { require('x') } catch { handle }
-    ///   try { await import('x') } catch { handle }
-    ///   try { require.resolve('x') } catch { handle }
-    ///   import('x').catch(handle)
-    ///   import('x').then(_, handle)
+    ///   `try { require('x') } catch { handle }`
+    ///   `try { await import('x') } catch { handle }`
+    ///   `try { require.resolve('x') } catch { handle }`
+    ///   `import('x').catch(handle)`
+    ///   `import('x').then(_, handle)`
     ///
     /// In these cases we shouldn't generate an error if the path could not be
     /// resolved.
-    handles_import_errors: bool = false,
+    pub inline fn handles_import_errors(this: *const ImportRecord) bool {
+        return this.flags.contains(.handles_import_errors);
+    }
 
     /// Sometimes the parser creates an import record and decides it isn't needed.
     /// For example, TypeScript code may have import statements that later turn
     /// out to be type-only imports after analyzing the whole file.
-    is_unused: bool = false,
+    pub inline fn is_unused(this: *const ImportRecord) bool {
+        return this.flags.contains(.is_unused);
+    }
 
     /// If this is true, the import contains syntax like "* as ns". This is used
     /// to determine whether modules that have no exports need to be wrapped in a
     /// CommonJS wrapper or not.
-    contains_import_star: bool = false,
+    pub inline fn contains_import_star(this: *const ImportRecord) bool {
+        return this.flags.contains(.contains_import_star);
+    }
 
     /// If this is true, the import contains an import for the alias "default",
     /// either via the "import x from" or "import {default as x} from" syntax.
-    contains_default_alias: bool = false,
+    pub inline fn contains_default_alias(this: *const ImportRecord) bool {
+        return this.flags.contains(.contains_default_alias);
+    }
 
     /// If true, this "export * from 'path'" statement is evaluated at run-time by
     /// calling the "__reExport()" helper function
-    calls_runtime_re_export_fn: bool = false,
-
+    pub inline fn calls_runtime_re_export_fn(this: *const ImportRecord) bool {
+        return this.flags.contains(.calls_runtime_re_export_fn);
+    }
     /// If true, this calls require() at runtime
-    calls_runtime_require: bool = false,
+    pub inline fn calls_runtime_require(this: *const ImportRecord) bool {
+        return this.flags.contains(.calls_runtime_require);
+    }
 
     /// Tell the printer to wrap this call to "require()" in "__toModule(...)"
-    wrap_with_to_module: bool = false,
+    pub inline fn wrap_with_to_module(this: *const ImportRecord) bool {
+        return this.flags.contains(.wrap_with_to_module);
+    }
 
     /// Tell the printer to wrap this call to "toESM()" in "__toESM(...)"
-    wrap_with_to_esm: bool = false,
+    pub inline fn wrap_with_to_esm(this: *const ImportRecord) bool {
+        return this.flags.contains(.wrap_with_to_esm);
+    }
 
-    /// True for require calls like this: "try { require() } catch {}". In this
-    /// case we shouldn't generate an error if the path could not be resolved.
-    is_inside_try_body: bool = false,
+    // If this is true, the import contains an import for the alias "__esModule",
+    // via the "import {__esModule} from" syntax.
+    pub inline fn contains_es_module_alias(this: *const ImportRecord) bool {
+        return this.flags.contains(.contains_es_module_alias);
+    }
 
     /// If true, this was originally written as a bare "import 'file'" statement
-    was_originally_bare_import: bool = false,
+    pub inline fn was_originally_bare_import(this: *const ImportRecord) bool {
+        return this.flags.contains(.was_originally_bare_import);
+    }
+    pub inline fn was_originally_require(this: *const ImportRecord) bool {
+        return this.flags.contains(.was_originally_require);
+    }
 
-    was_originally_require: bool = false,
+    pub const Flags = enum {
+        /// True for the following cases:
+        ///
+        ///   try { require('x') } catch { handle }
+        ///   try { await import('x') } catch { handle }
+        ///   try { require.resolve('x') } catch { handle }
+        ///   import('x').catch(handle)
+        ///   import('x').then(_, handle)
+        ///
+        /// In these cases we shouldn't generate an error if the path could not be
+        /// resolved.
+        handles_import_errors,
 
-    kind: ImportKind,
+        /// Sometimes the parser creates an import record and decides it isn't needed.
+        /// For example, TypeScript code may have import statements that later turn
+        /// out to be type-only imports after analyzing the whole file.
+        is_unused,
 
-    tag: Tag = Tag.none,
+        /// If this is true, the import contains syntax like "* as ns". This is used
+        /// to determine whether modules that have no exports need to be wrapped in a
+        /// CommonJS wrapper or not.
+        contains_import_star,
+
+        /// If this is true, the import contains an import for the alias "default",
+        /// either via the "import x from" or "import {default as x} from" syntax.
+        contains_default_alias,
+
+        // If this is true, the import contains an import for the alias "__esModule",
+        // via the "import {__esModule} from" syntax.
+        contains_es_module_alias,
+
+        /// If true, this "export * from 'path'" statement is evaluated at run-time by
+        /// calling the "__reExport()" helper function
+        calls_runtime_re_export_fn,
+
+        /// If true, this calls require() at runtime
+        calls_runtime_require,
+
+        /// Tell the printer to wrap this call to "require()" in "__toModule(...)"
+        wrap_with_to_module,
+
+        /// Tell the printer to wrap this call to "toESM()" in "__toESM(...)"
+        wrap_with_to_esm,
+
+        /// If true, this was originally written as a bare "import 'file'" statement
+        was_originally_bare_import,
+
+        was_originally_require,
+
+        pub const None = Set{};
+        pub const Fields = std.enums.EnumFieldStruct(Flags, bool, false);
+        pub const Set = std.enums.EnumSet(Flags);
+    };
 
     pub inline fn isRuntime(this: *const ImportRecord) bool {
         return this.tag.isRuntime();
@@ -156,12 +240,20 @@ pub const ImportRecord = struct {
 
     pub const Tag = enum(u3) {
         none,
+        /// JSX auto-import for React Fast Refresh
         react_refresh,
+        /// JSX auto-import for jsxDEV or jsx
         jsx_import,
+        /// JSX auto-import for Fragment or createElement
         jsx_classic,
+        /// Uses the `bun` import specifier
+        ///     import {foo} from "bun";
         bun,
+        /// Uses the `bun:test` import specifier
+        ///     import {expect} from "bun:test";
         bun_test,
         runtime,
+        /// A macro: import specifier OR a macro import
         macro,
 
         pub inline fn isRuntime(this: Tag) bool {

@@ -487,12 +487,12 @@ const ImportVariant = enum {
     pub fn determine(record: *const importRecord.ImportRecord, s_import: *const S.Import) ImportVariant {
         var variant = ImportVariant.path_only;
 
-        if (record.contains_import_star) {
+        if (record.contains_import_star()) {
             variant = variant.hasStar();
         }
 
-        if (!record.was_originally_bare_import) {
-            if (!record.contains_default_alias) {
+        if (!record.was_originally_bare_import()) {
+            if (!record.contains_default_alias()) {
                 if (s_import.default_name) |default_name| {
                     if (default_name.ref != null) {
                         variant = variant.hasDefault();
@@ -1361,7 +1361,7 @@ pub fn NewPrinter(
             if (record.kind != .dynamic) {
                 p.printSpaceBeforeIdentifier();
 
-                if (record.path.is_disabled and record.handles_import_errors and !is_external) {
+                if (record.path.is_disabled and record.handles_import_errors() and !is_external) {
                     p.printRequireError(record.path.text);
                     return;
                 }
@@ -2071,7 +2071,7 @@ pub fn NewPrinter(
                                 if (wrap) {
                                     p.print(")");
                                 }
-                            } else if (import_record.was_originally_require and import_record.path.is_disabled) {
+                            } else if (import_record.was_originally_require() and import_record.path.is_disabled) {
                                 p.printRequireError(import_record.path.text);
                                 didPrint = true;
                             }
@@ -2349,7 +2349,7 @@ pub fn NewPrinter(
         }
 
         pub fn printNamespaceAlias(p: *Printer, import_record: ImportRecord, namespace: G.NamespaceAlias) void {
-            if (import_record.isBundled() and !import_record.contains_import_star) {
+            if (import_record.isBundled() and !import_record.contains_import_star()) {
                 p.print("$");
                 p.printModuleId(import_record.module_id);
             } else {
@@ -3606,7 +3606,7 @@ pub fn NewPrinter(
                         return p.printBundledImport(record, s);
                     }
 
-                    if (record.wrap_with_to_module) {
+                    if (record.wrap_with_to_module()) {
                         const require_ref = p.options.require_ref.?;
 
                         const module_id = record.module_id;
@@ -3620,7 +3620,7 @@ pub fn NewPrinter(
                             try p.imported_module_ids.append(module_id);
                         }
 
-                        if (record.contains_import_star) {
+                        if (record.contains_import_star()) {
                             p.print("var ");
                             p.printSymbol(s.namespace_ref);
                             p.print(" = ");
@@ -3673,7 +3673,7 @@ pub fn NewPrinter(
 
                             p.print("} = ");
 
-                            if (record.contains_import_star) {
+                            if (record.contains_import_star()) {
                                 p.printSymbol(s.namespace_ref);
                                 p.print(";\n");
                             } else {
@@ -3731,7 +3731,7 @@ pub fn NewPrinter(
                         return;
                     }
 
-                    if (record.handles_import_errors and record.path.is_disabled and record.kind.isCommonJS()) {
+                    if (record.handles_import_errors() and record.path.is_disabled and record.kind.isCommonJS()) {
                         return;
                     }
 

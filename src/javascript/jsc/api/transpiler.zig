@@ -856,7 +856,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
     if (parse_result) |*res| {
         for (res.ast.import_records.slice()) |*import| {
             if (import.kind.isCommonJS()) {
-                import.wrap_with_to_module = true;
+                import.enable(.wrap_with_to_module);
                 import.module_id = @truncate(u32, std.hash.Wyhash.hash(0, import.path.pretty));
             }
         }

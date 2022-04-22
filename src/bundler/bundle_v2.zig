@@ -798,7 +798,7 @@ const ParseTask = struct {
                             error.ModuleNotFound => {
                                 const addError = Logger.Log.addResolveErrorWithTextDupeMaybeWarn;
 
-                                if (!import_record.handles_import_errors) {
+                                if (!import_record.handles_import_errors()) {
                                     last_error = err;
                                     if (isPackagePath(import_record.path.text)) {
                                         if (platform.isWebLike() and options.ExternalModules.isNodeBuiltin(import_record.path.text)) {
@@ -1595,7 +1595,7 @@ const LinkerContext = struct {
                         //
                         // In that case the module *is* considered a CommonJS module because
                         // the namespace object must be created.
-                        if ((record.contains_import_star or record.contains_default_alias) and
+                        if ((record.contains_import_star() or record.contains_default_alias()) and
                             // TODO: hasLazyExport
                             (other_wrap == .none))
                         {
@@ -2047,7 +2047,7 @@ const LinkerContext = struct {
                                 // We should use "__require" instead of "require" if we're not
                                 // generating a CommonJS output file, since it won't exist otherwise
                                 if (this.shouldCallRuntimeRequire(output_format)) {
-                                    record.calls_runtime_require = true;
+                                    record.enable(.calls_runtime_require);
                                     runtime_require_uses += 1;
                                 }
 
@@ -2065,11 +2065,11 @@ const LinkerContext = struct {
                                 //
                                 if (kind != .require and
                                     (kind != .stmt or
-                                    record.contains_import_star or
-                                    record.contains_default_alias or
-                                    record.contains_es_module_alias))
+                                    record.contains_import_star() or
+                                    record.contains_default_alias() or
+                                    record.contains_es_module_alias()))
                                 {
-                                    record.wrap_with_to_esm = true;
+                                    record.enable(.wrap_with_to_esm);
                                     to_esm_uses += 1;
                                 }
                             }
@@ -2099,7 +2099,7 @@ const LinkerContext = struct {
                                 // This is an ES6 import of a CommonJS module, so it needs the
                                 // "__toESM" wrapper as long as it's not a bare "require()"
                                 if (kind != .require and other_export_kind == .common_js) {
-                                    record.wrap_with_to_esm = true;
+                                    record.enable(.wrap_with_to_esm);
                                     to_esm_uses += 1;
                                 }
                             },
@@ -2197,7 +2197,7 @@ const LinkerContext = struct {
                                 Index.init(source_index),
                             ) catch unreachable;
                             this.graph.ast.items(.uses_export_ref)[id] = true;
-                            record.calls_runtime_re_export_fn = true;
+                            record.enable(.calls_runtime_re_export_fn);
                             re_export_uses += 1;
                         }
                     }

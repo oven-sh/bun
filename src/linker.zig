@@ -510,7 +510,7 @@ pub const Linker = struct {
                         // We can do this in the printer instead of creating a bunch of AST nodes here.
                         // But we need to at least tell the printer that this needs to happen.
                         if (resolved_import.shouldAssumeCommonJS(import_record.kind)) {
-                            import_record.wrap_with_to_module = true;
+                            import_record.enable(.wrap_with_to_module);
                             import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
 
                             result.ast.needs_runtime = true;
@@ -519,7 +519,7 @@ pub const Linker = struct {
                     } else |err| {
                         switch (err) {
                             error.ModuleNotFound => {
-                                if (import_record.handles_import_errors) {
+                                if (import_record.handles_import_errors()) {
                                     import_record.path.is_disabled = true;
                                     continue;
                                 }

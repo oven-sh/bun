@@ -432,7 +432,7 @@ pub const ImportScanner = struct {
                     var record: *ImportRecord = &p.import_records.items[st.import_record_index];
 
                     if (record.tag == .macro) {
-                        record.is_unused = true;
+                        record.set(.is_unused, true);
                         record.path.is_disabled = true;
                         continue;
                     }
@@ -601,8 +601,8 @@ pub const ImportScanner = struct {
                         {
                             // internal imports are presumed to be always used
                             // require statements cannot be stripped
-                            if (!record.isInternal() and !record.was_originally_require) {
-                                record.is_unused = true;
+                            if (!record.isInternal() and !record.was_originally_require()) {
+                                record.set(.is_unused, true);
                                 continue;
                             }
                         }
@@ -615,7 +615,7 @@ pub const ImportScanner = struct {
                         st.star_name_loc = null;
                     }
 
-                    record.contains_default_alias = record.contains_default_alias or st.default_name != null;
+                    record.set(.contains_default_alias, record.contains_default_alias() or st.default_name != null);
 
                     const existing_items: ImportItemForNamespaceMap = p.import_items_for_namespace.get(namespace_ref) orelse
                         ImportItemForNamespaceMap.init(allocator);
@@ -628,7 +628,7 @@ pub const ImportScanner = struct {
                     // This keeps track of the `namespace_alias` incase, at printing time, we determine that we should print it with the namespace
                     for (st.items) |item| {
                         const is_default = strings.eqlComptime(item.alias, "default");
-                        record.contains_default_alias = record.contains_default_alias or is_default;
+                        record.set(.contains_default_alias, record.contains_default_alias() or is_default);
 
                         const name: LocRef = item.name;
                         const name_ref = name.ref.?;
@@ -654,10 +654,10 @@ pub const ImportScanner = struct {
                     try p.import_records_for_current_part.append(allocator, st.import_record_index);
 
                     if (st.star_name_loc != null) {
-                        record.contains_import_star = true;
+                        record.enable(.contains_import_star);
                     }
 
-                    if (record.was_originally_require) {
+                    if (record.was_originally_require()) {
                         var symbol = &p.symbols.items[namespace_ref.innerIndex()];
                         symbol.namespace_alias = G.NamespaceAlias{
                             .namespace_ref = namespace_ref,
@@ -2224,10 +2224,13 @@ pub const Parser = struct {
                 // - import 'foo';
                 // - import("foo")
                 // - require("foo")
-                import_record.is_unused = import_record.is_unused or
-                    (import_record.kind == .stmt and
-                    !import_record.was_originally_bare_import and
-                    !import_record.calls_runtime_re_export_fn);
+                import_record.set(
+                    .is_unused,
+                    import_record.is_unused() or
+                        (import_record.kind == .stmt and
+                        !import_record.was_originally_bare_import() and
+                        !import_record.calls_runtime_re_export_fn()),
+                );
             }
 
             var iter = scan_pass.used_symbols.iterator();
@@ -3114,7 +3117,7 @@ fn NewParser_(
                 }
 
                 const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
-                p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
+                p.import_records.items[import_record_index].set(.handles_import_errors, (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target);
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
                 return p.e(E.Import{
                     .expr = arg,
@@ -3153,15 +3156,15 @@ fn NewParser_(
                     const pathname = str.string(p.allocator) catch unreachable;
 
                     const import_record_index = p.addImportRecord(.require, arg.loc, pathname);
-                    p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
+                    p.import_records.items[import_record_index].set(.handles_import_errors, p.fn_or_arrow_data_visit.try_body_count != 0);
                     p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
                     if (!p.options.transform_require_to_import) {
                         return p.e(E.Require{ .import_record_index = import_record_index }, arg.loc);
                     }
 
-                    p.import_records.items[import_record_index].was_originally_require = true;
-                    p.import_records.items[import_record_index].contains_import_star = true;
+                    p.import_records.items[import_record_index].enable(.was_originally_require);
+                    p.import_records.items[import_record_index].enable(.contains_import_star);
 
                     const symbol_name = p.import_records.items[import_record_index].path.name.nonUniqueNameString(p.allocator);
                     const cjs_import_name = std.fmt.allocPrint(
@@ -5583,7 +5586,7 @@ fn NewParser_(
                 const id = p.addImportRecord(.stmt, path.loc, path.text);
                 p.import_records.items[id].tag = .macro;
                 p.import_records.items[id].path.namespace = js_ast.Macro.namespace;
-                p.import_records.items[id].is_unused = true;
+                p.import_records.items[id].set(.is_unused, true);
 
                 if (stmt.default_name) |name_loc| {
                     const name = p.loadNameFromRef(name_loc.ref.?);
@@ -5608,7 +5611,7 @@ fn NewParser_(
                 null;
 
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
-            p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
+            p.import_records.items[stmt.import_record_index].set(.was_originally_bare_import, was_originally_bare_import);
 
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);
@@ -5655,7 +5658,7 @@ fn NewParser_(
                             try p.macro.refs.put(ref, new_import_id);
 
                             p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
-                            p.import_records.items[new_import_id].is_unused = true;
+                            p.import_records.items[new_import_id].set(.is_unused, true);
                             if (comptime only_scan_imports_and_do_not_visit) {
                                 p.import_records.items[new_import_id].tag = .macro;
                                 p.import_records.items[new_import_id].path.is_disabled = true;
@@ -5707,7 +5710,7 @@ fn NewParser_(
                         try p.macro.refs.put(ref, new_import_id);
 
                         p.import_records.items[new_import_id].path.namespace = js_ast.Macro.namespace;
-                        p.import_records.items[new_import_id].is_unused = true;
+                        p.import_records.items[new_import_id].set(.is_unused, true);
                         p.import_records.items[new_import_id].tag = .macro;
 
                         if (comptime only_scan_imports_and_do_not_visit) {
@@ -5736,7 +5739,7 @@ fn NewParser_(
 
             if (remap_count > 0 and stmt.items.len == 0 and stmt.default_name == null) {
                 p.import_records.items[stmt.import_record_index].path.namespace = js_ast.Macro.namespace;
-                p.import_records.items[stmt.import_record_index].is_unused = true;
+                p.import_records.items[stmt.import_record_index].set(.is_unused, true);
                 p.import_records.items[stmt.import_record_index].tag = .macro;
 
                 if (comptime only_scan_imports_and_do_not_visit) {
@@ -6270,7 +6273,7 @@ fn NewParser_(
 
                             if (comptime track_symbol_usage_during_parse_pass) {
                                 // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                                p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
+                                p.import_records.items[import_record_index].enable(.calls_runtime_re_export_fn);
                             }
 
                             try p.lexer.expectOrInsertSemicolon();
@@ -6309,7 +6312,7 @@ fn NewParser_(
 
                                 if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                                    p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
+                                    p.import_records.items[import_record_index].enable(.calls_runtime_re_export_fn);
                                 }
 
                                 return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
@@ -10572,7 +10575,7 @@ fn NewParser_(
                     if (strings.eqlComptime(clause.alias, "default")) {
                         var non_unique_name = record.path.name.nonUniqueNameString(p.allocator) catch unreachable;
                         clause.original_name = std.fmt.allocPrint(p.allocator, "{s}_default", .{non_unique_name}) catch unreachable;
-                        record.contains_default_alias = true;
+                        record.enable(.contains_default_alias);
                     }
                     const name_ref = p.declareSymbol(.import, this.loc, clause.original_name) catch unreachable;
                     clause.name = LocRef{ .loc = this.loc, .ref = name_ref };

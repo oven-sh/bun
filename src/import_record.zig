@@ -116,10 +116,16 @@ pub const ImportRecord = struct {
 
     /// If true, this "export * from 'path'" statement is evaluated at run-time by
     /// calling the "__reExport()" helper function
-    calls_run_time_re_export_fn: bool = false,
+    calls_runtime_re_export_fn: bool = false,
+
+    /// If true, this calls require() at runtime
+    calls_runtime_require: bool = false,
 
     /// Tell the printer to wrap this call to "require()" in "__toModule(...)"
     wrap_with_to_module: bool = false,
+
+    /// Tell the printer to wrap this call to "toESM()" in "__toESM(...)"
+    wrap_with_to_esm: bool = false,
 
     /// True for require calls like this: "try { require() } catch {}". In this
     /// case we shouldn't generate an error if the path could not be resolved.

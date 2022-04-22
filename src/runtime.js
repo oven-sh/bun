@@ -156,10 +156,10 @@ export var __exportDefault = (target, value) => {
   });
 };
 
-export var __reExport = (target, module, desc) => {
+export var __reExport = (target, module, copyDefault, desc) => {
   if ((module && typeof module === "object") || typeof module === "function")
     for (let key of __getOwnPropNames(module))
-      if (!__hasOwnProp.call(target, key) && key !== "default")
+      if (!__hasOwnProp.call(target, key) && (copyDefault || key !== "default"))
         __defProp(target, key, {
           get: () => module[key],
           configurable: true,
@@ -168,3 +168,37 @@ export var __reExport = (target, module, desc) => {
         });
   return target;
 };
+
+// Converts the module from CommonJS to ESM
+export var __toESM = (module, isNodeMode) => {
+  return __reExport(
+    __markAsModule(
+      __defProp(
+        module != null ? __create(__getProtoOf(module)) : {},
+        "default",
+
+        // If the importer is not in node compatibility mode and this is an ESM
+        // file that has been converted to a CommonJS file using a Babel-
+        // compatible transform (i.e. "__esModule" has been set), then forward
+        // "default" to the export named "default". Otherwise set "default" to
+        // "module.exports" for node compatibility.
+        !isNodeMode && module && module.__esModule
+          ? { get: () => module.default, enumerable: true }
+          : { value: module, enumerable: true }
+      )
+    ),
+    module
+  );
+};
+
+// Converts the module from ESM to CommonJS
+export var __toCommonJS = /* @__PURE__ */ ((cache) => {
+  return (module, temp) => {
+    return (
+      (cache && cache.get(module)) ||
+      ((temp = __reExport(__markAsModule({}), module, /* copyDefault */ 1)),
+      cache && cache.set(module, temp),
+      temp)
+    );
+  };
+})(typeof WeakMap !== "undefined" ? new WeakMap() : 0);

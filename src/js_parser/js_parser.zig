@@ -2227,7 +2227,7 @@ pub const Parser = struct {
                 import_record.is_unused = import_record.is_unused or
                     (import_record.kind == .stmt and
                     !import_record.was_originally_bare_import and
-                    !import_record.calls_run_time_re_export_fn);
+                    !import_record.calls_runtime_re_export_fn);
             }
 
             var iter = scan_pass.used_symbols.iterator();
@@ -4125,20 +4125,13 @@ fn NewParser_(
             var import_record: *ImportRecord = &p.import_records.items[import_record_i];
             import_record.path.namespace = "runtime";
             import_record.tag = .runtime;
-            var import_path_identifier = try import_record.path.name.nonUniqueNameString(allocator);
-            var namespace_identifier = try allocator.alloc(u8, import_path_identifier.len + suffix.len);
+            const import_path_identifier = comptime suffix ++ "bun_runtime";
             var clause_items = try allocator.alloc(js_ast.ClauseItem, imports.len);
             var stmts = try allocator.alloc(Stmt, 1 + if (additional_stmt != null) @as(usize, 1) else @as(usize, 0));
             var declared_symbols = js_ast.DeclaredSymbol.List{};
             try declared_symbols.ensureTotalCapacity(p.allocator, imports.len);
-            std.mem.copy(u8, namespace_identifier[0..suffix.len], suffix);
-            std.mem.copy(
-                u8,
-                namespace_identifier[suffix.len..namespace_identifier.len],
-                import_path_identifier[0..import_path_identifier.len],
-            );
 
-            const namespace_ref = try p.newSymbol(.other, namespace_identifier);
+            const namespace_ref = try p.newSymbol(.other, import_path_identifier);
             try p.module_scope.generated.append(allocator, namespace_ref);
             for (imports) |alias, i| {
                 const ref = symbols.get(alias) orelse unreachable;
@@ -5588,6 +5581,7 @@ fn NewParser_(
             var stmt = stmt_;
             if (is_macro) {
                 const id = p.addImportRecord(.stmt, path.loc, path.text);
+                p.import_records.items[id].tag = .macro;
                 p.import_records.items[id].path.namespace = js_ast.Macro.namespace;
                 p.import_records.items[id].is_unused = true;
 
@@ -6276,7 +6270,7 @@ fn NewParser_(
 
                             if (comptime track_symbol_usage_during_parse_pass) {
                                 // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                                p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
+                                p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
                             }
 
                             try p.lexer.expectOrInsertSemicolon();
@@ -6315,7 +6309,7 @@ fn NewParser_(
 
                                 if (comptime track_symbol_usage_during_parse_pass) {
                                     // In the scan pass, we need _some_ way of knowing *not* to mark as unused
-                                    p.import_records.items[import_record_index].calls_run_time_re_export_fn = true;
+                                    p.import_records.items[import_record_index].calls_runtime_re_export_fn = true;
                                 }
 
                                 return p.s(S.ExportFrom{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line, .namespace_ref = namespace_ref, .import_record_index = import_record_index }, loc);
@@ -9016,7 +9010,7 @@ fn NewParser_(
         }
 
         pub fn addImportRecordByRange(p: *P, kind: ImportKind, range: logger.Range, name: string) u32 {
-            var index = p.import_records.items.len;
+            const index = p.import_records.items.len;
             const record = ImportRecord{
                 .kind = kind,
                 .range = range,

@@ -62,10 +62,9 @@ pub const MutableString = struct {
         return mutable;
     }
 
-    // Convert it to an ASCII identifier. Note: If you change this to a non-ASCII
-    // identifier, you're going to potentially cause trouble with non-BMP code
-    // points in target environments that don't support bracketed Unicode escapes.
-
+    /// Convert it to an ASCII identifier. Note: If you change this to a non-ASCII
+    /// identifier, you're going to potentially cause trouble with non-BMP code
+    /// points in target environments that don't support bracketed Unicode escapes.
     pub fn ensureValidIdentifier(str: string, allocator: std.mem.Allocator) !string {
         if (str.len == 0) {
             return "_";

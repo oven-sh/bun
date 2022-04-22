@@ -1282,6 +1282,25 @@ const LinkerGraph = struct {
     // it is a 2 dimensional bitset
     file_entry_bits: Bitmap,
 
+    pub fn generateRuntimeSymbolImportAndUse(
+        graph: *LinkerGraph,
+        source_index: Index.Int,
+        index: Index.Int,
+        entry_point_part_index: Index,
+        name: []const u8,
+        count: u32,
+    ) !void {
+        const ref = graph.ast.items(.ast)[Index.runtime.get()].module_scope.members.get(name).?.ref;
+        try graph.generateSymbolImportAndUse(
+            index,
+            source_index,
+            entry_point_part_index.get(),
+            ref,
+            count,
+            Index.runtime,
+        );
+    }
+
     pub fn addPartToFile(
         graph: *LinkerGraph,
         id: u32,
@@ -1761,12 +1780,441 @@ const LinkerContext = struct {
         // Step 5: Create namespace exports for every file. This is always necessary
         // for CommonJS files, and is also necessary for other files if they are
         // imported using an import star statement.
+        // Note: `do` will wait for all to finish before moving forward
+        try this.parse_graph.pool.pool.do(this.allocator(), &this.wait_group, this, doStep5, this.graph.reachable_files);
+
+        // Step 6: Bind imports to exports. This adds non-local dependencies on the
+        // parts that declare the export to all parts that use the import. Also
+        // generate wrapper parts for wrapped files.
         {
-            try this.parse_graph.pool.pool.do(this.allocator(), &this.wait_group, this, doStep5, this.graph.reachable_files);
+            const bufPrint = std.fmt.bufPrint;
+            var parts_list: []js_ast.Part.List = this.graph.ast.items(.parts);
+            var wrapper_refs = this.graph.meta.items(.wrapper_ref);
+            const needs_export_symbol_from_runtime: []const bool = this.graph.meta.items(.needs_export_symbol_from_runtime);
+            var imports_to_bind_list: []*RefImportData = this.graph.meta.items(.imports_to_bind);
+            var runtime_export_symbol_ref: Ref = Ref.None;
+            for (reachable) |source_index| {
+                const id = asts[source_index];
+                if (id > named_imports.len) {
+                    continue;
+                }
+                const is_entry_point = entry_point_kinds[source_index].isEntryPoint();
+                const aliases = this.graph.meta.items(.sorted_and_filtered_export_aliases)[id];
+                const wrap = wraps[id];
+                const export_kind = export_kinds[id];
+                const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
+                const exports_ref = exports_refs[id];
+                var exports_symbol: ?*js_ast.Symbol = if (exports_ref.isValid())
+                    this.graph.symbols.get(exports_ref)
+                else
+                    null;
+                const module_ref = module_refs[id];
+                var module_symbol: ?*js_ast.Symbol = if (module_ref.isValid())
+                    this.graph.symbols.get(module_ref)
+                else
+                    null;
+
+                // TODO: see if counting and batching into a single large allocation instead of per-file improves perf
+                const string_buffer_len: usize = brk: {
+                    var count: usize = 0;
+                    if (is_entry_point and this.output_format == .esm) {
+                        for (aliases) |alias| {
+                            count += std.fmt.count("{}", .{strings.fmtIdentifier(alias)});
+                        }
+                        count *= "export_".len;
+                    }
+
+                    var ident_fmt_len: usize = 0;
+                    if (wrap == .esm or (wrap != .cjs and export_kind != .common_js)) {
+                        ident_fmt_len += if (source.identifier_name.len > 0)
+                            source.identifier_name.len
+                        else
+                            std.fmt.count("{}", .{source.fmtIdentifier()});
+                    }
+
+                    if (wrap == .esm) {
+                        count += "init_".len + ident_fmt_len;
+                    }
+
+                    if (wrap != .cjs and export_kind != .common_js) {
+                        count += "exports_".len + ident_fmt_len;
+                        count += "module_".len + ident_fmt_len;
+                    }
+
+                    break :brk count;
+                };
+
+                var string_buffer = this.allocator.alloc(u8, string_buffer_len) catch unreachable;
+                var buf = string_buffer;
+
+                defer std.debug.assert(buf.len == 0); // ensure we used all of it
+
+                // Pre-generate symbols for re-exports CommonJS symbols in case they
+                // are necessary later. This is done now because the symbols map cannot be
+                // mutated later due to parallelism.
+                if (is_entry_point and this.output_format == .esm) {
+                    var copies = this.allocator().alloc(Ref, aliases.len) catch unreachable;
+
+                    for (aliases) |alias, i| {
+                        const original_name = bufPrint(buf, "export_{}", .{strings.fmtIdentifier(alias)}) catch unreachable;
+                        buf = buf[original_name.len..];
+                        copies[i] = this.graph.generateNewSymbol(source_index, .other, original_name);
+                    }
+                    this.graph.meta.items(.cjs_export_copies)[id] = copies;
+                }
+
+                // Use "init_*" for ESM wrappers instead of "require_*"
+                if (wrap == .esm) {
+                    const original_name = bufPrint(
+                        buf,
+                        "init_{}",
+                        .{
+                            strings.fmtIdentifier(source.fmtIdentifier()),
+                        },
+                    ) catch unreachable;
+
+                    buf = buf[original_name.len..];
+                    this.graph.symbols.get(wrapper_refs[id]).original_name = original_name;
+                }
+
+                // If this isn't CommonJS, then rename the unused "exports" and "module"
+                // variables to avoid them causing the identically-named variables in
+                // actual CommonJS files from being renamed. This is purely about
+                // aesthetics and is not about correctness. This is done here because by
+                // this point, we know the CommonJS status will not change further.
+                if (wrap != .cjs and export_kind != .common_js) {
+                    const exports_name = bufPrint(buf, "exports_{s}", .{strings.fmtIdentifier(source.fmtIdentifier())}) catch unreachable;
+                    buf = buf[exports_name.len..];
+                    const module_name = bufPrint(buf, "module_{s}", .{strings.fmtIdentifier(source.fmtIdentifier())}) catch unreachable;
+                    buf = buf[module_name.len..];
+
+                    exports_symbol.?.original_name = exports_name;
+                    module_symbol.?.original_name = module_name;
+                }
+
+                // Include the "__export" symbol from the runtime if it was used in the
+                // previous step. The previous step can't do this because it's running in
+                // parallel and can't safely mutate the "importsToBind" map of another file.
+                if (needs_exports_variable[id]) {
+                    if (!runtime_export_symbol_ref.isValid()) {
+                        runtime_export_symbol_ref = this.graph.ast.items(.module_scope)[Index.runtime.get()].members.get("__export").?.ref;
+                    }
+
+                    std.debug.assert(runtime_export_symbol_ref.isValid());
+
+                    this.graph.generateSymbolImportAndUse(
+                        id,
+                        source_index,
+                        js_ast.namespace_export_part_index,
+                        runtime_export_symbol_ref,
+                        1,
+                        Index.runtime.get(),
+                    ) catch unreachable;
+                }
+
+                var parts: []js_ast.Part = parts_list[id].slice();
+
+                var imports_to_bind = imports_to_bind_list[id];
+                var imports_to_bind_iter = imports_to_bind.iterator();
+                while (imports_to_bind_iter.next()) |import| {
+                    const import_source_index = import.value_ptr.source_index;
+                    const import_id = asts[import_source_index];
+                    const import_ref = import.key_ptr.*;
+                    var named_import = named_imports[import_id].getPtr(import_ref) orelse continue;
+                    const parts_declaring_symbol = this.topLevelSymbolsToParts(import_id, import_ref);
+
+                    for (named_import.local_parts_with_uses.slice()) |part_index| {
+                        var part: *js_ast.Part = &parts[part_index];
+
+                        part.dependencies.ensureUnusedCapacity(
+                            this.allocator(),
+                            parts_declaring_symbol.len + @as(usize, import.value_ptr.re_exports.len),
+                        ) catch unreachable;
+
+                        // Depend on the file containing the imported symbol
+                        for (parts_declaring_symbol) |resolved_part_index| {
+                            part.dependencies.appendAssumeCapacity(
+                                this.allocator(),
+                                .{
+                                    .source_index = import_source_index,
+                                    .part_index = resolved_part_index,
+                                },
+                            );
+                        }
+
+                        // Also depend on any files that re-exported this symbol in between the
+                        // file containing the import and the file containing the imported symbol
+                        part.dependencies.appendSliceAssumeCapacity(import.value_ptr.re_exports.slice());
+                    }
+
+                    // Merge these symbols so they will share the same name
+                    this.graph.symbols.merge(import_ref, import.value_ptr.ref);
+                }
+
+                // If this is an entry point, depend on all exports so they are included
+                if (is_entry_point) {
+                    const force_include_exports = force_include_exports_for_entry_points[id];
+                    const add_wrapper = wrap != .none;
+                    var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(
+                        this.allocator(),
+                        @as(usize, @boolToInt(force_include_exports)) + @as(usize, @boolToInt(add_wrapper)),
+                    );
+                    var resolved_exports_list: *RefExportData = this.graph.meta.items(.resolved_exports)[id];
+                    for (aliases) |alias| {
+                        var export_ = resolved_exports_list.get(alias).?;
+                        var target_source_index = export_.source_index;
+                        var target_id = asts[target_source_index];
+                        var target_ref = export_.ref;
+
+                        // If this is an import, then target what the import points to
+
+                        if (imports_to_bind.get(target_ref)) |import_data| {
+                            target_source_index = import_data.value_ptr.source_index;
+                            target_id = asts[target_source_index];
+                            target_ref = import_data.value_ptr.ref;
+                            dependencies.appendSlice(import_data.re_exports.slice()) catch unreachable;
+                        }
+
+                        const top_to_parts = this.topLevelSymbolsToParts(target_id, target_ref);
+                        dependencies.ensureUnusedCapacity(top_to_parts.len) catch unreachable;
+                        // Pull in all declarations of this symbol
+                        for (top_to_parts) |part_index| {
+                            dependencies.appendAssumeCapacity(
+                                .{
+                                    .source_index = target_source_index,
+                                    .part_index = part_index,
+                                },
+                            );
+                        }
+                    }
+
+                    dependencies.ensureUnusedCapacity(@as(usize, @boolToInt(force_include_exports)) + @as(usize, @boolToInt(add_wrapper))) catch unreachable;
+
+                    // Ensure "exports" is included if the current output format needs it
+                    if (force_include_exports) {
+                        dependencies.appendAssumeCapacity(
+                            .{ .source_index = source_index, .part_index = js_ast.namespace_export_part_index },
+                        );
+                    }
+
+                    if (add_wrapper) {
+                        dependencies.appendAssumeCapacity(
+                            .{
+                                .source_index = source_index,
+                                .part_index = this.graph.meta.items(.wrapper_part_index)[id].get(),
+                            },
+                        );
+                    }
+
+                    // Represent these constraints with a dummy part
+                    const entry_point_part_index = this.graph.addPartToFile(
+                        id,
+                        .{
+                            .dependencies = js_ast.Dependency.List.fromList(dependencies),
+                            .can_be_removed_if_unused = false,
+                        },
+                    ) catch unreachable;
+                    this.graph.items(.meta)[id].entry_point_part_index = Index.init(entry_point_part_index);
+
+                    // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
+                    if (force_include_exports) {
+                        this.graph.generateRuntimeSymbolImportAndUse(
+                            source_index,
+                            entry_point_part_index,
+                            "__toCommonJS",
+                            1,
+                        ) catch unreachable;
+                    }
+                }
+
+                // Encode import-specific constraints in the dependency graph
+                var import_records = import_records_list[id].slice();
+                for (parts) |*part, part_index| {
+                    var to_esm_uses: u32 = 0;
+                    var to_common_js_uses: u32 = 0;
+                    var runtime_require_uses: u32 = 0;
+
+                    for (part.import_record_indices.slice()) |import_record_index| {
+                        var record = &import_records[import_record_index];
+                        const kind = record.kind;
+
+                        // Don't follow external imports (this includes import() expressions)
+                        if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
+                            // This is an external import. Check if it will be a "require()" call.
+                            if (kind == .require or !output_format.keepES6ImportExportSyntax() or
+                                (kind == .dynamic))
+                            {
+                                // We should use "__require" instead of "require" if we're not
+                                // generating a CommonJS output file, since it won't exist otherwise
+                                if (this.shouldCallRuntimeRequire(output_format)) {
+                                    record.calls_runtime_require = true;
+                                    runtime_require_uses += 1;
+                                }
+
+                                // If this wasn't originally a "require()" call, then we may need
+                                // to wrap this in a call to the "__toESM" wrapper to convert from
+                                // CommonJS semantics to ESM semantics.
+                                //
+                                // Unfortunately this adds some additional code since the conversion
+                                // is somewhat complex. As an optimization, we can avoid this if the
+                                // following things are true:
+                                //
+                                // - The import is an ES module statement (e.g. not an "import()" expression)
+                                // - The ES module namespace object must not be captured
+                                // - The "default" and "__esModule" exports must not be accessed
+                                //
+                                if (kind != .require and
+                                    (kind != .stmt or
+                                    record.contains_import_star or
+                                    record.contains_default_alias or
+                                    record.contains_es_module_alias))
+                                {
+                                    record.wrap_with_to_esm = true;
+                                    to_esm_uses += 1;
+                                }
+                            }
+                            continue;
+                        }
+
+                        const other_source_index = record.source_index.get();
+                        const other_id = asts[other_source_index];
+                        std.debug.assert(@intCast(usize, other_id) < this.graph.meta.len);
+
+                        const other_export_kind = export_kinds[other_id];
+
+                        switch (wrap) {
+                            else => {
+
+                                // Depend on the automatically-generated require wrapper symbol
+                                const wrapper_ref = wrapper_refs[other_id];
+                                this.graph.generateSymbolImportAndUse(
+                                    id,
+                                    source_index,
+                                    @intCast(u32, part_index),
+                                    wrapper_ref,
+                                    1,
+                                    Index.init(other_source_index),
+                                ) catch unreachable;
+
+                                // This is an ES6 import of a CommonJS module, so it needs the
+                                // "__toESM" wrapper as long as it's not a bare "require()"
+                                if (kind != .require and other_export_kind == .common_js) {
+                                    record.wrap_with_to_esm = true;
+                                    to_esm_uses += 1;
+                                }
+                            },
+                            .none => {
+                                if (kind == .stmt and other_export_kind == .esm_with_dynamic_fallback) {
+                                    // This is an import of a module that has a dynamic export fallback
+                                    // object. In that case we need to depend on that object in case
+                                    // something ends up needing to use it later. This could potentially
+                                    // be omitted in some cases with more advanced analysis if this
+                                    // dynamic export fallback object doesn't end up being needed.
+                                    this.graph.generateSymbolImportAndUse(
+                                        id,
+                                        source_index,
+                                        @intCast(u32, part_index),
+                                        this.graph.ast.items(.exports_ref)[other_id],
+                                        1,
+                                        Index.init(other_source_index),
+                                    ) catch unreachable;
+                                }
+                            },
+                        }
+                    }
+
+                    // If there's an ES6 import of a non-ES6 module, then we're going to need the
+                    // "__toESM" symbol from the runtime to wrap the result of "require()"
+                    this.graph.generateRuntimeSymbolImportAndUse(
+                        id,
+                        source_index,
+                        Index.init(part_index),
+                        "__toESM",
+                        to_esm_uses,
+                    ) catch unreachable;
+
+                    // If there's a CommonJS require of an ES6 module, then we're going to need the
+                    // "__toCommonJS" symbol from the runtime to wrap the exports object
+                    this.graph.generateRuntimeSymbolImportAndUse(
+                        id,
+                        source_index,
+                        Index.init(part_index),
+                        "__toCommonJS",
+                        to_common_js_uses,
+                    ) catch unreachable;
+
+                    // If there are unbundled calls to "require()" and we're not generating
+                    // code for node, then substitute a "__require" wrapper for "require".
+                    this.graph.generateRuntimeSymbolImportAndUse(
+                        id,
+                        source_index,
+                        Index.init(part_index),
+                        "__require",
+                        runtime_require_uses,
+                    ) catch unreachable;
+
+                    // If there's an ES6 export star statement of a non-ES6 module, then we're
+                    // going to need the "__reExport" symbol from the runtime
+                    var re_export_uses: u32 = 0;
+
+                    for (export_star_import_records[id]) |import_record_index| {
+                        var record = &import_records[import_record_index];
+
+                        var happens_at_runtime = record.source_index.isInvalid() and (!is_entry_point or !output_format.keepES6ImportExportSyntax());
+                        if (record.source_index.isValid()) {
+                            var other_source_index = record.source_index.get();
+                            const other_id = asts[other_source_index];
+                            std.debug.assert(@intCast(usize, other_id) < this.graph.meta.len);
+                            const other_export_kind = export_kinds[other_id];
+                            if (other_source_index != source_index and other_export_kind.isDynamic()) {
+                                happens_at_runtime = true;
+                            }
+
+                            if (other_export_kind == .esm_with_dynamic_fallback) {
+                                // This looks like "__reExport(exports_a, exports_b)". Make sure to
+                                // pull in the "exports_b" symbol into this export star. This matters
+                                // in code splitting situations where the "export_b" symbol might live
+                                // in a different chunk than this export star.
+                                this.graph.generateSymbolImportAndUse(
+                                    id,
+                                    source_index,
+                                    @intCast(u32, part_index),
+                                    this.graph.ast.items(.exports_ref)[other_id],
+                                    1,
+                                    Index.init(other_source_index),
+                                ) catch unreachable;
+                            }
+                        }
+
+                        if (happens_at_runtime) {
+                            // Depend on this file's "exports" object for the first argument to "__reExport"
+                            this.graph.generateSymbolImportAndUse(
+                                id,
+                                source_index,
+                                @intCast(u32, part_index),
+                                this.graph.ast.items(.exports_ref)[id],
+                                1,
+                                Index.init(source_index),
+                            ) catch unreachable;
+                            this.graph.ast.items(.uses_export_ref)[id] = true;
+                            record.calls_runtime_re_export_fn = true;
+                            re_export_uses += 1;
+                        }
+                    }
+
+                    this.graph.generateRuntimeSymbolImportAndUse(
+                        source_index,
+                        id,
+                        Index.init(part_index),
+                        "__reExport",
+                        re_export_uses,
+                    ) catch unreachable;
+                }
+            }
         }
     }
 
-    pub fn createExportsForFile(c: *LinkerContext, allocator_: std.mem.Allocator, source_index: Index.Int, id: u32, ids: []u32, resolved_exports: *RefExportData, imports_to_bind: []*RefImportData, export_aliases: []const string, re_exports_count: usize) void {
+    pub fn createExportsForFile(c: *LinkerContext, allocator_: std.mem.Allocator, id: u32, ids: []u32, resolved_exports: *RefExportData, imports_to_bind: []*RefImportData, export_aliases: []const string, re_exports_count: usize) void {
         ////////////////////////////////////////////////////////////////////////////////
         // WARNING: This method is run in parallel over all files. Do not mutate data
         // for other files within this method or you will create a data race.
@@ -1793,7 +2241,7 @@ const LinkerContext = struct {
         defer stmts.done();
         const loc = Logger.Loc.Empty;
         // todo: investigate if preallocating this array is faster
-        var ns_export_dependencies = std.ArrayList(js_ast.Dependency).init(allocator_);
+        var ns_export_dependencies = std.ArrayList(js_ast.Dependency).initCapacity(allocator_, re_exports_count) catch unreachable;
 
         for (export_aliases) |alias| {
             var export_ = resolved_exports.getPtr(alias).?;
@@ -1883,7 +2331,7 @@ const LinkerContext = struct {
         var declared_symbols = js_ast.DeclaredSymbol.List{};
         var exports_ref = c.graph.ast.items(.exports_ref)[id];
         var export_stmts: []js_ast.Stmt = stmts.head;
-        std.debug.assert(stmts.head.len <= 2);
+        std.debug.assert(stmts.head.len <= 2); // assert we allocated exactly the right amount
         stmts.head.len = 0;
 
         // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
@@ -1976,6 +2424,9 @@ const LinkerContext = struct {
         }
     }
 
+    /// Step 5: Create namespace exports for every file. This is always necessary
+    /// for CommonJS files, and is also necessary for other files if they are
+    /// imported using an import star statement.
     pub fn doStep5(c: *LinkerContext, source_index: Index.Int, _: usize) void {
         const ids = c.parse_graph.input_files.items(.ast);
         const id = ids[source_index];
@@ -2043,7 +2494,6 @@ const LinkerContext = struct {
         // come second after we fill in that array
         c.createExportsForFile(
             allocator_,
-            source_index,
             id,
             ids,
             resolved_exports,

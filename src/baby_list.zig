@@ -34,6 +34,15 @@ pub fn BabyList(comptime Type: type) type {
             this.len += 1;
         }
 
+        pub inline fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
+            var tail = this.ptr[this.len];
+            for (values) |value| {
+                tail.* = value;
+                tail += 1;
+            }
+            this.len += values.len;
+        }
+
         pub inline fn init(items: []const Type) ListType {
             @setRuntimeSafety(false);
             return ListType{

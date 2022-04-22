@@ -211,6 +211,47 @@ pub fn fromSlice(
     }
 }
 
+/// Say you need to allocate a bunch of tiny arrays
+/// You could just do separate allocations for each, but that is slow
+/// With std.ArrayList, pointers invalidate on resize and that means it will crash.
+/// So a better idea is to batch up your allocations into one larger allocation
+/// and then just make all the arrays point to different parts of the larger allocation
+pub fn Batcher(comptime Type: type) type {
+    return struct {
+        head: []Type,
+
+        pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
+            var all = try allocator.alloc(Type, count);
+            return @This(){ .head = all };
+        }
+
+        pub inline fn done(this: *@This()) void {
+            std.debug.assert(this.head.len == 0);
+        }
+
+        pub inline fn eat(this: *@This(), value: Type) *Type {
+            this.head[0] = value;
+            var prev = &this.head[0];
+            this.head = this.head[1..];
+            return prev;
+        }
+
+        pub inline fn eat1(this: *@This(), value: Type) []Type {
+            this.head[0] = value;
+            var prev = this.head[0..1];
+            this.head = this.head[1..];
+            return prev;
+        }
+
+        pub inline fn next(this: *@This(), values: anytype) []Type {
+            this.head[0..values.len].* = values;
+            var prev = this.head[0..values.len];
+            this.head = this.head[values.len..];
+            return prev;
+        }
+    };
+}
+
 test "fromEntries" {
     const values = try from(std.AutoHashMap(u32, u32), std.heap.page_allocator, .{
         .{ 123, 456 },

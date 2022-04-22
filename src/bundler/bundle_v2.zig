@@ -1,6 +1,7 @@
 const Bundler = @import("../bundler.zig").Bundler;
 const GenerateNodeModulesBundle = @This();
 const bun = @import("../global.zig");
+const from = bun.from;
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -66,6 +67,7 @@ const Dependency = js_ast.Dependency;
 const JSAst = js_ast.Ast;
 const Loader = options.Loader;
 const Index = @import("../ast/base.zig").Index;
+const Batcher = bun.Batcher;
 
 pub const ThreadPool = struct {
     pool: ThreadPoolLib = undefined,
@@ -1764,25 +1766,35 @@ const LinkerContext = struct {
         }
     }
 
-    pub fn createExportsForFile(
-        c: *LinkerContext,
-        allocator_: std.mem.Allocator,
-        source_index: Index.Int,
-        id: u32,
-        ids: []u32,
-        resolved_exports: *RefExportData,
-        imports_to_bind: []*RefImportData,
-        export_aliases: []const string,
-    ) void {
+    pub fn createExportsForFile(c: *LinkerContext, allocator_: std.mem.Allocator, source_index: Index.Int, id: u32, ids: []u32, resolved_exports: *RefExportData, imports_to_bind: []*RefImportData, export_aliases: []const string, re_exports_count: usize) void {
         ////////////////////////////////////////////////////////////////////////////////
         // WARNING: This method is run in parallel over all files. Do not mutate data
         // for other files within this method or you will create a data race.
         ////////////////////////////////////////////////////////////////////////////////
 
+        // 1 property per export
         var properties = std.ArrayList(js_ast.G.Property)
             .initCapacity(allocator_, export_aliases.len) catch unreachable;
-        var ns_export_dependencies = std.ArrayList(js_ast.Dependency).init(allocator_);
+
         var ns_export_symbol_uses = js_ast.Part.SymbolUseMap{};
+        ns_export_symbol_uses.ensureTotalCapacity(allocator_, export_aliases.len) catch unreachable;
+
+        const needs_exports_variable = c.graph.meta.items(.needs_exports_variable)[id];
+
+        const stmts_count =
+            // 3 statements for every export
+            export_aliases.len * 3 +
+            // + 1 if there are non-zero exports
+            @as(usize, @boolToInt(export_aliases.len > 0)) +
+            // + 1 if we need to inject the exports variable
+            @as(usize, @boolToInt(needs_exports_variable));
+
+        var stmts = js_ast.Stmt.Batcher.init(allocator_, stmts_count) catch unreachable;
+        defer stmts.done();
+        const loc = Logger.Loc.Empty;
+        // todo: investigate if preallocating this array is faster
+        var ns_export_dependencies = std.ArrayList(js_ast.Dependency).init(allocator_);
+
         for (export_aliases) |alias| {
             var export_ = resolved_exports.getPtr(alias).?;
 
@@ -1800,6 +1812,7 @@ const LinkerContext = struct {
 
             // Exports of imports need EImportIdentifier in case they need to be re-
             // written to a property access later on
+            // note: this is stack allocated
             var value: js_ast.Expr = undefined;
             if (c.graph.symbols.getConst(export_.ref).?.namespace_alias != null) {
                 value = js_ast.Expr.init(
@@ -1807,8 +1820,158 @@ const LinkerContext = struct {
                     js_ast.E.ImportIdentifier{
                         .ref = export_.ref,
                     },
-                    Logger.Loc.Empty,
+                    loc,
                 );
+            } else {
+                value = js_ast.Expr.init(
+                    js_ast.E.Identifier,
+                    js_ast.E.Identifier{
+                        .ref = export_.ref,
+                    },
+                    loc,
+                );
+            }
+
+            var block = stmts.eat1(
+                js_ast.Stmt.alloc(js_ast.S.Block, .{
+                    .stmts = stmts.eat1(
+                        js_ast.Stmt.alloc(
+                            js_ast.S.Return,
+                            .{ .value = value },
+                            loc,
+                        ),
+                    ),
+                }, loc),
+            );
+            const fn_body = js_ast.G.FnBody{
+                .stmts = block,
+                .loc = loc,
+            };
+            properties.appendAssumeCapacity(
+                .{
+                    .key = js_ast.Expr.init(
+                        js_ast.E.String,
+                        .{
+                            // TODO: test emoji work as expected
+                            // relevant for WASM exports
+                            .utf8 = alias,
+                        },
+                        loc,
+                    ),
+                    .value = js_ast.Expr.init(js_ast.E.Arrow, .{ .prefer_expr = true, .body = fn_body }, loc),
+                },
+            );
+            ns_export_symbol_uses.putAssumeCapacity(export_.ref, .{ .count_estimate = 1 });
+
+            // Make sure the part that declares the export is included
+            const parts = c.topLevelSymbolsToParts(other_id, export_.ref);
+            ns_export_dependencies.ensureUnusedCapacity(parts.len) catch unreachable;
+            var ptr = ns_export_dependencies.items.ptr + ns_export_dependencies.items.len;
+            ns_export_dependencies.items.len += parts.len;
+
+            for (parts) |part_id| {
+                // Use a non-local dependency since this is likely from a different
+                // file if it came in through an export star
+                ptr[0] = .{
+                    .source_index = export_.source_index,
+                    .part_index = part_id,
+                };
+                ptr += 1;
+            }
+        }
+
+        var declared_symbols = js_ast.DeclaredSymbol.List{};
+        var exports_ref = c.graph.ast.items(.exports_ref)[id];
+        var export_stmts: []js_ast.Stmt = stmts.head;
+        std.debug.assert(stmts.head.len <= 2);
+        stmts.head.len = 0;
+
+        // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
+        if (needs_exports_variable) {
+            var decls = allocator_.alloc(1, js_ast.G.Decl) catch unreachable;
+            decls[0] = .{
+                .binding = js_ast.Binding.alloc(
+                    allocator_,
+                    js_ast.B.Identifier{
+                        .ref = exports_ref,
+                    },
+                    loc,
+                ),
+                .value = js_ast.Expr.init(js_ast.E.Object, .{}, loc),
+            };
+            export_stmts[0] = js_ast.Stmt.alloc(
+                js_ast.S.Local,
+                .{
+                    .decls = decls,
+                },
+                export_stmts[0].loc,
+            );
+            declared_symbols.append(allocator_, .{ .ref = exports_ref, .is_top_level = true }) catch unreachable;
+        }
+
+        // "__export(exports, { foo: () => foo })"
+        var export_ref = Ref.None;
+        if (properties.items.len > 0) {
+            export_ref = c.graph.ast.items(.module_scope)[Index.runtime.get()].members.get("__export").?.ref;
+            var args = allocator_.alloc(js_ast.Expr, 2) catch unreachable;
+            args[0..2].* = [_]js_ast.Expr{
+                js_ast.Expr.initIdentifier(exports_ref, loc),
+                js_ast.Expr.init(js_ast.E.Object, .{ .properties = js_ast.G.Property.List.fromList(properties) }, loc),
+            };
+            // the end incase we somehow get into a state where needs_export_variable is false but properties.len > 0
+            export_stmts[export_stmts.len - 1] = js_ast.Stmt.alloc(
+                js_ast.S.SExpr,
+                .{
+                    .value = js_ast.Expr.init(
+                        js_ast.E.Call,
+                        .{
+                            .target = js_ast.Expr.initIdentifier(export_ref, loc),
+                            .args = args,
+                        },
+                        loc,
+                    ),
+                },
+                loc,
+            );
+
+            // Make sure this file depends on the "__export" symbol
+            const parts = c.topLevelSymbolsToPartsForRuntime(export_ref);
+            ns_export_dependencies.ensureUnusedCapacity(parts.len) catch unreachable;
+            for (parts) |part_index| {
+                ns_export_dependencies.appendAssumeCapacity(
+                    .{ .source_index = Index.runtime.get(), .part_index = part_index },
+                );
+            }
+
+            // Make sure the CommonJS closure, if there is one, includes "exports"
+            c.graph.ast.items(.uses_exports_ref)[id] = true;
+        }
+
+        // No need to generate a part if it'll be empty
+        if (export_stmts.len > 0) {
+            var parts: js_ast.Part.List = c.graph.ast.items(.parts)[id];
+            // - we must already have preallocated the parts array
+            // - if the parts list is completely empty, we shouldn't have gotten here in the first place
+            std.debug.assert(parts.len > 1);
+
+            // Initialize the part that was allocated for us earlier. The information
+            // here will be used after this during tree shaking.
+            parts.ptr[js_ast.namespace_export_part_index] = .{
+                .stmts = export_stmts,
+                .symbol_uses = ns_export_symbol_uses,
+                .dependencies = js_ast.Dependency.List.fromList(ns_export_dependencies),
+                .declared_symbols = declared_symbols,
+
+                // This can be removed if nothing uses it
+                .can_be_removed_if_unused = true,
+
+                // Make sure this is trimmed if unused even if tree shaking is disabled
+                .force_tree_shaking = true,
+            };
+
+            // Pull in the "__export" symbol if it was used
+            if (export_ref.isValid()) {
+                c.graph.meta.items(.needs_export_symbol_from_runtime)[id] = true;
             }
         }
     }
@@ -1837,20 +2000,25 @@ const LinkerContext = struct {
         var imports_to_bind = c.graph.meta.items(.imports_to_bind);
         var is_probably_typescript_type = c.graph.meta.items(.is_probably_typescript_type);
 
+        // counting in here saves us an extra pass through the array
+        var re_exports_count: usize = 0;
+
         next_alias: while (alias_iter.next()) |entry| {
             var export_ = entry.value_ptr.*;
             var alias = entry.key_ptr.*;
             const this_id = ids[export_.source_index];
+            var inner_count: usize = 0;
             // Re-exporting multiple symbols with the same name causes an ambiguous
             // export. These names cannot be used and should not end up in generated code.
             if (export_.potentially_ambiguous_export_star_refs.len > 0) {
-                var main_ref = imports_to_bind[this_id].get(export_.ref) orelse export_.ref;
+                const main_ref = imports_to_bind[this_id].get(export_.ref) orelse export_.ref;
                 for (export_.potentially_ambiguous_export_star_refs.slice()) |ambig| {
                     const _id = ids[ambig.source_index];
                     const ambig_ref = imports_to_bind[_id].get(ambig.ref) orelse ambig.ref;
                     if (!main_ref.eql(ambig_ref)) {
                         continue :next_alias;
                     }
+                    inner_count += @as(usize, ambig.re_exports.len);
                 }
             }
 
@@ -1860,6 +2028,7 @@ const LinkerContext = struct {
             if (is_probably_typescript_type[this_id].contains(export_.ref)) {
                 continue;
             }
+            re_exports_count += inner_count;
 
             aliases.appendAssumeCapacity(alias);
         }
@@ -1872,7 +2041,16 @@ const LinkerContext = struct {
 
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array
-        c.createExportsForFile(allocator_, source_index, id, ids, resolved_exports, imports_to_bind, export_aliases);
+        c.createExportsForFile(
+            allocator_,
+            source_index,
+            id,
+            ids,
+            resolved_exports,
+            imports_to_bind,
+            export_aliases,
+            re_exports_count,
+        );
 
         // Each part tracks the other parts it depends on within this file
         var local_dependencies = std.AutoHashMap(u32, u32).init(allocator);

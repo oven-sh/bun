@@ -1826,6 +1826,8 @@ pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub const Batcher = bun.Batcher(Stmt);
+
     const Serializable = struct {
         @"type": Tag,
         object: string,
@@ -2107,6 +2109,8 @@ pub const Stmt = struct {
 pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
+
+    pub const Batcher = bun.Batcher(Stmt);
 
     pub fn fromBlob(
         blob: *const JSC.WebCore.Blob,

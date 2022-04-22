@@ -1262,6 +1262,7 @@ const AstSourceIDMapping = struct {
 
 const LinkerGraph = struct {
     files: File.List = .{},
+    files_live: std.DynamicBitSetUnmanaged = undefined,
     entry_points: EntryPoint.List = .{},
     symbols: js_ast.Symbol.Map = .{},
 
@@ -1393,6 +1394,10 @@ const LinkerGraph = struct {
         this.file_entry_bits = try Bitmap.init(sources.len, entry_points.len, this.allocator());
 
         try this.files.ensureTotalCapacity(this.allocator(), sources.len);
+        this.files_live = std.DynamicBitSetUnmanaged.initEmpty(
+            this.allocator,
+            sources.len,
+        );
         this.files.len = sources.len;
         var files = this.files.slice();
 
@@ -1435,8 +1440,6 @@ const LinkerGraph = struct {
                 files.items(.distance_from_entry_point),
                 comptime file.distance_from_entry_point,
             );
-            var is_live = std.mem.sliceAsBytes(files.items(.is_live));
-            @memset(is_live.ptr, 0, is_live.len);
         }
 
         this.symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.parse_graph.ast.items(.symbols)));
@@ -1458,10 +1461,6 @@ const LinkerGraph = struct {
         /// the user as top-level entry points, so some dynamically-imported files
         /// may be "entryPointUserSpecified" instead of "entryPointDynamicImport".
         entry_point_kind: EntryPoint.Kind = .none,
-
-        /// This is true if this file has been marked as live by the tree shaking
-        /// algorithm.
-        is_live: bool = false,
 
         pub fn isEntryPoint(this: *const File) bool {
             return this.entry_point_kind.isEntryPoint();
@@ -1500,6 +1499,7 @@ const LinkerContext = struct {
 
     pub const LinkerOptions = struct {
         output_format: options.OutputFormat = .esm,
+        ignore_dce_annotations: bool = false,
     };
 
     fn load(this: *LinkerContext, bundle: *BundleV2, entry_points: []Index.Int, reachable: []Index.Int) !void {
@@ -2584,6 +2584,93 @@ const LinkerContext = struct {
     pub fn source_(c: *LinkerContext, index: anytype) *const Logger.Source {
         return &c.parse_graph.input_files.items(.source)[index];
     }
+
+    pub fn treeShakingAndCodeSplitting(c: *LinkerContext) !void {
+        // Tree shaking: Each entry point marks all files reachable from itself
+        for (c.graph.entry_points.items(.source_index)) |entry_point| {
+            c.markFileLiveForTreeShaking(entry_point);
+        }
+    }
+
+    pub fn markFileLiveForTreeShaking(c: *LinkerContext, source_index: Index.Int) void {
+        if (c.graph.files_live.isSet(source_index))
+            return;
+
+        c.graph.files_live.set(source_index);
+
+        // TODO: CSS source index
+
+        const id = c.graph.files.items(.asts)[source_index];
+        if (@as(usize, id) >= c.graph.asts.len) return;
+        for (c.graph.ast.items(.parts)[id]) |part, part_index| {
+            var can_be_removed_if_unused = part.can_be_removed_if_unused;
+
+            // Also include any statement-level imports
+            for (part.import_record_indices) |import_record_Index| {
+                var record: *ImportRecord = &c.graph.ast.items(.import_records)[import_record_Index];
+
+                if (record.kind != .stmt)
+                    continue;
+
+                if (record.source_index.isValid()) {
+                    const other_source_index = record.source_index.get();
+
+                    // Don't include this module for its side effects if it can be
+                    // considered to have no side effects
+                    if (c.parse_graph.input_files.items(.side_effects)[other_source_index] != .has_side_effects and !c.options.ignore_dce_annoations) {
+                        continue;
+                    }
+
+                    // Otherwise, include this module for its side effects
+                    c.markFileLiveForTreeShaking(other_source_index);
+                } else if (record.is_external_without_side_effects()) {
+                    // This can be removed if it's unused
+                    continue;
+                }
+
+                // If we get here then the import was included for its side effects, so
+                // we must also keep this part
+                can_be_removed_if_unused = false;
+            }
+
+            // Include all parts in this file with side effects, or just include
+            // everything if tree-shaking is disabled. Note that we still want to
+            // perform tree-shaking on the runtime even if tree-shaking is disabled.
+            if (!can_be_removed_if_unused or
+                (!part.force_tree_shaking and
+                !c.options.tree_shaking and
+                c.graph.entry_points.items(.entry_point_kinds)[id].isEntryPoint()))
+            {
+                c.markPartLiveForTreeShaking(
+                    part_index,
+                    id,
+                );
+            }
+        }
+    }
+
+    pub fn markPartLiveForTreeShaking(c: *LinkerContext, part_index: u32, id: u32) bool {
+        var part: js_ast.Part = &c.graph.ast.items(.parts)[id][part_index];
+        // only once
+        if (part.is_live) {
+            return false;
+        }
+
+        part.is_live = true;
+
+        for (part.dependencies.slice()) |dependency| {
+            const _id = c.parse_graph.input_files.items(.ast)[dependency.source_index];
+            if (c.markPartLiveForTreeShaking(
+                dependency.part_index,
+                _id,
+            )) {
+                c.markFileLiveForTreeShaking(dependency.source_index);
+            }
+        }
+
+        return true;
+    }
+
     pub fn matchImportWithExport(
         c: *LinkerContext,
         tracker_: ImportTracker,

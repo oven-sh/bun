@@ -170,6 +170,10 @@ pub const ImportRecord = struct {
         return this.flags.contains(.was_originally_require);
     }
 
+    pub inline fn is_external_without_side_effects(this: *const ImportRecord) bool {
+        return @enumToInt(this.tag) >= @enumToInt(Tag.bun) or this.flags.contains(.is_external_without_side_effects);
+    }
+
     pub const Flags = enum {
         /// True for the following cases:
         ///
@@ -218,6 +222,8 @@ pub const ImportRecord = struct {
         was_originally_bare_import,
 
         was_originally_require,
+
+        is_external_without_side_effects,
 
         pub const None = Set{};
         pub const Fields = std.enums.EnumFieldStruct(Flags, bool, false);

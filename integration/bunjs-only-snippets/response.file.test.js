@@ -107,7 +107,7 @@ it("Bun.file", async () => {
 });
 
 it("Bun.file as a Blob", async () => {
-  const filePath = path.join(import.meta.url, "../fetch.js.txt");
+  const filePath = path.join(import.meta.path, "../fetch.js.txt");
   const fixture = fs.readFileSync(filePath, "utf8");
   // this is a Blob object with the same interface as the one returned by fetch
   // internally, instead of a byte array, it stores the file path!

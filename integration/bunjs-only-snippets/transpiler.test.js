@@ -23,7 +23,7 @@ describe("Bun.Transpiler", () => {
 
         // Explicitly remove the top-level export, even if it is in use by
         // another part of the file
-        eliminate: ["loader"],
+        eliminate: ["loader", "localVarToRemove"],
       },
       /* only per-file for now, so this isn't good yet */
       treeShaking: true,
@@ -36,8 +36,6 @@ describe("Bun.Transpiler", () => {
     });
 
     it("a deletes dead exports and any imports only referenced in dead regions", () => {
-      console.log("b");
-
       const out = transpiler.transformSync(`
     import {getUserById} from './my-database';
 
@@ -50,9 +48,6 @@ describe("Bun.Transpiler", () => {
       return <div id='user'>{user.name}</div>;
     }
   `);
-
-      // when all three flags are set, it means
-      console.log(out);
     });
 
     it("deletes dead exports and any imports only referenced in dead regions", () => {
@@ -104,7 +99,6 @@ describe("Bun.Transpiler", () => {
           require("bar");
         }
       `);
-      console.log(output);
       expect(output.includes("loader")).toBe(false);
       expect(output.includes("react")).toBe(false);
       expect(output.includes("deadFS")).toBe(false);

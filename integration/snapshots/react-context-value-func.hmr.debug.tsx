@@ -2,10 +2,12 @@ import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 import {
-__require as require
-} from "http://localhost:8080/bun:wrap";
-import {
 __HMRClient as Bun
+} from "http://localhost:8080/bun:wrap";
+Bun.activate(true);
+
+import {
+__require as require
 } from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
@@ -16,9 +18,8 @@ var jsx = require(JSX).jsxDEV;
 
 import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var { default: React} = require($bbcd215f);
-Bun.activate(true);
-
 var hmr = new FastHMR(3514348331, "react-context-value-func.tsx", FastRefresh), exports = hmr.exports;
+
 (hmr._load = function() {
   const Context = React.createContext({});
   const ContextProvider = ({ children }) => {

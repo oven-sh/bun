@@ -2,10 +2,12 @@ import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 import {
-__require as require
-} from "http://localhost:8080/bun:wrap";
-import {
 __HMRClient as Bun
+} from "http://localhost:8080/bun:wrap";
+Bun.activate(true);
+
+import {
+__require as require
 } from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
@@ -20,9 +22,8 @@ import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
 var { default: React} = require($bbcd215f);
 import * as $5b3cea55 from "http://localhost:8080/node_modules/react-dom/index.js";
 var { default: ReactDOM} = require($5b3cea55);
-Bun.activate(true);
-
 var hmr = new FastHMR(1290604342, "styledcomponents-output.js", FastRefresh), exports = hmr.exports;
+
 (hmr._load = function() {
   const ErrorScreenRoot = styled.div`
   font-family: "Muli", -apple-system, BlinkMacSystemFont, Helvetica, Arial,

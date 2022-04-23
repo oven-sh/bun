@@ -2,10 +2,12 @@ import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
 import {
-__require as require
-} from "http://localhost:8080/bun:wrap";
-import {
 __HMRClient as Bun
+} from "http://localhost:8080/bun:wrap";
+Bun.activate(true);
+
+import {
+__require as require
 } from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
@@ -17,9 +19,8 @@ var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, jsxEl = require(JSXClassic).createElement;
 
 var { default: React} = require($bbcd215f);
-Bun.activate(true);
-
 var hmr = new FastHMR(2717584935, "spread_with_key.tsx", FastRefresh), exports = hmr.exports;
+
 (hmr._load = function() {
   function SpreadWithTheKey({ className }) {
     const rest = {};

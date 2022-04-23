@@ -2388,7 +2388,7 @@ pub const Parser = struct {
 
         var wrapper_expr: ?Expr = null;
 
-        if ((p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) and !uses_module_ref and !uses_exports_ref) {
+        if ((p.es6_export_keyword.len > 0 or p.top_level_await_keyword.len > 0) and !uses_exports_ref) {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;

@@ -632,7 +632,7 @@ jsc-bindings-headers:
 	touch src/javascript/jsc/bindings/headers.zig
 	mkdir -p src/javascript/jsc/bindings-obj/
 	$(ZIG) build headers-obj
-	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC) -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
+	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)  -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc -Wl,--unresolved-symbols=ignore-all;
 	/tmp/build-jsc-headers
 	$(ZIG) translate-c src/javascript/jsc/bindings/headers.h > src/javascript/jsc/bindings/headers.zig
 	$(ZIG) run misctools/headers-cleaner.zig -lc

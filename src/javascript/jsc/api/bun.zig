@@ -1202,8 +1202,172 @@ pub const Class = NewClass(
         .SHA512_256 = .{
             .get = Crypto.SHA512_256.getter,
         },
+        .Clipboard = .{
+            .get = Clipboard.getter,
+        },
     },
 );
+
+pub const Clipboard = struct {
+    const macOS = @import("../../../deps/objc.zig").ObjC;
+    pub const Class = NewClass(
+        void,
+        .{ .name = "Clipboard" },
+        .{
+            .readText = .{
+                .rfn = JSC.wrapWithHasContainer(Clipboard, "readText", false, false),
+            },
+            .readPNG = .{
+                .rfn = JSC.wrapWithHasContainer(Clipboard, "readPNG", false, false),
+            },
+            .writeText = .{
+                .rfn = JSC.wrapWithHasContainer(Clipboard, "writeText", false, false),
+            },
+            .writePNG = .{
+                .rfn = JSC.wrapWithHasContainer(Clipboard, "writePNG", false, false),
+            },
+        },
+        .{},
+    );
+
+    pub fn getter(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        var existing = ctx.ptr().getCachedObject(&ZigString.init("BunClipboard"));
+        if (existing.isEmpty()) {
+            return ctx.ptr().putCachedObject(
+                &ZigString.init("BunClipboard"),
+                JSC.JSValue.c(JSC.C.JSObjectMake(ctx, Clipboard.Class.get().*, null)),
+            ).asObjectRef();
+        }
+
+        return existing.asObjectRef();
+    }
+
+    pub fn readText(
+        global: *JSC.JSGlobalObject,
+        exception: JSC.C.ExceptionRef,
+    ) JSC.JSValue {
+        if (comptime !Environment.isMac) {
+            return JSC.JSValue.jsUndefined();
+        }
+
+        var data = macOS.Clipboard.get(bun.default_allocator, .string) catch |err| {
+            JSC.JSError(bun.default_allocator, "Error reading clipboard {s}", .{@errorName(err)}, global.ref(), exception);
+            return JSC.JSValue.jsUndefined();
+        };
+        var text = ZigString.init(data).withEncoding();
+        if (text.isUTF8()) {
+            var ret = text.toValueGC(global);
+            bun.default_allocator.free(data);
+            return JSC.JSPromise.resolvedPromiseValue(global, ret);
+        }
+        text.mark();
+        return JSC.JSPromise.resolvedPromiseValue(global, text.toExternalValue(global));
+    }
+    pub fn readPNG(
+        global: *JSC.JSGlobalObject,
+        exception: JSC.C.ExceptionRef,
+    ) JSC.JSValue {
+        if (comptime !Environment.isMac) {
+            return JSC.JSValue.jsUndefined();
+        }
+
+        var data = macOS.Clipboard.get(bun.default_allocator, .png) catch |err| {
+            JSC.JSError(bun.default_allocator, "Error reading clipboard {s}", .{@errorName(err)}, global.ref(), exception);
+            return JSC.JSValue.jsUndefined();
+        };
+        if (data.len == 0) {
+            return JSC.JSPromise.resolvedPromiseValue(global, JSC.JSValue.jsUndefined());
+        }
+
+        var blob = JSC.WebCore.Blob.initWithStore(JSC.WebCore.Blob.Store.init(data, bun.default_allocator) catch unreachable, global);
+        var ptr = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
+        ptr.* = blob;
+        ptr.allocator = bun.default_allocator;
+        return JSC.JSPromise.resolvedPromiseValue(global, JSC.JSValue.c(JSC.WebCore.Blob.Class.make(global.ref(), ptr)));
+    }
+    pub fn writeText(
+        global: *JSGlobalObject,
+        text: ZigString,
+    ) JSC.JSValue {
+        if (comptime !Environment.isMac) {
+            return JSC.JSValue.jsUndefined();
+        }
+
+        var slice = text.toSlice(bun.default_allocator);
+        defer slice.deinit();
+        var data = slice.slice();
+        macOS.Clipboard.set(.string, data) catch {
+            return ZigString.init("Error writing to clipboard").toErrorInstance(global);
+        };
+        return JSC.JSPromise.resolvedPromiseValue(global, JSC.JSValue.jsUndefined());
+    }
+    pub fn writePNG(
+        global: *JSGlobalObject,
+        blob_value: JSValue,
+    ) JSC.JSValue {
+        if (comptime !Environment.isMac) {
+            return JSC.JSValue.jsUndefined();
+        }
+
+        var blob = blob_value.as(JSC.WebCore.Blob) orelse {
+            var err = ZigString.init("Expected Blob").toErrorInstance(global);
+            return JSC.JSPromise.rejectedPromiseValue(global, err);
+        };
+        if (blob.needsToReadFile()) {
+            var sink = bun.default_allocator.create(ClipboardPromise) catch unreachable;
+            sink.* = .{
+                .promise = JSC.JSPromise.create(global),
+                .global = global,
+            };
+            blob.doReadFileInternal(*ClipboardPromise, sink, ClipboardPromise.onFinishedLoading, global);
+            return sink.promise.asValue(global);
+        }
+
+        doWritePNG(blob.sharedView()) catch {
+            return JSC.JSPromise.rejectedPromiseValue(global, ZigString.init("Error writing to clipboard").toErrorInstance(global));
+        };
+
+        return JSC.JSPromise.resolvedPromiseValue(global, JSC.JSValue.jsUndefined());
+    }
+
+    pub fn doWritePNG(blob: []const u8) !void {
+        if (comptime !Environment.isMac) {
+            return;
+        }
+
+        try macOS.Clipboard.set(.png, blob);
+    }
+
+    const ClipboardPromise = struct {
+        promise: *JSC.JSPromise,
+        global: *JSGlobalObject,
+
+        pub fn onFinishedLoading(sink: *ClipboardPromise, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {
+            switch (bytes) {
+                .err => |err| {
+                    sink.promise.reject(sink.global, err.toErrorInstance(sink.global));
+                    bun.default_allocator.destroy(sink);
+                    return;
+                },
+                .result => |data| {
+                    doWritePNG(data.buf) catch {
+                        sink.promise.reject(sink.global, ZigString.init("Error writing to clipboard").toErrorInstance(sink.global));
+                        bun.default_allocator.destroy(sink);
+                        return;
+                    };
+                    sink.promise.resolve(sink.global, JSC.JSValue.jsUndefined());
+                    bun.default_allocator.destroy(sink);
+                },
+            }
+        }
+    };
+};
 
 pub const Crypto = struct {
     const Hashers = @import("../../../sha.zig");

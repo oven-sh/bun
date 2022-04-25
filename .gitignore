@@ -95,3 +95,4 @@ packages/bun-wasm/*.cjs
 packages/bun-wasm/*.map
 packages/bun-wasm/*.js
 packages/bun-wasm/*.d.ts
+*.bc

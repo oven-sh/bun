@@ -187,6 +187,13 @@ pub const Encoding = enum(u8) {
     /// Refer to the buffer's encoding
     buffer,
 
+    pub fn isBinaryToText(this: Encoding) bool {
+        return switch (this) {
+            .hex, .base64, .base64url => true,
+            else => false,
+        };
+    }
+
     const Eight = strings.ExactSizeMatcher(8);
     /// Caller must verify the value is a string
     pub fn fromStringValue(value: JSC.JSValue, global: *JSC.JSGlobalObject) ?Encoding {

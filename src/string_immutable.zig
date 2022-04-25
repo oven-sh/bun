@@ -719,10 +719,18 @@ pub fn copyU8IntoU16WithAlignment(comptime alignment: u21, output_: []align(alig
     if (comptime Environment.allow_assert) {
         std.debug.assert(input.len <= output.len);
     }
-    while (input.len >= word) {
-        appendUTF8MachineWordToUTF16MachineWordUnaligned(alignment, output[0..word], input[0..word]);
-        output = output[word..];
-        input = input[word..];
+
+    // un-aligned data access is slow
+    // so we attempt to align the data
+    while (!std.mem.isAligned(@ptrToInt(output.ptr), @alignOf(u16)) and input.len >= word) {
+        output[0] = input[0];
+        output = output[1..];
+        input = input[1..];
+    }
+
+    if (std.mem.isAligned(@ptrToInt(output.ptr), @alignOf(u16)) and input.len > 0) {
+        copyU8IntoU16(@alignCast(@alignOf(u16), output.ptr)[0..output.len], input);
+        return;
     }
 
     for (input) |c, i| {
@@ -758,28 +766,33 @@ pub fn copyU8IntoU16WithAlignment(comptime alignment: u21, output_: []align(alig
 // }
 
 pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: InputType) void {
-    var output = output_;
-    var input = input_;
     if (comptime Environment.allow_assert) {
-        std.debug.assert(input.len <= output.len);
+        std.debug.assert(input_.len <= output_.len);
     }
 
-    // on X64, this is 4
-    // on WASM, this is 2
-    const machine_word_length = comptime @sizeOf(usize) / @sizeOf(u16);
+    if (comptime !JSC.is_bindgen) {
+        JSC.WTF.copyLCharsFromUCharSource(output_.ptr, InputType, input_);
+    } else {
+        var output = output_;
+        var input = input_;
 
-    while (input.len >= machine_word_length) {
-        comptime var machine_word_i: usize = 0;
-        inline while (machine_word_i < machine_word_length) : (machine_word_i += 1) {
-            output[machine_word_i] = @intCast(u8, input[machine_word_i]);
+        // on X64, this is 4
+        // on WASM, this is 2
+        const machine_word_length = comptime @sizeOf(usize) / @sizeOf(u16);
+
+        while (input.len >= machine_word_length) {
+            comptime var machine_word_i: usize = 0;
+            inline while (machine_word_i < machine_word_length) : (machine_word_i += 1) {
+                output[machine_word_i] = @intCast(u8, input[machine_word_i]);
+            }
+
+            output = output[machine_word_length..];
+            input = input[machine_word_length..];
         }
 
-        output = output[machine_word_length..];
-        input = input[machine_word_length..];
-    }
-
-    for (input) |c, i| {
-        output[i] = @intCast(u8, c);
+        for (input) |c, i| {
+            output[i] = @intCast(u8, c);
+        }
     }
 }
 
@@ -972,7 +985,7 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
                 if (first < 16) {
                     latin1 = latin1[(comptime count * ascii_vector_size)..];
                     list.items.len += (comptime count * ascii_vector_size);
-                    try list.appendSlice(latin1[0..first]);
+                    list.appendSliceAssumeCapacity(latin1[0..first]);
                     latin1 = latin1[first..];
                     break_outer = true;
                     break :outer;
@@ -1152,6 +1165,29 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
     };
 }
 
+const JSC = @import("javascript_core");
+
+pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
+    var buf = buf_;
+    var latin1 = latin1_;
+    while (buf.len > 0 and latin1.len > 0) {
+        var to_write = strings.firstNonASCII(latin1) orelse @truncate(u32, latin1.len);
+        strings.copyU8IntoU16WithAlignment(std.meta.alignment(Buffer), buf, latin1[0..to_write]);
+        latin1 = latin1[to_write..];
+        buf = buf[to_write..];
+        if (latin1.len > 0 and buf.len >= 2) {
+            buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII16(latin1[0]);
+            latin1 = latin1[1..];
+            buf = buf[2..];
+        }
+    }
+
+    return .{
+        .read = @truncate(u32, buf_.len - buf.len),
+        .written = @truncate(u32, latin1_.len - latin1.len),
+    };
+}
+
 test "copyLatin1IntoUTF8" {
     var input: string = "hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!";
     var output = std.mem.zeroes([500]u8);
@@ -1172,11 +1208,19 @@ pub fn latin1ToCodepointAssumeNotASCII(char: u8, comptime CodePointType: type) C
     );
 }
 
-pub fn latin1ToCodepointBytesAssumeNotASCII(char: u32) [2]u8 {
-    return [2]u8{
-        @truncate(u8, 0xc0 | char >> 6),
-        @truncate(u8, 0x80 | (char & 0x3f)),
+pub fn latin1ToCodepointBytesAssumeNotASCIIWIthCharType(comptime Char: type, char: u32) [2]Char {
+    return [2]Char{
+        @as(Char, @truncate(u8, 0xc0 | char >> 6)),
+        @as(Char, @truncate(u8, 0x80 | (char & 0x3f))),
     };
+}
+
+pub fn latin1ToCodepointBytesAssumeNotASCII(char: u32) [2]u8 {
+    return latin1ToCodepointBytesAssumeNotASCIIWIthCharType(u8, char);
+}
+
+pub fn latin1ToCodepointBytesAssumeNotASCII16(char: u32) [2]u16 {
+    return latin1ToCodepointBytesAssumeNotASCIIWIthCharType(u16, char);
 }
 
 pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeIntoResult {
@@ -1661,11 +1705,72 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
     return null;
 }
 
+const hex_table: [255]u8 = brk: {
+    var values: [255]u8 = [_]u8{0} ** 255;
+    values['0'] = 0;
+    values['1'] = 1;
+    values['2'] = 2;
+    values['3'] = 3;
+    values['4'] = 4;
+    values['5'] = 5;
+    values['6'] = 6;
+    values['7'] = 7;
+    values['8'] = 8;
+    values['9'] = 9;
+    values['A'] = 10;
+    values['B'] = 11;
+    values['C'] = 12;
+    values['D'] = 13;
+    values['E'] = 14;
+    values['F'] = 15;
+    values['a'] = 10;
+    values['b'] = 11;
+    values['c'] = 12;
+    values['d'] = 13;
+    values['e'] = 14;
+    values['f'] = 15;
+
+    break :brk values;
+};
+
+pub fn decodeHexToBytes(destination: []u8, comptime Char: type, source: []const Char) usize {
+    var remain = destination;
+    var input = source;
+
+    while (input.len > 1 and remain.len > 0) {
+        const int = input[0..2].*;
+        const a = hex_table[@truncate(u8, int[0])];
+        const b = hex_table[@truncate(u8, int[1])];
+        if (a == 255 or b == 255) {
+            break;
+        }
+        remain[0] = a << 4 | b;
+        remain = remain[1..];
+        input = input[2..];
+    }
+
+    return destination.len - remain.len;
+}
+
+test "decodeHexToBytes" {
+    var buffer = std.mem.zeroes([1024]u8);
+    for (buffer) |_, i| {
+        buffer[i] = @truncate(u8, i % 256);
+    }
+    var written: [2048]u8 = undefined;
+    var hex = std.fmt.bufPrint(&written, "{}", .{std.fmt.fmtSliceHexLower(&buffer)}) catch unreachable;
+    var good: [4096]u8 = undefined;
+    var ours_buf: [4096]u8 = undefined;
+    var match = try std.fmt.hexToBytes(good[0..1024], hex);
+    var ours = decodeHexToBytes(&ours_buf, hex);
+    try std.testing.expectEqualSlices(u8, match, ours_buf[0..ours]);
+    try std.testing.expectEqualSlices(u8, &buffer, ours_buf[0..ours]);
+}
+
 pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     if (indexOfNotChar(slice, char)) |i| {
         return slice[i..];
     }
-
     return "";
 }
 
@@ -2028,9 +2133,10 @@ pub fn containsNonBmpCodePoint(text: string) bool {
 }
 
 // this is std.mem.trim except it doesn't forcibly change the slice to be const
-pub fn trim(slice: anytype, values_to_strip: []const u8) @TypeOf(slice) {
+pub fn trim(slice: anytype, comptime values_to_strip: []const u8) @TypeOf(slice) {
     var begin: usize = 0;
     var end: usize = slice.len;
+
     while (begin < end and std.mem.indexOfScalar(u8, values_to_strip, slice[begin]) != null) : (begin += 1) {}
     while (end > begin and std.mem.indexOfScalar(u8, values_to_strip, slice[end - 1]) != null) : (end -= 1) {}
     return slice[begin..end];

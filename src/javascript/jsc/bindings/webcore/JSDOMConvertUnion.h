@@ -29,6 +29,7 @@
 #include "JSDOMBinding.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertBufferSource.h"
+#include "JSDOMConvertBufferSource+JSBuffer.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNull.h"
 #include "JavaScriptCore/IteratorOperations.h"

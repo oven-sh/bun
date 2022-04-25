@@ -205,4 +205,16 @@ extern "C" const char* Bun__versions_zig;
 
 extern "C" void ZigString__free_global(const unsigned char* ptr, size_t len);
 
+extern "C" int64_t Bun__encoding__writeLatin1AsHex(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeUTF16AsHex(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeLatin1AsURLSafeBase64(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeUTF16AsURLSafeBase64(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeLatin1AsBase64(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeUTF16AsBase64(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeLatin1AsUTF16(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeUTF16AsUTF16(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeLatin1AsUTF8(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeUTF16AsUTF8(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeLatin1AsASCII(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeUTF16AsASCII(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
 #endif

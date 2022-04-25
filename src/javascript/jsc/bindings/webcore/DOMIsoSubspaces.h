@@ -15,6 +15,10 @@ class DOMIsoSubspaces {
 
 public:
     DOMIsoSubspaces() = default;
+    /*-- BUN --*/
+    std::unique_ptr<IsoSubspace> m_subspaceForBuffer;
+    /*-- BUN --*/
+
     // std::unique_ptr<IsoSubspace> m_subspaceForTouch;
     // std::unique_ptr<IsoSubspace> m_subspaceForTouchEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForTouchList;

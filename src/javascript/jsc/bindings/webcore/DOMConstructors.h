@@ -843,9 +843,14 @@ enum class DOMConstructorID : uint16_t {
     XPathNSResolver,
     XPathResult,
     XSLTProcessor,
+
+    // Bun extras
+    Buffer
 };
 
-static constexpr unsigned numberOfDOMConstructors = 836;
+static constexpr unsigned bunExtraConstructors = 1;
+
+static constexpr unsigned numberOfDOMConstructors = 836 + bunExtraConstructors;
 
 class DOMConstructors {
     WTF_MAKE_NONCOPYABLE(DOMConstructors);

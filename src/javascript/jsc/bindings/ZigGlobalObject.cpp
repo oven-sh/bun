@@ -88,6 +88,8 @@
 
 #include "JavaScriptCore/RemoteInspectorServer.h"
 
+#include "JSBuffer.h"
+
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
@@ -99,6 +101,7 @@ using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
+using JSBuffer = WebCore::JSBuffer;
 
 static bool has_loaded_jsc = false;
 
@@ -324,6 +327,17 @@ void GlobalObject::setConsole(void* console)
 }
 
 #pragma mark - Globals
+
+JSC_DECLARE_CUSTOM_GETTER(JSBuffer_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSBuffer::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
 
 JSC_DECLARE_CUSTOM_GETTER(JSDOMURL_getter);
 
@@ -872,6 +886,9 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ErrorEvent"_s), JSC::CustomGetterSetter::create(vm, JSErrorEvent_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Buffer"_s), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();

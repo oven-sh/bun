@@ -3461,6 +3461,19 @@ pub const StringView = extern struct {
     };
 };
 
+pub const WTF = struct {
+    extern fn WTF__copyLCharsFromUCharSource(dest: [*]u8, source: *const anyopaque, len: usize) void;
+
+    /// This uses SSE2 instructions and/or ARM NEON to copy 16-bit characters efficiently
+    /// See wtf/Text/ASCIIFastPath.h for details
+    pub fn copyLCharsFromUCharSource(destination: [*]u8, comptime Source: type, source: Source) void {
+        if (comptime JSC.is_bindgen) unreachable;
+
+        // This is any alignment
+        WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
+    }
+};
+
 pub const Callback = struct {
     // zig: Value,
 };

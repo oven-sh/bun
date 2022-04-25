@@ -14,6 +14,7 @@ pub const FeatureFlags = @import("feature_flags.zig");
 const root = @import("root");
 pub const meta = @import("./meta.zig");
 pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
+pub const base64 = @import("./base64/base64.zig");
 
 pub const fmt = struct {
     pub usingnamespace std.fmt;

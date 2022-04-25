@@ -15,6 +15,10 @@ class DOMClientIsoSubspaces {
 public:
     DOMClientIsoSubspaces() = default;
 
+    /* --- bun --- */
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuffer;
+    /* --- bun --- */
+
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGlobalObject;
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMException;

@@ -4,6 +4,7 @@ const Environment = @import("./env.zig");
 const string = @import("string_types.zig").string;
 const stringZ = @import("string_types.zig").stringZ;
 const CodePoint = @import("string_types.zig").CodePoint;
+const bun = @import("global.zig");
 const assert = std.debug.assert;
 pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;
@@ -809,9 +810,9 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
 
 const strings = @This();
 
-/// If there are non-ascii characters in the string, this encodes UTF-8 into a new UTF-16 string.
+/// Convert a UTF-8 string to a UTF-16 string IF there are any non-ascii characters
 /// If there are no non-ascii characters, this returns null
-/// This is intended to be used for strings that go to
+/// This is intended to be used for strings that go to JavaScript
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const ascii = bytes[0..i];
@@ -1715,6 +1716,22 @@ pub fn decodeHexToBytes(destination: []u8, comptime Char: type, source: []const 
     return destination.len - remain.len;
 }
 
+pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
+    std.debug.assert(destination.len > 0);
+    std.debug.assert(source.len > 0);
+    const to_write = if (destination.len < source.len * 2)
+        destination.len - destination.len % 2
+    else
+        source.len * 2;
+
+    const to_read = to_write / 2;
+
+    const formatter = std.fmt.fmtSliceHexLower(source[0..to_read]);
+    const written = std.fmt.bufPrint(destination, "{}", .{formatter}) catch unreachable;
+
+    return written.len;
+}
+
 test "decodeHexToBytes" {
     var buffer = std.mem.zeroes([1024]u8);
     for (buffer) |_, i| {
@@ -1729,6 +1746,19 @@ test "decodeHexToBytes" {
     try std.testing.expectEqualSlices(u8, match, ours_buf[0..ours]);
     try std.testing.expectEqualSlices(u8, &buffer, ours_buf[0..ours]);
 }
+
+// test "formatBytesToHex" {
+//     var buffer = std.mem.zeroes([1024]u8);
+//     for (buffer) |_, i| {
+//         buffer[i] = @truncate(u8, i % 256);
+//     }
+//     var written: [2048]u8 = undefined;
+//     var hex = std.fmt.bufPrint(&written, "{}", .{std.fmt.fmtSliceHexLower(&buffer)}) catch unreachable;
+//     var ours_buf: [4096]u8 = undefined;
+//     // var ours = formatBytesToHex(&ours_buf, &buffer);
+//     // try std.testing.expectEqualSlices(u8, match, ours_buf[0..ours]);
+//     try std.testing.expectEqualSlices(u8, &buffer, ours_buf[0..ours]);
+// }
 
 pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     if (indexOfNotChar(slice, char)) |i| {

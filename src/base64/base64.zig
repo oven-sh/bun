@@ -51,3 +51,5 @@ pub const urlsafe = std.base64.Base64DecoderWithIgnore.init(
     null,
     "= \t\r\n" ++ [_]u8{ std.ascii.control_code.VT, std.ascii.control_code.FF },
 );
+
+pub const urlsafeEncoder = std.base64.url_safe_no_pad.Encoder;

@@ -217,4 +217,5 @@ extern "C" int64_t Bun__encoding__writeLatin1AsUTF8(const unsigned char* ptr, si
 extern "C" int64_t Bun__encoding__writeUTF16AsUTF8(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
 extern "C" int64_t Bun__encoding__writeLatin1AsASCII(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
 extern "C" int64_t Bun__encoding__writeUTF16AsASCII(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
+
 #endif

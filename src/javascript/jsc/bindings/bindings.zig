@@ -3463,6 +3463,7 @@ pub const StringView = extern struct {
 
 pub const WTF = struct {
     extern fn WTF__copyLCharsFromUCharSource(dest: [*]u8, source: *const anyopaque, len: usize) void;
+    extern fn WTF__toBase64URLStringValue(bytes: [*]const u8, length: usize, globalObject: *JSGlobalObject) JSValue;
 
     /// This uses SSE2 instructions and/or ARM NEON to copy 16-bit characters efficiently
     /// See wtf/Text/ASCIIFastPath.h for details
@@ -3471,6 +3472,12 @@ pub const WTF = struct {
 
         // This is any alignment
         WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
+    }
+
+    /// Encode a byte array to a URL-safe base64 string for use with JS
+    /// Memory is managed by JavaScriptCore instead of us
+    pub fn toBase64URLStringValue(bytes: []const u8, globalObject: *JSGlobalObject) JSValue {
+        return WTF__toBase64URLStringValue(bytes.ptr, bytes.len, globalObject);
     }
 };
 

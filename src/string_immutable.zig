@@ -694,6 +694,24 @@ pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
     if (comptime Environment.allow_assert) {
         std.debug.assert(input.len <= output.len);
     }
+
+    // https://zig.godbolt.org/z/9rTn1orcY
+
+    const group = if (Environment.isAarch64)
+        // on ARM64, 128 seems to be the best choice judging by lines of ASM
+        128
+    else
+        // on x64, 128 seems to be the best choice judging by lines of ASM
+        16;
+
+    while (input.len >= group) {
+        const input_vec: @Vector(group, u8) = input[0..group].*;
+        const output_vec: @Vector(group, u16) = @as(@Vector(group, u16), input_vec);
+        output[0..group].* = output_vec;
+        output = output[group..];
+        input = input[group..];
+    }
+
     while (input.len >= word) {
         appendUTF8MachineWordToUTF16MachineWord(output[0..word], input[0..word]);
         output = output[word..];
@@ -702,13 +720,6 @@ pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
 
     for (input) |c, i| {
         output[i] = c;
-    }
-}
-
-pub inline fn appendUTF8MachineWordToUTF16MachineWordUnaligned(comptime alignment: u21, output: *align(alignment) [@sizeOf(usize) / 2]u16, input: *const [@sizeOf(usize) / 2]u8) void {
-    comptime var i: usize = 0;
-    inline while (i < @sizeOf(usize) / 2) : (i += 1) {
-        output[i] = input[i];
     }
 }
 
@@ -798,6 +809,9 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
 
 const strings = @This();
 
+/// If there are non-ascii characters in the string, this encodes UTF-8 into a new UTF-16 string.
+/// If there are no non-ascii characters, this returns null
+/// This is intended to be used for strings that go to
 pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const ascii = bytes[0..i];
@@ -969,55 +983,13 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
     var list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len);
     var latin1 = latin1_;
     while (latin1.len > 0) {
-        var read: usize = 0;
-        var break_outer = false;
-
-        outer: while (latin1.len >= 128) {
-            try list.ensureUnusedCapacity(128);
-            var base = list.items.ptr[list.items.len..list.items.len].ptr;
-
-            comptime var count: usize = 0;
-            inline while (count < 8) : (count += 1) {
-                const vec: AsciiVector = latin1[(comptime count * ascii_vector_size)..][0..ascii_vector_size].*;
-                const cmp = vec > max_16_ascii;
-                const bitmask = @ptrCast(*const u16, &cmp).*;
-                const first = @ctz(u16, bitmask);
-                if (first < 16) {
-                    latin1 = latin1[(comptime count * ascii_vector_size)..];
-                    list.items.len += (comptime count * ascii_vector_size);
-                    list.appendSliceAssumeCapacity(latin1[0..first]);
-                    latin1 = latin1[first..];
-                    break_outer = true;
-                    break :outer;
-                }
-                base[(comptime count * ascii_vector_size)..(comptime count * ascii_vector_size + ascii_vector_size)][0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec);
-            }
-
-            latin1 = latin1[(comptime count * ascii_vector_size)..];
-            list.items.len += (comptime count * ascii_vector_size);
-        }
-
-        if (!break_outer) {
-            while (latin1.len >= ascii_vector_size) {
-                const vec: AsciiVector = latin1[0..ascii_vector_size].*;
-                const cmp = vec > max_16_ascii;
-                const bitmask = @ptrCast(*const u16, &cmp).*;
-                const first = @ctz(u16, bitmask);
-                if (first < 16) {
-                    try list.appendSlice(latin1[0..first]);
-                    latin1 = latin1[first..];
-                    break;
-                }
-
-                try list.ensureUnusedCapacity(ascii_vector_size);
-                list.items.len += ascii_vector_size;
-                list.items[list.items.len - ascii_vector_size ..][0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec);
-                latin1 = latin1[ascii_vector_size..];
-            }
-        }
-
-        while (read < latin1.len and latin1[read] < 0x80) : (read += 1) {}
-        try list.appendSlice(latin1[0..read]);
+        const read = @as(usize, firstNonASCII(latin1) orelse @intCast(u32, latin1.len));
+        try list.ensureTotalCapacityPrecise(
+            list.items.len + read + if (read != latin1.len) @as(usize, 2) else @as(usize, 0),
+        );
+        const before = list.items.len;
+        list.items.len += read;
+        @memcpy(list.items[before..].ptr, latin1.ptr, read);
         latin1 = latin1[read..];
 
         if (latin1.len > 0) {
@@ -1120,8 +1092,8 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
             };
         },
         // invalid unicode sequence
-        0 => return UTF16Replacement{ .len = 1 },
-        else => unreachable,
+        // 1 or 0 are both invalid here
+        else => return UTF16Replacement{ .len = 1 },
     }
 }
 
@@ -1133,12 +1105,11 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
 
         while (latin1.len > ascii_vector_size) {
             const vec: AsciiVector = latin1[0..ascii_vector_size].*;
-            const cmp = vec > max_16_ascii;
-            const bitmask = @ptrCast(*const u16, &cmp).*;
-            const first = @ctz(u16, bitmask);
-            if (first < 16) {
+
+            if (@reduce(.Max, vec) > 127) {
                 break;
             }
+
             buf[0..8].* = @bitCast([ascii_vector_size]u8, vec)[0..8].*;
             buf[8..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[8..ascii_vector_size].*;
             latin1 = latin1[ascii_vector_size..];
@@ -1171,7 +1142,7 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
     var buf = buf_;
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
-        var to_write = strings.firstNonASCII(latin1) orelse @truncate(u32, latin1.len);
+        const to_write = strings.firstNonASCII(latin1) orelse @truncate(u32, latin1.len);
         strings.copyU8IntoU16WithAlignment(std.meta.alignment(Buffer), buf, latin1[0..to_write]);
         latin1 = latin1[to_write..];
         buf = buf[to_write..];
@@ -1443,7 +1414,7 @@ pub fn isAllASCII(slice: []const u8) bool {
             inline while (count < 8) : (count += 1) {
                 const vec: AsciiVector = remaining[(comptime count * ascii_vector_size)..][0..ascii_vector_size].*;
 
-                if ((@reduce(.Or, vec > max_16_ascii))) {
+                if (@reduce(.Max, vec) > 127) {
                     return false;
                 }
             }
@@ -1453,20 +1424,11 @@ pub fn isAllASCII(slice: []const u8) bool {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
 
-            if ((@reduce(.Or, vec > max_16_ascii))) {
+            if (@reduce(.Max, vec) > 127) {
                 return false;
             }
 
             remaining = remaining[ascii_vector_size..];
-        }
-
-        while (remaining.len >= 4) {
-            const vec: std.meta.Vector(4, u8) = remaining[0..4].*;
-
-            remaining = remaining[4..];
-            if (@reduce(.Or, vec > max_4_ascii)) {
-                return false;
-            }
         }
     }
 
@@ -1503,10 +1465,11 @@ pub fn firstNonASCII(slice: []const u8) ?u32 {
     if (comptime Environment.isAarch64 or Environment.isX64) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = vec > max_16_ascii;
-            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-            const first = @ctz(AsciiVectorInt, bitmask);
-            if (first < ascii_vector_size) {
+
+            if (@reduce(.Max, vec) > 127) {
+                const cmp = vec > max_16_ascii;
+                const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+                const first = @ctz(AsciiVectorInt, bitmask);
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
             }
 
@@ -1774,27 +1737,6 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     return "";
 }
 
-pub fn containsAnyBesidesChar(bytes: []const u8, char: u8) bool {
-    var remain = bytes;
-    while (remain.len >= ascii_vector_size) {
-        const vec: AsciiVector = remain[0..ascii_vector_size].*;
-        const comparator = @splat(ascii_vector_size, char);
-        remain = remain[ascii_vector_size..];
-        if ((@reduce(.Or, vec != comparator))) {
-            return true;
-        }
-    }
-
-    while (remain.len > 0) {
-        if (remain[0] != char) {
-            return true;
-        }
-        remain = remain[1..];
-    }
-
-    return bytes.len > 0;
-}
-
 pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
     return firstNonASCII16CheckMin(Slice, slice, true);
 }
@@ -1863,25 +1805,31 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
     if (comptime Environment.isAarch64 or Environment.isX64) {
         while (remaining.len >= ascii_u16_vector_size) {
             const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
+            const max_value = @reduce(.Max, vec);
 
             if (comptime check_min) {
-                const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
-                    @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
+                // by using @reduce here, we make it only do one comparison
+                // @reduce doesn't tell us the index though
+                const min_value = @reduce(.Min, vec);
+                if (min_value < 0x20 or max_value > 127) {
+                    // this is really slow
+                    // it does it element-wise for every single u8 on the vector
+                    // instead of doing the SIMD instructions
+                    // it removes a loop, but probably is slower in the end
+                    const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
+                        @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
+                    const bitmask = @ptrCast(*const u16, &cmp).*;
+                    const first = @ctz(u16, bitmask);
 
-                const bitmask = @ptrCast(*const u16, &cmp).*;
-                const first = @ctz(u16, bitmask);
-                if (first < ascii_u16_vector_size) {
                     return @intCast(u32, @as(u32, first) +
                         @intCast(u32, slice.len - remaining.len));
                 }
-            }
+            } else if (comptime !check_min) {
+                if (max_value > 127) {
+                    const cmp = vec > max_u16_ascii;
+                    const bitmask = @ptrCast(*const u16, &cmp).*;
+                    const first = @ctz(u16, bitmask);
 
-            if (comptime !check_min) {
-                const cmp = vec > max_u16_ascii;
-                const bitmask = @ptrCast(*const u16, &cmp).*;
-                const first = @ctz(u16, bitmask);
-
-                if (first < ascii_u16_vector_size) {
                     return @intCast(u32, @as(u32, first) +
                         @intCast(u32, slice.len - remaining.len));
                 }

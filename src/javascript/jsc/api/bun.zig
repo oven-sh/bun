@@ -1121,6 +1121,12 @@ pub const Class = NewClass(
         .sha = .{
             .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash", false, false),
         },
+        .dlprint = .{
+            .rfn = JSC.wrapWithHasContainer(JSC.FFI, "print", false, false),
+        },
+        .dlopen = .{
+            .rfn = JSC.wrapWithHasContainer(JSC.FFI, "open", false, false),
+        },
     },
     .{
         .main = .{

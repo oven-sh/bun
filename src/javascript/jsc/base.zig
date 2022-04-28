@@ -2568,6 +2568,7 @@ const SHA384 = JSC.API.Bun.Crypto.SHA384;
 const SHA256 = JSC.API.Bun.Crypto.SHA256;
 const SHA512_256 = JSC.API.Bun.Crypto.SHA512_256;
 const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
+const FFI = JSC.FFI;
 
 pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     AttributeIterator,
@@ -2614,6 +2615,7 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     TextEncoder,
     TimeoutTask,
     Transpiler,
+    FFI,
 });
 
 pub inline fn GetJSPrivateData(comptime Type: type, ref: js.JSObjectRef) ?*Type {

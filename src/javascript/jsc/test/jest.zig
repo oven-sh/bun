@@ -556,7 +556,8 @@ pub const ExpectPrototype = struct {
             return js.JSValueMakeUndefined(ctx);
         }
         var expect_ = getAllocator(ctx).create(Expect) catch unreachable;
-        js.JSValueProtect(ctx, arguments[0]);
+        if (JSC.JSValue.c(arguments[0]).isCell())
+            js.JSValueProtect(ctx, arguments[0]);
         expect_.* = .{
             .value = arguments[0],
             .scope = DescribeScope.active,

@@ -28,8 +28,10 @@
 #include "wtf/GetPtr.h"
 #include "wtf/PointerPreparations.h"
 #include "wtf/URL.h"
+#include "JSBufferPrototypeBuiltins.h"
 
 #include "JSBufferEncodingType.h"
+#include "JavaScriptCore/BuiltinNames.h"
 
 #if ENABLE(MEDIA_SOURCE)
 #include "BufferMediaSource.h"
@@ -56,60 +58,16 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_fill);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_includes);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_indexOf);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readBigInt64BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readBigInt64LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readBigUInt64BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readBigUInt64LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readDoubleBE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readDoubleLE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readFloatBE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readFloatLE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt16BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt16LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt32BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt32LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt8);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readIntBE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readIntLE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt16BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt16LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt32BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt32LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt8);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readUIntBE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_readUIntLE);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap16);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeDoubleBE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeDoubleLE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeFloatBE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeFloatLE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt16BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt16LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt32BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt32LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt8);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeIntBE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeIntLE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt16BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt16LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt32BE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt32LE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt8);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUIntBE);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUIntLE);
 
 namespace WebCore {
 using namespace JSC;
 
-template<> class IDLOperation<JSBuffer> {
+template<> class IDLOperation<WebCore::JSBuffer> {
 public:
     using ClassParameter = JSC::JSUint8Array*;
     using Operation = JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::CallFrame*, ClassParameter);
@@ -153,7 +111,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::JSType(JSC::JSType::Uint8ArrayType), StructureFlags), info(), JSC::MayHaveIndexedAccessors);
     }
 
 private:
@@ -173,85 +131,86 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSG
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_alloc, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_allocBody>(*lexicalGlobalObject, *callFrame, "alloc");
+    return IDLOperation<WebCore::JSBuffer>::call<jsBufferConstructorFunction_allocBody>(*lexicalGlobalObject, *callFrame, "alloc");
 }
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSValue::encode(jsUndefined());
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_allocUnsafeBody>(*lexicalGlobalObject, *callFrame, "allocUnsafe");
+    return IDLOperation<WebCore::JSBuffer>::call<jsBufferConstructorFunction_allocUnsafeBody>(*lexicalGlobalObject, *callFrame, "allocUnsafe");
 }
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSValue::encode(jsUndefined());
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_allocUnsafeSlowBody>(*lexicalGlobalObject, *callFrame, "allocUnsafeSlow");
+    return IDLOperation<WebCore::JSBuffer>::call<jsBufferConstructorFunction_allocUnsafeSlowBody>(*lexicalGlobalObject, *callFrame, "allocUnsafeSlow");
 }
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSValue::encode(jsUndefined());
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_byteLengthBody>(*lexicalGlobalObject, *callFrame, "byteLength");
+    return IDLOperation<WebCore::JSBuffer>::call<jsBufferConstructorFunction_byteLengthBody>(*lexicalGlobalObject, *callFrame, "byteLength");
 }
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSValue::encode(jsUndefined());
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_compare, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_compareBody>(*lexicalGlobalObject, *callFrame, "compare");
+    return IDLOperation<WebCore::JSBuffer>::call<jsBufferConstructorFunction_compareBody>(*lexicalGlobalObject, *callFrame, "compare");
 }
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSValue::encode(jsUndefined());
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_concat, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_concatBody>(*lexicalGlobalObject, *callFrame, "concat");
+    return IDLOperation<WebCore::JSBuffer>::call<jsBufferConstructorFunction_concatBody>(*lexicalGlobalObject, *callFrame, "concat");
 }
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_fromBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_fromBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSValue::encode(jsUndefined());
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_from, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_fromBody>(*lexicalGlobalObject, *callFrame, "from");
+    return IDLOperation<WebCore::JSBuffer>::call<jsBufferConstructorFunction_fromBody>(*lexicalGlobalObject, *callFrame, "from");
 }
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_isBufferBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_isBufferBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSValue::encode(jsUndefined());
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_isBufferBody>(*lexicalGlobalObject, *callFrame, "isBuffer");
+    return IDLOperation<WebCore::JSBuffer>::call<jsBufferConstructorFunction_isBufferBody>(*lexicalGlobalObject, *callFrame, "isBuffer");
 }
-static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_isEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSValue::encode(jsUndefined());
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_isEncodingBody>(*lexicalGlobalObject, *callFrame, "isEncoding");
+    return IDLOperation<WebCore::JSBuffer>::call<jsBufferConstructorFunction_isEncodingBody>(*lexicalGlobalObject, *callFrame, "isEncoding");
 }
 
 using JSBufferConstructor = JSDOMConstructor<JSBuffer>;
 
 /* Hash table for constructor */
 static const HashTableValue JSBufferConstructorTableValues[] = {
+    { "construct", static_cast<unsigned>(JSC::PropertyAttribute::Builtin, JSC::PropertyAttribute::DontEnum, JSC::PropertyAttribute::DontDelete), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeBufferConstructorCodeGenerator), (intptr_t)(3) } },
     { "alloc", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_alloc), (intptr_t)(3) } },
     { "allocUnsafe", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_allocUnsafe), (intptr_t)(1) } },
     { "allocUnsafeSlow", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_allocUnsafeSlow), (intptr_t)(1) } },
@@ -259,8 +218,6 @@ static const HashTableValue JSBufferConstructorTableValues[] = {
     { "compare", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_compare), (intptr_t)(2) } },
     { "concat", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_concat), (intptr_t)(2) } },
     { "from", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_from), (intptr_t)(3) } },
-    { "isBuffer", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_isBuffer), (intptr_t)(1) } },
-    { "isEncoding", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_isEncoding), (intptr_t)(1) } },
 };
 
 // new Buffer()
@@ -322,16 +279,23 @@ static inline EncodedJSValue constructBufferFromLength(JSGlobalObject* lexicalGl
         return JSValue::encode(jsUndefined());
     }
 
-    auto arrayBuffer = JSC::ArrayBuffer::tryCreate(length, 1);
-    if (!arrayBuffer) {
+    auto globalObject = reinterpret_cast<WebCore::JSDOMGlobalObject*>(lexicalGlobalObject);
+
+    JSC::MarkedArgumentBuffer args;
+
+    auto* baseStructure = globalObject->m_typedArrayUint8.get(globalObject);
+    auto arrayBufferView = JSC::JSUint8Array::createUninitialized(globalObject, baseStructure, length);
+
+    if (!arrayBufferView) {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         return JSValue::encode(jsUndefined());
     }
 
-    auto uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(arrayBuffer), 0, length);
-    uint8Array->setPrototypeDirect(vm, JSBuffer::prototype(vm, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)));
+    auto* subclassStructure = JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, arrayBufferView, WebCore::getDOMStructure<JSBuffer>(vm, *globalObject));
 
-    return JSC::JSValue::encode(uint8Array);
+    auto buffer = JSBuffer::create(subclassStructure, globalObject, Buffer::create(globalObject, WTFMove(arrayBufferView)));
+
+    return JSC::JSValue::encode(buffer);
 }
 
 // new Buffer(string[, encoding])
@@ -388,6 +352,7 @@ template<> void JSBufferConstructor::initializeProperties(VM& vm, JSDOMGlobalObj
     JSString* nameString = jsNontrivialString(vm, "Buffer"_s);
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+
     putDirect(vm, vm.propertyNames->prototype, JSBuffer::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     reifyStaticProperties(vm, JSBuffer::info(), JSBufferConstructorTableValues, *this);
 }
@@ -399,29 +364,30 @@ bool JSBuffer__isBuffer(JSC::JSGlobalObject* global, JSC::EncodedJSValue value)
     return !!jsBuffer;
 }
 
-const ClassInfo JSBuffer::s_info = { "Buffer"_s, JSC::getUint8ArrayClassInfo(), nullptr, nullptr, CREATE_METHOD_TABLE(JSBuffer) };
+const ClassInfo JSBuffer::s_info
+    = { "Buffer"_s, JSC::getUint8ArrayClassInfo(), nullptr, nullptr, CREATE_METHOD_TABLE(JSBuffer) };
 
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -430,142 +396,33 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JS
 
     return JSC::JSValue::encode(JSC::JSValue(reinterpret_cast<uint8_t*>(castedThis->vector())[0]));
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_lastIndexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_lastIndexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readBigInt64BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readBigInt64LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readBigUInt64BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readBigUInt64LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readDoubleBEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readDoubleLEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readFloatBEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readFloatLEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readInt16BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readInt16LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readInt32BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readInt32LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readInt8Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readIntBEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readIntLEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readUInt16BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readUInt16LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readUInt32BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readUInt32LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readUInt8Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readUIntBEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_readUIntLEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     uint32_t offset = 0;
@@ -670,7 +527,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(retValue));
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<WebCore::JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     uint32_t offset = 0;
@@ -797,116 +654,6 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(written)));
 }
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBigInt64BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBigInt64LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBigUInt64BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBigUInt64LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeDoubleBEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeDoubleLEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeFloatBEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeFloatLEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeInt16BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeInt16LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeInt32BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeInt32LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeInt8Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeIntBEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeIntLEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeUInt16BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeUInt16LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeUInt32BEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeUInt32LEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeUInt8Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeUIntBEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeUIntLEBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSC::JSValue::encode(jsUndefined());
-}
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_compare, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -936,94 +683,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf, (JSGlobalObject 
 {
     return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_lastIndexOfBody>(*lexicalGlobalObject, *callFrame, "lastIndexOf");
 }
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readBigInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readBigInt64BEBody>(*lexicalGlobalObject, *callFrame, "readBigInt64BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readBigInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readBigInt64LEBody>(*lexicalGlobalObject, *callFrame, "readBigInt64LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readBigUInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readBigUInt64BEBody>(*lexicalGlobalObject, *callFrame, "readBigUInt64BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readBigUInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readBigUInt64LEBody>(*lexicalGlobalObject, *callFrame, "readBigUInt64LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readDoubleBE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readDoubleBEBody>(*lexicalGlobalObject, *callFrame, "readDoubleBE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readDoubleLE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readDoubleLEBody>(*lexicalGlobalObject, *callFrame, "readDoubleLE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readFloatBE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readFloatBEBody>(*lexicalGlobalObject, *callFrame, "readFloatBE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readFloatLE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readFloatLEBody>(*lexicalGlobalObject, *callFrame, "readFloatLE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt16BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readInt16BEBody>(*lexicalGlobalObject, *callFrame, "readInt16BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt16LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readInt16LEBody>(*lexicalGlobalObject, *callFrame, "readInt16LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt32BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readInt32BEBody>(*lexicalGlobalObject, *callFrame, "readInt32BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt32LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readInt32LEBody>(*lexicalGlobalObject, *callFrame, "readInt32LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readInt8, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readInt8Body>(*lexicalGlobalObject, *callFrame, "readInt8");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readIntBE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readIntBEBody>(*lexicalGlobalObject, *callFrame, "readIntBE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readIntLE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readIntLEBody>(*lexicalGlobalObject, *callFrame, "readIntLE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt16BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readUInt16BEBody>(*lexicalGlobalObject, *callFrame, "readUInt16BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt16LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readUInt16LEBody>(*lexicalGlobalObject, *callFrame, "readUInt16LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt32BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readUInt32BEBody>(*lexicalGlobalObject, *callFrame, "readUInt32BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt32LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readUInt32LEBody>(*lexicalGlobalObject, *callFrame, "readUInt32LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readUInt8, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readUInt8Body>(*lexicalGlobalObject, *callFrame, "readUInt8");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readUIntBE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readUIntBEBody>(*lexicalGlobalObject, *callFrame, "readUIntBE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_readUIntLE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_readUIntLEBody>(*lexicalGlobalObject, *callFrame, "readUIntLE");
-}
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_swap16, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_swap16Body>(*lexicalGlobalObject, *callFrame, "swap16");
@@ -1044,94 +703,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_write, (JSGlobalObject * lexi
 {
     return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeBody>(*lexicalGlobalObject, *callFrame, "write");
 }
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeBigInt64BEBody>(*lexicalGlobalObject, *callFrame, "writeBigInt64BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeBigInt64LEBody>(*lexicalGlobalObject, *callFrame, "writeBigInt64LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeBigUInt64BEBody>(*lexicalGlobalObject, *callFrame, "writeBigUInt64BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeBigUInt64LEBody>(*lexicalGlobalObject, *callFrame, "writeBigUInt64LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeDoubleBE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeDoubleBEBody>(*lexicalGlobalObject, *callFrame, "writeDoubleBE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeDoubleLE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeDoubleLEBody>(*lexicalGlobalObject, *callFrame, "writeDoubleLE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeFloatBE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeFloatBEBody>(*lexicalGlobalObject, *callFrame, "writeFloatBE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeFloatLE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeFloatLEBody>(*lexicalGlobalObject, *callFrame, "writeFloatLE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt16BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeInt16BEBody>(*lexicalGlobalObject, *callFrame, "writeInt16BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt16LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeInt16LEBody>(*lexicalGlobalObject, *callFrame, "writeInt16LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt32BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeInt32BEBody>(*lexicalGlobalObject, *callFrame, "writeInt32BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt32LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeInt32LEBody>(*lexicalGlobalObject, *callFrame, "writeInt32LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeInt8, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeInt8Body>(*lexicalGlobalObject, *callFrame, "writeInt8");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeIntBE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeIntBEBody>(*lexicalGlobalObject, *callFrame, "writeIntBE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeIntLE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeIntLEBody>(*lexicalGlobalObject, *callFrame, "writeIntLE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt16BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeUInt16BEBody>(*lexicalGlobalObject, *callFrame, "writeUInt16BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt16LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeUInt16LEBody>(*lexicalGlobalObject, *callFrame, "writeUInt16LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt32BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeUInt32BEBody>(*lexicalGlobalObject, *callFrame, "writeUInt32BE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt32LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeUInt32LEBody>(*lexicalGlobalObject, *callFrame, "writeUInt32LE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUInt8, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeUInt8Body>(*lexicalGlobalObject, *callFrame, "writeUInt8");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUIntBE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeUIntBEBody>(*lexicalGlobalObject, *callFrame, "writeUIntBE");
-}
-JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeUIntLE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSBuffer>::call<jsBufferPrototypeFunction_writeUIntLEBody>(*lexicalGlobalObject, *callFrame, "writeUIntLE");
-}
 
 /* Hash table for prototype */
 
@@ -1144,55 +715,50 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "includes", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_includes), (intptr_t)(3) } },
           { "indexOf", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_indexOf), (intptr_t)(3) } },
           { "lastIndexOf", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_lastIndexOf), (intptr_t)(3) } },
-          { "readBigInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readBigInt64BE), (intptr_t)(2) } },
-          { "readBigInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readBigInt64LE), (intptr_t)(2) } },
-          { "readBigUInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readBigUInt64BE), (intptr_t)(2) } },
-          { "readBigUInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readBigUInt64LE), (intptr_t)(2) } },
-          { "readDoubleBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readDoubleBE), (intptr_t)(2) } },
-          { "readDoubleLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readDoubleLE), (intptr_t)(2) } },
-          { "readFloatBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readFloatBE), (intptr_t)(2) } },
-          { "readFloatLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readFloatLE), (intptr_t)(2) } },
-          { "readInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readInt16BE), (intptr_t)(2) } },
-          { "readInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readInt16LE), (intptr_t)(2) } },
-          { "readInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readInt32BE), (intptr_t)(2) } },
-          { "readInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readInt32LE), (intptr_t)(2) } },
-          { "readInt8", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readInt8), (intptr_t)(2) } },
-          { "readIntBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readIntBE), (intptr_t)(2) } },
-          { "readIntLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readIntLE), (intptr_t)(2) } },
-          { "readUInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readUInt16BE), (intptr_t)(2) } },
-          { "readUInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readUInt16LE), (intptr_t)(2) } },
-          { "readUInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readUInt32BE), (intptr_t)(2) } },
-          { "readUInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readUInt32LE), (intptr_t)(2) } },
-          { "readUInt8", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readUInt8), (intptr_t)(2) } },
-          { "readUIntBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readUIntBE), (intptr_t)(2) } },
-          { "readUIntLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_readUIntLE), (intptr_t)(2) } },
           { "swap16", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_swap16), (intptr_t)(0) } },
           { "swap32", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_swap32), (intptr_t)(0) } },
           { "swap64", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_swap64), (intptr_t)(0) } },
           { "toString", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_toString), (intptr_t)(4) } },
           { "write", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_write), (intptr_t)(4) } },
-          { "writeBigInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeBigInt64BE), (intptr_t)(2) } },
-          { "writeBigInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeBigInt64LE), (intptr_t)(2) } },
-          { "writeBigUInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeBigUInt64BE), (intptr_t)(2) } },
-          { "writeBigUInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeBigUInt64LE), (intptr_t)(2) } },
-          { "writeDoubleBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeDoubleBE), (intptr_t)(2) } },
-          { "writeDoubleLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeDoubleLE), (intptr_t)(2) } },
-          { "writeFloatBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeFloatBE), (intptr_t)(2) } },
-          { "writeFloatLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeFloatLE), (intptr_t)(2) } },
-          { "writeInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeInt16BE), (intptr_t)(2) } },
-          { "writeInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeInt16LE), (intptr_t)(2) } },
-          { "writeInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeInt32BE), (intptr_t)(2) } },
-          { "writeInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeInt32LE), (intptr_t)(2) } },
-          { "writeInt8", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeInt8), (intptr_t)(2) } },
-          { "writeIntBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeIntBE), (intptr_t)(2) } },
-          { "writeIntLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeIntLE), (intptr_t)(2) } },
-          { "writeUInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeUInt16BE), (intptr_t)(2) } },
-          { "writeUInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeUInt16LE), (intptr_t)(2) } },
-          { "writeUInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeUInt32BE), (intptr_t)(2) } },
-          { "writeUInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeUInt32LE), (intptr_t)(2) } },
-          { "writeUInt8", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeUInt8), (intptr_t)(2) } },
-          { "writeUIntBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeUIntBE), (intptr_t)(2) } },
-          { "writeUIntLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_writeUIntLE), (intptr_t)(2) } },
+          { "readBigInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigInt64BECodeGenerator), (intptr_t)(2) } },
+          { "readBigInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigInt64LECodeGenerator), (intptr_t)(2) } },
+          { "readBigUInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigUInt64BECodeGenerator), (intptr_t)(3) } },
+          { "readBigUInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigUInt64LECodeGenerator), (intptr_t)(3) } },
+          { "readDoubleBE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadDoubleBECodeGenerator), (intptr_t)(3) } },
+          { "readDoubleLE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadDoubleLECodeGenerator), (intptr_t)(3) } },
+          { "readFloatBE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadFloatBECodeGenerator), (intptr_t)(3) } },
+          { "readFloatLE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadFloatLECodeGenerator), (intptr_t)(3) } },
+          { "readInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt16BECodeGenerator), (intptr_t)(3) } },
+          { "readInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt16LECodeGenerator), (intptr_t)(3) } },
+          { "readInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt32BECodeGenerator), (intptr_t)(1) } },
+          { "readInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt32LECodeGenerator), (intptr_t)(1) } },
+          { "readInt8", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt8CodeGenerator), (intptr_t)(1) } },
+          { "readUInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt16BECodeGenerator), (intptr_t)(1) } },
+          { "readUInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt16LECodeGenerator), (intptr_t)(1) } },
+          { "readUInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt32BECodeGenerator), (intptr_t)(1) } },
+          { "readUInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt32LECodeGenerator), (intptr_t)(1) } },
+          { "readUInt8", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt8CodeGenerator), (intptr_t)(1) } },
+          { "slice", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeSliceCodeGenerator), (intptr_t)(2) } },
+          { "subarray", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeSubarrayCodeGenerator), (intptr_t)(2) } },
+          { "toJSON", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeToJSONCodeGenerator), (intptr_t)(2) } },
+          { "writeBigInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigInt64BECodeGenerator), (intptr_t)(2) } },
+          { "writeBigInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigInt64LECodeGenerator), (intptr_t)(2) } },
+          { "writeBigUInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigUInt64BECodeGenerator), (intptr_t)(2) } },
+          { "writeBigUInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigUInt64LECodeGenerator), (intptr_t)(2) } },
+          { "writeDoubleBE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteDoubleBECodeGenerator), (intptr_t)(2) } },
+          { "writeDoubleLE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteDoubleLECodeGenerator), (intptr_t)(2) } },
+          { "writeFloatBE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteFloatBECodeGenerator), (intptr_t)(2) } },
+          { "writeFloatLE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteFloatLECodeGenerator), (intptr_t)(2) } },
+          { "writeInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt16BECodeGenerator), (intptr_t)(2) } },
+          { "writeInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt16LECodeGenerator), (intptr_t)(2) } },
+          { "writeInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt32BECodeGenerator), (intptr_t)(2) } },
+          { "writeInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt32LECodeGenerator), (intptr_t)(2) } },
+          { "writeInt8", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt8CodeGenerator), (intptr_t)(2) } },
+          { "writeUInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt16BECodeGenerator), (intptr_t)(2) } },
+          { "writeUInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt16LECodeGenerator), (intptr_t)(2) } },
+          { "writeUInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt32BECodeGenerator), (intptr_t)(2) } },
+          { "writeUInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt32LECodeGenerator), (intptr_t)(2) } },
+          { "writeUInt8", static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt8CodeGenerator), (intptr_t)(0) } },
       };
 
 void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
@@ -1200,14 +766,13 @@ void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-    this->setPrototypeDirect(vm, globalThis->m_typedArrayUint8.prototype(globalThis));
 }
 
 const ClassInfo JSBufferPrototype::s_info = { "Buffer"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype) };
 
 JSObject* JSBuffer::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSBufferPrototype::create(vm, &globalObject, JSBufferPrototype::createStructure(vm, &globalObject, globalObject.m_typedArrayUint8.prototype(&globalObject)));
+    return JSBufferPrototype::create(vm, &globalObject, JSBufferPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
 }
 
 JSObject* JSBuffer::prototype(VM& vm, JSDOMGlobalObject& globalObject)

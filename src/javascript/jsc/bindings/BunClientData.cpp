@@ -40,6 +40,7 @@ JSVMClientData::JSVMClientData(VM& vm)
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
+    , m_builtinFunctions(vm)
 {
 }
 

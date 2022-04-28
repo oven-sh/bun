@@ -7,17 +7,17 @@
 #include "root.h"
 
 #include "Buffer.h"
-#include "JavaScriptCore/JSArrayBufferViewInlines.h"
+#include "JavaScriptCore/Uint8Array.h"
 
 namespace WebCore {
 
-Ref<Buffer> Buffer::create(JSC::JSGlobalObject* globalObject, RefPtr<ArrayBuffer>&& arrayBuffer, size_t byteOffset, size_t length)
+Ref<Buffer> Buffer::create(JSC::JSGlobalObject* globalObject, JSC::JSUint8Array* array, size_t byteOffset, size_t length)
 {
-    return adoptRef(*new Buffer(globalObject, WTFMove(arrayBuffer), byteOffset, length));
+    return adoptRef(*new Buffer(globalObject, array, byteOffset, length));
 }
-Ref<Buffer> Buffer::create(JSC::JSGlobalObject* globalObject, RefPtr<ArrayBuffer>&& arrayBuffer)
+Ref<Buffer> Buffer::create(JSC::JSGlobalObject* globalObject, JSC::JSUint8Array* array)
 {
-    return create(globalObject, WTFMove(arrayBuffer), 0, arrayBuffer->byteLength());
+    return create(globalObject, array, 0, array->byteLength());
 }
 
 int32_t static write(WTF::StringView view, size_t offset, size_t length, BufferEncodingType encodingType)
@@ -26,7 +26,6 @@ int32_t static write(WTF::StringView view, size_t offset, size_t length, BufferE
 
 Buffer::~Buffer()
 {
-    m_arrayBuffer->deref();
 }
 
 Ref<Buffer> Buffer::createEmpty(JSC::JSGlobalObject* globalObject)

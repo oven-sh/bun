@@ -23,6 +23,8 @@ class DOMWrapperWorld;
 #include "JavaScriptCore/WeakInlines.h"
 #include "JavaScriptCore/IsoSubspacePerVM.h"
 
+#include "BunBuiltins.h"
+
 namespace WebCore {
 using namespace JSC;
 using namespace Zig;
@@ -77,6 +79,7 @@ public:
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
+    JSBuiltinFunctions& builtinFunctions() { return m_builtinFunctions; }
 
     WebCore::DOMWrapperWorld& normalWorld() { return *m_normalWorld; }
 
@@ -94,6 +97,7 @@ public:
 
 private:
     BunBuiltinNames m_builtinNames;
+    JSBuiltinFunctions m_builtinFunctions;
 
     JSHeapData* m_heapData;
 

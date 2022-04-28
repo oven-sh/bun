@@ -141,6 +141,10 @@ pub const ZigString = extern struct {
             return this.ptr[0..this.len];
         }
 
+        pub fn sliceZ(this: Slice) [:0]const u8 {
+            return std.meta.assumeSentinel(this.ptr[0..this.len], 0);
+        }
+
         pub fn mut(this: Slice) []u8 {
             return @intToPtr([*]u8, @ptrToInt(this.ptr))[0..this.len];
         }
@@ -3484,3 +3488,11 @@ pub const WTF = struct {
 pub const Callback = struct {
     // zig: Value,
 };
+
+const NodeBuffer = @import("../node/buffer.zig");
+
+comptime {
+    if (!JSC.is_bindgen) {
+        std.testing.refAllDecls(NodeBuffer.Write);
+    }
+}

@@ -30,6 +30,7 @@ pub const API = struct {
     pub const Router = @import("./javascript/jsc/api/router.zig");
     pub const ServerConfig = @import("./javascript/jsc/api/server.zig").ServerConfig;
 };
+pub const FFI = @import("./javascript/jsc/api/ffi.zig").FFI;
 pub const Node = struct {
     pub usingnamespace @import("./javascript/jsc/node/types.zig");
     pub usingnamespace @import("./javascript/jsc/node/node_fs.zig");

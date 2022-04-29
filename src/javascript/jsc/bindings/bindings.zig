@@ -2305,6 +2305,15 @@ pub const JSValue = enum(u64) {
         return cppFn("makeWithNameAndPrototype", .{ globalObject, class, instance, name_ });
     }
 
+    /// Must come from globally-allocated memory!
+    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: std.mem.Allocator) JSValue {
+        if (comptime JSC.is_bindgen) unreachable;
+        @setRuntimeSafety(false);
+        return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, allocator.ptr, JSC.MarkedArrayBuffer_deallocator);
+    }
+
+    extern fn JSBuffer__bufferFromPointerAndLengthAndDeinit(*JSGlobalObject, [*]u8, usize, ?*anyopaque, JSC.C.JSTypedArrayBytesDeallocator) JSValue;
+
     pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {
         return switch (comptime Number) {
             JSValue => number,

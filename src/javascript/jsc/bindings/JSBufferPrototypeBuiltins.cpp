@@ -480,7 +480,7 @@ const char* const s_jsBufferPrototypeWriteBigUInt64BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsBufferPrototypeSliceCodeLength = 152;
+const int s_jsBufferPrototypeSliceCodeLength = 309;
 static const JSC::Intrinsic s_jsBufferPrototypeSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeSliceCode =
     "(function (start, end) {\n" \
@@ -489,24 +489,187 @@ const char* const s_jsBufferPrototypeSliceCode =
     "    return this;\n" \
     "  }\n" \
     "\n" \
-    "  return this.subarray(start, end);\n" \
+    "  if (Buffer[Symbol.species] !== Buffer) {\n" \
+    "    Buffer[Symbol.species] = Buffer;\n" \
+    "  }\n" \
+    "\n" \
+    "  return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));\n" \
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_jsBufferPrototypeSubarrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_jsBufferPrototypeSubarrayCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsBufferPrototypeSubarrayCodeLength = 247;
-static const JSC::Intrinsic s_jsBufferPrototypeSubarrayCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeSubarrayCode =
-    "(function (start, end) {\n" \
+const JSC::ConstructAbility s_jsBufferPrototypeUtf8WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeUtf8WriteCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeUtf8WriteCodeLength = 105;
+static const JSC::Intrinsic s_jsBufferPrototypeUtf8WriteCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeUtf8WriteCode =
+    "(function (text, offset, length) {\n" \
     "  \"use strict\";\n" \
-    "  \n" \
-    "  var array = new @Uint8Array(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));\n" \
-    "  @setPrototypeDirect.@call(\n" \
-    "    array,\n" \
-    "    Buffer.prototype\n" \
-    "  );\n" \
-    "  return array;\n" \
+    "  return this.write(text, offset, length, \"utf8\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeUcs2WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeUcs2WriteCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeUcs2WriteCodeLength = 105;
+static const JSC::Intrinsic s_jsBufferPrototypeUcs2WriteCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeUcs2WriteCode =
+    "(function (text, offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.write(text, offset, length, \"ucs2\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeUtf16leWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeUtf16leWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeUtf16leWriteCodeLength = 108;
+static const JSC::Intrinsic s_jsBufferPrototypeUtf16leWriteCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeUtf16leWriteCode =
+    "(function (text, offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.write(text, offset, length, \"utf16le\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeLatin1WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeLatin1WriteCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeLatin1WriteCodeLength = 107;
+static const JSC::Intrinsic s_jsBufferPrototypeLatin1WriteCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeLatin1WriteCode =
+    "(function (text, offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.write(text, offset, length, \"latin1\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeAsciiWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeAsciiWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeAsciiWriteCodeLength = 106;
+static const JSC::Intrinsic s_jsBufferPrototypeAsciiWriteCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeAsciiWriteCode =
+    "(function (text, offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.write(text, offset, length, \"ascii\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeBase64WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeBase64WriteCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeBase64WriteCodeLength = 107;
+static const JSC::Intrinsic s_jsBufferPrototypeBase64WriteCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeBase64WriteCode =
+    "(function (text, offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.write(text, offset, length, \"base64\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeBase64urlWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeBase64urlWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeBase64urlWriteCodeLength = 110;
+static const JSC::Intrinsic s_jsBufferPrototypeBase64urlWriteCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeBase64urlWriteCode =
+    "(function (text, offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.write(text, offset, length, \"base64url\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeHexWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeHexWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeHexWriteCodeLength = 104;
+static const JSC::Intrinsic s_jsBufferPrototypeHexWriteCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeHexWriteCode =
+    "(function (text, offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.write(text, offset, length, \"hex\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeUtf8SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeUtf8SliceCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeUtf8SliceCodeLength = 96;
+static const JSC::Intrinsic s_jsBufferPrototypeUtf8SliceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeUtf8SliceCode =
+    "(function (offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.toString(offset, length, \"utf8\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeUcs2SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeUcs2SliceCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeUcs2SliceCodeLength = 96;
+static const JSC::Intrinsic s_jsBufferPrototypeUcs2SliceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeUcs2SliceCode =
+    "(function (offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.toString(offset, length, \"ucs2\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeUtf16leSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeUtf16leSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeUtf16leSliceCodeLength = 99;
+static const JSC::Intrinsic s_jsBufferPrototypeUtf16leSliceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeUtf16leSliceCode =
+    "(function (offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.toString(offset, length, \"utf16le\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeLatin1SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeLatin1SliceCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeLatin1SliceCodeLength = 98;
+static const JSC::Intrinsic s_jsBufferPrototypeLatin1SliceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeLatin1SliceCode =
+    "(function (offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.toString(offset, length, \"latin1\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeAsciiSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeAsciiSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeAsciiSliceCodeLength = 97;
+static const JSC::Intrinsic s_jsBufferPrototypeAsciiSliceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeAsciiSliceCode =
+    "(function (offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.toString(offset, length, \"ascii\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeBase64SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeBase64SliceCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeBase64SliceCodeLength = 98;
+static const JSC::Intrinsic s_jsBufferPrototypeBase64SliceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeBase64SliceCode =
+    "(function (offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.toString(offset, length, \"base64\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeBase64urlSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeBase64urlSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeBase64urlSliceCodeLength = 101;
+static const JSC::Intrinsic s_jsBufferPrototypeBase64urlSliceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeBase64urlSliceCode =
+    "(function (offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.toString(offset, length, \"base64url\");\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeHexSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeHexSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeHexSliceCodeLength = 95;
+static const JSC::Intrinsic s_jsBufferPrototypeHexSliceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeHexSliceCode =
+    "(function (offset, length) {\n" \
+    "  \"use strict\";\n" \
+    "  return this.toString(offset, length, \"hex\");\n" \
     "})\n" \
 ;
 

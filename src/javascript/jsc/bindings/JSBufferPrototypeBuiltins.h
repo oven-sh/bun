@@ -1,3 +1,4 @@
+// clang-format off
 /*
  * Copyright (c) 2016 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
@@ -198,10 +199,70 @@ extern const char* const s_jsBufferPrototypeSliceCode;
 extern const int s_jsBufferPrototypeSliceCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind;
-extern const char* const s_jsBufferPrototypeSubarrayCode;
-extern const int s_jsBufferPrototypeSubarrayCodeLength;
-extern const JSC::ConstructAbility s_jsBufferPrototypeSubarrayCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsBufferPrototypeSubarrayCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeUtf8WriteCode;
+extern const int s_jsBufferPrototypeUtf8WriteCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeUtf8WriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeUtf8WriteCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeUcs2WriteCode;
+extern const int s_jsBufferPrototypeUcs2WriteCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeUcs2WriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeUcs2WriteCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeUtf16leWriteCode;
+extern const int s_jsBufferPrototypeUtf16leWriteCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeUtf16leWriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeUtf16leWriteCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeLatin1WriteCode;
+extern const int s_jsBufferPrototypeLatin1WriteCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeLatin1WriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeLatin1WriteCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeAsciiWriteCode;
+extern const int s_jsBufferPrototypeAsciiWriteCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeAsciiWriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeAsciiWriteCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeBase64WriteCode;
+extern const int s_jsBufferPrototypeBase64WriteCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeBase64WriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeBase64WriteCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeBase64urlWriteCode;
+extern const int s_jsBufferPrototypeBase64urlWriteCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeBase64urlWriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeBase64urlWriteCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeHexWriteCode;
+extern const int s_jsBufferPrototypeHexWriteCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeHexWriteCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeHexWriteCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeUtf8SliceCode;
+extern const int s_jsBufferPrototypeUtf8SliceCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeUtf8SliceCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeUtf8SliceCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeUcs2SliceCode;
+extern const int s_jsBufferPrototypeUcs2SliceCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeUcs2SliceCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeUcs2SliceCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeUtf16leSliceCode;
+extern const int s_jsBufferPrototypeUtf16leSliceCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeUtf16leSliceCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeUtf16leSliceCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeLatin1SliceCode;
+extern const int s_jsBufferPrototypeLatin1SliceCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeLatin1SliceCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeLatin1SliceCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeAsciiSliceCode;
+extern const int s_jsBufferPrototypeAsciiSliceCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeAsciiSliceCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeAsciiSliceCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeBase64SliceCode;
+extern const int s_jsBufferPrototypeBase64SliceCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeBase64SliceCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeBase64SliceCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeBase64urlSliceCode;
+extern const int s_jsBufferPrototypeBase64urlSliceCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeBase64urlSliceCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeBase64urlSliceCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeHexSliceCode;
+extern const int s_jsBufferPrototypeHexSliceCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeHexSliceCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeHexSliceCodeConstructorKind;
 extern const char* const s_jsBufferPrototypeToJSONCode;
 extern const int s_jsBufferPrototypeToJSONCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeToJSONCodeConstructAbility;
@@ -247,7 +308,22 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
     macro(writeBigUInt64LE, jsBufferPrototypeWriteBigUInt64LE, 2) \
     macro(writeBigUInt64BE, jsBufferPrototypeWriteBigUInt64BE, 2) \
     macro(slice, jsBufferPrototypeSlice, 2) \
-    macro(subarray, jsBufferPrototypeSubarray, 2) \
+    macro(utf8Write, jsBufferPrototypeUtf8Write, 3) \
+    macro(ucs2Write, jsBufferPrototypeUcs2Write, 3) \
+    macro(utf16leWrite, jsBufferPrototypeUtf16leWrite, 3) \
+    macro(latin1Write, jsBufferPrototypeLatin1Write, 3) \
+    macro(asciiWrite, jsBufferPrototypeAsciiWrite, 3) \
+    macro(base64Write, jsBufferPrototypeBase64Write, 3) \
+    macro(base64urlWrite, jsBufferPrototypeBase64urlWrite, 3) \
+    macro(hexWrite, jsBufferPrototypeHexWrite, 3) \
+    macro(utf8Slice, jsBufferPrototypeUtf8Slice, 2) \
+    macro(ucs2Slice, jsBufferPrototypeUcs2Slice, 2) \
+    macro(utf16leSlice, jsBufferPrototypeUtf16leSlice, 2) \
+    macro(latin1Slice, jsBufferPrototypeLatin1Slice, 2) \
+    macro(asciiSlice, jsBufferPrototypeAsciiSlice, 2) \
+    macro(base64Slice, jsBufferPrototypeBase64Slice, 2) \
+    macro(base64urlSlice, jsBufferPrototypeBase64urlSlice, 2) \
+    macro(hexSlice, jsBufferPrototypeHexSlice, 2) \
     macro(toJSON, jsBufferPrototypeToJSON, 0) \
 
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_BUFFER 1
@@ -289,7 +365,22 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEBIGUINT64LE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_WRITEBIGUINT64BE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SLICE 1
-#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SUBARRAY 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_UTF8WRITE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_UCS2WRITE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_UTF16LEWRITE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_LATIN1WRITE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_ASCIIWRITE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_BASE64WRITE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_BASE64URLWRITE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_HEXWRITE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_UTF8SLICE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_UCS2SLICE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_UTF16LESLICE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_LATIN1SLICE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_ASCIISLICE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_BASE64SLICE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_BASE64URLSLICE 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_HEXSLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_TOJSON 1
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_CODE(macro) \
@@ -332,7 +423,22 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
     macro(jsBufferPrototypeWriteBigUInt64LECode, writeBigUInt64LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteBigUInt64LECodeLength) \
     macro(jsBufferPrototypeWriteBigUInt64BECode, writeBigUInt64BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteBigUInt64BECodeLength) \
     macro(jsBufferPrototypeSliceCode, slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeSliceCodeLength) \
-    macro(jsBufferPrototypeSubarrayCode, subarray, static_cast<const char*>(nullptr), s_jsBufferPrototypeSubarrayCodeLength) \
+    macro(jsBufferPrototypeUtf8WriteCode, utf8Write, static_cast<const char*>(nullptr), s_jsBufferPrototypeUtf8WriteCodeLength) \
+    macro(jsBufferPrototypeUcs2WriteCode, ucs2Write, static_cast<const char*>(nullptr), s_jsBufferPrototypeUcs2WriteCodeLength) \
+    macro(jsBufferPrototypeUtf16leWriteCode, utf16leWrite, static_cast<const char*>(nullptr), s_jsBufferPrototypeUtf16leWriteCodeLength) \
+    macro(jsBufferPrototypeLatin1WriteCode, latin1Write, static_cast<const char*>(nullptr), s_jsBufferPrototypeLatin1WriteCodeLength) \
+    macro(jsBufferPrototypeAsciiWriteCode, asciiWrite, static_cast<const char*>(nullptr), s_jsBufferPrototypeAsciiWriteCodeLength) \
+    macro(jsBufferPrototypeBase64WriteCode, base64Write, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64WriteCodeLength) \
+    macro(jsBufferPrototypeBase64urlWriteCode, base64urlWrite, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64urlWriteCodeLength) \
+    macro(jsBufferPrototypeHexWriteCode, hexWrite, static_cast<const char*>(nullptr), s_jsBufferPrototypeHexWriteCodeLength) \
+    macro(jsBufferPrototypeUtf8SliceCode, utf8Slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeUtf8SliceCodeLength) \
+    macro(jsBufferPrototypeUcs2SliceCode, ucs2Slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeUcs2SliceCodeLength) \
+    macro(jsBufferPrototypeUtf16leSliceCode, utf16leSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeUtf16leSliceCodeLength) \
+    macro(jsBufferPrototypeLatin1SliceCode, latin1Slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeLatin1SliceCodeLength) \
+    macro(jsBufferPrototypeAsciiSliceCode, asciiSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeAsciiSliceCodeLength) \
+    macro(jsBufferPrototypeBase64SliceCode, base64Slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64SliceCodeLength) \
+    macro(jsBufferPrototypeBase64urlSliceCode, base64urlSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64urlSliceCodeLength) \
+    macro(jsBufferPrototypeHexSliceCode, hexSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeHexSliceCodeLength) \
     macro(jsBufferPrototypeToJSONCode, toJSON, static_cast<const char*>(nullptr), s_jsBufferPrototypeToJSONCodeLength) \
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_FUNCTION_NAME(macro) \
@@ -357,8 +463,13 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
     macro(readUInt8) \
     macro(setBigUint64) \
     macro(slice) \
-    macro(subarray) \
     macro(toJSON) \
+    macro(ucs2Slice) \
+    macro(ucs2Write) \
+    macro(utf16leSlice) \
+    macro(utf16leWrite) \
+    macro(utf8Slice) \
+    macro(utf8Write) \
     macro(writeBigInt64BE) \
     macro(writeBigInt64LE) \
     macro(writeBigUInt64BE) \

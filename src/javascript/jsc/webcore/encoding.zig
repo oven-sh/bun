@@ -650,6 +650,10 @@ pub const TextDecoder = struct {
     }
 };
 
+/// This code is incredibly redundant
+/// We have different paths for creaitng a new buffer versus writing into an existing one
+/// That's mostly why all the duplication
+/// The majority of the business logic here is just shooting it off to the optimized functions
 pub const Encoder = struct {
     export fn Bun__encoding__writeLatin1AsHex(input: [*]const u8, len: usize, to: [*]u8, to_len: usize) i64 {
         return writeU8(input, len, to, to_len, .hex);
@@ -686,6 +690,55 @@ pub const Encoder = struct {
     }
     export fn Bun__encoding__writeUTF16AsASCII(input: [*]const u8, len: usize, to: [*]u8, to_len: usize) i64 {
         return writeU8(input, len, to, to_len, .ascii);
+    }
+
+    export fn Bun__encoding__constructFromLatin1AsHex(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
+        var slice = constructFromU8(input, len, .hex);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromLatin1AsASCII(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
+        var slice = constructFromU8(input, len, .ascii);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromLatin1AsURLSafeBase64(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
+        var slice = constructFromU8(input, len, .base64url);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromLatin1AsUTF16(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
+        var slice = constructFromU8(input, len, .utf16le);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromLatin1AsUTF8(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
+        var slice = constructFromU8(input, len, JSC.Node.Encoding.utf8);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromLatin1AsBase64(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
+        var slice = constructFromU8(input, len, .base64);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromUTF16AsBase64(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
+        var slice = constructFromU16(input, len, .base64);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromUTF16AsHex(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
+        var slice = constructFromU16(input, len, .hex);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromUTF16AsURLSafeBase64(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
+        var slice = constructFromU16(input, len, .base64url);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromUTF16AsUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
+        var slice = constructFromU16(input, len, JSC.Node.Encoding.utf16le);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromUTF16AsUTF8(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
+        var slice = constructFromU16(input, len, .utf8);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+    }
+    export fn Bun__encoding__constructFromUTF16AsASCII(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
+        var slice = constructFromU16(input, len, .utf8);
+        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
     }
 
     export fn Bun__encoding__toStringUTF16(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
@@ -867,7 +920,8 @@ pub const Encoder = struct {
     }
 
     pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) i64 {
-
+        if (len == 0)
+            return 0;
         // TODO: increase temporary buffer size for larger amounts of data
         // defer {
         //     if (comptime encoding.isBinaryToText()) {}
@@ -880,7 +934,7 @@ pub const Encoder = struct {
                 return @intCast(i32, strings.copyUTF16IntoUTF8(to[0..to_len], []const u16, input[0..len]).written);
             },
             // string is already encoded, just need to copy the data
-            JSC.Node.Encoding.ascii, JSC.Node.Encoding.ucs2, JSC.Node.Encoding.buffer, JSC.Node.Encoding.utf16le => {
+            .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.ucs2, JSC.Node.Encoding.buffer, JSC.Node.Encoding.utf16le => {
                 strings.copyU16IntoU8(to[0..to_len], []const u16, input[0..len]);
 
                 return @intCast(i64, @minimum(len, to_len));
@@ -900,60 +954,142 @@ pub const Encoder = struct {
                 defer bun.default_allocator.free(transcoded);
                 return writeU8(transcoded.ptr, transcoded.len, to, to_len, encoding);
             },
-            else => return 0,
+            // else => return &[_]u8{};
         }
     }
-    // pub fn writeU8(input: [*]const u8, len: usize, to: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) callconv(.C) i32 {}
 
-    // pub fn toUTF8FromU16(comptime Slice: type, slice: Slice, out_ptr: *[*]u8) i32 {
-    //     var out = strings.toUTF8AllocWithType(
-    //         default_allocator,
-    //         Slice,
-    //         slice,
-    //     ) catch {
-    //         return -1;
-    //     };
-    //     out_ptr.* = out.ptr;
-    //     return @intCast(isize, out.len);
-    // }
+    pub fn constructFromU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
+        if (len == 0)
+            return &[_]u8{};
 
-    // pub fn toUTF8FromLatin1(comptime Slice: type, slice: Slice, out_ptr: *[*]u8) i32 {
-    //     var latin1 = strings.allocateLatin1IntoUTF8(default_allocator, Slice, slice) catch return -1;
-    //     out_ptr.* = latin1.ptr;
-    //     return @intCast(isize, latin1.len);
-    // }
+        const allocator = VirtualMachine.vm.allocator;
 
-    // pub fn toUTF16FromLatin1(comptime Slice: type, slice: Slice, out_ptr: *[*]u8) i32 {
-    //     var latin1 = strings.toUTF(default_allocator, Slice, slice) catch return -1;
-    //     out_ptr.* = latin1.ptr;
-    //     return @intCast(isize, latin1.len);
-    // }
+        switch (comptime encoding) {
+            JSC.Node.Encoding.buffer => {
+                var to = allocator.alloc(u8, len) catch return &[_]u8{};
+                @memcpy(to.ptr, input, len);
 
-    // pub fn toUTF16FromU8(slice: []const u8, out_ptr: *[*]u16) i32 {
-    //     if (strings.toUTF16Alloc(default_allocator, slice, true)) |result_| {
-    //         if (result_) |result| {
-    //             out_ptr.* = result.ptr;
-    //             return @intCast(isize, result.len);
-    //         }
-    //     } else |err| {
-    //         switch (err) {
-    //             error.InvalidByteSequence => {
-    //                 return -2;
-    //             },
-    //             error.OutOfMemory => {
-    //                 return -1;
-    //             },
-    //             else => {
-    //                 return -3;
-    //             },
-    //         }
-    //     }
+                return to;
+            },
+            .latin1, .ascii => {
+                var to = allocator.alloc(u8, len) catch return &[_]u8{};
+                @memcpy(to.ptr, input, len);
 
-    //     var out = default_allocator.alloc(u16, slice.len) catch return -1;
-    //     strings.copyU8IntoU16(out, slice);
-    //     out_ptr.* = out.ptr;
-    //     return @intCast(isize, out.len);
-    // }
+                // Hoping this gets auto vectorized
+                for (to[0..len]) |c, i| {
+                    to[i] = @as(u8, @truncate(u7, c));
+                }
+
+                return to;
+            },
+            .utf8 => {
+                // need to encode
+                return strings.allocateLatin1IntoUTF8(allocator, []const u8, input[0..len]) catch return &[_]u8{};
+            },
+            // encode latin1 into UTF16
+            // return as bytes
+            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+                var to = allocator.alloc(u16, len) catch return &[_]u8{};
+                _ = strings.copyLatin1IntoUTF16([]u16, to, []const u8, input[0..len]);
+                return std.mem.sliceAsBytes(to[0..len]);
+            },
+
+            JSC.Node.Encoding.hex => {
+                if (len < 2)
+                    return &[_]u8{};
+
+                var to = allocator.alloc(u8, len / 2) catch return &[_]u8{};
+                return to[0..strings.decodeHexToBytes(to, u8, input[0..len])];
+            },
+
+            JSC.Node.Encoding.base64url => {
+                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.VT});
+                if (slice.len == 0)
+                    return &[_]u8{};
+
+                if (strings.eqlComptime(slice[slice.len - 2 ..][0..2], "==")) {
+                    slice = slice[0 .. slice.len - 2];
+                } else if (slice[slice.len - 1] == '=') {
+                    slice = slice[0 .. slice.len - 1];
+                }
+
+                const to_len = bun.base64.urlsafe.decoder.calcSizeForSlice(slice) catch unreachable;
+                var to = allocator.alloc(u8, to_len) catch return &[_]u8{};
+
+                const wrote = bun.base64.urlsafe.decode(to[0..to_len], slice) catch |err| brk: {
+                    if (err == error.NoSpaceLeft) {
+                        break :brk to_len;
+                    }
+
+                    return &[_]u8{};
+                };
+                return to[0..wrote];
+            },
+
+            JSC.Node.Encoding.base64 => {
+                var slice = strings.trim(input[0..len], "\r\n\t " ++ [_]u8{std.ascii.control_code.VT});
+                var outlen = bun.base64.decodeLen(slice);
+
+                var to = allocator.alloc(u8, outlen) catch return &[_]u8{};
+                const written = bun.base64.decode(to[0..outlen], slice).written;
+                return to[0..written];
+            },
+            // else => return 0,
+        }
+    }
+
+    pub fn constructFromU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) []u8 {
+        if (len == 0)
+            return &[_]u8{};
+
+        const allocator = VirtualMachine.vm.allocator;
+
+        switch (comptime encoding) {
+            .utf8 => {
+                return strings.toUTF8AllocWithType(allocator, []const u16, input[0..len]) catch return &[_]u8{};
+            },
+            JSC.Node.Encoding.latin1, JSC.Node.Encoding.buffer, JSC.Node.Encoding.ascii => {
+                var to = allocator.alloc(u8, len) catch return &[_]u8{};
+                @memcpy(to.ptr, input, len);
+                for (to[0..len]) |c, i| {
+                    to[i] = @as(u8, @truncate(u7, c));
+                }
+
+                return to;
+            },
+            // string is already encoded, just need to copy the data
+            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+                var to = std.mem.sliceAsBytes(allocator.alloc(u16, len * 2) catch return &[_]u8{});
+                @memcpy(to.ptr, std.mem.sliceAsBytes(input[0..len]).ptr, std.mem.sliceAsBytes(input[0..len]).len);
+                return to;
+            },
+
+            JSC.Node.Encoding.hex => {
+                var to = allocator.alloc(u8, len * 2) catch return &[_]u8{};
+                return to[0..strings.decodeHexToBytes(to, u16, input[0..len])];
+            },
+
+            JSC.Node.Encoding.base64 => {
+
+                // very very slow case!
+                // shouldn't really happen though
+                var transcoded = strings.toUTF8Alloc(allocator, input[0..len]) catch return &[_]u8{};
+                defer allocator.free(transcoded);
+                return constructFromU8(transcoded.ptr, transcoded.len, .base64);
+            },
+
+            JSC.Node.Encoding.base64url => {
+
+                // very very slow case!
+                // shouldn't really happen though
+                var transcoded = strings.toUTF8Alloc(allocator, input[0..len]) catch return &[_]u8{};
+                defer allocator.free(transcoded);
+                return constructFromU8(transcoded.ptr, transcoded.len, .base64url);
+            },
+            // else => return 0,
+        }
+    }
+
     comptime {
         if (!JSC.is_bindgen) {
             _ = Bun__encoding__writeLatin1AsHex;
@@ -976,6 +1112,19 @@ pub const Encoder = struct {
             _ = Bun__encoding__toStringHex;
             _ = Bun__encoding__toStringBase64;
             _ = Bun__encoding__toStringURLSafeBase64;
+
+            _ = Bun__encoding__constructFromLatin1AsHex;
+            _ = Bun__encoding__constructFromLatin1AsASCII;
+            _ = Bun__encoding__constructFromLatin1AsURLSafeBase64;
+            _ = Bun__encoding__constructFromLatin1AsUTF16;
+            _ = Bun__encoding__constructFromLatin1AsUTF8;
+            _ = Bun__encoding__constructFromLatin1AsBase64;
+            _ = Bun__encoding__constructFromUTF16AsBase64;
+            _ = Bun__encoding__constructFromUTF16AsHex;
+            _ = Bun__encoding__constructFromUTF16AsURLSafeBase64;
+            _ = Bun__encoding__constructFromUTF16AsUTF16;
+            _ = Bun__encoding__constructFromUTF16AsUTF8;
+            _ = Bun__encoding__constructFromUTF16AsASCII;
         }
     }
 };

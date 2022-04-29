@@ -30,8 +30,8 @@
 
 
 
-// note: the _view inline getter is structured this way for performance
-// using a getter 
+// The fastest way as of April 2022 is to use DataView.
+// DataView has intrinsics that cause inlining
 
 function setBigUint64(offset, value, le) {
   "use strict";
@@ -214,10 +214,75 @@ function slice(start, end) {
     return this;
   }
 
-  return this.subarray(start, end);
+  Buffer[Symbol.species] ||= Buffer;
+
+  return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));
 }
 
-function subarray(start, end) {
+
+
+function utf8Write(text, offset, length) {
+  "use strict";
+  return this.write(text, offset, length, "utf8");
+}
+function ucs2Write(text, offset, length) {
+  "use strict";
+  return this.write(text, offset, length, "ucs2");
+}
+function utf16leWrite(text, offset, length) {
+  "use strict";
+  return this.write(text, offset, length, "utf16le");
+}
+function latin1Write(text, offset, length) {
+  "use strict";
+  return this.write(text, offset, length, "latin1");
+}
+function asciiWrite(text, offset, length) {
+  "use strict";
+  return this.write(text, offset, length, "ascii");
+}
+function base64Write(text, offset, length) {
+  "use strict";
+  return this.write(text, offset, length, "base64");
+}
+function base64urlWrite(text, offset, length) {
+  "use strict";
+  return this.write(text, offset, length, "base64url");
+}
+function hexWrite(text, offset, length) {
+  "use strict";
+  return this.write(text, offset, length, "hex");
+}
+
+function utf8Slice(offset, length) {
+  "use strict";
+  return this.toString(offset, length, "utf8");
+}
+function ucs2Slice(offset, length) {
+  "use strict";
+  return this.toString(offset, length, "ucs2");
+}
+function utf16leSlice(offset, length) {
+  "use strict";
+  return this.toString(offset, length, "utf16le");
+}
+function latin1Slice(offset, length) {
+  "use strict";
+  return this.toString(offset, length, "latin1");
+}
+function asciiSlice(offset, length) {
+  "use strict";
+  return this.toString(offset, length, "ascii");
+}
+function base64Slice(offset, length) {
+  "use strict";
+  return this.toString(offset, length, "base64");
+}
+function base64urlSlice(offset, length) {
+  "use strict";
+  return this.toString(offset, length, "base64url");
+}
+function hexSlice(offset, length) {
   "use strict";
   
   var array = new @Uint8Array(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));

@@ -95,6 +95,7 @@ using namespace JSC;
     macro(version) \
     macro(versions) \
     macro(write) \
+    macro(dataView) \
     BUN_ADDITIONAL_PRIVATE_IDENTIFIERS(macro) \
 
 class BunBuiltinNames {

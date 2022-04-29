@@ -10,13 +10,13 @@
 #include "BufferEncodingType.h"
 #include "JavaScriptCore/GenericTypedArrayView.h"
 
-extern "C" JSC__JSValue Bun__encoding__toStringUTF16(const uint8_t* input, size_t len, JSC__JSGlobalObject* globalObject);
-extern "C" JSC__JSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC__JSGlobalObject* globalObject);
-extern "C" JSC__JSValue Bun__encoding__toStringASCII(const uint8_t* input, size_t len, JSC__JSGlobalObject* globalObject);
-extern "C" JSC__JSValue Bun__encoding__toStringLatin1(const uint8_t* input, size_t len, JSC__JSGlobalObject* globalObject);
-extern "C" JSC__JSValue Bun__encoding__toStringHex(const uint8_t* input, size_t len, JSC__JSGlobalObject* globalObject);
-extern "C" JSC__JSValue Bun__encoding__toStringBase64(const uint8_t* input, size_t len, JSC__JSGlobalObject* globalObject);
-extern "C" JSC__JSValue Bun__encoding__toStringURLSafeBase64(const uint8_t* input, size_t len, JSC__JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF16(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringASCII(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringLatin1(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringHex(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringBase64(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringURLSafeBase64(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 
 namespace WebCore {
 

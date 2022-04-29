@@ -185,6 +185,7 @@ HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
+SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp) 
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp) 
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
@@ -274,7 +275,7 @@ PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 endif
 
 
-
+SHARED_LIB_EXTENSION = .so
 
 JSC_BINDINGS = $(JSC_FILES) $(BINDINGS_OBJ)
 
@@ -284,7 +285,10 @@ DEBUG_FLAGS=
 ifeq ($(OS_NAME), darwin)
 	RELEASE_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs 
 	DEBUG_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs 
+	SHARED_LIB_EXTENSION = .dylib
 endif
+
+
 
 
 
@@ -298,7 +302,9 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		-lz \
 		-larchive \
 		-lssl \
-		-lbase64
+		-lbase64 \
+		-ltcc \
+		-L/Users/jarred/Build/tinycc
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 
@@ -353,6 +359,20 @@ base64:
 	   $(CXX) $(CXXFLAGS) $(CFLAGS) -c neonbase64.cc -g -fPIC -emit-llvm && \
 	   $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libbase64.a ./*.bc
 
+generate-builtins:
+	rm -f src/javascript/jsc/bindings/WebCoreBuiltins.cpp src/javascript/jsc/bindings/WebCoreBuiltins.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCore*Builtins* || echo ""
+	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --force 
+	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --wrappers-only
+	echo 'namespace Zig { class GlobalObject; }' > /tmp/1.h
+	cat /tmp/1.h  src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h > src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1
+	mv src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1 src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h
+	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h
+# Since we don't currently support web streams, we don't need this line
+# so we comment it out
+	$(SED) -i -e 's/globalObject.addStaticGlobals/\/\/globalObject.addStaticGlobals/' src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp
+# We delete this file because our script already builds all .cpp files
+# We will get duplicate symbols if we don't delete it
+	rm src/javascript/jsc/bindings/WebCoreJSBuiltins.cpp
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64
 
 prepare-types:
@@ -377,6 +397,9 @@ boringssl-copy:
 
 boringssl: boringssl-build boringssl-copy
 boringssl-debug: boringssl-build-debug boringssl-copy
+
+compile-ffi-test:
+	clang -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test$(SHARED_LIB_EXTENSION) integration/bunjs-only-snippets/ffi-test.c
 
 libbacktrace:
 	cd $(BUN_DEPS_DIR)/libbacktrace && \

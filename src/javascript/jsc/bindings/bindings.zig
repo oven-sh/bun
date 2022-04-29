@@ -3488,11 +3488,3 @@ pub const WTF = struct {
 pub const Callback = struct {
     // zig: Value,
 };
-
-const NodeBuffer = @import("../node/buffer.zig");
-
-comptime {
-    if (!JSC.is_bindgen) {
-        std.testing.refAllDecls(NodeBuffer.Write);
-    }
-}

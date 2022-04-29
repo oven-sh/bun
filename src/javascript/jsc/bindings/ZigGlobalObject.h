@@ -22,6 +22,7 @@ class ScriptExecutionContext;
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSTypeInfo.h"
 #include "JavaScriptCore/Structure.h"
+#include "WebCoreJSBuiltinInternals.h"
 
 #include "ZigConsoleClient.h"
 
@@ -125,8 +126,12 @@ public:
         JSC::JSPromiseRejectionOperation);
     void setConsole(void* console);
     void installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm);
+    WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
 
 private:
+    void addBuiltinGlobals(JSC::VM&);
+    friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
+    WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
     GlobalObject(JSC::VM& vm, JSC::Structure* structure);
     std::unique_ptr<WebCore::DOMConstructors> m_constructors;
     uint8_t m_worldIsNormal;

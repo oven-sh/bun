@@ -69,7 +69,6 @@ static void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array
 
 JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, unsigned int length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
-
     JSC::JSUint8Array* uint8Array = nullptr;
 
     if (LIKELY(length > 0)) {
@@ -352,36 +351,36 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
     return JSC::JSValue::encode(buffer);
 }
 
-    case WebCore::BufferEncodingType::base64url: {
-        if (view.is8Bit()) {
-            result = Bun__encoding__constructFromLatin1AsURLSafeBase64(lexicalGlobalObject, view.characters8(), view.length());
-        } else {
-            result = Bun__encoding__constructFromUTF16AsURLSafeBase64(lexicalGlobalObject, view.characters16(), view.length());
-        }
-        break;
+case WebCore::BufferEncodingType::base64url: {
+    if (view.is8Bit()) {
+        result = Bun__encoding__constructFromLatin1AsURLSafeBase64(lexicalGlobalObject, view.characters8(), view.length());
+    } else {
+        result = Bun__encoding__constructFromUTF16AsURLSafeBase64(lexicalGlobalObject, view.characters16(), view.length());
     }
+    break;
+}
 
-    case WebCore::BufferEncodingType::hex: {
-        if (view.is8Bit()) {
-            result = Bun__encoding__constructFromLatin1AsHex(lexicalGlobalObject, view.characters8(), view.length());
-        } else {
-            result = Bun__encoding__constructFromUTF16AsHex(lexicalGlobalObject, view.characters16(), view.length());
-        }
-        break;
+case WebCore::BufferEncodingType::hex: {
+    if (view.is8Bit()) {
+        result = Bun__encoding__constructFromLatin1AsHex(lexicalGlobalObject, view.characters8(), view.length());
+    } else {
+        result = Bun__encoding__constructFromUTF16AsHex(lexicalGlobalObject, view.characters16(), view.length());
     }
-    }
-    JSC::JSValue decoded = JSC::JSValue::decode(result);
-    if (UNLIKELY(!result)) {
-        throwTypeError(lexicalGlobalObject, scope, "An error occurred while decoding the string"_s);
-        return JSC::JSValue::encode(jsUndefined());
-    }
+    break;
+}
+}
+JSC::JSValue decoded = JSC::JSValue::decode(result);
+if (UNLIKELY(!result)) {
+    throwTypeError(lexicalGlobalObject, scope, "An error occurred while decoding the string"_s);
+    return JSC::JSValue::encode(jsUndefined());
+}
 
-    if (decoded.isCell() && decoded.getObject()->isErrorInstance()) {
-        scope.throwException(lexicalGlobalObject, decoded);
-        return JSC::JSValue::encode(jsUndefined());
-    }
+if (decoded.isCell() && decoded.getObject()->isErrorInstance()) {
+    scope.throwException(lexicalGlobalObject, decoded);
+    return JSC::JSValue::encode(jsUndefined());
+}
 
-    RELEASE_AND_RETURN(scope, result);
+RELEASE_AND_RETURN(scope, result);
 }
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBufferConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { unsafe } from "bun";
 
 it("ffi print", () => {
   Bun.dlprint({
@@ -168,7 +169,6 @@ it("ffi run", () => {
     //   params: ["uint64_t", "uint64_t"],
     // },
   };
-  console.log(Bun.dlprint(types)[0]);
   const {
     symbols: {
       returns_true,
@@ -253,7 +253,12 @@ it("ffi run", () => {
   expect(ptr != 0).toBe(true);
   expect(typeof ptr === "number").toBe(true);
   expect(does_pointer_equal_42_as_int32_t(ptr)).toBe(true);
-  //   expect(add_uint64_t(1, 1)).toBe(2);
+  const buffer = unsafe.bufferFromPtr(ptr, 4);
+  expect(buffer.readInt32(0)).toBe(42);
+  expect(
+    new DataView(unsafe.arrayBufferFromPtr(ptr, 4), 0, 4).getInt32(0, true)
+  ).toBe(42);
+  expect(unsafe.arrayBufferToPtr(buffer)).toBe(ptr);
   close();
 });
 ``;

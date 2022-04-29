@@ -2305,11 +2305,15 @@ pub const JSValue = enum(u64) {
         return cppFn("makeWithNameAndPrototype", .{ globalObject, class, instance, name_ });
     }
 
-    /// Must come from globally-allocated memory!
-    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: std.mem.Allocator) JSValue {
+    /// Must come from globally-allocated memory if allocator is not null
+    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: ?std.mem.Allocator) JSValue {
         if (comptime JSC.is_bindgen) unreachable;
         @setRuntimeSafety(false);
-        return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, allocator.ptr, JSC.MarkedArrayBuffer_deallocator);
+        if (allocator) |alloc| {
+            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, JSC.MarkedArrayBuffer_deallocator);
+        } else {
+            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, null);
+        }
     }
 
     extern fn JSBuffer__bufferFromPointerAndLengthAndDeinit(*JSGlobalObject, [*]u8, usize, ?*anyopaque, JSC.C.JSTypedArrayBytesDeallocator) JSValue;
@@ -2816,6 +2820,11 @@ pub const JSValue = enum(u64) {
     }
 
     pub inline fn asVoid(this: JSValue) *anyopaque {
+        if (comptime bun.Environment.allow_assert) {
+            if (@enumToInt(this) == 0) {
+                @panic("JSValue is null");
+            }
+        }
         return @intToPtr(*anyopaque, @enumToInt(this));
     }
 

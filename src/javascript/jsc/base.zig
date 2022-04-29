@@ -2309,7 +2309,7 @@ pub const ArrayBuffer = extern struct {
     pub fn toJSWithContext(
         this: ArrayBuffer,
         ctx: JSC.C.JSContextRef,
-        deallocator: *anyopaque,
+        deallocator: ?*anyopaque,
         callback: JSC.C.JSTypedArrayBytesDeallocator,
         exception: JSC.C.ExceptionRef,
     ) JSC.JSValue {

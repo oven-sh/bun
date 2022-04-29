@@ -42,18 +42,21 @@ uint16_t add_uint16_t(uint16_t a, uint16_t b);
 uint32_t add_uint32_t(uint32_t a, uint32_t b);
 uint64_t add_uint64_t(uint64_t a, uint64_t b);
 
-int8_t returns_neg_42_int8_t() { return 42; }
 uint16_t returns_42_uint16_t() { return 42; }
 uint32_t returns_42_uint32_t() { return 42; }
 uint64_t returns_42_uint64_t() { return 42; }
+
+int8_t returns_neg_42_int8_t() { return -42; }
 int16_t returns_neg_42_int16_t() { return -42; }
 int32_t returns_neg_42_int32_t() { return -42; }
 int64_t returns_neg_42_int64_t() { return -42; }
+
 bool returns_true() { return true; }
 bool returns_false() { return false; }
+
 char returns_42_char() { return '*'; }
-float returns_42_float() { return 42.0f; }
-double returns_42_double() { return (double)42.0; }
+float returns_42_float() { return 42.42f; }
+double returns_42_double() { return (double)42.42; }
 uint8_t returns_42_uint8_t() { return (uint8_t)42; }
 
 char identity_char(char a) { return a; }

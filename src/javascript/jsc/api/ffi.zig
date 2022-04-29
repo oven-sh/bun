@@ -404,6 +404,7 @@ pub const FFI = struct {
             try source_code.append(0);
             defer source_code.deinit();
             var state = TCC.tcc_new() orelse return error.TCCMissing;
+            TCC.tcc_set_options(state, "-std=c11");
             TCC.tcc_set_error_func(state, this, handleTCCError);
             // defer TCC.tcc_delete(state);
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
@@ -469,6 +470,21 @@ pub const FFI = struct {
             this: *Function,
             writer: anytype,
         ) !void {
+            brk: {
+                if (this.return_type == .primitive and this.return_type.primitive.isFloatingPoint()) {
+                    try writer.writeAll("#define USES_FLOAT 1\n");
+                    break :brk;
+                }
+
+                for (this.arg_types.items) |arg| {
+                    // conditionally include math.h
+                    if (arg == .primitive and arg.primitive.isFloatingPoint()) {
+                        try writer.writeAll("#define USES_FLOAT 1\n");
+                        break;
+                    }
+                }
+            }
+
             if (comptime Environment.isRelease) {
                 try writer.writeAll(std.mem.span(FFI_HEADER));
             } else {
@@ -524,7 +540,8 @@ pub const FFI = struct {
                 first = false;
                 try writer.print("arg{d}", .{i});
             }
-            try writer.writeAll(");\n\n");
+            try writer.writeAll(");\n");
+            if (!first) try writer.writeAll("\n");
 
             try writer.writeAll("    ");
 
@@ -548,6 +565,10 @@ pub const FFI = struct {
             ABIType,
             .{
                 .{ "char", ABIType{ .primitive = Primitive.Tag.char } },
+                .{ "float", ABIType{ .primitive = Primitive.Tag.float } },
+                .{ "double", ABIType{ .primitive = Primitive.Tag.double } },
+                .{ "f32", ABIType{ .primitive = Primitive.Tag.float } },
+                .{ "f64", ABIType{ .primitive = Primitive.Tag.double } },
                 .{ "bool", ABIType{ .primitive = Primitive.Tag.@"bool" } },
 
                 .{ "i8", ABIType{ .primitive = Primitive.Tag.int8_t } },
@@ -702,6 +723,13 @@ pub const FFI = struct {
 
             bool = 13,
 
+            pub fn isFloatingPoint(this: Tag) bool {
+                return switch (this) {
+                    .double, .float => true,
+                    else => false,
+                };
+            }
+
             const ToCFormatter = struct {
                 symbol: string,
                 tag: Tag,
@@ -710,7 +738,7 @@ pub const FFI = struct {
                     switch (self.tag) {
                         .void => {},
                         .bool => {
-                            try writer.print("JSVALUE_IS_TRUE({s})", .{self.symbol});
+                            try writer.print("JSVALUE_TO_BOOL({s})", .{self.symbol});
                         },
                         .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
                             try writer.print("JSVALUE_TO_INT32({s})", .{self.symbol});
@@ -744,10 +772,10 @@ pub const FFI = struct {
                         .int64_t => {},
                         .uint64_t => {},
                         .double => {
-                            try writer.print("DOUBLE_to_JSVALUE({s})", .{self.symbol});
+                            try writer.print("DOUBLE_TO_JSVALUE({s})", .{self.symbol});
                         },
                         .float => {
-                            try writer.print("FLOAT_to_JSVALUE({s})", .{self.symbol});
+                            try writer.print("FLOAT_TO_JSVALUE({s})", .{self.symbol});
                         },
                         else => unreachable,
                     }
@@ -781,8 +809,8 @@ pub const FFI = struct {
                     .int64_t => "int64_t",
                     .uint64_t => "uint64_t",
                     .double => "float",
-                    .float => "double",
-                    .char => "int8_t",
+                    .float => "float",
+                    .char => "char",
                     else => unreachable,
                 };
             }

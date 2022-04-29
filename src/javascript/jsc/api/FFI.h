@@ -1,10 +1,15 @@
-// This is an auto-generated file
+// This file is part of Bun!
+// You can find the original source:
+// https://github.com/Jarred-Sumner/bun/blob/main/src/javascript/jsc/api/FFI.h#L2
 //
 // clang-format off
 // This file is only compatible with 64 bit CPUs
 // It must be kept in sync with JSCJSValue.h
 // https://github.com/Jarred-Sumner/WebKit/blob/72c2052b781cbfd4af867ae79ac9de460e392fba/Source/JavaScriptCore/runtime/JSCJSValue.h#L455-L458
 
+#ifdef USES_FLOAT
+#include <math.h>
+#endif
 
 #define IS_BIG_ENDIAN 0
 #define USE_JSVALUE64 1
@@ -25,12 +30,12 @@ typedef uintptr_t size_t;
 
 #define true 1
 #define false 0
-#define bool _bool
+#define bool _Bool
 
 // This value is 2^49, used to encode doubles such that the encoded value will
 // begin with a 15-bit pattern within the range 0x0002..0xFFFC.
-#define DoubleEncodeOffsetBit (size_t)(49)
-#define DoubleEncodeOffset    (int64_t)(1ll << DoubleEncodeOffsetBit)
+#define DoubleEncodeOffsetBit 49
+#define DoubleEncodeOffset    (1ll << DoubleEncodeOffsetBit)
 #define OtherTag              0x2
 #define BoolTag               0x4
 #define UndefinedTag          0x8
@@ -71,25 +76,60 @@ typedef union EncodedJSValue {
 EncodedJSValue ValueUndefined = { TagValueUndefined };
 EncodedJSValue ValueTrue = { TagValueTrue };
 
+static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inline__));
+static EncodedJSValue DOUBLE_TO_JSVALUE(double val) __attribute__((__always_inline__));
+static EncodedJSValue FLOAT_TO_JSVALUE(float val) __attribute__((__always_inline__));
+static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) __attribute__((__always_inline__));
 
-static EncodedJSValue INT32_TO_JSVALUE(int32_t val);
+static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inline__));
+static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
+static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
+static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__));
+
+
+static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
+  return val.asInt64;
+}
+
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
    EncodedJSValue res;
    res.asInt64 = NumberTag | (uint32_t)val;
    return res;
 }
 
-#define JSVALUE_IS_TRUE(i) (!!(i.asInt64 == ValueTrue))
-#define JSVALUE_TO_INT32(i) (int32_t)i.asInt64
-#define JSVALUE_TO_DOUBLE(i) ((double)(i.asInt64 - DoubleEncodeOffset))
-#define JSVALUE_TO_FLOAT(i) ((float)(i.asInt64 - DoubleEncodeOffset))
+static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
+  EncodedJSValue res;
+#ifdef USES_FLOAT
+   res.asInt64 = trunc(val) == val ?  val : val - DoubleEncodeOffset;
+#else 
+// should never get here
+  res.asInt64 = 0xa;
+#endif
+   return res;
+}
 
-#define BOOLEAN_TO_JSVALUE(i) (i ? ValueTrue : ValueFalse)
+static EncodedJSValue FLOAT_TO_JSVALUE(float val) {
+  return DOUBLE_TO_JSVALUE(val);
+}
 
-#define DOUBLE_TO_JSVALUE(i) ((double)(i.asInt64 - DoubleEncodeOffset))
-#define FLOAT_TO_JSVALUE(i) ((float)(i.asInt64 - DoubleEncodeOffset))
+static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) {
+  EncodedJSValue res;
+  res.asInt64 = val ? TagValueTrue : TagValueFalse;
+  return res;
+}
 
 
+static double JSVALUE_TO_DOUBLE(EncodedJSValue val) {
+  return val.asInt64 + DoubleEncodeOffset;
+}
+
+static float JSVALUE_TO_FLOAT(EncodedJSValue val) {
+  return (float)JSVALUE_TO_DOUBLE(val);
+}
+
+static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
+  return val.asInt64 == TagValueTrue;
+}
 
 
 typedef void* JSContext;
@@ -105,3 +145,5 @@ void* Bun__CallbackFunctionPlaceholder(JSContext ctx, EncodedJSValue function, E
 void* Bun__CallbackFunctionPlaceholder(JSContext ctx, EncodedJSValue function, EncodedJSValue thisObject, size_t argumentCount, const EncodedJSValue arguments[], JSException exception) {
     return (void*)123;
 }
+
+// --- Generated Code ---

@@ -2511,7 +2511,7 @@ comptime {
     std.testing.refAllDecls(RefString);
 }
 
-export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
+pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
     const mimalloc = @import("../../allocators/mimalloc.zig");
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things

@@ -31,7 +31,7 @@
 
 #include "JSBufferEncodingType.h"
 #include "JSBufferPrototypeBuiltins.h"
-
+#include "JavaScriptCore/JSBase.h"
 #if ENABLE(MEDIA_SOURCE)
 #include "BufferMediaSource.h"
 #include "JSMediaSource.h"
@@ -49,6 +49,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_from);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_toBuffer);
 
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_compare);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_copy);
@@ -63,8 +64,78 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
 
+static void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* uint8Array);
+
+JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, unsigned int length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
+{
+
+    JSC::JSUint8Array* uint8Array = nullptr;
+
+    if (LIKELY(length > 0)) {
+        auto buffer = ArrayBuffer::createFromBytes(ptr, length, createSharedTask<void(void*)>([=](void* p) {
+            if (bytesDeallocator)
+                bytesDeallocator(p, ctx);
+        }));
+
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(buffer), 0, length);
+    } else {
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), 0);
+    }
+
+    toBuffer(lexicalGlobalObject, uint8Array);
+
+    return JSC::JSValue::encode(uint8Array);
+}
+
 namespace WebCore {
 using namespace JSC;
+
+EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int length)
+{
+    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+
+    if (UNLIKELY(length < 0)) {
+        throwRangeError(lexicalGlobalObject, throwScope, "Invalid array length");
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSC::JSUint8Array* uint8Array = nullptr;
+
+    if (LIKELY(length > 0)) {
+
+        auto arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(length, 1);
+        if (UNLIKELY(!arrayBuffer)) {
+            throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+            return JSValue::encode(jsUndefined());
+        }
+
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(arrayBuffer), 0, length);
+    } else {
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), 0);
+    }
+
+    toBuffer(lexicalGlobalObject, uint8Array);
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+}
+
+EncodedJSValue JSBuffer__bufferFromPointerAndLength(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, unsigned int length)
+{
+
+    JSC::JSUint8Array* uint8Array;
+
+    if (LIKELY(length > 0)) {
+        auto buffer = ArrayBuffer::createFromBytes(ptr, length, nullptr);
+
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(buffer), 0, length);
+    } else {
+        uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), 0);
+    }
+
+    toBuffer(lexicalGlobalObject, uint8Array);
+
+    return JSC::JSValue::encode(uint8Array);
+}
 
 template<> class IDLOperation<JSBuffer> {
 public:
@@ -123,10 +194,38 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferPrototype, JSBufferPrototype::Base);
 
+bool JSBuffer__isBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value)
+{
+    VM& vm = lexicalGlobalObject->vm();
+    auto clientData = WebCore::clientData(vm);
+
+    auto* jsBuffer = JSC::jsDynamicCast<JSUint8Array*>(vm, JSC::JSValue::decode(value));
+    if (!jsBuffer)
+        return false;
+
+    return !!jsBuffer->getIfPropertyExists(lexicalGlobalObject, clientData->builtinNames().dataViewPrivateName());
+}
+
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSValue::encode(jsUndefined());
+    VM& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto length = callFrame->uncheckedArgument(0).toInt32(lexicalGlobalObject);
+    if (length < 0) {
+        throwRangeError(lexicalGlobalObject, throwScope, "Invalid array length");
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto arrayBuffer = JSC::ArrayBuffer::tryCreate(length, 1);
+    if (!arrayBuffer) {
+        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(arrayBuffer), 0, length);
+    toBuffer(lexicalGlobalObject, uint8Array);
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_alloc, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -134,8 +233,16 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_alloc, (JSGlobalObject * le
 }
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSValue::encode(jsUndefined());
+
+    VM& vm = lexicalGlobalObject->vm();
+
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1)
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+
+    auto length = callFrame->uncheckedArgument(0).toInt32(lexicalGlobalObject);
+    RELEASE_AND_RETURN(throwScope, JSBuffer__bufferFromLength(lexicalGlobalObject, length));
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -143,8 +250,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafe, (JSGlobalObjec
 }
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSValue::encode(jsUndefined());
+    return jsBufferConstructorFunction_allocUnsafeBody(lexicalGlobalObject, callFrame, castedThis);
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_allocUnsafeSlow, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -184,12 +290,13 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_fromBody(JSC::JSGl
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_from, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_fromBody>(*lexicalGlobalObject, *callFrame, "from");
 }
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_isBufferBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSValue::encode(jsUndefined());
+    if (callFrame->argumentCount() < 1)
+        return JSC::JSValue::encode(JSC::jsBoolean(false));
+
+    return JSC::JSValue::encode(JSC::jsBoolean(JSBuffer__isBuffer(lexicalGlobalObject, JSC::JSValue::encode(callFrame->uncheckedArgument(0)))));
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -205,110 +312,160 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding, (JSGlobalObject
     return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_isEncodingBody>(*lexicalGlobalObject, *callFrame, "isEncoding");
 }
 
+static inline JSC::EncodedJSValue jsBufferConstructorFunction_toBufferBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (UNLIKELY(callFrame->argumentCount() < 1)) {
+        throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto buffer = callFrame->uncheckedArgument(0);
+    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->classInfo(vm)->typedArrayStorageType)) {
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
+    }
+
+    JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(vm, buffer);
+
+    if (!view) {
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
+        return JSValue::encode(jsUndefined());
+    }
+    toBuffer(lexicalGlobalObject, view);
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(view));
+}
+JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_toBuffer, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSBuffer>::call<jsBufferConstructorFunction_toBufferBody>(*lexicalGlobalObject, *callFrame, "toBuffer");
+}
+
 using JSBufferConstructor = JSDOMConstructor<JSBuffer>;
 
 /* Hash table for constructor */
 static const HashTableValue JSBufferConstructorTableValues[] = {
     { "alloc", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_alloc), (intptr_t)(3) } },
     { "allocUnsafe", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_allocUnsafe), (intptr_t)(1) } },
-    { "allocUnsafeSlow", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_allocUnsafeSlow), (intptr_t)(1) } },
+    { "allocUnsafeSlow", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_allocUnsafe), (intptr_t)(1) } },
     { "byteLength", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_byteLength), (intptr_t)(2) } },
     { "compare", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_compare), (intptr_t)(2) } },
     { "concat", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_concat), (intptr_t)(2) } },
     { "from", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_from), (intptr_t)(3) } },
     { "isBuffer", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_isBuffer), (intptr_t)(1) } },
+    { "toBuffer", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_toBuffer), (intptr_t)(1) } },
     { "isEncoding", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_isEncoding), (intptr_t)(1) } },
 };
 
 // new Buffer()
 static inline EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSBufferConstructor*>(callFrame->jsCallee());
-    ASSERT(castedThis);
-    auto object = Buffer::createEmpty(lexicalGlobalObject);
-    auto jsValue = toJSNewlyCreated<IDLInterface<Buffer>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<Buffer>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    return JSValue::encode(jsValue);
-}
-
-// new Buffer(array)
-static inline EncodedJSValue constructBufferFromArray(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
-{
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSBufferConstructor*>(callFrame->jsCallee());
-    ASSERT(castedThis);
-    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-}
-
-// new Buffer(arrayBuffer[, byteOffset[, length]])
-static inline EncodedJSValue constructBufferFromArrayBuffer(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
-{
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSBufferConstructor*>(callFrame->jsCallee());
-    ASSERT(castedThis);
-    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-}
-
-// new Buffer(buffer)
-static inline EncodedJSValue constructBufferFromBuffer(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
-{
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSBufferConstructor*>(callFrame->jsCallee());
-    ASSERT(castedThis);
-    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
 // new Buffer(size)
 static inline EncodedJSValue constructBufferFromLength(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSBufferConstructor*>(callFrame->jsCallee());
-    ASSERT(castedThis);
-    auto length = callFrame->uncheckedArgument(0).toInt32(lexicalGlobalObject);
-    if (length < 0) {
-        throwRangeError(lexicalGlobalObject, throwScope, "Invalid array length");
-        return JSValue::encode(jsUndefined());
-    }
-
-    auto arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(length, 1);
-    if (!arrayBuffer) {
-        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        return JSValue::encode(jsUndefined());
-    }
-
-    auto clientData = WebCore::clientData(vm);
-
-    auto uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(arrayBuffer), 0, length);
-    uint8Array->setPrototypeDirect(vm, JSBuffer::prototype(vm, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)));
-
-    auto* dataView = JSDataView::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeDataView), uint8Array->possiblySharedBuffer(), uint8Array->byteOffset(), uint8Array->length());
-    uint8Array->putDirectWithoutTransition(vm, clientData->builtinNames().dataViewPublicName(), dataView, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-
-    return JSC::JSValue::encode(uint8Array);
+    return jsBufferConstructorFunction_allocUnsafeBody(lexicalGlobalObject, callFrame, nullptr);
 }
 
-// new Buffer(string[, encoding])
-static inline EncodedJSValue constructBufferFromStringAndEncoding(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* castedThis = jsCast<JSBufferConstructor*>(callFrame->jsCallee());
-    ASSERT(castedThis);
-    EnsureStillAliveScope string = callFrame->uncheckedArgument(0);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    uint32_t offset = 0;
+    uint32_t length = castedThis->length();
+    WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
-    JSC::JSValue optionalEncodingValue = jsUndefined();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    EnsureStillAliveScope arg0 = callFrame->argument(0);
+    auto* str = arg0.value().toString(lexicalGlobalObject);
+
+    EnsureStillAliveScope arg1 = callFrame->argument(1);
+
+    if (str->length() == 0)
+        return constructBufferEmpty(lexicalGlobalObject, callFrame);
+
     if (callFrame->argumentCount() > 1) {
-        optionalEncodingValue = callFrame->uncheckedArgument(1);
+        std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(1));
+        if (!encoded) {
+            throwTypeError(lexicalGlobalObject, scope, "Invalid encoding");
+            return JSC::JSValue::encode(jsUndefined());
+        }
+
+        encoding = encoded.value();
     }
+
+    auto view = str->tryGetValue(lexicalGlobalObject);
+    JSC::EncodedJSValue result;
+
+    switch (encoding) {
+    case WebCore::BufferEncodingType::utf8: {
+        if (view.is8Bit()) {
+            result = Bun__encoding__constructFromLatin1AsUTF8(lexicalGlobalObject, view.characters8(), view.length());
+        } else {
+            result = Bun__encoding__constructFromUTF16AsUTF8(lexicalGlobalObject, view.characters16(), view.length());
+        }
+        break;
+    }
+
+    case WebCore::BufferEncodingType::latin1:
+    case WebCore::BufferEncodingType::ascii: {
+        if (view.is8Bit()) {
+            result = Bun__encoding__constructFromLatin1AsASCII(lexicalGlobalObject, view.characters8(), view.length());
+        } else {
+            result = Bun__encoding__constructFromUTF16AsASCII(lexicalGlobalObject, view.characters16(), view.length());
+        }
+        break;
+    }
+    case WebCore::BufferEncodingType::ucs2:
+    case WebCore::BufferEncodingType::utf16le: {
+        if (view.is8Bit()) {
+            result = Bun__encoding__constructFromLatin1AsUTF16(lexicalGlobalObject, view.characters8(), view.length());
+        } else {
+            result = Bun__encoding__constructFromUTF16AsUTF16(lexicalGlobalObject, view.characters16(), view.length());
+        }
+        break;
+    }
+
+    case WebCore::BufferEncodingType::base64: {
+        if (view.is8Bit()) {
+            result = Bun__encoding__constructFromLatin1AsBase64(lexicalGlobalObject, view.characters8(), view.length());
+        } else {
+            result = Bun__encoding__constructFromUTF16AsBase64(lexicalGlobalObject, view.characters16(), view.length());
+        }
+        break;
+    }
+
+    case WebCore::BufferEncodingType::base64url: {
+        if (view.is8Bit()) {
+            result = Bun__encoding__constructFromLatin1AsURLSafeBase64(lexicalGlobalObject, view.characters8(), view.length());
+        } else {
+            result = Bun__encoding__constructFromUTF16AsURLSafeBase64(lexicalGlobalObject, view.characters16(), view.length());
+        }
+        break;
+    }
+
+    case WebCore::BufferEncodingType::hex: {
+        if (view.is8Bit()) {
+            result = Bun__encoding__constructFromLatin1AsHex(lexicalGlobalObject, view.characters8(), view.length());
+        } else {
+            result = Bun__encoding__constructFromUTF16AsHex(lexicalGlobalObject, view.characters16(), view.length());
+        }
+        break;
+    }
+    }
+    JSC::JSValue decoded = JSC::JSValue::decode(result);
+    if (UNLIKELY(!result)) {
+        throwTypeError(lexicalGlobalObject, scope, "An error occurred while decoding the string"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    if (decoded.isCell() && decoded.getObject()->isErrorInstance()) {
+        scope.throwException(lexicalGlobalObject, decoded);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    RELEASE_AND_RETURN(scope, result);
 }
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBufferConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -323,16 +480,27 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBufferConstructor::construc
     JSValue distinguishingArg = callFrame->uncheckedArgument(0);
     if (distinguishingArg.isNumber()) {
         RELEASE_AND_RETURN(throwScope, (constructBufferFromLength(lexicalGlobalObject, callFrame)));
+    } else if (distinguishingArg.isString()) {
+        RELEASE_AND_RETURN(throwScope, (constructBufferFromStringAndEncoding(lexicalGlobalObject, callFrame, nullptr)));
     }
-    // if (argsCount == 2) {
 
-    //     if (distinguishingArg.isUndefined())
-    //         RELEASE_AND_RETURN(throwScope, (constructJSBuffer1(lexicalGlobalObject, callFrame)));
-    //     if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBuffer>(vm))
-    //         RELEASE_AND_RETURN(throwScope, (constructJSBuffer2(lexicalGlobalObject, callFrame)));
-    //     RELEASE_AND_RETURN(throwScope, (constructJSBuffer1(lexicalGlobalObject, callFrame)));
-    // }
-    return argsCount < 1 ? throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject)) : throwVMTypeError(lexicalGlobalObject, throwScope);
+    JSC::JSObject* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
+
+    // TODO: avoid this copy
+    MarkedArgumentBuffer args;
+    for (size_t i = 0; i < argsCount; ++i)
+        args.append(callFrame->uncheckedArgument(i));
+
+    JSC::JSObject* object = JSC::construct(lexicalGlobalObject, constructor, callFrame->newTarget(), args, "Failed to construct 'Buffer' object"_s);
+    if (!object) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto value = JSC::JSValue(object);
+
+    toBuffer(lexicalGlobalObject, JSC::jsCast<JSC::JSUint8Array*>(value));
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(value));
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSBufferConstructorConstruct, JSBufferConstructor::construct);
 
@@ -352,13 +520,6 @@ template<> void JSBufferConstructor::initializeProperties(VM& vm, JSDOMGlobalObj
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSBuffer::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     reifyStaticProperties(vm, JSBuffer::info(), JSBufferConstructorTableValues, *this);
-}
-
-bool JSBuffer__isBuffer(JSC::JSGlobalObject* global, JSC::EncodedJSValue value)
-{
-    VM& vm = global->vm();
-    auto* jsBuffer = jsDynamicCast<JSBuffer*>(vm, JSValue::decode(value));
-    return !!jsBuffer;
 }
 
 const ClassInfo JSBuffer::s_info = { "Buffer"_s, JSC::getUint8ArrayClassInfo(), nullptr, nullptr, CREATE_METHOD_TABLE(JSBuffer) };
@@ -705,63 +866,96 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_write, (JSGlobalObject * lexi
 
 static const HashTableValue JSBufferPrototypeTableValues[]
     = {
+          { "asciiSlice", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeAsciiSliceCodeGenerator), (intptr_t)(2) } },
+          { "asciiWrite", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeAsciiWriteCodeGenerator), (intptr_t)(1) } },
+          { "base64Slice", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeBase64SliceCodeGenerator), (intptr_t)(2) } },
+          { "base64urlSlice", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeBase64urlSliceCodeGenerator), (intptr_t)(2) } },
+          { "base64urlWrite", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeBase64urlWriteCodeGenerator), (intptr_t)(1) } },
+          { "base64Write", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeBase64WriteCodeGenerator), (intptr_t)(1) } },
           { "compare", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_compare), (intptr_t)(5) } },
           { "copy", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_copy), (intptr_t)(4) } },
           { "equals", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_equals), (intptr_t)(1) } },
           { "fill", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_fill), (intptr_t)(4) } },
+          { "hexSlice", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeHexSliceCodeGenerator), (intptr_t)(2) } },
+          { "hexWrite", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeHexWriteCodeGenerator), (intptr_t)(1) } },
           { "includes", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_includes), (intptr_t)(3) } },
           { "indexOf", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_indexOf), (intptr_t)(3) } },
           { "lastIndexOf", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_lastIndexOf), (intptr_t)(3) } },
+          { "latin1Slice", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeLatin1SliceCodeGenerator), (intptr_t)(2) } },
+          { "latin1Write", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeLatin1WriteCodeGenerator), (intptr_t)(1) } },
+          { "readBigInt64", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigInt64LECodeGenerator), (intptr_t)(1) } },
           { "readBigInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigInt64BECodeGenerator), (intptr_t)(1) } },
           { "readBigInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigInt64LECodeGenerator), (intptr_t)(1) } },
+          { "readBigUInt64", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigUInt64LECodeGenerator), (intptr_t)(1) } },
           { "readBigUInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigUInt64BECodeGenerator), (intptr_t)(1) } },
           { "readBigUInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadBigUInt64LECodeGenerator), (intptr_t)(1) } },
+          { "readDouble", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadDoubleLECodeGenerator), (intptr_t)(1) } },
           { "readDoubleBE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadDoubleBECodeGenerator), (intptr_t)(1) } },
           { "readDoubleLE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadDoubleLECodeGenerator), (intptr_t)(1) } },
+          { "readFloat", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadFloatLECodeGenerator), (intptr_t)(1) } },
           { "readFloatBE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadFloatBECodeGenerator), (intptr_t)(1) } },
           { "readFloatLE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadFloatLECodeGenerator), (intptr_t)(1) } },
+          { "readInt16", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt16LECodeGenerator), (intptr_t)(1) } },
           { "readInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt16BECodeGenerator), (intptr_t)(1) } },
           { "readInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt16LECodeGenerator), (intptr_t)(1) } },
+          { "readInt32", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt32LECodeGenerator), (intptr_t)(1) } },
           { "readInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt32BECodeGenerator), (intptr_t)(1) } },
           { "readInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt32LECodeGenerator), (intptr_t)(1) } },
           { "readInt8", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadInt8CodeGenerator), (intptr_t)(2) } },
-          //   { "readIntBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadIntBECodeGenerator), (intptr_t)(2) } },
-          //   { "readIntLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadIntLECodeGenerator), (intptr_t)(2) } },
+          { "readUint16BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt16BECodeGenerator), (intptr_t)(1) } },
           { "readUInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt16BECodeGenerator), (intptr_t)(1) } },
+          { "readUint16LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt16LECodeGenerator), (intptr_t)(1) } },
           { "readUInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt16LECodeGenerator), (intptr_t)(1) } },
+          { "readUint32BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt32BECodeGenerator), (intptr_t)(1) } },
           { "readUInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt32BECodeGenerator), (intptr_t)(1) } },
+          { "readUint32LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt32LECodeGenerator), (intptr_t)(1) } },
           { "readUInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt32LECodeGenerator), (intptr_t)(1) } },
+          { "readUint8", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt8CodeGenerator), (intptr_t)(1) } },
           { "readUInt8", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUInt8CodeGenerator), (intptr_t)(1) } },
-          //   { "readUIntBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUIntBECodeGenerator), (intptr_t)(2) } },
-          //   { "readUIntLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeReadUIntLECodeGenerator), (intptr_t)(2) } },
+          { "slice", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeSliceCodeGenerator), (intptr_t)(2) } },
+          { "subarray", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeSliceCodeGenerator), (intptr_t)(2) } },
           { "swap16", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_swap16), (intptr_t)(0) } },
           { "swap32", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_swap32), (intptr_t)(0) } },
           { "swap64", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_swap64), (intptr_t)(0) } },
           { "toString", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_toString), (intptr_t)(4) } },
+          { "ucs2Slice", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeUcs2SliceCodeGenerator), (intptr_t)(2) } },
+          { "ucs2Write", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeUcs2WriteCodeGenerator), (intptr_t)(1) } },
+          { "utf16leSlice", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeUtf16leSliceCodeGenerator), (intptr_t)(2) } },
+          { "utf16leWrite", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeUtf16leWriteCodeGenerator), (intptr_t)(1) } },
+          { "utf8Slice", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeUtf8SliceCodeGenerator), (intptr_t)(2) } },
+          { "utf8Write", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeUtf8WriteCodeGenerator), (intptr_t)(1) } },
           { "write", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferPrototypeFunction_write), (intptr_t)(4) } },
-
-          { "writeInt8", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt8CodeGenerator), (intptr_t)(1) } },
-          //   { "writeIntBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteIntBECodeGenerator), (intptr_t)(2) } },
-          //   { "writeIntLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteIntLECodeGenerator), (intptr_t)(2) } },
-          { "writeUInt8", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt8CodeGenerator), (intptr_t)(1) } },
-          //   { "writeUIntBE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUIntBECodeGenerator), (intptr_t)(2) } },
-          //   { "writeUIntLE", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUIntLECodeGenerator), (intptr_t)(2) } },
+          { "writeBigInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigInt64BECodeGenerator), (intptr_t)(1) } },
+          { "writeBigInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigInt64LECodeGenerator), (intptr_t)(1) } },
+          { "writeBigUint64BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigUInt64BECodeGenerator), (intptr_t)(1) } },
+          { "writeBigUInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigUInt64BECodeGenerator), (intptr_t)(1) } },
+          { "writeBigUint64LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigUInt64LECodeGenerator), (intptr_t)(1) } },
+          { "writeBigUInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigUInt64LECodeGenerator), (intptr_t)(1) } },
+          { "writeDouble", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteDoubleLECodeGenerator), (intptr_t)(1) } },
+          { "writeDoubleBE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteDoubleBECodeGenerator), (intptr_t)(1) } },
+          { "writeDoubleLE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteDoubleLECodeGenerator), (intptr_t)(1) } },
+          { "writeFloat", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteFloatLECodeGenerator), (intptr_t)(1) } },
           { "writeFloatBE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteFloatBECodeGenerator), (intptr_t)(1) } },
           { "writeFloatLE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteFloatLECodeGenerator), (intptr_t)(1) } },
           { "writeInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt16BECodeGenerator), (intptr_t)(1) } },
           { "writeInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt16LECodeGenerator), (intptr_t)(1) } },
           { "writeInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt32BECodeGenerator), (intptr_t)(1) } },
           { "writeInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt32LECodeGenerator), (intptr_t)(1) } },
-          { "writeDoubleBE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteDoubleBECodeGenerator), (intptr_t)(1) } },
-          { "writeDoubleLE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteDoubleLECodeGenerator), (intptr_t)(1) } },
+          { "writeInt8", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteInt8CodeGenerator), (intptr_t)(1) } },
+          { "writeUint16", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt16LECodeGenerator), (intptr_t)(1) } },
+          { "writeUInt16", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt16LECodeGenerator), (intptr_t)(1) } },
+          { "writeUint16BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt16BECodeGenerator), (intptr_t)(1) } },
           { "writeUInt16BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt16BECodeGenerator), (intptr_t)(1) } },
+          { "writeUint16LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt16LECodeGenerator), (intptr_t)(1) } },
           { "writeUInt16LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt16LECodeGenerator), (intptr_t)(1) } },
+          { "writeUint32", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt32LECodeGenerator), (intptr_t)(1) } },
+          { "writeUInt32", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt32LECodeGenerator), (intptr_t)(1) } },
+          { "writeUint32BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt32BECodeGenerator), (intptr_t)(1) } },
           { "writeUInt32BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt32BECodeGenerator), (intptr_t)(1) } },
+          { "writeUint32LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt32LECodeGenerator), (intptr_t)(1) } },
           { "writeUInt32LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt32LECodeGenerator), (intptr_t)(1) } },
-          { "writeBigInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigInt64BECodeGenerator), (intptr_t)(1) } },
-          { "writeBigInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigInt64LECodeGenerator), (intptr_t)(1) } },
-          { "writeBigUInt64BE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigUInt64BECodeGenerator), (intptr_t)(1) } },
-          { "writeBigUInt64LE", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteBigUInt64LECodeGenerator), (intptr_t)(1) } },
+          { "writeUint8", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt8CodeGenerator), (intptr_t)(1) } },
+          { "writeUInt8", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(jsBufferPrototypeWriteUInt8CodeGenerator), (intptr_t)(1) } },
       };
 
 void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
@@ -885,3 +1079,17 @@ Buffer* JSBuffer::toWrapped(JSC::VM& vm, JSC::JSValue value)
 }
 
 } // namespace WebCore
+
+static void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* uint8Array)
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto clientData = WebCore::clientData(vm);
+    JSC::JSObject* object = JSC::JSValue(uint8Array).getObject();
+
+    object->setPrototypeDirect(vm, WebCore::JSBuffer::prototype(vm, *JSC::jsCast<WebCore::JSDOMGlobalObject*>(lexicalGlobalObject)));
+
+    auto* dataView = JSC::JSDataView::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeDataView), uint8Array->possiblySharedBuffer(), uint8Array->byteOffset(), uint8Array->length());
+    object->putDirectWithoutTransition(vm, clientData->builtinNames().dataViewPublicName(), dataView, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    // Mark it
+    object->putDirectWithoutTransition(vm, clientData->builtinNames().dataViewPrivateName(), JSC::JSValue(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+}

@@ -9,7 +9,9 @@
 
 #include "BufferEncodingType.h"
 #include "JavaScriptCore/GenericTypedArrayView.h"
+#include "JavaScriptCore/JSBase.h"
 
+extern "C" JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, unsigned int length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF16(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringASCII(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);

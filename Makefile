@@ -363,7 +363,8 @@ generate-builtins:
 	rm -f src/javascript/jsc/bindings/WebCoreBuiltins.cpp src/javascript/jsc/bindings/WebCoreBuiltins.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCore*Builtins* || echo ""
 	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --force 
 	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --wrappers-only
-	echo 'namespace Zig { class GlobalObject; }' > /tmp/1.h
+	echo '//clang-format off' > /tmp/1.h
+	echo 'namespace Zig { class GlobalObject; }' >> /tmp/1.h
 	cat /tmp/1.h  src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h > src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1
 	mv src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1 src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h
 	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h

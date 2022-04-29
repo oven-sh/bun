@@ -87,7 +87,7 @@
 #include "Process.h"
 
 #include "JavaScriptCore/RemoteInspectorServer.h"
-
+#include "WebCoreJSBuiltinInternals.h"
 #include "JSBuffer.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
@@ -290,8 +290,10 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
     , m_worldIsNormal(true)
+    , m_builtinInternalFunctions(vm)
 
 {
+
     m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
 }
 

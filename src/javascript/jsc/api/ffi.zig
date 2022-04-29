@@ -574,8 +574,6 @@ pub const FFI = struct {
 
                 .{ "char*", ABIType{ .pointer = .{ .primitive = Primitive.Tag.char } } },
                 .{ "void*", ABIType{ .pointer = .{ .primitive = Primitive.Tag.@"void" } } },
-                .{ "const char*", ABIType{ .pointer = .{ .is_const = true, .primitive = Primitive.Tag.char } } },
-                .{ "const void*", ABIType{ .pointer = .{ .is_const = true, .primitive = Primitive.Tag.@"void" } } },
             },
         );
 
@@ -662,16 +660,12 @@ pub const FFI = struct {
         char: i8,
         int8_t: i8,
         uint8_t: u8,
-
         int16_t: i16,
         uint16_t: u16,
-
         int32_t: c_int,
         uint32_t: c_uint,
-
         int64_t: i64,
         uint64_t: u64,
-
         double: f64,
         float: f32,
 
@@ -744,7 +738,7 @@ pub const FFI = struct {
                         .bool => {
                             try writer.print("BOOLEAN_TO_JSVALUE({s})", .{self.symbol});
                         },
-                        .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
+                        .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
                             try writer.print("INT32_TO_JSVALUE({s})", .{self.symbol});
                         },
                         .int64_t => {},

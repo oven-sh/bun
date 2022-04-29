@@ -326,7 +326,7 @@ pub const FFI = struct {
                 }
             }
             // var function
-            var return_type = ABIType{ .primitive = .@"void" };
+            var return_type = ABIType.@"void";
 
             if (value.get(global, "return_type")) |ret_value| {
                 var ret_slice = ret_value.toSlice(global, allocator);
@@ -471,14 +471,14 @@ pub const FFI = struct {
             writer: anytype,
         ) !void {
             brk: {
-                if (this.return_type == .primitive and this.return_type.primitive.isFloatingPoint()) {
+                if (this.return_type.isFloatingPoint()) {
                     try writer.writeAll("#define USES_FLOAT 1\n");
                     break :brk;
                 }
 
                 for (this.arg_types.items) |arg| {
                     // conditionally include math.h
-                    if (arg == .primitive and arg.primitive.isFloatingPoint()) {
+                    if (arg.isFloatingPoint()) {
                         try writer.writeAll("#define USES_FLOAT 1\n");
                         break;
                     }
@@ -527,7 +527,7 @@ pub const FFI = struct {
             }
 
             try writer.writeAll("    ");
-            if (!(this.return_type == .primitive and this.return_type.primitive == .void)) {
+            if (!(this.return_type == .void)) {
                 try this.return_type.typename(writer);
                 try writer.writeAll(" return_value = ");
             }
@@ -547,7 +547,7 @@ pub const FFI = struct {
 
             try writer.writeAll("return ");
 
-            if (!(this.return_type == .primitive and this.return_type.primitive == .void)) {
+            if (!(this.return_type == .void)) {
                 try writer.print("{}.asPtr", .{this.return_type.toJS("return_value")});
             } else {
                 try writer.writeAll("ValueUndefined.asPtr");
@@ -557,263 +557,162 @@ pub const FFI = struct {
         }
     };
 
-    pub const ABIType = union(enum) {
-        primitive: Primitive.Tag,
-        pointer: Pointer,
+    pub const ABIType = enum(i32) {
+        char = 0,
 
-        pub const label = ComptimeStringMap(
-            ABIType,
-            .{
-                .{ "char", ABIType{ .primitive = Primitive.Tag.char } },
-                .{ "float", ABIType{ .primitive = Primitive.Tag.float } },
-                .{ "double", ABIType{ .primitive = Primitive.Tag.double } },
-                .{ "f32", ABIType{ .primitive = Primitive.Tag.float } },
-                .{ "f64", ABIType{ .primitive = Primitive.Tag.double } },
-                .{ "bool", ABIType{ .primitive = Primitive.Tag.@"bool" } },
+        int8_t = 1,
+        uint8_t = 2,
 
-                .{ "i8", ABIType{ .primitive = Primitive.Tag.int8_t } },
-                .{ "u8", ABIType{ .primitive = Primitive.Tag.uint8_t } },
-                .{ "i16", ABIType{ .primitive = Primitive.Tag.int16_t } },
-                .{ "int", ABIType{ .primitive = Primitive.Tag.int32_t } },
-                .{ "c_int", ABIType{ .primitive = Primitive.Tag.int32_t } },
-                .{ "c_uint", ABIType{ .primitive = Primitive.Tag.uint32_t } },
-                .{ "i32", ABIType{ .primitive = Primitive.Tag.int32_t } },
-                .{ "i64", ABIType{ .primitive = Primitive.Tag.int64_t } },
-                .{ "u16", ABIType{ .primitive = Primitive.Tag.uint16_t } },
-                .{ "u32", ABIType{ .primitive = Primitive.Tag.uint32_t } },
-                .{ "u64", ABIType{ .primitive = Primitive.Tag.uint64_t } },
-                .{ "int8_t", ABIType{ .primitive = Primitive.Tag.int8_t } },
-                .{ "isize", ABIType{ .primitive = Primitive.Tag.int64_t } },
-                .{ "usize", ABIType{ .primitive = Primitive.Tag.uint64_t } },
-                .{ "int16_t", ABIType{ .primitive = Primitive.Tag.int16_t } },
-                .{ "int32_t", ABIType{ .primitive = Primitive.Tag.int32_t } },
-                .{ "int64_t", ABIType{ .primitive = Primitive.Tag.int64_t } },
-                .{ "uint8_t", ABIType{ .primitive = Primitive.Tag.uint8_t } },
-                .{ "uint16_t", ABIType{ .primitive = Primitive.Tag.uint16_t } },
-                .{ "uint32_t", ABIType{ .primitive = Primitive.Tag.uint32_t } },
-                .{ "uint64_t", ABIType{ .primitive = Primitive.Tag.uint64_t } },
+        int16_t = 3,
+        uint16_t = 4,
 
-                .{ "char*", ABIType{ .pointer = .{ .primitive = Primitive.Tag.char } } },
-                .{ "void*", ABIType{ .pointer = .{ .primitive = Primitive.Tag.@"void" } } },
-            },
-        );
+        int32_t = 5,
+        uint32_t = 6,
 
-        const ToJSFormatter = struct {
-            symbol: []const u8,
-            abi: ABIType,
+        int64_t = 7,
+        uint64_t = 8,
 
-            pub fn format(self: ToJSFormatter, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-                switch (self.abi) {
-                    .pointer => |ptr| {
-                        _ = ptr;
+        double = 9,
+        float = 10,
+
+        bool = 11,
+
+        ptr = 12,
+
+        @"void" = 13,
+
+        pub const label = ComptimeStringMap(ABIType, .{
+            .{ "bool", .bool },
+            .{ "c_int", .int32_t },
+            .{ "c_uint", .uint32_t },
+            .{ "char", .char },
+            .{ "char*", .ptr },
+            .{ "double", .double },
+            .{ "f32", .float },
+            .{ "f64", .double },
+            .{ "float", .float },
+            .{ "i16", .int16_t },
+            .{ "i32", .int32_t },
+            .{ "i64", .int64_t },
+            .{ "i8", .int8_t },
+            .{ "int", .int32_t },
+            .{ "int16_t", .int16_t },
+            .{ "int32_t", .int32_t },
+            .{ "int64_t", .int64_t },
+            .{ "int8_t", .int8_t },
+            .{ "isize", .int64_t },
+            .{ "u16", .uint16_t },
+            .{ "u32", .uint32_t },
+            .{ "u64", .uint64_t },
+            .{ "u8", .uint8_t },
+            .{ "uint16_t", .uint16_t },
+            .{ "uint32_t", .uint32_t },
+            .{ "uint64_t", .uint64_t },
+            .{ "uint8_t", .uint8_t },
+            .{ "usize", .uint64_t },
+            .{ "void*", .ptr },
+            .{ "ptr", .ptr },
+            .{ "pointer", .ptr },
+        });
+
+        pub fn isFloatingPoint(this: ABIType) bool {
+            return switch (this) {
+                .double, .float => true,
+                else => false,
+            };
+        }
+
+        const ToCFormatter = struct {
+            symbol: string,
+            tag: ABIType,
+
+            pub fn format(self: ToCFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                switch (self.tag) {
+                    .void => {},
+                    .bool => {
+                        try writer.print("JSVALUE_TO_BOOL({s})", .{self.symbol});
                     },
-                    .primitive => |prim| {
-                        try prim.toJS(self.symbol).format(comptime fmt, opts, writer);
+                    .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
+                        try writer.print("JSVALUE_TO_INT32({s})", .{self.symbol});
+                    },
+                    .int64_t => {},
+                    .uint64_t => {},
+                    .ptr => {
+                        try writer.print("JSVALUE_TO_PTR({s})", .{self.symbol});
+                    },
+                    .double => {
+                        try writer.print("JSVALUE_TO_DOUBLE({s})", .{self.symbol});
+                    },
+                    .float => {
+                        try writer.print("JSVALUE_TO_FLOAT({s})", .{self.symbol});
                     },
                 }
             }
         };
 
-        const ToCFormatter = struct {
+        const ToJSFormatter = struct {
             symbol: []const u8,
-            abi: ABIType,
+            tag: ABIType,
 
-            pub fn format(self: ToCFormatter, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-                try self.abi.primitive.toC(self.symbol).format(
-                    comptime fmt,
-                    opts,
-                    writer,
-                );
+            pub fn format(self: ToJSFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                switch (self.tag) {
+                    .void => {},
+                    .bool => {
+                        try writer.print("BOOLEAN_TO_JSVALUE({s})", .{self.symbol});
+                    },
+                    .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
+                        try writer.print("INT32_TO_JSVALUE({s})", .{self.symbol});
+                    },
+                    .int64_t => {},
+                    .uint64_t => {},
+                    .ptr => {
+                        try writer.print("PTR_TO_JSVALUE({s})", .{self.symbol});
+                    },
+                    .double => {
+                        try writer.print("DOUBLE_TO_JSVALUE({s})", .{self.symbol});
+                    },
+                    .float => {
+                        try writer.print("FLOAT_TO_JSVALUE({s})", .{self.symbol});
+                    },
+                }
             }
         };
+
+        pub fn toC(this: ABIType, symbol: string) ToCFormatter {
+            return ToCFormatter{ .tag = this, .symbol = symbol };
+        }
 
         pub fn toJS(
             this: ABIType,
             symbol: string,
         ) ToJSFormatter {
             return ToJSFormatter{
+                .tag = this,
                 .symbol = symbol,
-                .abi = this,
-            };
-        }
-
-        pub fn toC(this: ABIType, symbol: string) ToCFormatter {
-            return ToCFormatter{
-                .symbol = symbol,
-                .abi = this,
             };
         }
 
         pub fn typename(this: ABIType, writer: anytype) !void {
-            switch (this) {
-                .primitive => |prim| {
-                    try writer.writeAll(prim.typename());
-                },
-                .pointer => |ptr| {
-                    try ptr.typename(writer);
-                },
-            }
+            try writer.writeAll(this.typenameLabel());
         }
-    };
 
-    pub const Pointer = struct {
-        count: u8 = 1,
-        primitive: Primitive.Tag,
-        is_const: bool = false,
-
-        pub fn typename(this: Pointer, writer: anytype) !void {
-            if (this.is_const) {
-                try writer.writeAll("const ");
-            }
-
-            var i: u8 = 0;
-            while (i < this.count) {
-                try writer.writeAll("*");
-                i = i + 1;
-            }
-
-            try writer.writeAll(" ");
-            try writer.writeAll(this.primitive.typename());
+        pub fn typenameLabel(this: ABIType) []const u8 {
+            return switch (this) {
+                .ptr => "void*",
+                .bool => "bool",
+                .int8_t => "int8_t",
+                .uint8_t => "uint8_t",
+                .int16_t => "int16_t",
+                .uint16_t => "uint16_t",
+                .int32_t => "int32_t",
+                .uint32_t => "uint32_t",
+                .int64_t => "int64_t",
+                .uint64_t => "uint64_t",
+                .double => "float",
+                .float => "float",
+                .char => "char",
+                .void => "void",
+            };
         }
-    };
-
-    pub const Primitive = union(Tag) {
-        char: i8,
-        int8_t: i8,
-        uint8_t: u8,
-        int16_t: i16,
-        uint16_t: u16,
-        int32_t: c_int,
-        uint32_t: c_uint,
-        int64_t: i64,
-        uint64_t: u64,
-        double: f64,
-        float: f32,
-
-        void: *anyopaque,
-
-        bool: bool,
-
-        dynamic: struct {
-            size: u32,
-            alignment: u21,
-            name: []const u8,
-        },
-
-        pub const Tag = enum(i32) {
-            char = 0,
-
-            int8_t = 1,
-            uint8_t = 2,
-
-            int16_t = 3,
-            uint16_t = 4,
-
-            int32_t = 5,
-            uint32_t = 6,
-
-            int64_t = 7,
-            uint64_t = 8,
-
-            double = 9,
-            float = 10,
-
-            void = 11,
-            dynamic = 12,
-
-            bool = 13,
-
-            pub fn isFloatingPoint(this: Tag) bool {
-                return switch (this) {
-                    .double, .float => true,
-                    else => false,
-                };
-            }
-
-            const ToCFormatter = struct {
-                symbol: string,
-                tag: Tag,
-
-                pub fn format(self: ToCFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-                    switch (self.tag) {
-                        .void => {},
-                        .bool => {
-                            try writer.print("JSVALUE_TO_BOOL({s})", .{self.symbol});
-                        },
-                        .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
-                            try writer.print("JSVALUE_TO_INT32({s})", .{self.symbol});
-                        },
-                        .int64_t => {},
-                        .uint64_t => {},
-                        .double => {
-                            try writer.print("JSVALUE_TO_DOUBLE({s})", .{self.symbol});
-                        },
-                        .float => {
-                            try writer.print("JSVALUE_TO_FLOAT({s})", .{self.symbol});
-                        },
-                        else => unreachable,
-                    }
-                }
-            };
-
-            const ToJSFormatter = struct {
-                symbol: []const u8,
-                tag: Tag,
-
-                pub fn format(self: ToJSFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-                    switch (self.tag) {
-                        .void => {},
-                        .bool => {
-                            try writer.print("BOOLEAN_TO_JSVALUE({s})", .{self.symbol});
-                        },
-                        .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
-                            try writer.print("INT32_TO_JSVALUE({s})", .{self.symbol});
-                        },
-                        .int64_t => {},
-                        .uint64_t => {},
-                        .double => {
-                            try writer.print("DOUBLE_TO_JSVALUE({s})", .{self.symbol});
-                        },
-                        .float => {
-                            try writer.print("FLOAT_TO_JSVALUE({s})", .{self.symbol});
-                        },
-                        else => unreachable,
-                    }
-                }
-            };
-
-            pub fn toC(this: Tag, symbol: string) ToCFormatter {
-                return ToCFormatter{ .tag = this, .symbol = symbol };
-            }
-
-            pub fn toJS(
-                this: Tag,
-                symbol: string,
-            ) ToJSFormatter {
-                return ToJSFormatter{
-                    .tag = this,
-                    .symbol = symbol,
-                };
-            }
-
-            pub fn typename(this: Tag) []const u8 {
-                return switch (this) {
-                    .void => "void",
-                    .bool => "bool",
-                    .int8_t => "int8_t",
-                    .uint8_t => "uint8_t",
-                    .int16_t => "int16_t",
-                    .uint16_t => "uint16_t",
-                    .int32_t => "int32_t",
-                    .uint32_t => "uint32_t",
-                    .int64_t => "int64_t",
-                    .uint64_t => "uint64_t",
-                    .double => "float",
-                    .float => "float",
-                    .char => "char",
-                    else => unreachable,
-                };
-            }
-        };
     };
 };

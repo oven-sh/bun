@@ -80,11 +80,25 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inli
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) __attribute__((__always_inline__));
 static EncodedJSValue FLOAT_TO_JSVALUE(float val) __attribute__((__always_inline__));
 static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) __attribute__((__always_inline__));
+static EncodedJSValue PTR_TO_JSVALUE(void* ptr) __attribute__((__always_inline__));
 
+static void* JSVALUE_TO_PTR(EncodedJSValue val) __attribute__((__always_inline__));
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inline__));
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__));
+
+static void* JSVALUE_TO_PTR(EncodedJSValue val) {
+  // must be a double
+  return (void*)(val.asInt64 - DoubleEncodeOffset);
+}
+
+static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
+  EncodedJSValue val;
+  val.asInt64 = (int64_t)ptr + DoubleEncodeOffset;
+  return val;
+}
+
 
 
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {

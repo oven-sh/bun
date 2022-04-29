@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 bool returns_true();
 bool returns_false();
@@ -83,3 +84,13 @@ uint8_t add_uint8_t(uint8_t a, uint8_t b) { return a + b; }
 uint16_t add_uint16_t(uint16_t a, uint16_t b) { return a + b; }
 uint32_t add_uint32_t(uint32_t a, uint32_t b) { return a + b; }
 uint64_t add_uint64_t(uint64_t a, uint64_t b) { return a + b; }
+
+void *ptr_should_point_to_42_as_int32_t();
+void *ptr_should_point_to_42_as_int32_t() {
+  int32_t *ptr = malloc(sizeof(int32_t));
+  *ptr = 42;
+  return ptr;
+}
+
+bool does_pointer_equal_42_as_int32_t(int32_t *ptr);
+bool does_pointer_equal_42_as_int32_t(int32_t *ptr) { return *ptr == 42; }

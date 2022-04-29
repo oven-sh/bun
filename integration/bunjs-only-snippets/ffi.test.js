@@ -153,6 +153,16 @@ it("ffi run", () => {
       return_type: "uint32_t",
       params: ["uint32_t", "uint32_t"],
     },
+
+    does_pointer_equal_42_as_int32_t: {
+      return_type: "bool",
+      params: ["ptr"],
+    },
+
+    ptr_should_point_to_42_as_int32_t: {
+      return_type: "ptr",
+      params: [],
+    },
     // add_uint64_t: {
     //   return_type: "uint64_t",
     //   params: ["uint64_t", "uint64_t"],
@@ -197,6 +207,8 @@ it("ffi run", () => {
       add_uint16_t,
       add_uint32_t,
       add_uint64_t,
+      does_pointer_equal_42_as_int32_t,
+      ptr_should_point_to_42_as_int32_t,
     },
     close,
   } = Bun.dlopen("/tmp/bun-ffi-test.dylib", types);
@@ -236,6 +248,11 @@ it("ffi run", () => {
   expect(add_uint8_t(1, 1)).toBe(2);
   expect(add_uint16_t(1, 1)).toBe(2);
   expect(add_uint32_t(1, 1)).toBe(2);
+
+  const ptr = ptr_should_point_to_42_as_int32_t();
+  expect(ptr != 0).toBe(true);
+  expect(typeof ptr === "number").toBe(true);
+  expect(does_pointer_equal_42_as_int32_t(ptr)).toBe(true);
   //   expect(add_uint64_t(1, 1)).toBe(2);
   close();
 });

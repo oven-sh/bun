@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 bool returns_true();
@@ -15,6 +16,20 @@ uint64_t returns_42_uint64_t();
 int16_t returns_neg_42_int16_t();
 int32_t returns_neg_42_int32_t();
 int64_t returns_neg_42_int64_t();
+
+bool cb_identity_true(bool (*cb)());
+bool cb_identity_false(bool (*cb)());
+char cb_identity_42_char(char (*cb)());
+float cb_identity_42_float(float (*cb)());
+double cb_identity_42_double(double (*cb)());
+uint8_t cb_identity_42_uint8_t(uint8_t (*cb)());
+int8_t cb_identity_neg_42_int8_t(int8_t (*cb)());
+uint16_t cb_identity_42_uint16_t(uint16_t (*cb)());
+uint32_t cb_identity_42_uint32_t(uint32_t (*cb)());
+uint64_t cb_identity_42_uint64_t(uint64_t (*cb)());
+int16_t cb_identity_neg_42_int16_t(int16_t (*cb)());
+int32_t cb_identity_neg_42_int32_t(int32_t (*cb)());
+int64_t cb_identity_neg_42_int64_t(int64_t (*cb)());
 
 bool identity_bool_true();
 bool identity_bool_false();
@@ -94,3 +109,15 @@ void *ptr_should_point_to_42_as_int32_t() {
 
 bool does_pointer_equal_42_as_int32_t(int32_t *ptr);
 bool does_pointer_equal_42_as_int32_t(int32_t *ptr) { return *ptr == 42; }
+bool cb_identity_false(bool (*cb)()) { return cb(); }
+char cb_identity_42_char(char (*cb)()) { return cb(); }
+float cb_identity_42_float(float (*cb)()) { return cb(); }
+double cb_identity_42_double(double (*cb)()) { return cb(); }
+uint8_t cb_identity_42_uint8_t(uint8_t (*cb)()) { return cb(); }
+int8_t cb_identity_neg_42_int8_t(int8_t (*cb)()) { return cb(); }
+uint16_t cb_identity_42_uint16_t(uint16_t (*cb)()) { return cb(); }
+uint32_t cb_identity_42_uint32_t(uint32_t (*cb)()) { return cb(); }
+uint64_t cb_identity_42_uint64_t(uint64_t (*cb)()) { return cb(); }
+int16_t cb_identity_neg_42_int16_t(int16_t (*cb)()) { return cb(); }
+int32_t cb_identity_neg_42_int32_t(int32_t (*cb)()) { return cb(); }
+int64_t cb_identity_neg_42_int64_t(int64_t (*cb)()) { return cb(); }

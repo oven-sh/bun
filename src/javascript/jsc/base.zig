@@ -2735,7 +2735,7 @@ pub fn wrap(
     comptime name: string,
     comptime maybe_async: bool,
 ) MethodType(Container, true) {
-    return wrapWithHasContainer(Container, name, maybe_async, true);
+    return wrapWithHasContainer(Container, name, maybe_async, true, true);
 }
 
 pub fn wrapWithHasContainer(
@@ -2743,11 +2743,13 @@ pub fn wrapWithHasContainer(
     comptime name: string,
     comptime maybe_async: bool,
     comptime has_container: bool,
+    comptime auto_protect: bool,
 ) MethodType(Container, has_container) {
     return struct {
         const FunctionType = @TypeOf(@field(Container, name));
         const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
         const Args = std.meta.ArgsTuple(FunctionType);
+        const eater = if (auto_protect) JSC.Node.ArgumentsSlice.protectEatNext else JSC.Node.ArgumentsSlice.nextEat;
 
         pub fn callback(
             this: if (has_container) *Container else void,
@@ -2763,6 +2765,7 @@ pub fn wrapWithHasContainer(
             comptime var i: usize = 0;
             inline while (i < FunctionTypeInfo.args.len) : (i += 1) {
                 const ArgType = comptime FunctionTypeInfo.args[i].arg_type.?;
+
                 switch (comptime ArgType) {
                     *Container => {
                         args[i] = this;
@@ -2818,7 +2821,7 @@ pub fn wrapWithHasContainer(
                         }
                     },
                     ZigString => {
-                        var string_value = iter.protectEatNext() orelse {
+                        var string_value = eater(&iter) orelse {
                             JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
                             iter.deinit();
                             return null;
@@ -2842,7 +2845,7 @@ pub fn wrapWithHasContainer(
                         }
                     },
                     *Response => {
-                        args[i] = (iter.protectEatNext() orelse {
+                        args[i] = (eater(&iter) orelse {
                             JSC.throwInvalidArguments("Missing Response object", .{}, ctx, exception);
                             iter.deinit();
                             return null;
@@ -2853,7 +2856,7 @@ pub fn wrapWithHasContainer(
                         };
                     },
                     *Request => {
-                        args[i] = (iter.protectEatNext() orelse {
+                        args[i] = (eater(&iter) orelse {
                             JSC.throwInvalidArguments("Missing Request object", .{}, ctx, exception);
                             iter.deinit();
                             return null;
@@ -2875,7 +2878,7 @@ pub fn wrapWithHasContainer(
                         args[i] = exception;
                     },
                     JSValue => {
-                        const val = iter.protectEatNext() orelse {
+                        const val = eater(&iter) orelse {
                             JSC.throwInvalidArguments("Missing argument", .{}, ctx, exception);
                             iter.deinit();
                             return null;
@@ -2883,7 +2886,7 @@ pub fn wrapWithHasContainer(
                         args[i] = val;
                     },
                     ?JSValue => {
-                        args[i] = iter.protectEatNext();
+                        args[i] = eater(&iter);
                     },
                     else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
                 }

@@ -1,13 +1,12 @@
 /**
  * `bun:ffi` lets you efficiently call C functions & FFI functions from JavaScript
- *  without writing any C code yourself.
+ *  without writing bindings yourself.
  *
  * ```js
  * import {dlopen, CString, ptr} from 'bun:ffi';
  *
- * const lib = dlopen('libsqlite3', {});
- *
- *
+ * const lib = dlopen('libsqlite3', {
+ * });
  * ```
  *
  * This is powered by just-in-time compiling C wrappers
@@ -314,68 +313,104 @@ declare module "bun:ffi" {
      */
     void = 13,
   }
+  export type FFITypeOrString =
+    | FFIType
+    | "char"
+    | "int8_t"
+    | "i8"
+    | "uint8_t"
+    | "u8"
+    | "int16_t"
+    | "i16"
+    | "uint16_t"
+    | "u16"
+    | "int32_t"
+    | "i32"
+    | "int"
+    | "uint32_t"
+    | "u32"
+    | "int64_t"
+    | "i64"
+    | "uint64_t"
+    | "u64"
+    | "double"
+    | "f64"
+    | "float"
+    | "f32"
+    | "bool"
+    | "ptr"
+    | "pointer"
+    | "void";
 
-  type Symbols = Record<
-    string,
-    {
-      /**
-       * Arguments to a FFI function (C ABI)
-       *
-       * Defaults to an empty array, which means no arguments.
-       *
-       * To pass a pointer, use "ptr" or "pointer" as the type name. To get a pointer, see {@link ptr}.
-       *
-       * @example
-       * From JavaScript:
-       * ```js
-       * const lib = dlopen('add', {
-       *    // FFIType can be used or you can pass string labels.
-       *    args: [FFIType.i32, "i32"],
-       *    return_type: "i32",
-       * });
-       * lib.symbols.add(1, 2)
-       * ```
-       * In C:
-       * ```c
-       * int add(int a, int b) {
-       *   return a + b;
-       * }
-       * ```
-       */
-      args?: FFIType[];
-      /**
-       * Return type to a FFI function (C ABI)
-       *
-       * Defaults to an empty array, which means no arguments.
-       *
-       * To pass a pointer, use "ptr" or "pointer" as the type name. To get a pointer, see {@link ptr}.
-       *
-       * @example
-       * From JavaScript:
-       * ```js
-       * const lib = dlopen('add', {
-       *    // FFIType can be used or you can pass string labels.
-       *    args: [FFIType.i32, "i32"],
-       *    return_type: "i32",
-       * });
-       * lib.symbols.add(1, 2)
-       * ```
-       * In C:
-       * ```c
-       * int add(int a, int b) {
-       *   return a + b;
-       * }
-       * ```
-       */
-      return_type?: FFIType;
-    }
-  >;
+  interface FFIFunction {
+    /**
+     * Arguments to a FFI function (C ABI)
+     *
+     * Defaults to an empty array, which means no arguments.
+     *
+     * To pass a pointer, use "ptr" or "pointer" as the type name. To get a pointer, see {@link ptr}.
+     *
+     * @example
+     * From JavaScript:
+     * ```js
+     * const lib = dlopen('add', {
+     *    // FFIType can be used or you can pass string labels.
+     *    args: [FFIType.i32, "i32"],
+     *    return_type: "i32",
+     * });
+     * lib.symbols.add(1, 2)
+     * ```
+     * In C:
+     * ```c
+     * int add(int a, int b) {
+     *   return a + b;
+     * }
+     * ```
+     */
+    args?: FFITypeOrString[];
+    /**
+     * Return type to a FFI function (C ABI)
+     *
+     * Defaults to {@link FFIType.void}
+     *
+     * To pass a pointer, use "ptr" or "pointer" as the type name. To get a pointer, see {@link ptr}.
+     *
+     * @example
+     * From JavaScript:
+     * ```js
+     * const lib = dlopen('z', {
+     *    version: {
+     *      return_type: "ptr",
+     *   }
+     * });
+     * console.log(new CString(lib.symbols.version()));
+     * ```
+     * In C:
+     * ```c
+     * char* version()
+     * {
+     *  return "1.0.0";
+     * }
+     * ```
+     */
+    return_type?: FFITypeOrString;
+  }
+
+  type Symbols = Record<string, FFIFunction>;
+
+  /**
+   * Compile a callback function
+   *
+   * Returns a function pointer
+   *
+   */
+  export function callback(ffi: FFIFunction, cb: Function): number;
 
   export interface Library {
     symbols: Record<string, CallableFunction>;
 
     /**
-     * `dlclose` the library, unloading the symbols and freeing memory allocated.
+     * `dlclose` the library, unloading the symbols and freeing allocated memory.
      *
      * Once called, the library is no longer usable.
      *
@@ -444,11 +479,11 @@ declare module "bun:ffi" {
    * ```js
    * const array = new Uint8Array(10);
    * const rawPtr = ptr(array);
-   * myCFunction(rawPtr);
+   * myFFIFunction(rawPtr);
    * ```
    * To C:
    * ```c
-   * void myCFunction(char* rawPtr) {
+   * void myFFIFunction(char* rawPtr) {
    *  // Do something with rawPtr
    * }
    * ```
@@ -519,5 +554,6 @@ declare module "bun:ffi" {
    * You probably won't need this unless there's a bug in the FFI bindings
    * generator or you're just curious.
    */
-  export function viewSource(symbols: Symbols): string[];
+  export function viewSource(symbols: Symbols, is_callback?: false): string[];
+  export function viewSource(callback: FFIFunction, is_callback: true): string;
 }

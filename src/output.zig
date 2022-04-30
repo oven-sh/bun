@@ -310,7 +310,8 @@ pub fn println(comptime fmt: string, args: anytype) void {
 
 pub inline fn debug(comptime fmt: string, args: anytype) void {
     if (comptime Environment.isRelease) return;
-    return prettyErrorln("\n<d>DEBUG:<r> " ++ fmt, args);
+    prettyErrorln("\n<d>DEBUG:<r> " ++ fmt, args);
+    flush();
 }
 
 pub fn _debug(comptime fmt: string, args: anytype) void {

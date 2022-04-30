@@ -6,6 +6,9 @@
 // This file is only compatible with 64 bit CPUs
 // It must be kept in sync with JSCJSValue.h
 // https://github.com/Jarred-Sumner/WebKit/blob/72c2052b781cbfd4af867ae79ac9de460e392fba/Source/JavaScriptCore/runtime/JSCJSValue.h#L455-L458
+#ifdef IS_CALLBACK
+#define INJECT_BEFORE printf("bun_call %p cachedJSContext %p cachedCallbackFunction %p\n", &bun_call, cachedJSContext, cachedCallbackFunction);
+#endif
 
 #ifdef USES_FLOAT
 #include <math.h>
@@ -15,23 +18,27 @@
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
 
-/* 7.18.1.1  Exact-width integer types */
-typedef signed char int8_t;
-typedef unsigned char uint8_t;
-typedef char int8_t;
-typedef short int16_t;
-typedef unsigned short uint16_t;
-typedef int int32_t;
-typedef unsigned uint32_t;
-typedef long long int64_t;
-typedef unsigned long long uint64_t;
-typedef int64_t intptr_t;
-typedef uint64_t uintptr_t;
-typedef uintptr_t size_t;
+#include <stdint.h>
+#include <stdio.h>
+// #include <tcclib.h>
+
+// // /* 7.18.1.1  Exact-width integer types */
+// typedef unsigned char uint8_t;
+// typedef signed char int8_t;
+// typedef short int16_t;
+// typedef unsigned short uint16_t;
+// typedef int int32_t;
+// typedef unsigned int uint32_t;
+// typedef long long int64_t;
+// typedef unsigned long long uint64_t;
+// typedef uint64_t size_t;
+// typedef long intptr_t;
+// typedef uint64_t uintptr_t;
+typedef _Bool bool;
 
 #define true 1
 #define false 0
-#define bool _Bool
+
 
 // This value is 2^49, used to encode doubles such that the encoded value will
 // begin with a 15-bit pattern within the range 0x0002..0xFFFC.
@@ -77,6 +84,15 @@ typedef union EncodedJSValue {
 EncodedJSValue ValueUndefined = { TagValueUndefined };
 EncodedJSValue ValueTrue = { TagValueTrue };
 
+typedef void* JSContext;
+
+
+#ifdef IS_CALLBACK
+extern int64_t bun_call(JSContext, void* func,  void* thisValue, size_t len, const EncodedJSValue args[], void* exception);
+JSContext cachedJSContext;
+void* cachedCallbackFunction;
+#endif
+
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inline__));
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) __attribute__((__always_inline__));
 static EncodedJSValue FLOAT_TO_JSVALUE(float val) __attribute__((__always_inline__));
@@ -99,8 +115,6 @@ static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   val.asInt64 = (int64_t)ptr + DoubleEncodeOffset;
   return val;
 }
-
-
 
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
   return val.asInt64;
@@ -147,18 +161,5 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 }
 
 
-typedef void* JSContext;
-typedef EncodedJSValue* JSException;
-
-
-// typedef void* (^ArrayBufferLikeGetPtrFunction)(JSContext, EncodedJSValue);
-// static ArrayBufferLikeGetPtrFunction JSArrayBufferGetPtr = (ArrayBufferLikeGetPtrFunction)MEMORY_ADDRESS_FOR_GET_ARRAY_BUFFER_FUNCTION;
-// (*JSObjectCallAsFunctionCallback) (JSContextRef ctx, JSObjectRef function, JSObjectRef thisObject, size_t argumentCount, const JSValueRef arguments[], JSValueRef* exception);
-
-// This is an example of a function which does the bare minimum
-void* Bun__CallbackFunctionPlaceholder(JSContext ctx, EncodedJSValue function, EncodedJSValue thisObject, size_t argumentCount, const EncodedJSValue arguments[], JSException exception);
-void* Bun__CallbackFunctionPlaceholder(JSContext ctx, EncodedJSValue function, EncodedJSValue thisObject, size_t argumentCount, const EncodedJSValue arguments[], JSException exception) {
-    return (void*)123;
-}
 
 // --- Generated Code ---

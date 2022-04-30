@@ -79,6 +79,28 @@ const ComptimeStringMap = @import("../../../comptime_string_map.zig").ComptimeSt
 
 const TCC = @import("../../../../tcc.zig");
 
+/// This is the entry point for generated FFI callback functions
+/// We want to avoid potentially causing LLVM to not inline our regular calls to JSC.C.JSObjectCallAsFunction
+/// to do that, we use a different pointer for the callback function
+/// which is this noinline wrapper
+noinline fn bun_call(
+    ctx: JSC.C.JSContextRef,
+    function: JSC.C.JSObjectRef,
+    count: usize,
+    argv: [*c]const JSC.C.JSValueRef,
+) callconv(.C) JSC.C.JSObjectRef {
+    var exception = [1]JSC.C.JSValueRef{null};
+    Output.debug("[bun_call] {d} args\n", .{count});
+    return JSC.C.JSObjectCallAsFunction(ctx, function, JSC.JSValue.jsUndefined().asObjectRef(), count, argv, &exception);
+}
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = bun_call;
+        @export(bun_call, .{ .name = "bun_call" });
+    }
+}
+
 pub const FFI = struct {
     dylib: std.DynLib,
     functions: std.StringArrayHashMapUnmanaged(Function) = .{},
@@ -87,9 +109,50 @@ pub const FFI = struct {
     pub const Class = JSC.NewClass(
         FFI,
         .{ .name = "class" },
-        .{ .call = JSC.wrapWithHasContainer(FFI, "close", false, true) },
+        .{ .call = JSC.wrapWithHasContainer(FFI, "close", false, true, true) },
         .{},
     );
+
+    pub fn callback(globalThis: *JSGlobalObject, interface: JSC.JSValue, js_callback: JSC.JSValue) JSValue {
+        if (!interface.isObject()) {
+            return JSC.toInvalidArguments("Expected object", .{}, globalThis.ref());
+        }
+
+        if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable(globalThis.vm())) {
+            return JSC.toInvalidArguments("Expected callback function", .{}, globalThis.ref());
+        }
+
+        const allocator = VirtualMachine.vm.allocator;
+        var function: Function = undefined;
+        var func = &function;
+
+        if (generateSymbolForFunction(globalThis, allocator, interface, func) catch ZigString.init("Out of memory").toErrorInstance(globalThis)) |val| {
+            return val;
+        }
+
+        // TODO: WeakRefHandle that automatically frees it?
+        JSC.C.JSValueProtect(globalThis.ref(), js_callback.asObjectRef());
+        func.base_name = "";
+        func.compileCallback(allocator, globalThis, js_callback.asObjectRef().?) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
+        switch (func.step) {
+            .failed => |err| {
+                JSC.C.JSValueUnprotect(globalThis.ref(), js_callback.asObjectRef());
+                const message = ZigString.init(err).toErrorInstance(globalThis);
+                func.deinit(allocator);
+                return message;
+            },
+            .pending => {
+                JSC.C.JSValueUnprotect(globalThis.ref(), js_callback.asObjectRef());
+                func.deinit(allocator);
+                return ZigString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
+            },
+            .compiled => {
+                var function_ = bun.default_allocator.create(Function) catch unreachable;
+                function_.* = func.*;
+                return JSC.JSValue.jsNumber(@bitCast(f64, @as(usize, @ptrToInt(function_.step.compiled.ptr))));
+            },
+        }
+    }
 
     pub fn close(this: *FFI) JSValue {
         if (this.closed) {
@@ -101,17 +164,44 @@ pub const FFI = struct {
         const allocator = VirtualMachine.vm.allocator;
 
         for (this.functions.values()) |*val| {
-            allocator.free(bun.constStrToU8(std.mem.span(val.base_name)));
-
-            val.arg_types.deinit(allocator);
+            val.deinit(allocator);
         }
         this.functions.deinit(allocator);
 
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn print(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
+    pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
         const allocator = VirtualMachine.vm.allocator;
+
+        if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
+            return JSC.toInvalidArguments("Expected an object", .{}, global.ref());
+        }
+
+        var function: Function = undefined;
+        if (generateSymbolForFunction(global, allocator, object, &function) catch ZigString.init("Out of memory").toErrorInstance(global)) |val| {
+            return val;
+        }
+
+        var arraylist = std.ArrayList(u8).init(allocator);
+        defer arraylist.deinit();
+        var writer = arraylist.writer();
+
+        function.base_name = "my_callback_function";
+
+        function.printCallbackSourceCode(&writer) catch {
+            return ZigString.init("Error while printing code").toErrorInstance(global);
+        };
+        return ZigString.init(arraylist.items).toValueGC(global);
+    }
+
+    pub fn print(global: *JSGlobalObject, object: JSC.JSValue, is_callback_val: ?JSC.JSValue) JSValue {
+        const allocator = VirtualMachine.vm.allocator;
+        if (is_callback_val) |is_callback| {
+            if (is_callback.toBoolean()) {
+                return printCallback(global, object);
+            }
+        }
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
             return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global.ref());
@@ -142,11 +232,11 @@ pub const FFI = struct {
                 for (symbols.values()) |*function_| {
                     function_.arg_types.deinit(allocator);
                 }
+
                 symbols.clearAndFree(allocator);
-                allocator.free(zig_strings);
                 return ZigString.init("Error while printing code").toErrorInstance(global);
             };
-            zig_strings[i] = ZigString.init(arraylist.toOwnedSlice());
+            zig_strings[i] = ZigString.init(arraylist.items);
         }
 
         const ret = JSC.JSValue.createStringArray(global, zig_strings.ptr, zig_strings.len, true);
@@ -264,9 +354,9 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |compiled| {
-                    var callback = JSC.C.JSObjectMakeFunctionWithCallback(global.ref(), null, @ptrCast(JSC.C.JSObjectCallAsFunctionCallback, compiled.ptr));
+                    var cb = JSC.C.JSObjectMakeFunctionWithCallback(global.ref(), null, @ptrCast(JSC.C.JSObjectCallAsFunctionCallback, compiled.ptr));
 
-                    obj.put(global, &ZigString.init(std.mem.span(function.base_name)), JSC.JSValue.cast(callback));
+                    obj.put(global, &ZigString.init(std.mem.span(function.base_name)), JSC.JSValue.cast(cb));
                 },
             }
         }
@@ -280,6 +370,83 @@ pub const FFI = struct {
         var close_object = JSC.JSValue.c(Class.make(global.ref(), lib));
 
         return JSC.JSValue.createObject2(global, &ZigString.init("close"), &ZigString.init("symbols"), close_object, obj);
+    }
+    pub fn generateSymbolForFunction(global: *JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, function: *Function) !?JSValue {
+        var abi_types = std.ArrayListUnmanaged(ABIType){};
+
+        if (value.get(global, "args")) |args| {
+            if (args.isEmptyOrUndefinedOrNull() or !args.jsType().isArray()) {
+                return ZigString.init("Expected an object with \"args\" as an array").toErrorInstance(global);
+            }
+
+            var array = args.arrayIterator(global);
+
+            try abi_types.ensureTotalCapacityPrecise(allocator, array.len);
+            while (array.next()) |val| {
+                if (val.isEmptyOrUndefinedOrNull()) {
+                    abi_types.clearAndFree(allocator);
+                    return ZigString.init("param must be a string (type name) or number").toErrorInstance(global);
+                }
+
+                if (val.isAnyInt()) {
+                    const int = val.toInt32();
+                    switch (int) {
+                        0...13 => {
+                            abi_types.appendAssumeCapacity(@intToEnum(ABIType, int));
+                            continue;
+                        },
+                        else => {
+                            abi_types.clearAndFree(allocator);
+                            return ZigString.init("invalid ABI type").toErrorInstance(global);
+                        },
+                    }
+                }
+
+                if (!val.jsType().isStringLike()) {
+                    abi_types.clearAndFree(allocator);
+                    return ZigString.init("param must be a string (type name) or number").toErrorInstance(global);
+                }
+
+                var type_name = val.toSlice(global, allocator);
+                defer type_name.deinit();
+                abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
+                    abi_types.clearAndFree(allocator);
+                    return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global.ref());
+                });
+            }
+        }
+        // var function
+        var return_type = ABIType.@"void";
+
+        if (value.get(global, "return_type")) |ret_value| brk: {
+            if (ret_value.isAnyInt()) {
+                const int = ret_value.toInt32();
+                switch (int) {
+                    0...13 => {
+                        return_type = @intToEnum(ABIType, int);
+                        break :brk;
+                    },
+                    else => {
+                        abi_types.clearAndFree(allocator);
+                        return ZigString.init("invalid ABI type").toErrorInstance(global);
+                    },
+                }
+            }
+
+            var ret_slice = ret_value.toSlice(global, allocator);
+            defer ret_slice.deinit();
+            return_type = ABIType.label.get(ret_slice.slice()) orelse {
+                abi_types.clearAndFree(allocator);
+                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global.ref());
+            };
+        }
+
+        function.* = Function{
+            .base_name = "",
+            .arg_types = abi_types,
+            .return_type = return_type,
+        };
+        return null;
     }
     pub fn generateSymbols(global: *JSGlobalObject, symbols: *std.StringArrayHashMapUnmanaged(Function), object: JSC.JSValue) !?JSValue {
         const allocator = VirtualMachine.vm.allocator;
@@ -303,66 +470,12 @@ pub const FFI = struct {
                 return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{s}\"", .{prop}, global.ref());
             }
 
-            var abi_types = std.ArrayListUnmanaged(ABIType){};
-
-            if (value.get(global, "params")) |params| {
-                if (params.isEmptyOrUndefinedOrNull() or !params.jsType().isArray()) {
-                    return ZigString.init("Expected an object with \"params\" as an array").toErrorInstance(global);
-                }
-
-                var array = params.arrayIterator(global);
-
-                try abi_types.ensureTotalCapacityPrecise(allocator, array.len);
-                while (array.next()) |val| {
-                    if (val.isEmptyOrUndefinedOrNull()) {
-                        abi_types.clearAndFree(allocator);
-                        return ZigString.init("param must be a string (type name) or number").toErrorInstance(global);
-                    }
-
-                    if (val.isAnyInt()) {
-                        const int = val.toInt32();
-                        switch (int) {
-                            0...13 => {
-                                abi_types.appendAssumeCapacity(@intToEnum(ABIType, int));
-                                continue;
-                            },
-                            else => {
-                                abi_types.clearAndFree(allocator);
-                                return ZigString.init("invalid ABI type").toErrorInstance(global);
-                            },
-                        }
-                    }
-
-                    if (!val.jsType().isStringLike()) {
-                        abi_types.clearAndFree(allocator);
-                        return ZigString.init("param must be a string (type name) or number").toErrorInstance(global);
-                    }
-
-                    var type_name = val.toSlice(global, allocator);
-                    defer type_name.deinit();
-                    abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
-                        abi_types.clearAndFree(allocator);
-                        return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global.ref());
-                    });
-                }
+            var function: Function = undefined;
+            if (try generateSymbolForFunction(global, allocator, value, &function)) |val| {
+                return val;
             }
-            // var function
-            var return_type = ABIType.@"void";
+            function.base_name = try allocator.dupeZ(u8, prop);
 
-            if (value.get(global, "return_type")) |ret_value| {
-                var ret_slice = ret_value.toSlice(global, allocator);
-                defer ret_slice.deinit();
-                return_type = ABIType.label.get(ret_slice.slice()) orelse {
-                    abi_types.clearAndFree(allocator);
-                    return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global.ref());
-                };
-            }
-
-            const function = Function{
-                .base_name = try allocator.dupeZ(u8, prop),
-                .arg_types = abi_types,
-                .return_type = return_type,
-            };
             symbols.putAssumeCapacity(std.mem.span(function.base_name), function);
         }
 
@@ -372,16 +485,41 @@ pub const FFI = struct {
     pub const Function = struct {
         symbol_from_dynamic_library: ?*anyopaque = null,
         base_name: [:0]const u8 = "",
+        state: ?*TCC.TCCState = null,
 
         return_type: ABIType,
         arg_types: std.ArrayListUnmanaged(ABIType) = .{},
         step: Step = Step{ .pending = {} },
+
+        pub fn deinit(val: *Function, allocator: std.mem.Allocator) void {
+            if (std.mem.span(val.base_name).len > 0) allocator.free(bun.constStrToU8(std.mem.span(val.base_name)));
+
+            val.arg_types.deinit(allocator);
+
+            if (val.state) |state| {
+                TCC.tcc_delete(state);
+                val.state = null;
+            }
+
+            if (val.step == .compiled) {
+                // allocator.free(val.step.compiled.buf);
+                if (val.step.compiled.js_function) |js_function| {
+                    JSC.C.JSValueUnprotect(@ptrCast(JSC.C.JSContextRef, val.step.compiled.js_context.?), @ptrCast(JSC.C.JSObjectRef, js_function));
+                }
+            }
+
+            if (val.step == .failed) {
+                allocator.free(val.step.failed);
+            }
+        }
 
         pub const Step = union(enum) {
             pending: void,
             compiled: struct {
                 ptr: *anyopaque,
                 buf: []u8,
+                js_function: ?*anyopaque = null,
+                js_context: ?*anyopaque = null,
             },
             failed: []const u8,
         };
@@ -415,6 +553,8 @@ pub const FFI = struct {
 
         extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
+        const tcc_options = "-std=c11 -Wl,--export-all-symbols";
+
         pub fn compile(
             this: *Function,
             allocator: std.mem.Allocator,
@@ -422,12 +562,20 @@ pub const FFI = struct {
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
             try this.printSourceCode(&source_code_writer);
+
             try source_code.append(0);
             defer source_code.deinit();
             var state = TCC.tcc_new() orelse return error.TCCMissing;
-            TCC.tcc_set_options(state, "-std=c11");
+            TCC.tcc_set_options(state, tcc_options);
             TCC.tcc_set_error_func(state, this, handleTCCError);
-            // defer TCC.tcc_delete(state);
+            this.state = state;
+            defer {
+                if (this.step == .failed) {
+                    TCC.tcc_delete(state);
+                    this.state = null;
+                }
+            }
+
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
 
             const compilation_result = TCC.tcc_compile_string(
@@ -447,44 +595,123 @@ pub const FFI = struct {
 
             _ = TCC.tcc_add_symbol(state, this.base_name, this.symbol_from_dynamic_library.?);
 
-            // i don't fully understand this, why it needs two calls
-            // but that is the API
             var relocation_size = TCC.tcc_relocate(state, null);
-            if (relocation_size > 0) {
-                var bytes: []u8 = try allocator.rawAlloc(@intCast(usize, relocation_size), 16, 16, 0);
-                if (comptime Environment.isAarch64 and Environment.isMac) {
-                    pthread_jit_write_protect_np(false);
-                }
-                _ = TCC.tcc_relocate(state, bytes.ptr);
-                if (comptime Environment.isAarch64 and Environment.isMac) {
-                    pthread_jit_write_protect_np(true);
-                }
+            if (relocation_size == 0) return;
+            var bytes: []u8 = try allocator.rawAlloc(@intCast(usize, relocation_size), 16, 16, 0);
+            defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);
-                    return;
                 }
+            }
 
-                var formatted_symbol_name = try std.fmt.allocPrintZ(allocator, "bun_gen_{s}", .{std.mem.span(this.base_name)});
-                defer allocator.free(formatted_symbol_name);
-                var symbol = TCC.tcc_get_symbol(state, formatted_symbol_name) orelse {
-                    this.step = .{ .failed = "missing generated symbol in source code" };
-                    allocator.free(bytes);
+            if (comptime Environment.isAarch64 and Environment.isMac) {
+                pthread_jit_write_protect_np(false);
+            }
+            _ = TCC.tcc_relocate(state, bytes.ptr);
+            if (comptime Environment.isAarch64 and Environment.isMac) {
+                pthread_jit_write_protect_np(true);
+            }
 
-                    return;
-                };
+            var formatted_symbol_name = try std.fmt.allocPrintZ(allocator, "bun_gen_{s}", .{std.mem.span(this.base_name)});
+            defer allocator.free(formatted_symbol_name);
+            var symbol = TCC.tcc_get_symbol(state, formatted_symbol_name) orelse {
+                this.step = .{ .failed = "missing generated symbol in source code" };
+
+                return;
+            };
+
+            this.step = .{
+                .compiled = .{
+                    .ptr = symbol,
+                    .buf = bytes,
+                },
+            };
+            return;
+        }
+
+        pub fn compileCallback(
+            this: *Function,
+            allocator: std.mem.Allocator,
+            js_context: *anyopaque,
+            js_function: *anyopaque,
+        ) !void {
+            Output.debug("welcome", .{});
+            var source_code = std.ArrayList(u8).init(allocator);
+            var source_code_writer = source_code.writer();
+            try this.printCallbackSourceCode(&source_code_writer);
+            Output.debug("helllooo", .{});
+            try source_code.append(0);
+            // defer source_code.deinit();
+            var state = TCC.tcc_new() orelse return error.TCCMissing;
+
+            TCC.tcc_set_options(state, tcc_options);
+            TCC.tcc_set_error_func(state, this, handleTCCError);
+            this.state = state;
+            defer {
                 if (this.step == .failed) {
-                    allocator.free(bytes);
-                    return;
+                    TCC.tcc_delete(state);
+                    this.state = null;
                 }
+            }
 
-                this.step = .{
-                    .compiled = .{
-                        .ptr = symbol,
-                        .buf = bytes,
-                    },
-                };
+            _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
+
+            const compilation_result = TCC.tcc_compile_string(
+                state,
+                source_code.items.ptr,
+            );
+            Output.debug("compile", .{});
+            // did tcc report an error?
+            if (this.step == .failed) {
                 return;
             }
+
+            // did tcc report failure but never called the error callback?
+            if (compilation_result == -1) {
+                this.step = .{ .failed = "tcc returned -1, which means it failed" };
+
+                return;
+            }
+            Output.debug("here", .{});
+
+            _ = TCC.tcc_add_symbol(state, "bun_call", JSC.C.JSObjectCallAsFunction);
+            _ = TCC.tcc_add_symbol(state, "cachedJSContext", js_context);
+            _ = TCC.tcc_add_symbol(state, "cachedCallbackFunction", js_function);
+
+            var relocation_size = TCC.tcc_relocate(state, null);
+            if (relocation_size == 0) return;
+            var bytes: []u8 = try allocator.rawAlloc(@intCast(usize, relocation_size), 16, 16, 0);
+            defer {
+                if (this.step == .failed) {
+                    allocator.free(bytes);
+                }
+            }
+
+            if (comptime Environment.isAarch64 and Environment.isMac) {
+                pthread_jit_write_protect_np(false);
+            }
+            _ = TCC.tcc_relocate(state, bytes.ptr);
+            if (comptime Environment.isAarch64 and Environment.isMac) {
+                pthread_jit_write_protect_np(true);
+            }
+
+            var symbol = TCC.tcc_get_symbol(state, "my_callback_function") orelse {
+                this.step = .{ .failed = "missing generated symbol in source code" };
+
+                return;
+            };
+            Output.debug("symbol: {*}", .{symbol});
+            Output.debug("bun_call: {*}", .{&bun_call});
+            Output.debug("js_function: {*}", .{js_function});
+
+            this.step = .{
+                .compiled = .{
+                    .ptr = symbol,
+                    .buf = &[_]u8{},
+                    .js_function = js_function,
+                    .js_context = js_context,
+                },
+            };
         }
 
         pub fn printSourceCode(
@@ -532,11 +759,16 @@ pub const FFI = struct {
             // -- Generate JavaScriptCore's C wrapper function
             try writer.writeAll("/* ---- Your Wrapper Function ---- */\nvoid* bun_gen_");
             try writer.writeAll(std.mem.span(this.base_name));
-            try writer.writeAll("(JSContext ctx, EncodedJSValue function, EncodedJSValue thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception);\n\n");
+            try writer.writeAll("(JSContext ctx, void* function, void* thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception);\n\n");
 
             try writer.writeAll("void* bun_gen_");
             try writer.writeAll(std.mem.span(this.base_name));
-            try writer.writeAll("(JSContext ctx, EncodedJSValue function, EncodedJSValue thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception) {\n\n");
+            try writer.writeAll("(JSContext ctx, void* function, void* thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception) {\n\n");
+            if (comptime Environment.isDebug) {
+                try writer.writeAll("#ifdef INJECT_BEFORE\n");
+                try writer.writeAll("INJECT_BEFORE;\n");
+                try writer.writeAll("#endif\n");
+            }
             var arg_buf: [512]u8 = undefined;
             arg_buf[0.."arguments[".len].* = "arguments[".*;
             for (this.arg_types.items) |arg, i| {
@@ -572,6 +804,117 @@ pub const FFI = struct {
                 try writer.print("{}.asPtr", .{this.return_type.toJS("return_value")});
             } else {
                 try writer.writeAll("ValueUndefined.asPtr");
+            }
+
+            try writer.writeAll(";\n}\n\n");
+        }
+
+        pub fn printCallbackSourceCode(
+            this: *Function,
+            writer: anytype,
+        ) !void {
+            try writer.writeAll("#define IS_CALLBACK 1\n");
+
+            brk: {
+                if (this.return_type.isFloatingPoint()) {
+                    try writer.writeAll("#define USES_FLOAT 1\n");
+                    break :brk;
+                }
+
+                for (this.arg_types.items) |arg| {
+                    // conditionally include math.h
+                    if (arg.isFloatingPoint()) {
+                        try writer.writeAll("#define USES_FLOAT 1\n");
+                        break;
+                    }
+                }
+            }
+
+            if (comptime Environment.isRelease) {
+                try writer.writeAll(std.mem.span(FFI_HEADER));
+            } else {
+                try writer.writeAll(ffiHeader());
+            }
+
+            // -- Generate the FFI function symbol
+            try writer.writeAll("\n \n/* --- The Callback Function */\n");
+            try writer.writeAll("/* --- The Callback Function */\n");
+            try this.return_type.typename(writer);
+            try writer.writeAll(" my_callback_function");
+            try writer.writeAll("(");
+            var first = true;
+            for (this.arg_types.items) |arg, i| {
+                if (!first) {
+                    try writer.writeAll(", ");
+                }
+                first = false;
+                try arg.typename(writer);
+                try writer.print(" arg{d}", .{i});
+            }
+            try writer.writeAll(");\n\n");
+
+            try this.return_type.typename(writer);
+
+            try writer.writeAll(" my_callback_function");
+            try writer.writeAll("(");
+            for (this.arg_types.items) |arg, i| {
+                if (!first) {
+                    try writer.writeAll(", ");
+                }
+                first = false;
+                try arg.typename(writer);
+                try writer.print(" arg{d}", .{i});
+            }
+            try writer.writeAll(") {\n");
+
+            if (comptime Environment.isDebug) {
+                try writer.writeAll("#ifdef INJECT_BEFORE\n");
+                try writer.writeAll("INJECT_BEFORE;\n");
+                try writer.writeAll("#endif\n");
+            }
+
+            first = true;
+
+            if (this.arg_types.items.len > 0) {
+                try writer.print("  EncodedJSValue arguments[{d}] = {{\n", .{this.arg_types.items.len});
+
+                var arg_buf: [512]u8 = undefined;
+                arg_buf[0.."arg".len].* = "arg".*;
+                for (this.arg_types.items) |arg, i| {
+                    try arg.typename(writer);
+                    const printed = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
+                    const arg_name = arg_buf[0 .. "arg".len + printed.len];
+                    try writer.print("    {}", .{arg.toJS(arg_name)});
+                    if (i < this.arg_types.items.len - 1) {
+                        try writer.writeAll(",\n");
+                    }
+                }
+                try writer.writeAll("\n  };\n");
+            } else {
+                try writer.writeAll(" EncodedJSValue arguments[1] = {{0}};\n");
+            }
+
+            try writer.writeAll("  ");
+            if (!(this.return_type == .void)) {
+                try writer.writeAll("  EncodedJSValue return_value = {");
+            }
+            // JSC.C.JSObjectCallAsFunction(
+            //     ctx,
+            //     object,
+            //     thisObject,
+            //     argumentCount,
+            //     arguments,
+            //     exception,
+            // );
+            try writer.writeAll("bun_call(cachedJSContext, cachedCallbackFunction, (void*)0, ");
+            if (this.arg_types.items.len > 0) {
+                try writer.print("{d}, arguments, 0)", .{this.arg_types.items.len});
+            } else {
+                try writer.writeAll("0, arguments, (void*)0)");
+            }
+
+            if (this.return_type != .void) {
+                try writer.print("}};\n  return {}", .{this.return_type.toC("return_value")});
             }
 
             try writer.writeAll(";\n}\n\n");
@@ -768,7 +1111,7 @@ pub const FFI = struct {
                 .uint32_t => "uint32_t",
                 .int64_t => "int64_t",
                 .uint64_t => "uint64_t",
-                .double => "float",
+                .double => "double",
                 .float => "float",
                 .char => "char",
                 .void => "void",

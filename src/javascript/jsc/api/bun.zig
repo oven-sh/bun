@@ -1120,7 +1120,7 @@ pub const Class = NewClass(
             .ts = d.ts{},
         },
         .sha = .{
-            .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash", false, false),
+            .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash", false, false, true),
         },
     },
     .{
@@ -1240,7 +1240,7 @@ pub const Crypto = struct {
                 @This(),
                 .{
                     .hash = .{
-                        .rfn = JSC.wrapWithHasContainer(@This(), "hash", false, false),
+                        .rfn = JSC.wrapWithHasContainer(@This(), "hash", false, false, true),
                     },
                     .constructor = .{ .rfn = constructor },
                 },
@@ -2257,19 +2257,22 @@ pub const FFI = struct {
         },
         .{
             .viewSource = .{
-                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "print", false, false),
+                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "print", false, false, true),
             },
             .dlopen = .{
-                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "open", false, false),
+                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "open", false, false, true),
+            },
+            .callback = .{
+                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "callback", false, false, false),
             },
             .ptr = .{
-                .rfn = JSC.wrapWithHasContainer(@This(), "ptr", false, false),
+                .rfn = JSC.wrapWithHasContainer(@This(), "ptr", false, false, true),
             },
             .toBuffer = .{
-                .rfn = JSC.wrapWithHasContainer(@This(), "toBuffer", false, false),
+                .rfn = JSC.wrapWithHasContainer(@This(), "toBuffer", false, false, true),
             },
             .toArrayBuffer = .{
-                .rfn = JSC.wrapWithHasContainer(@This(), "toArrayBuffer", false, false),
+                .rfn = JSC.wrapWithHasContainer(@This(), "toArrayBuffer", false, false, true),
             },
         },
         .{
@@ -2329,8 +2332,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref());
         }
 
-        // truncate to 56 bits to clear any pointer tags
-        return JSC.JSValue.jsNumber(@bitCast(f64, @as(usize, @truncate(u56, addr))));
+        return JSC.JSValue.jsNumber(@bitCast(f64, @as(usize, addr)));
     }
 
     const ValueOrError = union(enum) {
@@ -2425,6 +2427,22 @@ pub const FFI = struct {
     }
 
     pub fn toBuffer(
+        globalThis: *JSGlobalObject,
+        value: JSValue,
+        byteOffset: ?JSValue,
+        valueLength: ?JSValue,
+    ) JSC.JSValue {
+        switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
+            .err => |erro| {
+                return erro;
+            },
+            .slice => |slice| {
+                return JSC.JSValue.createBuffer(globalThis, slice, null);
+            },
+        }
+    }
+
+    pub fn toCStringBuffer(
         globalThis: *JSGlobalObject,
         value: JSValue,
         byteOffset: ?JSValue,

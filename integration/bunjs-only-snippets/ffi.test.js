@@ -9,180 +9,280 @@ import {
   toBuffer,
   toArrayBuffer,
   FFIType,
+  callback,
 } from "bun:ffi";
 
-it("ffi print", () => {
-  viewSource({
-    add: {
-      args: [FFIType.int],
-      return_type: "int32_t",
-    },
-  })[0];
+it("ffi print", async () => {
+  await Bun.write(
+    "ffi.test.fixture.callback.c",
+    viewSource(
+      {
+        return_type: "bool",
+        args: [],
+      },
+      true
+    )
+  );
+  await Bun.write(
+    "ffi.test.fixture.receiver.c",
+    viewSource(
+      {
+        callback: {
+          return_type: 13,
+          args: ["ptr"],
+        },
+      },
+      false
+    )[0]
+  );
+  expect(
+    viewSource(
+      {
+        return_type: "int8_t",
+        args: [],
+      },
+      true
+    ).length > 0
+  ).toBe(true);
+  expect(
+    viewSource(
+      {
+        a: {
+          return_type: "int8_t",
+          args: [],
+        },
+      },
+      false
+    ).length > 0
+  ).toBe(true);
 });
 
 it("ffi run", () => {
   const types = {
     returns_true: {
       return_type: "bool",
-      params: [],
+      args: [],
     },
     returns_false: {
       return_type: "bool",
-      params: [],
+      args: [],
     },
     returns_42_char: {
       return_type: "char",
-      params: [],
+      args: [],
     },
     // returns_42_float: {
     //   return_type: "float",
-    //   params: [],
+    //   args: [],
     // },
     // returns_42_double: {
     //   return_type: "double",
-    //   params: [],
+    //   args: [],
     // },
     returns_42_uint8_t: {
       return_type: "uint8_t",
-      params: [],
+      args: [],
     },
     returns_neg_42_int8_t: {
       return_type: "int8_t",
-      params: [],
+      args: [],
     },
     returns_42_uint16_t: {
       return_type: "uint16_t",
-      params: [],
+      args: [],
     },
     returns_42_uint32_t: {
       return_type: "uint32_t",
-      params: [],
+      args: [],
     },
     // // returns_42_uint64_t: {
     // //   return_type: "uint64_t",
-    // //   params: [],
+    // //   args: [],
     // // },
     returns_neg_42_int16_t: {
       return_type: "int16_t",
-      params: [],
+      args: [],
     },
     returns_neg_42_int32_t: {
       return_type: "int32_t",
-      params: [],
+      args: [],
     },
     // returns_neg_42_int64_t: {
     //   return_type: "int64_t",
-    //   params: [],
+    //   args: [],
     // },
 
     identity_char: {
       return_type: "char",
-      params: ["char"],
+      args: ["char"],
     },
     // identity_float: {
     //   return_type: "float",
-    //   params: ["float"],
+    //   args: ["float"],
     // },
     identity_bool: {
       return_type: "bool",
-      params: ["bool"],
+      args: ["bool"],
     },
     // identity_double: {
     //   return_type: "double",
-    //   params: ["double"],
+    //   args: ["double"],
     // },
     identity_int8_t: {
       return_type: "int8_t",
-      params: ["int8_t"],
+      args: ["int8_t"],
     },
     identity_int16_t: {
       return_type: "int16_t",
-      params: ["int16_t"],
+      args: ["int16_t"],
     },
     identity_int32_t: {
       return_type: "int32_t",
-      params: ["int32_t"],
+      args: ["int32_t"],
     },
     // identity_int64_t: {
     //   return_type: "int64_t",
-    //   params: ["int64_t"],
+    //   args: ["int64_t"],
     // },
     identity_uint8_t: {
       return_type: "uint8_t",
-      params: ["uint8_t"],
+      args: ["uint8_t"],
     },
     identity_uint16_t: {
       return_type: "uint16_t",
-      params: ["uint16_t"],
+      args: ["uint16_t"],
     },
     identity_uint32_t: {
       return_type: "uint32_t",
-      params: ["uint32_t"],
+      args: ["uint32_t"],
     },
     // identity_uint64_t: {
     //   return_type: "uint64_t",
-    //   params: ["uint64_t"],
+    //   args: ["uint64_t"],
     // },
 
     add_char: {
       return_type: "char",
-      params: ["char", "char"],
+      args: ["char", "char"],
     },
     add_float: {
       return_type: "float",
-      params: ["float", "float"],
+      args: ["float", "float"],
     },
     add_double: {
       return_type: "double",
-      params: ["double", "double"],
+      args: ["double", "double"],
     },
     add_int8_t: {
       return_type: "int8_t",
-      params: ["int8_t", "int8_t"],
+      args: ["int8_t", "int8_t"],
     },
     add_int16_t: {
       return_type: "int16_t",
-      params: ["int16_t", "int16_t"],
+      args: ["int16_t", "int16_t"],
     },
     add_int32_t: {
       return_type: "int32_t",
-      params: ["int32_t", "int32_t"],
+      args: ["int32_t", "int32_t"],
     },
     // add_int64_t: {
     //   return_type: "int64_t",
-    //   params: ["int64_t", "int64_t"],
+    //   args: ["int64_t", "int64_t"],
     // },
     add_uint8_t: {
       return_type: "uint8_t",
-      params: ["uint8_t", "uint8_t"],
+      args: ["uint8_t", "uint8_t"],
     },
     add_uint16_t: {
       return_type: "uint16_t",
-      params: ["uint16_t", "uint16_t"],
+      args: ["uint16_t", "uint16_t"],
     },
     add_uint32_t: {
       return_type: "uint32_t",
-      params: ["uint32_t", "uint32_t"],
+      args: ["uint32_t", "uint32_t"],
     },
 
     does_pointer_equal_42_as_int32_t: {
       return_type: "bool",
-      params: ["ptr"],
+      args: ["ptr"],
     },
 
     ptr_should_point_to_42_as_int32_t: {
       return_type: "ptr",
-      params: [],
+      args: [],
+    },
+    identity_ptr: {
+      return_type: "ptr",
+      args: ["ptr"],
     },
     // add_uint64_t: {
     //   return_type: "uint64_t",
-    //   params: ["uint64_t", "uint64_t"],
+    //   args: ["uint64_t", "uint64_t"],
     // },
+
+    cb_identity_true: {
+      return_type: "bool",
+      args: ["ptr"],
+    },
+    cb_identity_false: {
+      return_type: "bool",
+      args: ["ptr"],
+    },
+    cb_identity_42_char: {
+      return_type: "char",
+      args: ["ptr"],
+    },
+    // cb_identity_42_float: {
+    // return_type: "float",
+    // args: ["ptr"],
+    // },
+    // cb_identity_42_double: {
+    // return_type: "double",
+    // args: ["ptr"],
+    // },
+    cb_identity_42_uint8_t: {
+      return_type: "uint8_t",
+      args: ["ptr"],
+    },
+    cb_identity_neg_42_int8_t: {
+      return_type: "int8_t",
+      args: ["ptr"],
+    },
+    cb_identity_42_uint16_t: {
+      return_type: "uint16_t",
+      args: ["ptr"],
+    },
+    cb_identity_42_uint32_t: {
+      return_type: "uint32_t",
+      args: ["ptr"],
+    },
+    // cb_identity_42_uint64_t: {
+    // return_type: "uint64_t",
+    // args: ["ptr"],
+    // },
+    cb_identity_neg_42_int16_t: {
+      return_type: "int16_t",
+      args: ["ptr"],
+    },
+    cb_identity_neg_42_int32_t: {
+      return_type: "int32_t",
+      args: ["ptr"],
+    },
+    // cb_identity_neg_42_int64_t: {
+    // return_type: "int64_t",
+    // args: ["ptr"],
+    // },
+
+    return_a_function_ptr_to_function_that_returns_true: {
+      return_type: "ptr",
+      args: [],
+    },
   };
   const {
     symbols: {
       returns_true,
       returns_false,
+      return_a_function_ptr_to_function_that_returns_true,
       returns_42_char,
       returns_42_float,
       returns_42_double,
@@ -215,10 +315,24 @@ it("ffi run", () => {
       add_int64_t,
       add_uint8_t,
       add_uint16_t,
+      identity_ptr,
       add_uint32_t,
       add_uint64_t,
       does_pointer_equal_42_as_int32_t,
       ptr_should_point_to_42_as_int32_t,
+      cb_identity_true,
+      cb_identity_false,
+      cb_identity_42_char,
+      cb_identity_42_float,
+      cb_identity_42_double,
+      cb_identity_42_uint8_t,
+      cb_identity_neg_42_int8_t,
+      cb_identity_42_uint16_t,
+      cb_identity_42_uint32_t,
+      cb_identity_42_uint64_t,
+      cb_identity_neg_42_int16_t,
+      cb_identity_neg_42_int32_t,
+      cb_identity_neg_42_int64_t,
     },
     close,
   } = dlopen("/tmp/bun-ffi-test.dylib", types);
@@ -270,6 +384,105 @@ it("ffi run", () => {
   );
   expect(ptr(buffer)).toBe(cptr);
   expect(new CString(cptr, 0, 1)).toBe("*");
+  expect(identity_ptr(cptr)).toBe(cptr);
+  const second_ptr = ptr(new Buffer(8));
+  expect(identity_ptr(second_ptr)).toBe(second_ptr);
+  function identityBool() {
+    console.log("hi");
+    return true;
+  }
+  globalThis.identityBool = identityBool;
+
+  const first = callback(
+    {
+      return_type: "bool",
+    },
+    identityBool
+  );
+
+  expect(
+    cb_identity_true(return_a_function_ptr_to_function_that_returns_true())
+  ).toBe(true);
+
+  expect(cb_identity_true(first)).toBe(true);
+  console.log("second");
+
+  expect(
+    cb_identity_false(
+      callback(
+        {
+          return_type: "bool",
+        },
+        () => false
+      )
+    )
+  ).toBe(false);
+
+  expect(
+    cb_identity_42_char(
+      callback(
+        {
+          return_type: "char",
+        },
+        () => 42
+      )
+    )
+  ).toBe(42);
+  expect(
+    cb_identity_42_uint8_t(
+      callback(
+        {
+          return_type: "uint8_t",
+        },
+        () => 42
+      )
+    )
+  ).toBe(42);
+
+  cb_identity_neg_42_int8_t(
+    callback(
+      {
+        return_type: "int8_t",
+      },
+      () => -42
+    )
+  ).toBe(-42);
+
+  cb_identity_42_uint16_t(
+    callback(
+      {
+        return_type: "uint16_t",
+      },
+      () => 42
+    )
+  ).toBe(42);
+
+  cb_identity_42_uint32_t(
+    callback(
+      {
+        return_type: "uint32_t",
+      },
+      () => 42
+    )
+  ).toBe(42);
+
+  cb_identity_neg_42_int16_t(
+    callback(
+      {
+        return_type: "int16_t",
+      },
+      () => -42
+    )
+  ).toBe(-42);
+
+  cb_identity_neg_42_int32_t(
+    callback(
+      {
+        return_type: "int32_t",
+      },
+      () => -42
+    )
+  ).toBe(-42);
+
   close();
 });
-``;

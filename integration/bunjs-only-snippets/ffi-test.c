@@ -113,22 +113,17 @@ void *return_a_function_ptr_to_function_that_returns_true() {
   return (void *)&returns_true;
 }
 
-bool cb_identity_true(bool (*cb)()) {
-  printf("The memory address is: %p\n", cb);
-  printf("The memory address should be %p\n", &returns_true);
-  bool ran = cb();
-  printf("The result is : %d\n", ran);
-  return ran;
-}
-bool cb_identity_false(bool (^cb)()) { return cb(); }
-char cb_identity_42_char(char (^cb)()) { return cb(); }
-float cb_identity_42_float(float (^cb)()) { return cb(); }
-double cb_identity_42_double(double (^cb)()) { return cb(); }
-uint8_t cb_identity_42_uint8_t(uint8_t (^cb)()) { return cb(); }
-int8_t cb_identity_neg_42_int8_t(int8_t (^cb)()) { return cb(); }
-uint16_t cb_identity_42_uint16_t(uint16_t (^cb)()) { return cb(); }
-uint32_t cb_identity_42_uint32_t(uint32_t (^cb)()) { return cb(); }
-uint64_t cb_identity_42_uint64_t(uint64_t (^cb)()) { return cb(); }
-int16_t cb_identity_neg_42_int16_t(int16_t (^cb)()) { return cb(); }
-int32_t cb_identity_neg_42_int32_t(int32_t (^cb)()) { return cb(); }
-int64_t cb_identity_neg_42_int64_t(int64_t (^cb)()) { return cb(); }
+bool cb_identity_true(bool (*cb)()) { return cb(); }
+
+bool cb_identity_false(bool (*cb)()) { return cb(); }
+char cb_identity_42_char(char (*cb)()) { return cb(); }
+float cb_identity_42_float(float (*cb)()) { return cb(); }
+double cb_identity_42_double(double (*cb)()) { return cb(); }
+uint8_t cb_identity_42_uint8_t(uint8_t (*cb)()) { return cb(); }
+int8_t cb_identity_neg_42_int8_t(int8_t (*cb)()) { return cb(); }
+uint16_t cb_identity_42_uint16_t(uint16_t (*cb)()) { return cb(); }
+uint32_t cb_identity_42_uint32_t(uint32_t (*cb)()) { return cb(); }
+uint64_t cb_identity_42_uint64_t(uint64_t (*cb)()) { return cb(); }
+int16_t cb_identity_neg_42_int16_t(int16_t (*cb)()) { return cb(); }
+int32_t cb_identity_neg_42_int32_t(int32_t (*cb)()) { return cb(); }
+int64_t cb_identity_neg_42_int64_t(int64_t (*cb)()) { return cb(); }

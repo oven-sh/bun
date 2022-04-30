@@ -572,6 +572,22 @@ declare module "bun" {
       serverNames: Record<string, SSLOptions & SSLAdvancedOptions>;
     };
 
+  /**
+   * HTTP & HTTPS Server
+   *
+   * To start the server, see {@link serve}
+   *
+   * Often, you don't need to interact with this object directly. It exists to help you with the following tasks:
+   * - Stop the server
+   * - How many requests are currently being handled?
+   *
+   * For performance, Bun pre-allocates most of the data for 2048 concurrent requests.
+   * That means starting a new server allocates about 500 KB of memory. Try to
+   * avoid starting and stopping the server often (unless it's a new instance of bun).
+   *
+   * Powered by a fork of [uWebSockets](https://github.com/uNetworking/uWebSockets). Thank you @alexhultman.
+   *
+   */
   interface Server {
     /**
      * Stop listening to prevent new connections from being accepted.
@@ -877,7 +893,7 @@ declare module "bun" {
    *
    * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
    *
-   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
    *
    * The equivalent `openssl` command is:
    *
@@ -897,7 +913,7 @@ declare module "bun" {
    *
    * This hashing function balances speed with cryptographic strength. This does not encrypt or decrypt data.
    *
-   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
+   * The implementation uses [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
    *
    * The equivalent `openssl` command is:
    *
@@ -909,14 +925,9 @@ declare module "bun" {
   export function sha(input: StringOrBuffer, encoding: DigestEncoding): string;
 
   /**
+   * This is not the default because it's not cryptographically secure and it's slower than {@link SHA512}
    *
-   * Hashing functions for SHA-1
-   *
-   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
-   *
-   * SHA-1 is no longer cryptographically secure and it's slower than {@link SHA512}.
-   *
-   * Consider using the {@link SHA512_256} instead.
+   * Consider using the ugly-named {@link SHA512_256} instead
    */
   export class SHA1 extends CryptoHashInterface<SHA1> {
     constructor();
@@ -926,18 +937,6 @@ declare module "bun" {
      */
     static readonly byteLength: 20;
   }
-
-  /**
-   *
-   * Hashing functions for MD5
-   *
-   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
-   *
-   * If you're looking for a fast hashing function, consider {@link hash}
-   * instead. This is not cryptographically secure and it's slower than
-   * {@link hash}. The best reason to use it is compatibility.
-   *
-   */
   export class MD5 extends CryptoHashInterface<MD5> {
     constructor();
 
@@ -946,18 +945,6 @@ declare module "bun" {
      */
     static readonly byteLength: 16;
   }
-
-  /**
-   *
-   * Ancient hashing function. Bun maybe shouldn't have included this.
-   *
-   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
-   *
-   * If you're looking for a fast hashing function, consider {@link hash}
-   * instead. This is not cryptographically secure and it's slower than
-   * {@link hash}. The best reason to use it is compatibility.
-   *
-   */
   export class MD4 extends CryptoHashInterface<MD4> {
     constructor();
 
@@ -966,11 +953,6 @@ declare module "bun" {
      */
     static readonly byteLength: 16;
   }
-  /**
-   * Smaller variant of SHA-2
-   *
-   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
-   */
   export class SHA224 extends CryptoHashInterface<SHA224> {
     constructor();
 
@@ -979,11 +961,6 @@ declare module "bun" {
      */
     static readonly byteLength: 28;
   }
-  /**
-   * Faster variant of SHA-2, but with bigger output (64 bytes)
-   *
-   * Powered by [BoringSSL](https://boringssl.googlesource.com/boringssl) (used in Chromium & Go)
-   */
   export class SHA512 extends CryptoHashInterface<SHA512> {
     constructor();
 
@@ -1000,13 +977,6 @@ declare module "bun" {
      */
     static readonly byteLength: 48;
   }
-  /**
-   * SHA-2 (Secure Hash Algorithm 2) is a set of cryptographic hash functions
-   * designed by the United States National Security Agency (NSA) and first
-   * published in 2001
-   *
-   * {@link https://en.wikipedia.org/wiki/SHA-2}
-   */
   export class SHA256 extends CryptoHashInterface<SHA256> {
     constructor();
 
@@ -1016,9 +986,6 @@ declare module "bun" {
     static readonly byteLength: 32;
   }
   /**
-   *
-   * Fast variant of SHA-512, but with smaller output (32 bytes)
-   *
    * See also {@link sha}
    */
   export class SHA512_256 extends CryptoHashInterface<SHA512_256> {
@@ -1062,6 +1029,268 @@ interface BufferEncodingOption {
 }
 
 declare var Bun: typeof import("bun");
+
+
+// ./ffi.d.ts
+
+/**
+ * `bun:ffi` lets you efficiently call C functions & FFI functions from JavaScript
+ *  without writing any C code yourself.
+ *
+ * ```js
+ * import {dlopen, CString, ptr} from 'bun:ffi';
+ *
+ * const lib = dlopen('libsqlite3', {});
+ *
+ *
+ * ```
+ *
+ * This is powered by just-in-time compiling C wrappers
+ * that convert JavaScript types to C types and back. Internally,
+ * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
+ * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
+ *
+ */
+declare module "bun:ffi" {
+  export enum FFIType {
+    char = 0,
+
+    int8_t = 1,
+    i8 = 1,
+
+    uint8_t = 2,
+    u8 = 2,
+
+    int16_t = 3,
+    i16 = 3,
+
+    uint16_t = 4,
+    u16 = 4,
+
+    /**
+     * 32-bit signed integer
+     *
+     */
+    int32_t = 5,
+
+    /**
+     * 32-bit signed integer
+     *
+     * Alias of {@link FFIType.int32_t}
+     */
+    i32 = 5,
+    /**
+     * 32-bit signed integer
+     *
+     * The same as `int` in C
+     */
+    int = 5,
+
+    uint32_t = 6,
+    u32 = 6,
+
+    int64_t = 7,
+    i64 = 7,
+
+    uint64_t = 8,
+    u64 = 8,
+
+    double = 9,
+    f64 = 9,
+
+    float = 10,
+    f32 = 10,
+
+    bool = 11,
+
+    ptr = 12,
+    pointer = 12,
+
+    void = 13,
+  }
+
+  type Symbols = Record<
+    string,
+    {
+      /**
+       * Arguments to a C function
+       *
+       * Defaults to an empty array, which means no arguments.
+       *
+       * To pass a pointer, use "ptr" or "pointer" as the type name. To get a pointer, see {@link ptr}.
+       *
+       * @example
+       * From JavaScript:
+       * ```js
+       * const lib = dlopen('add', {
+       *    // FFIType can be used or you can pass string labels.
+       *    args: [FFIType.i32, "i32"],
+       *    return_type: "i32",
+       * });
+       * lib.symbols.add(1, 2)
+       * ```
+       * In C:
+       * ```c
+       * int add(int a, int b) {
+       *   return a + b;
+       * }
+       * ```
+       */
+      args?: FFIType[];
+      return_type?: FFIType;
+    }
+  >;
+
+  export interface Library {
+    symbols: Record<string, CallableFunction>;
+
+    /**
+     * `dlclose` the library, unloading the symbols and freeing memory allocated.
+     *
+     * Once called, the library is no longer usable.
+     *
+     * Calling a function from a library that has been closed is undefined behavior.
+     */
+    close(): void;
+  }
+
+  export function dlopen(libraryName: string, symbols: Symbols): Library<T>;
+
+  /**
+   * Read a pointer as a {@link Buffer}
+   *
+   * If `byteLength` is not provided, the pointer is assumed to be 0-terminated.
+   *
+   * @param ptr The memory address to read
+   * @param byteOffset bytes to skip before reading
+   * @param byteLength bytes to read
+   *
+   * While there are some checks to catch invalid pointers, this is a difficult
+   * thing to do safely. Passing an invalid pointer can crash the program and
+   * reading beyond the bounds of the pointer will crash the program or cause
+   * undefined behavior. Use with care!
+   *
+   */
+  export function toBuffer(
+    ptr: number,
+    byteOffset?: number,
+    byteLength?: number
+  ): Buffer;
+
+  /**
+   * Read a pointer as an {@link ArrayBuffer}
+   *
+   * If `byteLength` is not provided, the pointer is assumed to be 0-terminated.
+   *
+   * @param ptr The memory address to read
+   * @param byteOffset bytes to skip before reading
+   * @param byteLength bytes to read
+   *
+   * While there are some checks to catch invalid pointers, this is a difficult
+   * thing to do safely. Passing an invalid pointer can crash the program and
+   * reading beyond the bounds of the pointer will crash the program or cause
+   * undefined behavior. Use with care!
+   */
+  export function toArrayBuffer(
+    ptr: number,
+    byteOffset?: number,
+    byteLength?: number
+  ): ArrayBuffer;
+
+  /**
+   * Get the pointer backing a {@link TypedArray} or {@link ArrayBuffer}
+   *
+   * Use this to pass {@link TypedArray} or {@link ArrayBuffer} to C functions.
+   *
+   * This is for use with FFI functions. For performance reasons, FFI will
+   * not automatically convert typed arrays to C pointers.
+   *
+   * @param {TypedArray|ArrayBuffer|DataView} view the typed array or array buffer to get the pointer for
+   * @param {number} byteOffset optional offset into the view in bytes
+   *
+   * @example
+   *
+   * From JavaScript:
+   * ```js
+   * const array = new Uint8Array(10);
+   * const rawPtr = ptr(array);
+   * myCFunction(rawPtr);
+   * ```
+   * To C:
+   * ```c
+   * void myCFunction(char* rawPtr) {
+   *  // Do something with rawPtr
+   * }
+   * ```
+   *
+   */
+  export function ptr(
+    view: TypedArray | ArrayBufferLike | DataView,
+    byteOffset?: number
+  ): number;
+
+  /**
+   * Get a string from a UTF-8 encoded C string
+   * If `byteLength` is not provided, the string is assumed to be null-terminated.
+   *
+   * @example
+   * ```js
+   * var ptr = lib.symbols.getVersion();
+   * console.log(new CString(ptr));
+   * ```
+   *
+   * @example
+   * ```js
+   * var ptr = lib.symbols.getVersion();
+   * // print the first 4 characters
+   * console.log(new CString(ptr, 0, 4));
+   * ```
+   *
+   * While there are some checks to catch invalid pointers, this is a difficult
+   * thing to do safely. Passing an invalid pointer can crash the program and
+   * reading beyond the bounds of the pointer will crash the program or cause
+   * undefined behavior. Use with care!
+   */
+  export interface CString {
+    /**
+     * Get a string from a UTF-8 encoded C string
+     * If `byteLength` is not provided, the string is assumed to be null-terminated.
+     *
+     * @param ptr The pointer to the C string
+     * @param byteOffset bytes to skip before reading
+     * @param byteLength bytes to read
+     *
+     *
+     * @example
+     * ```js
+     * var ptr = lib.symbols.getVersion();
+     * console.log(new CString(ptr));
+     * ```
+     *
+     * @example
+     * ```js
+     * var ptr = lib.symbols.getVersion();
+     * // print the first 4 characters
+     * console.log(new CString(ptr, 0, 4));
+     * ```
+     *
+     * While there are some checks to catch invalid pointers, this is a difficult
+     * thing to do safely. Passing an invalid pointer can crash the program and
+     * reading beyond the bounds of the pointer will crash the program or cause
+     * undefined behavior. Use with care!
+     */
+    new (ptr: number, byteOffset?: number, byteLength?: number): string;
+  }
+
+  /**
+   * View the generated C code for FFI bindings
+   *
+   * You probably won't need this unless there's a bug in the FFI bindings
+   * generator or you're just curious.
+   */
+  export function viewSource(symbols: Symbols): string[];
+}
+
 
 // ./fs.d.ts
 
@@ -4664,6 +4893,7 @@ declare module "node:fs" {
   export = fs;
 }
 
+
 // ./html-rewriter.d.ts
 
 declare namespace HTMLRewriterTypes {
@@ -4780,9 +5010,10 @@ declare class HTMLRewriter {
   transform(input: Response): Response;
 }
 
+
 // ./globals.d.ts
 
-type Encoding = "utf8" | "utf-8" | "windows-1252" | "utf-16";
+type Encoding = "utf-8" | "windows-1252" | "utf-16";
 
 interface console {
   assert(condition?: boolean, ...data: any[]): void;
@@ -6208,6 +6439,7 @@ declare var Loader: {
   resolveSync: (specifier: string, from: string) => string;
 };
 
+
 // ./path.d.ts
 
 /**
@@ -6415,6 +6647,7 @@ declare module "node:path/win32" {
   export * from "path/win32";
 }
 
+
 // ./bun-test.d.ts
 
 /**
@@ -6453,3 +6686,4 @@ declare module "test" {
   import BunTestModule = require("bun:test");
   export = BunTestModule;
 }
+

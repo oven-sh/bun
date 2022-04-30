@@ -318,12 +318,15 @@ pub const Linker = struct {
                             }
                         }
 
-                        if (import_record.path.text.len > 4 and strings.eqlComptime(import_record.path.text[0.."bun:".len], "bun:")) {
+                        if (import_record.path.text.len > 4 and strings.eqlComptimeIgnoreLen(import_record.path.text[0.."bun:".len], "bun:")) {
                             import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
                             import_record.path.namespace = "bun";
-                            if (strings.eqlComptime(import_record.path.text, "test")) {
+                            if (strings.eqlComptime(import_record.path.text, "ffi")) {
+                                import_record.path.text = "bun:ffi";
+                            } else if (strings.eqlComptime(import_record.path.text, "test")) {
                                 import_record.tag = .bun_test;
                             }
+
                             // don't link bun
                             continue;
                         }

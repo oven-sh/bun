@@ -1,10 +1,20 @@
 import { describe, it, expect } from "bun:test";
 import { unsafe } from "bun";
+//
+import {
+  viewSource,
+  dlopen,
+  CString,
+  ptr,
+  toBuffer,
+  toArrayBuffer,
+  FFIType,
+} from "bun:ffi";
 
 it("ffi print", () => {
-  Bun.dlprint({
+  viewSource({
     add: {
-      params: ["int32_t", "int32_t"],
+      args: [FFIType.int],
       return_type: "int32_t",
     },
   })[0];
@@ -211,7 +221,7 @@ it("ffi run", () => {
       ptr_should_point_to_42_as_int32_t,
     },
     close,
-  } = Bun.dlopen("/tmp/bun-ffi-test.dylib", types);
+  } = dlopen("/tmp/bun-ffi-test.dylib", types);
 
   expect(returns_true()).toBe(true);
   expect(returns_false()).toBe(false);
@@ -249,16 +259,17 @@ it("ffi run", () => {
   expect(add_uint16_t(1, 1)).toBe(2);
   expect(add_uint32_t(1, 1)).toBe(2);
 
-  const ptr = ptr_should_point_to_42_as_int32_t();
-  expect(ptr != 0).toBe(true);
-  expect(typeof ptr === "number").toBe(true);
-  expect(does_pointer_equal_42_as_int32_t(ptr)).toBe(true);
-  const buffer = unsafe.bufferFromPtr(ptr, 4);
+  const cptr = ptr_should_point_to_42_as_int32_t();
+  expect(cptr != 0).toBe(true);
+  expect(typeof cptr === "number").toBe(true);
+  expect(does_pointer_equal_42_as_int32_t(cptr)).toBe(true);
+  const buffer = toBuffer(cptr, 0, 4);
   expect(buffer.readInt32(0)).toBe(42);
-  expect(
-    new DataView(unsafe.arrayBufferFromPtr(ptr, 4), 0, 4).getInt32(0, true)
-  ).toBe(42);
-  expect(unsafe.arrayBufferToPtr(buffer)).toBe(ptr);
+  expect(new DataView(toArrayBuffer(cptr, 0, 4), 0, 4).getInt32(0, true)).toBe(
+    42
+  );
+  expect(ptr(buffer)).toBe(cptr);
+  expect(new CString(cptr, 0, 1)).toBe("*");
   close();
 });
 ``;

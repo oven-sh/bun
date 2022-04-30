@@ -2882,6 +2882,9 @@ pub fn wrapWithHasContainer(
                         };
                         args[i] = val;
                     },
+                    ?JSValue => {
+                        args[i] = iter.protectEatNext();
+                    },
                     else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
                 }
             }
@@ -2920,4 +2923,52 @@ pub fn wrapWithHasContainer(
             return result.asObjectRef();
         }
     }.callback;
+}
+
+pub fn cachedBoundFunction(comptime name: [:0]const u8, comptime callback: anytype) (fn (
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef) {
+    return struct {
+        const name_ = name;
+        pub fn call(
+            arg2: js.JSContextRef,
+            arg3: js.JSObjectRef,
+            arg4: js.JSObjectRef,
+            arg5: usize,
+            arg6: [*c]const js.JSValueRef,
+            arg7: js.ExceptionRef,
+        ) callconv(.C) js.JSObjectRef {
+            return callback(
+                {},
+                arg2,
+                arg3,
+                arg4,
+                arg6[0..arg5],
+                arg7,
+            );
+        }
+
+        pub fn getter(
+            _: void,
+            ctx: js.JSContextRef,
+            _: js.JSValueRef,
+            _: js.JSStringRef,
+            _: js.ExceptionRef,
+        ) js.JSValueRef {
+            const name_slice = std.mem.span(name_);
+            var existing = ctx.ptr().getCachedObject(&ZigString.init(name_slice));
+            if (existing.isEmpty()) {
+                return ctx.ptr().putCachedObject(
+                    &ZigString.init(name_slice),
+                    JSValue.fromRef(JSC.C.JSObjectMakeFunctionWithCallback(ctx, JSC.C.JSStringCreateStatic(name_slice.ptr, name_slice.len), call)),
+                ).asObjectRef();
+            }
+
+            return existing.asObjectRef();
+        }
+    }.getter;
 }

@@ -1078,6 +1078,14 @@ pub const VirtualMachine = struct {
                 .source_url = ZigString.init("node:path"),
                 .hash = 0,
             };
+        } else if (strings.eqlComptime(_specifier, "bun:ffi")) {
+            return ResolvedSource{
+                .allocator = null,
+                .source_code = ZigString.init(@embedFile("ffi.exports.js") ++ "export const FFIType = " ++ JSC.FFI.ABIType.map_to_js_object ++ ";\n"),
+                .specifier = ZigString.init("bun:ffi"),
+                .source_url = ZigString.init("bun:ffi"),
+                .hash = 0,
+            };
         }
 
         const specifier = normalizeSpecifier(_specifier);
@@ -1303,10 +1311,13 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = "node:fs";
             return;
-        }
-        if (strings.eqlComptime(specifier, "node:path")) {
+        } else if (strings.eqlComptime(specifier, "node:path")) {
             ret.result = null;
             ret.path = "node:path";
+            return;
+        } else if (strings.eqlComptime(specifier, "bun:ffi")) {
+            ret.result = null;
+            ret.path = "bun:ffi";
             return;
         }
 

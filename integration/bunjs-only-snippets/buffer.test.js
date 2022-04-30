@@ -31,10 +31,6 @@ it("Buffer", () => {
     expect(new Buffer(input).toString("utf8")).toBe(inputs[i]);
     expect(Array.from(new Buffer(input)).join(",")).toBe(good[i].join(","));
   }
-  for (let i = 0; i < inputs.length; i++) {
-    var input = inputs[i];
-    expect(new Buffer(input, "ucs2").toString("utf8")).toBe(inputs[i]);
-  }
 });
 
 it("Buffer.toBuffer throws", () => {

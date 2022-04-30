@@ -98,12 +98,14 @@ pub const FFI = struct {
         this.closed = true;
         this.dylib.close();
 
-        for (this.functions.values()) |*val| {
-            VirtualMachine.vm.allocator.free(bun.constStrToU8(std.mem.span(val.base_name)));
+        const allocator = VirtualMachine.vm.allocator;
 
-            val.arg_types.deinit(VirtualMachine.vm.allocator);
+        for (this.functions.values()) |*val| {
+            allocator.free(bun.constStrToU8(std.mem.span(val.base_name)));
+
+            val.arg_types.deinit(allocator);
         }
-        this.functions.deinit(VirtualMachine.vm.allocator);
+        this.functions.deinit(allocator);
 
         return JSC.JSValue.jsUndefined();
     }
@@ -312,9 +314,28 @@ pub const FFI = struct {
 
                 try abi_types.ensureTotalCapacityPrecise(allocator, array.len);
                 while (array.next()) |val| {
-                    if (val.isEmptyOrUndefinedOrNull() or !val.jsType().isStringLike()) {
+                    if (val.isEmptyOrUndefinedOrNull()) {
                         abi_types.clearAndFree(allocator);
-                        return ZigString.init("param must be a string (type name)").toErrorInstance(global);
+                        return ZigString.init("param must be a string (type name) or number").toErrorInstance(global);
+                    }
+
+                    if (val.isAnyInt()) {
+                        const int = val.toInt32();
+                        switch (int) {
+                            0...13 => {
+                                abi_types.appendAssumeCapacity(@intToEnum(ABIType, int));
+                                continue;
+                            },
+                            else => {
+                                abi_types.clearAndFree(allocator);
+                                return ZigString.init("invalid ABI type").toErrorInstance(global);
+                            },
+                        }
+                    }
+
+                    if (!val.jsType().isStringLike()) {
+                        abi_types.clearAndFree(allocator);
+                        return ZigString.init("param must be a string (type name) or number").toErrorInstance(global);
                     }
 
                     var type_name = val.toSlice(global, allocator);
@@ -581,39 +602,78 @@ pub const FFI = struct {
 
         @"void" = 13,
 
-        pub const label = ComptimeStringMap(ABIType, .{
-            .{ "bool", .bool },
-            .{ "c_int", .int32_t },
-            .{ "c_uint", .uint32_t },
-            .{ "char", .char },
-            .{ "char*", .ptr },
-            .{ "double", .double },
-            .{ "f32", .float },
-            .{ "f64", .double },
-            .{ "float", .float },
-            .{ "i16", .int16_t },
-            .{ "i32", .int32_t },
-            .{ "i64", .int64_t },
-            .{ "i8", .int8_t },
-            .{ "int", .int32_t },
-            .{ "int16_t", .int16_t },
-            .{ "int32_t", .int32_t },
-            .{ "int64_t", .int64_t },
-            .{ "int8_t", .int8_t },
-            .{ "isize", .int64_t },
-            .{ "u16", .uint16_t },
-            .{ "u32", .uint32_t },
-            .{ "u64", .uint64_t },
-            .{ "u8", .uint8_t },
-            .{ "uint16_t", .uint16_t },
-            .{ "uint32_t", .uint32_t },
-            .{ "uint64_t", .uint64_t },
-            .{ "uint8_t", .uint8_t },
-            .{ "usize", .uint64_t },
-            .{ "void*", .ptr },
-            .{ "ptr", .ptr },
-            .{ "pointer", .ptr },
-        });
+        const map = .{
+            .{ "bool", ABIType.bool },
+            .{ "c_int", ABIType.int32_t },
+            .{ "c_uint", ABIType.uint32_t },
+            .{ "char", ABIType.char },
+            .{ "char*", ABIType.ptr },
+            .{ "double", ABIType.double },
+            .{ "f32", ABIType.float },
+            .{ "f64", ABIType.double },
+            .{ "float", ABIType.float },
+            .{ "i16", ABIType.int16_t },
+            .{ "i32", ABIType.int32_t },
+            .{ "i64", ABIType.int64_t },
+            .{ "i8", ABIType.int8_t },
+            .{ "int", ABIType.int32_t },
+            .{ "int16_t", ABIType.int16_t },
+            .{ "int32_t", ABIType.int32_t },
+            .{ "int64_t", ABIType.int64_t },
+            .{ "int8_t", ABIType.int8_t },
+            .{ "isize", ABIType.int64_t },
+            .{ "u16", ABIType.uint16_t },
+            .{ "u32", ABIType.uint32_t },
+            .{ "u64", ABIType.uint64_t },
+            .{ "u8", ABIType.uint8_t },
+            .{ "uint16_t", ABIType.uint16_t },
+            .{ "uint32_t", ABIType.uint32_t },
+            .{ "uint64_t", ABIType.uint64_t },
+            .{ "uint8_t", ABIType.uint8_t },
+            .{ "usize", ABIType.uint64_t },
+            .{ "void*", ABIType.ptr },
+            .{ "ptr", ABIType.ptr },
+            .{ "pointer", ABIType.ptr },
+        };
+        pub const label = ComptimeStringMap(ABIType, map);
+        const EnumMapFormatter = struct {
+            name: []const u8,
+            entry: ABIType,
+            pub fn format(self: EnumMapFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                try writer.writeAll("['");
+                // these are not all valid identifiers
+                try writer.writeAll(self.name);
+                try writer.writeAll("']:");
+                try std.fmt.formatInt(@enumToInt(self.entry), 10, .lower, .{}, writer);
+                try writer.writeAll(",'");
+                try std.fmt.formatInt(@enumToInt(self.entry), 10, .lower, .{}, writer);
+                try writer.writeAll("':");
+                try std.fmt.formatInt(@enumToInt(self.entry), 10, .lower, .{}, writer);
+            }
+        };
+        pub const map_to_js_object = brk: {
+            var count: usize = 2;
+            for (map) |item, i| {
+                var fmt = EnumMapFormatter{ .name = item.@"0", .entry = item.@"1" };
+                count += std.fmt.count("{}", .{fmt});
+                count += @boolToInt(i > 0);
+            }
+
+            var buf: [count]u8 = undefined;
+            buf[0] = '{';
+            buf[buf.len - 1] = '}';
+            var end: usize = 1;
+            for (map) |item, i| {
+                var fmt = EnumMapFormatter{ .name = item.@"0", .entry = item.@"1" };
+                if (i > 0) {
+                    buf[end] = ',';
+                    end += 1;
+                }
+                end += (std.fmt.bufPrint(buf[end..], "{}", .{fmt}) catch unreachable).len;
+            }
+
+            break :brk buf;
+        };
 
         pub fn isFloatingPoint(this: ABIType) bool {
             return switch (this) {

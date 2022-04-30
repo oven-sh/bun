@@ -986,6 +986,8 @@ declare module "bun" {
      */
     static readonly byteLength: 32;
   }
+
+  export const FFI: typeof import("bun:ffi");
 }
 
 type TypedArray =

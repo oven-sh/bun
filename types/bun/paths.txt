@@ -1,4 +1,5 @@
 ./bun.d.ts
+./ffi.d.ts
 ./fs.d.ts
 ./html-rewriter.d.ts
 ./globals.d.ts

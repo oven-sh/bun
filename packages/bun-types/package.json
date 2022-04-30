@@ -1,6 +1,6 @@
 {
   "name": "bun-types",
-  "version": "0.0.78",
+  "version": "0.0.79",
   "description": "Type definitions for bun.js",
   "types": "types.d.ts",
   "files": [

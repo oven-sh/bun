@@ -77,6 +77,7 @@ const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
 
 const is_bindgen = JSC.is_bindgen;
+const max_addressible_memory = std.math.maxInt(u56);
 
 threadlocal var css_imports_list_strings: [512]ZigString = undefined;
 threadlocal var css_imports_list: [512]Api.StringPointer = undefined;
@@ -1121,12 +1122,6 @@ pub const Class = NewClass(
         .sha = .{
             .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash", false, false),
         },
-        .dlprint = .{
-            .rfn = JSC.wrapWithHasContainer(JSC.FFI, "print", false, false),
-        },
-        .dlopen = .{
-            .rfn = JSC.wrapWithHasContainer(JSC.FFI, "open", false, false),
-        },
     },
     .{
         .main = .{
@@ -1207,6 +1202,9 @@ pub const Class = NewClass(
         },
         .SHA512_256 = .{
             .get = Crypto.SHA512_256.getter,
+        },
+        .FFI = .{
+            .get = FFI.getter,
         },
     },
 );
@@ -1862,111 +1860,9 @@ pub const Unsafe = struct {
             .arrayBufferToString = .{
                 .rfn = arrayBufferToString,
             },
-            .arrayBufferToPtr = .{
-                .rfn = JSC.wrapWithHasContainer(Unsafe, "arrayBufferToPtr", false, false),
-            },
-            .arrayBufferFromPtr = .{
-                .rfn = JSC.wrapWithHasContainer(Unsafe, "arrayBufferFromPtr", false, false),
-            },
-            .bufferFromPtr = .{
-                .rfn = JSC.wrapWithHasContainer(Unsafe, "bufferFromPtr", false, false),
-            },
         },
         .{},
     );
-
-    const ValueOrError = union(enum) {
-        err: JSValue,
-        slice: []u8,
-    };
-
-    pub fn arrayBufferToPtr(globalThis: *JSGlobalObject, value: JSValue) JSValue {
-        if (value.isEmpty()) {
-            return JSC.JSValue.jsNull();
-        }
-
-        const array_buffer = value.asArrayBuffer(globalThis) orelse {
-            return JSC.toInvalidArguments("Expected ArrayBufferView", .{}, globalThis.ref());
-        };
-
-        if (array_buffer.len == 0) {
-            return JSC.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{}, globalThis.ref());
-        }
-
-        return JSC.JSValue.jsNumber(@bitCast(f64, @ptrToInt(array_buffer.ptr)));
-    }
-
-    fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, valueLength: JSValue) ValueOrError {
-        if (!value.isNumber()) {
-            return .{ .err = JSC.toInvalidArguments("ptr must be a number.", .{}, globalThis.ref()) };
-        }
-
-        const num = value.asNumber();
-        if (num == 0) {
-            return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis.ref()) };
-        }
-
-        if (!std.math.isFinite(num)) {
-            return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis.ref()) };
-        }
-
-        const addr = @bitCast(usize, num);
-
-        if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
-            return .{ .err = JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref()) };
-        }
-
-        if (!valueLength.isNumber()) {
-            return .{ .err = JSC.toInvalidArguments("length must be a number.", .{}, globalThis.ref()) };
-        }
-
-        if (valueLength.asNumber() == 0.0) {
-            return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis.ref()) };
-        }
-
-        const length_i = valueLength.toInt64();
-        if (length_i < 0) {
-            return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis.ref()) };
-        }
-
-        if (length_i > std.math.maxInt(u48)) {
-            return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis.ref()) };
-        }
-
-        const length = @intCast(usize, length_i);
-
-        return .{ .slice = @intToPtr([*]u8, addr)[0..length] };
-    }
-
-    pub fn arrayBufferFromPtr(
-        globalThis: *JSGlobalObject,
-        value: JSValue,
-        valueLength: JSValue,
-    ) JSC.JSValue {
-        switch (getPtrSlice(globalThis, value, valueLength)) {
-            .err => |erro| {
-                return erro;
-            },
-            .slice => |slice| {
-                return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis.ref(), null, null, null);
-            },
-        }
-    }
-
-    pub fn bufferFromPtr(
-        globalThis: *JSGlobalObject,
-        value: JSValue,
-        valueLength: JSValue,
-    ) JSC.JSValue {
-        switch (getPtrSlice(globalThis, value, valueLength)) {
-            .err => |erro| {
-                return erro;
-            },
-            .slice => |slice| {
-                return JSC.JSValue.createBuffer(globalThis, slice, null);
-            },
-        }
-    }
 
     // For testing the segfault handler
     pub fn __debug__doSegfault(
@@ -2350,6 +2246,265 @@ pub const Timer = struct {
             @export(clearInterval, .{ .name = Export[3].symbol_name });
             @export(getNextID, .{ .name = Export[4].symbol_name });
         }
+    }
+};
+
+pub const FFI = struct {
+    pub const Class = NewClass(
+        void,
+        .{
+            .name = "FFI",
+        },
+        .{
+            .viewSource = .{
+                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "print", false, false),
+            },
+            .dlopen = .{
+                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "open", false, false),
+            },
+            .ptr = .{
+                .rfn = JSC.wrapWithHasContainer(@This(), "ptr", false, false),
+            },
+            .toBuffer = .{
+                .rfn = JSC.wrapWithHasContainer(@This(), "toBuffer", false, false),
+            },
+            .toArrayBuffer = .{
+                .rfn = JSC.wrapWithHasContainer(@This(), "toArrayBuffer", false, false),
+            },
+        },
+        .{
+            .CString = .{
+                .get = UnsafeCString.getter,
+            },
+        },
+    );
+
+    pub fn ptr(
+        globalThis: *JSGlobalObject,
+        value: JSValue,
+        byteOffset: ?JSValue,
+    ) JSValue {
+        if (value.isEmpty()) {
+            return JSC.JSValue.jsNull();
+        }
+
+        const array_buffer = value.asArrayBuffer(globalThis) orelse {
+            return JSC.toInvalidArguments("Expected ArrayBufferView", .{}, globalThis.ref());
+        };
+
+        if (array_buffer.len == 0) {
+            return JSC.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{}, globalThis.ref());
+        }
+
+        var addr: usize = @ptrToInt(array_buffer.ptr);
+
+        if (byteOffset) |off| {
+            if (!off.isEmptyOrUndefinedOrNull()) {
+                if (!off.isNumber()) {
+                    return JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis.ref());
+                }
+            }
+
+            const bytei64 = off.toInt64();
+            if (bytei64 < 0) {
+                addr -|= @intCast(usize, bytei64 * -1);
+            } else {
+                addr += @intCast(usize, bytei64);
+            }
+
+            if (addr > @ptrToInt(array_buffer.ptr) + @as(usize, array_buffer.byte_len)) {
+                return JSC.toInvalidArguments("byteOffset out of bounds", .{}, globalThis.ref());
+            }
+        }
+
+        if (addr > max_addressible_memory) {
+            return JSC.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{}, globalThis.ref());
+        }
+
+        if (addr == 0) {
+            return JSC.toInvalidArguments("Pointer must not be 0", .{}, globalThis.ref());
+        }
+
+        if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
+            return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref());
+        }
+
+        // truncate to 56 bits to clear any pointer tags
+        return JSC.JSValue.jsNumber(@bitCast(f64, @as(usize, @truncate(u56, addr))));
+    }
+
+    const ValueOrError = union(enum) {
+        err: JSValue,
+        slice: []u8,
+    };
+
+    pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
+        if (!value.isNumber()) {
+            return .{ .err = JSC.toInvalidArguments("ptr must be a number.", .{}, globalThis.ref()) };
+        }
+
+        const num = value.asNumber();
+        if (num == 0) {
+            return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis.ref()) };
+        }
+
+        if (!std.math.isFinite(num)) {
+            return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis.ref()) };
+        }
+
+        var addr = @bitCast(usize, num);
+
+        if (byteOffset) |byte_off| {
+            if (byte_off.isNumber()) {
+                const off = byte_off.toInt64();
+                if (off < 0) {
+                    addr -|= @intCast(usize, off * -1);
+                } else {
+                    addr +|= @intCast(usize, off);
+                }
+
+                if (addr == 0) {
+                    return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis.ref()) };
+                }
+
+                if (!std.math.isFinite(byte_off.asNumber())) {
+                    return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis.ref()) };
+                }
+            } else if (!byte_off.isEmptyOrUndefinedOrNull()) {
+                // do nothing
+            } else {
+                return .{ .err = JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis.ref()) };
+            }
+        }
+
+        if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
+            return .{ .err = JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref()) };
+        }
+
+        if (byteLength) |valueLength| {
+            if (!valueLength.isEmptyOrUndefinedOrNull()) {
+                if (!valueLength.isNumber()) {
+                    return .{ .err = JSC.toInvalidArguments("length must be a number.", .{}, globalThis.ref()) };
+                }
+
+                if (valueLength.asNumber() == 0.0) {
+                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis.ref()) };
+                }
+
+                const length_i = valueLength.toInt64();
+                if (length_i < 0) {
+                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis.ref()) };
+                }
+
+                if (length_i > max_addressible_memory) {
+                    return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis.ref()) };
+                }
+
+                const length = @intCast(usize, length_i);
+                return .{ .slice = @intToPtr([*]u8, addr)[0..length] };
+            }
+        }
+
+        return .{ .slice = std.mem.sliceTo(@intToPtr([*:0]u8, addr), 0) };
+    }
+
+    pub fn toArrayBuffer(
+        globalThis: *JSGlobalObject,
+        value: JSValue,
+        byteOffset: ?JSValue,
+        valueLength: ?JSValue,
+    ) JSC.JSValue {
+        switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
+            .err => |erro| {
+                return erro;
+            },
+            .slice => |slice| {
+                return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis.ref(), null, null, null);
+            },
+        }
+    }
+
+    pub fn toBuffer(
+        globalThis: *JSGlobalObject,
+        value: JSValue,
+        byteOffset: ?JSValue,
+        valueLength: ?JSValue,
+    ) JSC.JSValue {
+        switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
+            .err => |erro| {
+                return erro;
+            },
+            .slice => |slice| {
+                return JSC.JSValue.createBuffer(globalThis, slice, null);
+            },
+        }
+    }
+
+    pub fn getter(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        var existing = ctx.ptr().getCachedObject(&ZigString.init("FFI"));
+        if (existing.isEmpty()) {
+            var prototype = JSC.C.JSObjectMake(ctx, FFI.Class.get().?[0], null);
+            var base = JSC.C.JSObjectMake(ctx, null, null);
+            JSC.C.JSObjectSetPrototype(ctx, base, prototype);
+            return ctx.ptr().putCachedObject(
+                &ZigString.init("FFI"),
+                JSValue.fromRef(base),
+            ).asObjectRef();
+        }
+
+        return existing.asObjectRef();
+    }
+};
+
+pub const UnsafeCString = struct {
+    pub fn constructor(
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        len: usize,
+        args: [*c]const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) callconv(.C) js.JSObjectRef {
+        if (len == 0) {
+            JSC.throwInvalidArguments("Expected a ptr", .{}, ctx, exception);
+            return null;
+        }
+
+        return newCString(ctx.ptr(), JSC.JSValue.fromRef(args[0]), if (len > 1) JSC.JSValue.fromRef(args[1]) else null, if (len > 2) JSC.JSValue.fromRef(args[2]) else null).asObjectRef();
+    }
+
+    pub fn newCString(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, lengthValue: ?JSValue) JSC.JSValue {
+        switch (FFI.getPtrSlice(globalThis, value, byteOffset, lengthValue)) {
+            .err => |err| {
+                return err;
+            },
+            .slice => |slice| {
+                return WebCore.Encoder.toString(slice.ptr, slice.len, globalThis, .utf8);
+            },
+        }
+    }
+
+    pub fn getter(
+        _: void,
+        ctx: js.JSContextRef,
+        _: js.JSValueRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        var existing = ctx.ptr().getCachedObject(&ZigString.init("UnsafeCString"));
+        if (existing.isEmpty()) {
+            return ctx.ptr().putCachedObject(
+                &ZigString.init("UnsafeCString"),
+                JSValue.fromRef(JSC.C.JSObjectMakeConstructor(ctx, null, constructor)),
+            ).asObjectRef();
+        }
+
+        return existing.asObjectRef();
     }
 };
 

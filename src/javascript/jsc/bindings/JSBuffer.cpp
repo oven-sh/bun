@@ -376,10 +376,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
     for (size_t i = 0; i < arrayLength; i++) {
         auto element = array->getIndex(lexicalGlobalObject, i);
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (!element.isObject()) {
-            throwTypeError(lexicalGlobalObject, throwScope, "Buffer.concat expects Uint8Array"_s);
-            return JSValue::encode(jsUndefined());
-        }
+
         auto* typedArray = JSC::jsDynamicCast<JSC::JSUint8Array*>(vm, element);
         if (!typedArray) {
             throwTypeError(lexicalGlobalObject, throwScope, "Buffer.concat expects Uint8Array"_s);
@@ -1123,6 +1120,9 @@ void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
     reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     this->setPrototypeDirect(vm, globalThis->m_typedArrayUint8.prototype(globalThis));
+    auto clientData = WebCore::clientData(vm);
+    this->putDirect(vm, clientData->builtinNames().dataViewPublicName(), JSC::jsUndefined(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    this->putDirect(vm, clientData->builtinNames().dataViewPrivateName(), JSC::JSValue(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }
 
 const ClassInfo JSBufferPrototype::s_info = { "Buffer"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype) };
@@ -1249,6 +1249,5 @@ static void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array
 
     auto* dataView = JSC::JSDataView::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeDataView), uint8Array->possiblySharedBuffer(), uint8Array->byteOffset(), uint8Array->length());
     // putDirectWithTransition doesn't work here
-    object->putDirect(vm, clientData->builtinNames().dataViewPublicName(), dataView, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    object->putDirect(vm, clientData->builtinNames().dataViewPrivateName(), JSC::JSValue(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    object->putDirectWithoutTransition(vm, clientData->builtinNames().dataViewPublicName(), dataView, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }

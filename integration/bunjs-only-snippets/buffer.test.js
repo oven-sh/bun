@@ -1,22 +1,32 @@
+import { gc } from "bun";
 import { describe, it, expect } from "bun:test";
 
 it("buffer", () => {
   var buf = new Buffer(20);
+  gc();
   // if this fails or infinitely loops, it means there is a memory issue with the JSC::Structure object
   expect(Object.keys(buf).length > 0).toBe(true);
-
+  gc();
   expect(buf.write("hello world ")).toBe(12);
+  gc();
   expect(buf.toString("utf8", 0, "hello world ".length)).toBe("hello world ");
+  gc();
   expect(buf.toString("base64url", 0, "hello world ".length)).toBe(
     btoa("hello world ")
   );
-
+  gc();
   expect(buf instanceof Uint8Array).toBe(true);
+  gc();
   expect(buf instanceof Buffer).toBe(true);
+  gc();
   expect(buf.slice() instanceof Uint8Array).toBe(true);
+  gc();
   expect(buf.slice(0, 1) instanceof Buffer).toBe(true);
+  gc();
   expect(buf.slice(0, 1) instanceof Uint8Array).toBe(true);
+  gc();
   expect(buf.slice(0, 1) instanceof Buffer).toBe(true);
+  gc();
 });
 
 it("Buffer", () => {
@@ -29,8 +39,29 @@ it("Buffer", () => {
   for (let i = 0; i < inputs.length; i++) {
     var input = inputs[i];
     expect(new Buffer(input).toString("utf8")).toBe(inputs[i]);
+    gc();
     expect(Array.from(new Buffer(input)).join(",")).toBe(good[i].join(","));
+    gc();
   }
+});
+
+it("Buffer.isBuffer", () => {
+  expect(Buffer.isBuffer(new Buffer(1))).toBe(true);
+  gc();
+  expect(Buffer.isBuffer(new Buffer(0))).toBe(true);
+  gc();
+  expect(Buffer.isBuffer(new Uint8Array(0))).toBe(false);
+  gc();
+  expect(Buffer.isBuffer(new Uint8Array(1))).toBe(false);
+  gc();
+  var a = new Uint8Array(1);
+  gc();
+  expect(Buffer.isBuffer(a)).toBe(false);
+  gc();
+  Buffer.toBuffer(a);
+  gc();
+  expect(Buffer.isBuffer(a)).toBe(true);
+  gc();
 });
 
 it("Buffer.toBuffer throws", () => {
@@ -61,10 +92,13 @@ it("Buffer.toBuffer works", () => {
   expect(Object.keys(buf).length > 0).toBe(true);
 
   expect(buf.write("hello world ")).toBe(12);
+  gc();
   expect(buf.toString("utf8", 0, "hello world ".length)).toBe("hello world ");
+  gc();
   expect(buf.toString("base64url", 0, "hello world ".length)).toBe(
     btoa("hello world ")
   );
+  gc();
 
   expect(buf instanceof Uint8Array).toBe(true);
   expect(buf instanceof Buffer).toBe(true);
@@ -96,6 +130,7 @@ it("Buffer.from", () => {
   expect(Buffer.from("hello world", "latin1").toString("utf8")).toBe(
     "hello world"
   );
+  gc();
   expect(Buffer.from([254]).join(",")).toBe("254");
   expect(Buffer.from(123).join(",")).toBe(Uint8Array.from(123).join(","));
   expect(Buffer.from({ length: 124 }).join(",")).toBe(
@@ -109,6 +144,7 @@ it("Buffer.from", () => {
   expect(Buffer.from(new Buffer(new ArrayBuffer(1024), 0, 512)).join(",")).toBe(
     new Uint8Array(512).join(",")
   );
+  gc();
 });
 
 it("Buffer.copy", () => {
@@ -120,6 +156,7 @@ it("Buffer.copy", () => {
   Buffer.toBuffer(array2);
   var array3 = new Uint8Array(128);
   Buffer.toBuffer(array3);
+  gc();
   expect(array1.copy(array2)).toBe(128);
   expect(array1.join("")).toBe(array2.join(""));
 });
@@ -131,6 +168,7 @@ it("Buffer.concat", () => {
   array2.fill(200);
   var array3 = new Uint8Array(128);
   array3.fill(300);
+  gc();
   expect(Buffer.concat([array1, array2, array3]).join("")).toBe(
     array1.join("") + array2.join("") + array3.join("")
   );

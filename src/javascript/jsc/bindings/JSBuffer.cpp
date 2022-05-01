@@ -354,7 +354,65 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JS
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
 
-    return JSValue::encode(jsUndefined());
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (callFrame->argumentCount() < 1) {
+        return constructBufferEmpty(lexicalGlobalObject, callFrame);
+    }
+
+    auto arrayValue = callFrame->uncheckedArgument(0);
+    auto array = JSC::jsDynamicCast<JSC::JSArray*>(vm, arrayValue);
+    if (!array) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    size_t arrayLength = array->length();
+    if (arrayLength < 1) {
+        RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject, callFrame));
+    }
+
+    size_t byteLength = 0;
+
+    for (size_t i = 0; i < arrayLength; i++) {
+        auto element = array->getIndex(lexicalGlobalObject, i);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!element.isObject()) {
+            throwTypeError(lexicalGlobalObject, throwScope, "Buffer.concat expects Uint8Array"_s);
+            return JSValue::encode(jsUndefined());
+        }
+        auto* typedArray = JSC::jsDynamicCast<JSC::JSUint8Array*>(vm, element);
+        if (!typedArray) {
+            throwTypeError(lexicalGlobalObject, throwScope, "Buffer.concat expects Uint8Array"_s);
+            return JSValue::encode(jsUndefined());
+        }
+        byteLength += typedArray->length();
+    }
+
+    if (callFrame->argumentCount() > 1) {
+        auto byteLengthValue = callFrame->uncheckedArgument(1);
+        byteLength = std::min(byteLength, byteLengthValue.toTypedArrayIndex(lexicalGlobalObject, "totalLength must be a valid number"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+    }
+
+    if (byteLength == 0) {
+        RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject, callFrame));
+    }
+
+    JSC::JSUint8Array* outBuffer = JSBuffer__bufferFromLengthAsArray(lexicalGlobalObject, byteLength);
+    size_t remain = byteLength;
+    auto* head = outBuffer->typedVector();
+
+    for (size_t i = 0; i < arrayLength && remain > 0; i++) {
+        auto element = array->getIndex(lexicalGlobalObject, i);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        auto* typedArray = JSC::jsCast<JSC::JSUint8Array*>(element);
+        size_t length = std::min(remain, typedArray->length());
+        memcpy(head, typedArray->typedVector(), length);
+        remain -= length;
+        head += length;
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::JSValue(outBuffer)));
 }
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_isBufferBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {

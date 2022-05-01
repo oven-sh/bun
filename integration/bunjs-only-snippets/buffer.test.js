@@ -124,6 +124,25 @@ it("Buffer.copy", () => {
   expect(array1.join("")).toBe(array2.join(""));
 });
 
+it("Buffer.concat", () => {
+  var array1 = new Uint8Array(128);
+  array1.fill(100);
+  var array2 = new Uint8Array(128);
+  array2.fill(200);
+  var array3 = new Uint8Array(128);
+  array3.fill(300);
+  expect(Buffer.concat([array1, array2, array3]).join("")).toBe(
+    array1.join("") + array2.join("") + array3.join("")
+  );
+  expect(Buffer.concat([array1, array2, array3], 222).length).toBe(222);
+  expect(
+    Buffer.concat([array1, array2, array3], 222).subarray(0, 128).join("")
+  ).toBe("100".repeat(128));
+  expect(
+    Buffer.concat([array1, array2, array3], 222).subarray(129, 222).join("")
+  ).toBe("200".repeat(222 - 129));
+});
+
 it("read", () => {
   var buf = new Buffer(1024);
   var data = new DataView(buf.buffer);

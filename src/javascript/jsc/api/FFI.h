@@ -7,37 +7,57 @@
 // It must be kept in sync with JSCJSValue.h
 // https://github.com/Jarred-Sumner/WebKit/blob/72c2052b781cbfd4af867ae79ac9de460e392fba/Source/JavaScriptCore/runtime/JSCJSValue.h#L455-L458
 #ifdef IS_CALLBACK
-#define INJECT_BEFORE printf("bun_call %p cachedJSContext %p cachedCallbackFunction %p\n", &bun_call, cachedJSContext, cachedCallbackFunction);
-#endif
-
-#ifdef USES_FLOAT
-#include <math.h>
+// #define INJECT_BEFORE printf("bun_call %p cachedJSContext %p cachedCallbackFunction %p\n", &bun_call, cachedJSContext, cachedCallbackFunction);
 #endif
 
 #define IS_BIG_ENDIAN 0
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
 
-#include <stdint.h>
-#include <stdio.h>
+// #include <stdint.h>
+#ifdef INJECT_BEFORE
+// #include <stdio.h>
+#endif
 // #include <tcclib.h>
 
 // // /* 7.18.1.1  Exact-width integer types */
-// typedef unsigned char uint8_t;
-// typedef signed char int8_t;
-// typedef short int16_t;
-// typedef unsigned short uint16_t;
-// typedef int int32_t;
-// typedef unsigned int uint32_t;
-// typedef long long int64_t;
-// typedef unsigned long long uint64_t;
-// typedef uint64_t size_t;
-// typedef long intptr_t;
-// typedef uint64_t uintptr_t;
+typedef unsigned char uint8_t;
+typedef signed char int8_t;
+typedef short int16_t;
+typedef unsigned short uint16_t;
+typedef int int32_t;
+typedef unsigned int uint32_t;
+typedef long long int64_t;
+typedef unsigned long long uint64_t;
+typedef uint64_t size_t;
+typedef long intptr_t;
+typedef uint64_t uintptr_t;
 typedef _Bool bool;
 
 #define true 1
 #define false 0
+
+#ifdef USES_FLOAT
+// https://git.musl-libc.org/cgit/musl/tree/src/math/trunc.c
+double trunc(double x);
+double trunc(double x)
+{
+	union {double f; uint64_t i;} u = {x};
+	int e = (int)(u.i >> 52 & 0x7ff) - 0x3ff + 12;
+	uint64_t m;
+
+	if (e >= 52 + 12)
+		return x;
+	if (e < 12)
+		e = 1;
+	m = -1ULL >> e;
+	if ((u.i & m) == 0)
+		return x;
+	x + 0x1p120f;
+	u.i &= ~m;
+	return u.f;
+}
+#endif
 
 
 // This value is 2^49, used to encode doubles such that the encoded value will

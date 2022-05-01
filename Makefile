@@ -304,7 +304,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		-lssl \
 		-lbase64 \
 		-ltcc \
-		-L/Users/jarred/Build/tinycc
+		-L$(TINYCC_DIR)
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 
@@ -359,6 +359,15 @@ base64:
 	   $(CXX) $(CXXFLAGS) $(CFLAGS) -c neonbase64.cc -g -fPIC -emit-llvm && \
 	   $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libbase64.a ./*.bc
 
+# Prevent dependency on libtcc1 so it doesn't do filesystem lookups
+TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"
+
+tinycc:
+	cd $(TINYCC_DIR) && \
+		make clean && \
+		AR=$(AR) CC=$(CC) CFLAGS='$(CFLAGS) -emit-llvm $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CC) --ar=$(AR) --config-predefs=yes  && \
+		make -j10
+		
 generate-builtins:
 	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js) -o $(realpath src/javascript/jsc/bindings) --framework WebCore
 
@@ -781,10 +790,15 @@ ifeq ($(OS_NAME),linux)
 release-bin-push-dsym:
 endif
 
+TINYCC_DIR ?= $(realpath $(HOME)/Build/tinycc)
 
 release-bin-push: release-bin-push-bin release-bin-push-dsym
-release-bin-without-push: test-all release-bin-check release-bin-generate release-bin-codesign 
+generate-release-bin-as-zip: release-bin-generate release-bin-codesign
+release-bin-without-push: test-all release-bin-check generate-release-bin-as-zip
+
 release-bin: release-bin-without-push release-bin-push
+
+
 
 release-bin-dir:
 	echo $(PACKAGE_DIR)

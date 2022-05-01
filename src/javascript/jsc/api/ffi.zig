@@ -133,12 +133,15 @@ pub const FFI = struct {
         // TODO: WeakRefHandle that automatically frees it?
         JSC.C.JSValueProtect(globalThis.ref(), js_callback.asObjectRef());
         func.base_name = "";
+
         func.compileCallback(allocator, globalThis, js_callback.asObjectRef().?) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
         switch (func.step) {
             .failed => |err| {
                 JSC.C.JSValueUnprotect(globalThis.ref(), js_callback.asObjectRef());
-                const message = ZigString.init(err).toErrorInstance(globalThis);
+                const message = ZigString.init(err.msg).toErrorInstance(globalThis);
+
                 func.deinit(allocator);
+
                 return message;
             },
             .pending => {
@@ -310,6 +313,7 @@ pub const FFI = struct {
 
         var obj = JSC.JSValue.c(JSC.C.JSObjectMake(global.ref(), null, null));
         JSC.C.JSValueProtect(global.ref(), obj.asObjectRef());
+        // var has_checked = false;
         defer JSC.C.JSValueUnprotect(global.ref(), obj.asObjectRef());
         for (symbols.values()) |*function| {
             var resolved_symbol = dylib.lookup(*anyopaque, function.base_name) orelse {
@@ -324,8 +328,19 @@ pub const FFI = struct {
             };
 
             function.symbol_from_dynamic_library = resolved_symbol;
-            function.compile(allocator) catch {
-                const ret = JSC.toInvalidArguments("Failed to compile symbol \"{s}\" in \"{s}\"", .{ std.mem.span(function.base_name), name_slice.slice() }, global.ref());
+            // if (!has_checked and VirtualMachine.vm.rareData().needs_to_copy_libtcc1 orelse true) {
+            //     has_checked = true;
+            //     VirtualMachine.vm.rareData().needs_to_copy_libtcc1 = false;
+            //     if (VirtualMachine.vm.bundler.env.get("BUN_INSTALL")) |bun_install_dir| {
+            //         maybeCopyLibtcc1(bun_install_dir);
+            //     }
+            // }
+            function.compile(allocator) catch |err| {
+                const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
+                    std.mem.span(@errorName(err)),
+                    std.mem.span(function.base_name),
+                    name_slice.slice(),
+                }, global.ref());
                 for (symbols.values()) |*value| {
                     allocator.free(bun.constStrToU8(std.mem.span(value.base_name)));
                     value.arg_types.clearAndFree(allocator);
@@ -342,7 +357,9 @@ pub const FFI = struct {
                     }
                     symbols.clearAndFree(allocator);
                     dylib.close();
-                    return ZigString.init(err).toErrorInstance(global);
+                    const res = ZigString.init(err.msg).toErrorInstance(global);
+                    function.deinit(allocator);
+                    return res;
                 },
                 .pending => {
                     for (symbols.values()) |*value| {
@@ -491,6 +508,8 @@ pub const FFI = struct {
         arg_types: std.ArrayListUnmanaged(ABIType) = .{},
         step: Step = Step{ .pending = {} },
 
+        pub var lib_dirZ: [*:0]const u8 = "";
+
         pub fn deinit(val: *Function, allocator: std.mem.Allocator) void {
             if (std.mem.span(val.base_name).len > 0) allocator.free(bun.constStrToU8(std.mem.span(val.base_name)));
 
@@ -508,8 +527,8 @@ pub const FFI = struct {
                 }
             }
 
-            if (val.step == .failed) {
-                allocator.free(val.step.failed);
+            if (val.step == .failed and val.step.failed.allocated) {
+                allocator.free(val.step.failed.msg);
             }
         }
 
@@ -521,7 +540,10 @@ pub const FFI = struct {
                 js_function: ?*anyopaque = null,
                 js_context: ?*anyopaque = null,
             },
-            failed: []const u8,
+            failed: struct {
+                msg: []const u8,
+                allocated: bool = false,
+            },
         };
 
         const FFI_HEADER: string = @embedFile("./FFI.h");
@@ -548,12 +570,23 @@ pub const FFI = struct {
 
         pub fn handleTCCError(ctx: ?*anyopaque, message: [*c]const u8) callconv(.C) void {
             var this = bun.cast(*Function, ctx.?);
-            this.step = .{ .failed = std.mem.span(message) };
+            var msg = std.mem.span(message);
+            if (msg.len > 0) {
+                var offset: usize = 0;
+                // the message we get from TCC sometimes has garbage in it
+                // i think because we're doing in-memory compilation
+                while (offset < msg.len) : (offset += 1) {
+                    if (msg[offset] > 0x20 and msg[offset] < 0x7f) break;
+                }
+                msg = msg[offset..];
+            }
+
+            this.step = .{ .failed = .{ .msg = VirtualMachine.vm.allocator.dupe(u8, msg) catch unreachable, .allocated = true } };
         }
 
         extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
-        const tcc_options = "-std=c11 -Wl,--export-all-symbols";
+        const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols";
 
         pub fn compile(
             this: *Function,
@@ -565,8 +598,10 @@ pub const FFI = struct {
 
             try source_code.append(0);
             defer source_code.deinit();
+
             var state = TCC.tcc_new() orelse return error.TCCMissing;
             TCC.tcc_set_options(state, tcc_options);
+            // addSharedLibPaths(state);
             TCC.tcc_set_error_func(state, this, handleTCCError);
             this.state = state;
             defer {
@@ -589,14 +624,25 @@ pub const FFI = struct {
 
             // did tcc report failure but never called the error callback?
             if (compilation_result == -1) {
-                this.step = .{ .failed = "tcc returned -1, which means it failed" };
+                this.step = .{ .failed = .{ .msg = "tcc returned -1, which means it failed" } };
+                return;
+            }
+            CompilerRT.inject(state);
+            _ = TCC.tcc_add_symbol(state, this.base_name, this.symbol_from_dynamic_library.?);
+            if (this.step == .failed) {
                 return;
             }
 
-            _ = TCC.tcc_add_symbol(state, this.base_name, this.symbol_from_dynamic_library.?);
-
             var relocation_size = TCC.tcc_relocate(state, null);
-            if (relocation_size == 0) return;
+            if (this.step == .failed) {
+                return;
+            }
+
+            if (relocation_size < 0) {
+                this.step = .{ .failed = .{ .msg = "tcc_relocate returned a negative value" } };
+                return;
+            }
+
             var bytes: []u8 = try allocator.rawAlloc(@intCast(usize, relocation_size), 16, 16, 0);
             defer {
                 if (this.step == .failed) {
@@ -615,7 +661,7 @@ pub const FFI = struct {
             var formatted_symbol_name = try std.fmt.allocPrintZ(allocator, "bun_gen_{s}", .{std.mem.span(this.base_name)});
             defer allocator.free(formatted_symbol_name);
             var symbol = TCC.tcc_get_symbol(state, formatted_symbol_name) orelse {
-                this.step = .{ .failed = "missing generated symbol in source code" };
+                this.step = .{ .failed = .{ .msg = "missing generated symbol in source code" } };
 
                 return;
             };
@@ -628,6 +674,29 @@ pub const FFI = struct {
             };
             return;
         }
+
+        const CompilerRT = struct {
+            noinline fn memset(
+                dest: [*]u8,
+                c: u8,
+                byte_count: usize,
+            ) callconv(.C) void {
+                @memset(dest, c, byte_count);
+            }
+
+            noinline fn memcpy(
+                noalias dest: [*]u8,
+                noalias source: [*]const u8,
+                byte_count: usize,
+            ) callconv(.C) void {
+                @memcpy(dest, source, byte_count);
+            }
+
+            pub fn inject(state: *TCC.TCCState) void {
+                _ = TCC.tcc_add_symbol(state, "memset", &memset);
+                _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
+            }
+        };
 
         pub fn compileCallback(
             this: *Function,
@@ -643,7 +712,6 @@ pub const FFI = struct {
             try source_code.append(0);
             // defer source_code.deinit();
             var state = TCC.tcc_new() orelse return error.TCCMissing;
-
             TCC.tcc_set_options(state, tcc_options);
             TCC.tcc_set_error_func(state, this, handleTCCError);
             this.state = state;
@@ -655,6 +723,7 @@ pub const FFI = struct {
             }
 
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
+            CompilerRT.inject(state);
 
             const compilation_result = TCC.tcc_compile_string(
                 state,
@@ -668,7 +737,7 @@ pub const FFI = struct {
 
             // did tcc report failure but never called the error callback?
             if (compilation_result == -1) {
-                this.step = .{ .failed = "tcc returned -1, which means it failed" };
+                this.step = .{ .failed = .{ .msg = "tcc returned -1, which means it failed" } };
 
                 return;
             }
@@ -696,7 +765,7 @@ pub const FFI = struct {
             }
 
             var symbol = TCC.tcc_get_symbol(state, "my_callback_function") orelse {
-                this.step = .{ .failed = "missing generated symbol in source code" };
+                this.step = .{ .failed = .{ .msg = "missing generated symbol in source code" } };
 
                 return;
             };

@@ -177,3 +177,75 @@ pub fn kindFromMode(mode: os.mode_t) std.fs.File.Kind {
         else => .Unknown,
     };
 }
+
+pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}![][:0]u8 {
+    const List = std.ArrayList([:0]u8);
+    switch (builtin.os.tag) {
+        .linux,
+        .freebsd,
+        .netbsd,
+        .dragonfly,
+        .openbsd,
+        .solaris,
+        => {
+            var paths = List.init(allocator);
+            errdefer {
+                const slice = paths.toOwnedSlice();
+                for (slice) |item| {
+                    allocator.free(item);
+                }
+                allocator.free(slice);
+            }
+            try os.dl_iterate_phdr(&paths, error{OutOfMemory}, struct {
+                fn callback(info: *os.dl_phdr_info, size: usize, list: *List) !void {
+                    _ = size;
+                    const name = info.dlpi_name orelse return;
+                    if (name[0] == '/') {
+                        const item = try list.allocator.dupeZ(u8, mem.sliceTo(name, 0));
+                        errdefer list.allocator.free(item);
+                        try list.append(item);
+                    }
+                }
+            }.callback);
+            return paths.toOwnedSlice();
+        },
+        .macos, .ios, .watchos, .tvos => {
+            var paths = List.init(allocator);
+            errdefer {
+                const slice = paths.toOwnedSlice();
+                for (slice) |item| {
+                    allocator.free(item);
+                }
+                allocator.free(slice);
+            }
+            const img_count = std.c._dyld_image_count();
+            var i: u32 = 0;
+            while (i < img_count) : (i += 1) {
+                const name = std.c._dyld_get_image_name(i);
+                const item = try allocator.dupeZ(u8, mem.sliceTo(name, 0));
+                errdefer allocator.free(item);
+                try paths.append(item);
+            }
+            return paths.toOwnedSlice();
+        },
+        // revisit if Haiku implements dl_iterat_phdr (https://dev.haiku-os.org/ticket/15743)
+        .haiku => {
+            var paths = List.init(allocator);
+            errdefer {
+                const slice = paths.toOwnedSlice();
+                for (slice) |item| {
+                    allocator.free(item);
+                }
+                allocator.free(slice);
+            }
+
+            var b = "/boot/system/runtime_loader";
+            const item = try allocator.dupeZ(u8, mem.sliceTo(b, 0));
+            errdefer allocator.free(item);
+            try paths.append(item);
+
+            return paths.toOwnedSlice();
+        },
+        else => @compileError("getSelfExeSharedLibPaths unimplemented for this target"),
+    }
+}

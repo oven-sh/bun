@@ -490,6 +490,15 @@ pub const FileSystem = struct {
         return try allocator.dupe(u8, joined);
     }
 
+    pub fn absAllocZ(f: *@This(), allocator: std.mem.Allocator, parts: anytype) ![*:0]const u8 {
+        const joined = path_handler.joinAbsString(
+            f.top_level_dir,
+            parts,
+            .auto,
+        );
+        return try allocator.dupeZ(u8, joined);
+    }
+
     pub fn abs(f: *@This(), parts: anytype) string {
         return path_handler.joinAbsString(
             f.top_level_dir,

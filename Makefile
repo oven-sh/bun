@@ -369,7 +369,20 @@ tinycc:
 		make -j10
 		
 generate-builtins:
-	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js) -o $(realpath src/javascript/jsc/bindings) --framework WebCore
+	rm -f src/javascript/jsc/bindings/WebCoreBuiltins.cpp src/javascript/jsc/bindings/WebCoreBuiltins.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCore*Builtins* || echo ""
+	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --force 
+	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --wrappers-only
+	echo '//clang-format off' > /tmp/1.h
+	echo 'namespace Zig { class GlobalObject; }' >> /tmp/1.h
+	cat /tmp/1.h  src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h > src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1
+	mv src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1 src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h
+	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h
+# Since we don't currently support web streams, we don't need this line
+# so we comment it out
+	$(SED) -i -e 's/globalObject.addStaticGlobals/\/\/globalObject.addStaticGlobals/' src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp
+# We delete this file because our script already builds all .cpp files
+# We will get duplicate symbols if we don't delete it
+	rm src/javascript/jsc/bindings/WebCoreJSBuiltins.cpp
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64
 

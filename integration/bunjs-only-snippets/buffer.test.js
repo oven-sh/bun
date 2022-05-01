@@ -88,6 +88,42 @@ it("writeInt", () => {
   expect(childBuf.readInt32BE(0, false)).toBe(100);
 });
 
+it("Buffer.from", () => {
+  expect(Buffer.from("hello world").toString("utf8")).toBe("hello world");
+  expect(Buffer.from("hello world", "ascii").toString("utf8")).toBe(
+    "hello world"
+  );
+  expect(Buffer.from("hello world", "latin1").toString("utf8")).toBe(
+    "hello world"
+  );
+  expect(Buffer.from([254]).join(",")).toBe("254");
+  expect(Buffer.from(123).join(",")).toBe(Uint8Array.from(123).join(","));
+  expect(Buffer.from({ length: 124 }).join(",")).toBe(
+    Uint8Array.from({ length: 124 }).join(",")
+  );
+
+  expect(Buffer.from(new ArrayBuffer(1024), 0, 512).join(",")).toBe(
+    new Uint8Array(512).join(",")
+  );
+
+  expect(Buffer.from(new Buffer(new ArrayBuffer(1024), 0, 512)).join(",")).toBe(
+    new Uint8Array(512).join(",")
+  );
+});
+
+it("Buffer.copy", () => {
+  var array1 = new Uint8Array(128);
+  array1.fill(100);
+  Buffer.toBuffer(array1);
+  var array2 = new Uint8Array(128);
+  array2.fill(200);
+  Buffer.toBuffer(array2);
+  var array3 = new Uint8Array(128);
+  Buffer.toBuffer(array3);
+  expect(array1.copy(array2)).toBe(128);
+  expect(array1.join("")).toBe(array2.join(""));
+});
+
 it("read", () => {
   var buf = new Buffer(1024);
   var data = new DataView(buf.buffer);

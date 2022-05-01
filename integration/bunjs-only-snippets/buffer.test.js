@@ -147,6 +147,31 @@ it("Buffer.from", () => {
   gc();
 });
 
+it("Buffer.equals", () => {
+  var a = new Uint8Array(10);
+  a[2] = 1;
+  var b = new Uint8Array(10);
+  b[2] = 1;
+  Buffer.toBuffer(a);
+  Buffer.toBuffer(b);
+  expect(a.equals(b)).toBe(true);
+  b[2] = 0;
+  expect(a.equals(b)).toBe(false);
+});
+
+it("Buffer.compare", () => {
+  var a = new Uint8Array(10);
+  a[2] = 1;
+  var b = new Uint8Array(10);
+  b[2] = 1;
+  Buffer.toBuffer(a);
+  Buffer.toBuffer(b);
+  expect(a.compare(b)).toBe(0);
+  b[2] = 0;
+  expect(a.compare(b)).toBe(1);
+  expect(b.compare(a)).toBe(-1);
+});
+
 it("Buffer.copy", () => {
   var array1 = new Uint8Array(128);
   array1.fill(100);

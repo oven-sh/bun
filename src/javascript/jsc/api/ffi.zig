@@ -1046,6 +1046,7 @@ pub const FFI = struct {
             .{ "void*", ABIType.ptr },
             .{ "ptr", ABIType.ptr },
             .{ "pointer", ABIType.ptr },
+            .{ "void", ABIType.@"void" },
         };
         pub const label = ComptimeStringMap(ABIType, map);
         const EnumMapFormatter = struct {

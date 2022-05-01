@@ -1,4 +1,3 @@
-// clang-format off
 /*
  * Copyright (c) 2016 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
@@ -43,10 +42,6 @@ class FunctionExecutable;
 namespace WebCore {
 
 /* JSBufferPrototype */
-extern const char* const s_jsBufferPrototypeBufferConstructorCode;
-extern const int s_jsBufferPrototypeBufferConstructorCodeLength;
-extern const JSC::ConstructAbility s_jsBufferPrototypeBufferConstructorCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsBufferPrototypeBufferConstructorCodeConstructorKind;
 extern const char* const s_jsBufferPrototypeSetBigUint64Code;
 extern const int s_jsBufferPrototypeSetBigUint64CodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeSetBigUint64CodeConstructAbility;
@@ -267,9 +262,12 @@ extern const char* const s_jsBufferPrototypeToJSONCode;
 extern const int s_jsBufferPrototypeToJSONCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeToJSONCodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeInitializeBunBufferCode;
+extern const int s_jsBufferPrototypeInitializeBunBufferCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeInitializeBunBufferCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeConstructorKind;
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_DATA(macro) \
-    macro(Buffer, jsBufferPrototypeBufferConstructor, 3) \
     macro(setBigUint64, jsBufferPrototypeSetBigUint64, 3) \
     macro(readInt8, jsBufferPrototypeReadInt8, 1) \
     macro(readUInt8, jsBufferPrototypeReadUInt8, 1) \
@@ -325,8 +323,8 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
     macro(base64urlSlice, jsBufferPrototypeBase64urlSlice, 2) \
     macro(hexSlice, jsBufferPrototypeHexSlice, 2) \
     macro(toJSON, jsBufferPrototypeToJSON, 0) \
+    macro(initializeBunBuffer, jsBufferPrototypeInitializeBunBuffer, 1) \
 
-#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_BUFFER 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SETBIGUINT64 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READINT8 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_READUINT8 1
@@ -382,9 +380,9 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_BASE64URLSLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_HEXSLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_TOJSON 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_INITIALIZEBUNBUFFER 1
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_CODE(macro) \
-    macro(jsBufferPrototypeBufferConstructorCode, Buffer, static_cast<const char*>(nullptr), s_jsBufferPrototypeBufferConstructorCodeLength) \
     macro(jsBufferPrototypeSetBigUint64Code, setBigUint64, static_cast<const char*>(nullptr), s_jsBufferPrototypeSetBigUint64CodeLength) \
     macro(jsBufferPrototypeReadInt8Code, readInt8, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadInt8CodeLength) \
     macro(jsBufferPrototypeReadUInt8Code, readUInt8, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadUInt8CodeLength) \
@@ -440,9 +438,20 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
     macro(jsBufferPrototypeBase64urlSliceCode, base64urlSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64urlSliceCodeLength) \
     macro(jsBufferPrototypeHexSliceCode, hexSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeHexSliceCodeLength) \
     macro(jsBufferPrototypeToJSONCode, toJSON, static_cast<const char*>(nullptr), s_jsBufferPrototypeToJSONCodeLength) \
+    macro(jsBufferPrototypeInitializeBunBufferCode, initializeBunBuffer, static_cast<const char*>(nullptr), s_jsBufferPrototypeInitializeBunBufferCodeLength) \
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_FUNCTION_NAME(macro) \
-    macro(Buffer) \
+    macro(asciiSlice) \
+    macro(asciiWrite) \
+    macro(base64Slice) \
+    macro(base64Write) \
+    macro(base64urlSlice) \
+    macro(base64urlWrite) \
+    macro(hexSlice) \
+    macro(hexWrite) \
+    macro(initializeBunBuffer) \
+    macro(latin1Slice) \
+    macro(latin1Write) \
     macro(readBigInt64BE) \
     macro(readBigInt64LE) \
     macro(readBigUInt64BE) \

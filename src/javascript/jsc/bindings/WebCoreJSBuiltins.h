@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "JSBufferConstructorBuiltins.h"
 #include "JSBufferPrototypeBuiltins.h"
 #include <JavaScriptCore/VM.h>
 
@@ -39,14 +40,17 @@ class JSBuiltinFunctions {
 public:
     explicit JSBuiltinFunctions(JSC::VM& vm)
         : m_vm(vm)
+        , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
     {
     }
 
+    JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
 
 private:
     JSC::VM& m_vm;
+    JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
 };
 

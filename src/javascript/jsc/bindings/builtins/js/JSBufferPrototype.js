@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Codeblog Corp. All rights reserved.
+ * Copyright 2022 Codeblog Corp. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,9 +23,9 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+
 // ^ that comment is required or the builtins generator will have a fit.
-//
-//
+
 // The fastest way as of April 2022 is to use DataView.
 // DataView has intrinsics that cause inlining
 
@@ -47,7 +47,7 @@ function readInt16LE(offset) {
 }
 function readInt16BE(offset) {
   "use strict";
-  return this.dataView.getInt16(offset);
+  return this.dataView.getInt16(offset, false);
 }
 function readUInt16LE(offset) {
   "use strict";
@@ -55,7 +55,7 @@ function readUInt16LE(offset) {
 }
 function readUInt16BE(offset) {
   "use strict";
-  return this.dataView.getUint16(offset);
+  return this.dataView.getUint16(offset, false);
 }
 function readInt32LE(offset) {
   "use strict";
@@ -63,7 +63,7 @@ function readInt32LE(offset) {
 }
 function readInt32BE(offset) {
   "use strict";
-  return this.dataView.getInt32(offset);
+  return this.dataView.getInt32(offset, false);
 }
 function readUInt32LE(offset) {
   "use strict";
@@ -71,7 +71,7 @@ function readUInt32LE(offset) {
 }
 function readUInt32BE(offset) {
   "use strict";
-  return this.dataView.getUint32(offset);
+  return this.dataView.getUint32(offset, false);
 }
 function readFloatLE(offset) {
   "use strict";
@@ -79,7 +79,7 @@ function readFloatLE(offset) {
 }
 function readFloatBE(offset) {
   "use strict";
-  return this.dataView.getFloat32(offset);
+  return this.dataView.getFloat32(offset, false);
 }
 function readDoubleLE(offset) {
   "use strict";
@@ -87,7 +87,7 @@ function readDoubleLE(offset) {
 }
 function readDoubleBE(offset) {
   "use strict";
-  return this.dataView.getFloat64(offset);
+  return this.dataView.getFloat64(offset, false);
 }
 function readBigInt64LE(offset) {
   "use strict";
@@ -95,7 +95,7 @@ function readBigInt64LE(offset) {
 }
 function readBigInt64BE(offset) {
   "use strict";
-  return this.dataView.getBigInt64(offset);
+  return this.dataView.getBigInt64(offset, false);
 }
 function readBigUInt64LE(offset) {
   "use strict";
@@ -103,7 +103,7 @@ function readBigUInt64LE(offset) {
 }
 function readBigUInt64BE(offset) {
   "use strict";
-  return this.dataView.getBigUint64(offset);
+  return this.dataView.getBigUint64(offset, false);
 }
 function writeInt8(value, offset) {
   "use strict";
@@ -122,7 +122,7 @@ function writeInt16LE(value, offset) {
 }
 function writeInt16BE(value, offset) {
   "use strict";
-  this.dataView.setInt16(offset, value);
+  this.dataView.setInt16(offset, value, false);
   return offset + 2;
 }
 function writeUInt16LE(value, offset) {
@@ -132,7 +132,7 @@ function writeUInt16LE(value, offset) {
 }
 function writeUInt16BE(value, offset) {
   "use strict";
-  this.dataView.setUint16(offset, value);
+  this.dataView.setUint16(offset, value, false);
   return offset + 2;
 }
 function writeInt32LE(value, offset) {
@@ -142,7 +142,7 @@ function writeInt32LE(value, offset) {
 }
 function writeInt32BE(value, offset) {
   "use strict";
-  this.dataView.setInt32(offset, value);
+  this.dataView.setInt32(offset, value, false);
   return offset + 4;
 }
 function writeUInt32LE(value, offset) {
@@ -152,7 +152,7 @@ function writeUInt32LE(value, offset) {
 }
 function writeUInt32BE(value, offset) {
   "use strict";
-  this.dataView.setUint32(offset, value);
+  this.dataView.setUint32(offset, value, false);
   return offset + 4;
 }
 
@@ -164,7 +164,7 @@ function writeFloatLE(value, offset) {
 
 function writeFloatBE(value, offset) {
   "use strict";
-  this.dataView.setFloat32(offset, value);
+  this.dataView.setFloat32(offset, value, false);
   return offset + 4;
 }
 
@@ -176,7 +176,7 @@ function writeDoubleLE(value, offset) {
 
 function writeDoubleBE(value, offset) {
   "use strict";
-  this.dataView.setFloat64(offset, value);
+  this.dataView.setFloat64(offset, value, false);
   return offset + 8;
 }
 
@@ -188,7 +188,7 @@ function writeBigInt64LE(value, offset) {
 
 function writeBigInt64BE(value, offset) {
   "use strict";
-  this.dataView.setBigInt64(offset, value);
+  this.dataView.setBigInt64(offset, value, false);
   return offset + 8;
 }
 
@@ -200,7 +200,7 @@ function writeBigUInt64LE(value, offset) {
 
 function writeBigUInt64BE(value, offset) {
   "use strict";
-  this.dataView.setBigUint64(offset, value);
+  this.dataView.setBigUint64(offset, value, false);
   return offset + 8;
 }
 
@@ -276,11 +276,9 @@ function base64urlSlice(offset, length) {
   "use strict";
   return this.toString(offset, length, "base64url");
 }
-
-function subarray(start, end) {
+function hexSlice(offset, length) {
   "use strict";
-  
-  return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));
+  return this.toString(offset, length, "hex");
 }
 
 function toJSON() {
@@ -288,4 +286,18 @@ function toJSON() {
   const type = "Buffer";
   const data = @Array.from(this);
   return { type, data };
+}
+
+function subarray(start, end) {
+    "use strict";
+
+    Buffer[Symbol.species] ??= Buffer;
+    return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));
+}
+
+
+function initializeBunBuffer(parameters)
+{
+  "use strict";
+
 }

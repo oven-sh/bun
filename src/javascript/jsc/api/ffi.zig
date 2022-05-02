@@ -591,6 +591,21 @@ pub const FFI = struct {
 
         extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
+        const MyFunctionSStructWorkAround = struct {
+            JSVALUE_TO_INT64: fn (JSValue0: JSC.JSValue) callconv(.C) i64,
+            JSVALUE_TO_UINT64: fn (JSValue0: JSC.JSValue) callconv(.C) u64,
+            INT64_TO_JSVALUE: fn (arg0: [*c]JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
+            UINT64_TO_JSVALUE: fn (arg0: [*c]JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
+        };
+        const headers = @import("../bindings/headers.zig");
+
+        var workaround: MyFunctionSStructWorkAround = .{
+            .JSVALUE_TO_INT64 = headers.JSC__JSValue__toInt64,
+            .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
+            .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
+            .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
+        };
+
         const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols";
 
         pub fn compile(
@@ -625,6 +640,7 @@ pub const FFI = struct {
                 "Bun_FFI_PointerOffsetToArgumentsList",
                 std.fmt.bufPrintZ(&symbol_buf, "{d}", .{Sizes.Bun_FFI_PointerOffsetToArgumentsList}) catch unreachable,
             );
+
             // TCC.tcc_define_symbol(
             //     state,
             //     "Bun_FFI_PointerOffsetToArgumentsCount",
@@ -647,7 +663,31 @@ pub const FFI = struct {
             }
             CompilerRT.inject(state);
             _ = TCC.tcc_add_symbol(state, this.base_name, this.symbol_from_dynamic_library.?);
+            _ = TCC.tcc_add_symbol(
+                state,
+                "JSVALUE_TO_INT64",
+                workaround.JSVALUE_TO_INT64,
+            );
+            _ = TCC.tcc_add_symbol(
+                state,
+                "JSVALUE_TO_UINT64",
+                workaround.JSVALUE_TO_UINT64,
+            );
+            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
+            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
+            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
+            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
 
+            _ = TCC.tcc_add_symbol(
+                state,
+                "INT64_TO_JSVALUE",
+                workaround.INT64_TO_JSVALUE,
+            );
+            _ = TCC.tcc_add_symbol(
+                state,
+                "UINT64_TO_JSVALUE",
+                workaround.UINT64_TO_JSVALUE,
+            );
             if (this.step == .failed) {
                 return;
             }
@@ -1131,8 +1171,12 @@ pub const FFI = struct {
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
                         try writer.print("JSVALUE_TO_INT32({s})", .{self.symbol});
                     },
-                    .int64_t => {},
-                    .uint64_t => {},
+                    .int64_t => {
+                        try writer.print("JSVALUE_TO_INT64({s})", .{self.symbol});
+                    },
+                    .uint64_t => {
+                        try writer.print("JSVALUE_TO_UINT64(globalObject, {s})", .{self.symbol});
+                    },
                     .cstring, .ptr => {
                         try writer.print("JSVALUE_TO_PTR({s})", .{self.symbol});
                     },
@@ -1159,8 +1203,12 @@ pub const FFI = struct {
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
                         try writer.print("INT32_TO_JSVALUE({s})", .{self.symbol});
                     },
-                    .int64_t => {},
-                    .uint64_t => {},
+                    .int64_t => {
+                        try writer.print("INT64_TO_JSVALUE(globalObject, {s})", .{self.symbol});
+                    },
+                    .uint64_t => {
+                        try writer.print("UINT64_TO_JSVALUE(globalObject, {s})", .{self.symbol});
+                    },
                     .cstring, .ptr => {
                         try writer.print("PTR_TO_JSVALUE({s})", .{self.symbol});
                     },

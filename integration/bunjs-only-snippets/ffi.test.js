@@ -95,10 +95,10 @@ it("ffi run", () => {
       return_type: "uint32_t",
       args: [],
     },
-    // // returns_42_uint64_t: {
-    // //   return_type: "uint64_t",
-    // //   args: [],
-    // // },
+    returns_42_uint64_t: {
+      return_type: "uint64_t",
+      args: [],
+    },
     returns_neg_42_int16_t: {
       return_type: "int16_t",
       args: [],
@@ -107,10 +107,10 @@ it("ffi run", () => {
       return_type: "int32_t",
       args: [],
     },
-    // returns_neg_42_int64_t: {
-    //   return_type: "int64_t",
-    //   args: [],
-    // },
+    returns_neg_42_int64_t: {
+      return_type: "int64_t",
+      args: [],
+    },
 
     identity_char: {
       return_type: "char",
@@ -140,10 +140,10 @@ it("ffi run", () => {
       return_type: "int32_t",
       args: ["int32_t"],
     },
-    // identity_int64_t: {
-    //   return_type: "int64_t",
-    //   args: ["int64_t"],
-    // },
+    identity_int64_t: {
+      return_type: "int64_t",
+      args: ["int64_t"],
+    },
     identity_uint8_t: {
       return_type: "uint8_t",
       args: ["uint8_t"],
@@ -156,10 +156,10 @@ it("ffi run", () => {
       return_type: "uint32_t",
       args: ["uint32_t"],
     },
-    // identity_uint64_t: {
-    //   return_type: "uint64_t",
-    //   args: ["uint64_t"],
-    // },
+    identity_uint64_t: {
+      return_type: "uint64_t",
+      args: ["uint64_t"],
+    },
 
     add_char: {
       return_type: "char",
@@ -185,10 +185,10 @@ it("ffi run", () => {
       return_type: "int32_t",
       args: ["int32_t", "int32_t"],
     },
-    // add_int64_t: {
-    //   return_type: "int64_t",
-    //   args: ["int64_t", "int64_t"],
-    // },
+    add_int64_t: {
+      return_type: "int64_t",
+      args: ["int64_t", "int64_t"],
+    },
     add_uint8_t: {
       return_type: "uint8_t",
       args: ["uint8_t", "uint8_t"],
@@ -215,10 +215,10 @@ it("ffi run", () => {
       return_type: "ptr",
       args: ["ptr"],
     },
-    // add_uint64_t: {
-    //   return_type: "uint64_t",
-    //   args: ["uint64_t", "uint64_t"],
-    // },
+    add_uint64_t: {
+      return_type: "uint64_t",
+      args: ["uint64_t", "uint64_t"],
+    },
 
     cb_identity_true: {
       return_type: "bool",
@@ -232,14 +232,14 @@ it("ffi run", () => {
       return_type: "char",
       args: ["ptr"],
     },
-    // cb_identity_42_float: {
-    // return_type: "float",
-    // args: ["ptr"],
-    // },
-    // cb_identity_42_double: {
-    // return_type: "double",
-    // args: ["ptr"],
-    // },
+    cb_identity_42_float: {
+      return_type: "float",
+      args: ["ptr"],
+    },
+    cb_identity_42_double: {
+      return_type: "double",
+      args: ["ptr"],
+    },
     cb_identity_42_uint8_t: {
       return_type: "uint8_t",
       args: ["ptr"],
@@ -256,10 +256,10 @@ it("ffi run", () => {
       return_type: "uint32_t",
       args: ["ptr"],
     },
-    // cb_identity_42_uint64_t: {
-    // return_type: "uint64_t",
-    // args: ["ptr"],
-    // },
+    cb_identity_42_uint64_t: {
+      return_type: "uint64_t",
+      args: ["ptr"],
+    },
     cb_identity_neg_42_int16_t: {
       return_type: "int16_t",
       args: ["ptr"],
@@ -268,10 +268,10 @@ it("ffi run", () => {
       return_type: "int32_t",
       args: ["ptr"],
     },
-    // cb_identity_neg_42_int64_t: {
-    // return_type: "int64_t",
-    // args: ["ptr"],
-    // },
+    cb_identity_neg_42_int64_t: {
+      return_type: "int64_t",
+      args: ["ptr"],
+    },
 
     return_a_function_ptr_to_function_that_returns_true: {
       return_type: "ptr",
@@ -340,6 +340,7 @@ it("ffi run", () => {
   expect(returns_true()).toBe(true);
   expect(returns_false()).toBe(false);
   expect(returns_42_char()).toBe(42);
+  expect(returns_42_uint64_t().valueOf()).toBe(42);
 
   expect(Math.fround(returns_42_float())).toBe(Math.fround(42.41999804973602));
 
@@ -348,11 +349,11 @@ it("ffi run", () => {
   expect(returns_neg_42_int8_t()).toBe(-42);
   expect(returns_42_uint16_t()).toBe(42);
   expect(returns_42_uint32_t()).toBe(42);
-  //   expect(returns_42_uint64_t()).toBe(42);
+  expect(returns_42_uint64_t()).toBe(42);
   expect(returns_neg_42_int16_t()).toBe(-42);
   expect(returns_neg_42_int32_t()).toBe(-42);
   expect(identity_int32_t(10)).toBe(10);
-  //   expect(returns_neg_42_int64_t()).toBe(-42);
+  expect(returns_neg_42_int64_t()).toBe(-42);
   expect(identity_char(10)).toBe(10);
   expect(identity_float(10.199999809265137)).toBe(10.199999809265137);
   expect(identity_bool(true)).toBe(true);
@@ -360,18 +361,38 @@ it("ffi run", () => {
   expect(identity_double(10.100000000000364)).toBe(10.100000000000364);
   expect(identity_int8_t(10)).toBe(10);
   expect(identity_int16_t(10)).toBe(10);
-  console.log("here");
-  //   expect(identity_int64_t(10)).toBe(10);
+  expect(identity_int64_t(10)).toBe(10);
   expect(identity_uint8_t(10)).toBe(10);
   expect(identity_uint16_t(10)).toBe(10);
   expect(identity_uint32_t(10)).toBe(10);
+  expect(identity_uint64_t(10)).toBe(10);
+  var bigArray = new BigUint64Array(8);
+  new Uint8Array(bigArray.buffer).fill(255);
+  var bigIntArray = new BigInt64Array(bigArray.buffer);
+
+  expect(identity_uint64_t(bigArray[0])).toBe(bigArray[0]);
+  expect(identity_uint64_t(bigArray[0] - BigInt(1))).toBe(
+    bigArray[0] - BigInt(1)
+  );
+  expect(add_uint64_t(BigInt(-1) * bigArray[0], bigArray[0])).toBe(0);
+  expect(add_uint64_t(BigInt(-1) * bigArray[0] + BigInt(10), bigArray[0])).toBe(
+    10
+  );
+  expect(identity_uint64_t(0)).toBe(0);
+  expect(identity_uint64_t(100)).toBe(100);
+  expect(identity_uint64_t(BigInt(100))).toBe(100);
+  expect(identity_int64_t(bigIntArray[0])).toBe(bigIntArray[0]);
+  expect(identity_int64_t(bigIntArray[0] - BigInt(1))).toBe(
+    bigIntArray[0] - BigInt(1)
+  );
+
   expect(add_char(1, 1)).toBe(2);
   expect(add_float(2.4, 2.8)).toBe(Math.fround(5.2));
   expect(add_double(4.2, 0.1)).toBe(4.3);
   expect(add_int8_t(1, 1)).toBe(2);
   expect(add_int16_t(1, 1)).toBe(2);
   expect(add_int32_t(1, 1)).toBe(2);
-  //   expect(add_int64_t(1, 1)).toBe(2);
+  expect(add_int64_t(1, 1)).toBe(2);
   expect(add_uint8_t(1, 1)).toBe(2);
   expect(add_uint16_t(1, 1)).toBe(2);
   expect(add_uint32_t(1, 1)).toBe(2);
@@ -391,7 +412,6 @@ it("ffi run", () => {
   const second_ptr = ptr(new Buffer(8));
   expect(identity_ptr(second_ptr)).toBe(second_ptr);
   function identityBool() {
-    console.log("hi");
     return true;
   }
   globalThis.identityBool = identityBool;
@@ -408,7 +428,6 @@ it("ffi run", () => {
   ).toBe(true);
 
   expect(cb_identity_true(first)).toBe(true);
-  console.log("second");
 
   expect(
     cb_identity_false(

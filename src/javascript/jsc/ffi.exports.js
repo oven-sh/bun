@@ -84,6 +84,20 @@ ffiWrappers[FFIType.int64_t] = function int64(val) {
   return val;
 };
 
+ffiWrappers[FFIType.uint64_t] = function int64(val) {
+  if (typeof val === "bigint") {
+    if (val < Number.MAX_VALUE && val > 0) {
+      return Number(val).valueOf();
+    }
+  }
+
+  if (!val) {
+    return 0;
+  }
+
+  return val;
+};
+
 ffiWrappers[FFIType.uint16_t] = function uint64(val) {
   if (typeof val === "bigint") {
     if (val < Number.MAX_VALUE) {

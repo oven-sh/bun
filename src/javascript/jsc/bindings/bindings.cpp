@@ -1898,6 +1898,37 @@ int64_t JSC__JSValue__toInt64(JSC__JSValue val)
     return _val.asAnyInt();
 }
 
+JSC__JSValue JSC__JSValue__fromInt64NoTruncate(JSC__JSGlobalObject* globalObject, int64_t val)
+{
+    return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
+}
+
+JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObject, uint64_t val)
+{
+    return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
+}
+
+uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue val)
+{
+    JSC::JSValue _val = JSC::JSValue::decode(val);
+
+    int64_t result = JSC::tryConvertToInt52(_val.asDouble());
+    if (result != JSC::JSValue::notInt52) {
+        if (result < 0)
+            return 0;
+
+        return static_cast<uint64_t>(result);
+    }
+
+    if (_val.isHeapBigInt()) {
+
+        if (auto* heapBigInt = _val.asHeapBigInt()) {
+            return heapBigInt->toBigUInt64(heapBigInt);
+        }
+    }
+    return static_cast<uint64_t>(_val.asAnyInt());
+}
+
 JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, const ZigString* arg1,
     const ZigString* arg2, JSC__JSValue JSValue3,
     JSC__JSValue JSValue4)

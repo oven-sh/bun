@@ -324,6 +324,8 @@ pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCel
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__VM, [*c]JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
 pub extern fn JSC__JSValue__fromEntries(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
+pub extern fn JSC__JSValue__fromInt64NoTruncate(arg0: [*c]JSC__JSGlobalObject, arg1: i64) JSC__JSValue;
+pub extern fn JSC__JSValue__fromUInt64NoTruncate(arg0: [*c]JSC__JSGlobalObject, arg1: u64) JSC__JSValue;
 pub extern fn JSC__JSValue__getClassName(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigString) void;
 pub extern fn JSC__JSValue__getErrorsProperty(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__getIfPropertyExistsImpl(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]const u8, arg3: u32) JSC__JSValue;
@@ -384,6 +386,7 @@ pub extern fn JSC__JSValue__toPropertyKey(JSValue0: JSC__JSValue, arg1: [*c]JSC_
 pub extern fn JSC__JSValue__toPropertyKeyValue(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__toString(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) [*c]JSC__JSString;
 pub extern fn JSC__JSValue__toStringOrNull(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) [*c]JSC__JSString;
+pub extern fn JSC__JSValue__toUInt64NoTruncate(JSValue0: JSC__JSValue) u64;
 pub extern fn JSC__JSValue__toWTFString(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject) bWTF__String;
 pub extern fn JSC__JSValue__toZigException(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]ZigException) void;
 pub extern fn JSC__JSValue__toZigString(JSValue0: JSC__JSValue, arg1: [*c]ZigString, arg2: [*c]JSC__JSGlobalObject) void;

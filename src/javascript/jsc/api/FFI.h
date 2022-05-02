@@ -37,28 +37,6 @@ typedef _Bool bool;
 #define true 1
 #define false 0
 
-#ifdef USES_FLOAT
-// https://git.musl-libc.org/cgit/musl/tree/src/math/trunc.c
-double trunc(double x);
-double trunc(double x)
-{
-	union {double f; uint64_t i;} u = {x};
-	int e = (int)(u.i >> 52 & 0x7ff) - 0x3ff + 12;
-	uint64_t m;
-
-	if (e >= 52 + 12)
-		return x;
-	if (e < 12)
-		e = 1;
-	m = -1ULL >> e;
-	if ((u.i & m) == 0)
-		return x;
-	x + 0x1p120f;
-	u.i &= ~m;
-	return u.f;
-}
-#endif
-
 
 // This value is 2^49, used to encode doubles such that the encoded value will
 // begin with a 15-bit pattern within the range 0x0002..0xFFFC.
@@ -81,7 +59,6 @@ typedef  void* JSCell;
 typedef union EncodedJSValue {
   int64_t asInt64;
 #if USE_JSVALUE32_64
-  double asDouble;
 #elif USE_JSVALUE64
   JSCell *ptr;
 #endif
@@ -116,6 +93,11 @@ JSContext cachedJSContext;
 void* cachedCallbackFunction;
 #endif
 
+uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value);
+int64_t JSVALUE_TO_INT64(EncodedJSValue value);
+
+EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val);
+EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val);
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inline__));
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) __attribute__((__always_inline__));
@@ -183,11 +165,9 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 }
 
 #define arg(i) ((EncodedJSValue*)args)[i]
+#ifndef IS_CALLBACK
 void* JSFunctionCall(void* globalObject, void* callFrame);
-// int64_t JSFunctionCall(void* globalObject, void* callFrame) {
-//   EncodedJSValue* args = (EncodedJSValue*)((unsigned char*)callFrame + Bun_FFI_PointerOffsetToArgumentsList);
-// }
-
+#endif
 
 
 // --- Generated Code ---

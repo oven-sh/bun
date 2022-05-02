@@ -34,7 +34,10 @@ using FFIFunction = JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, J
  *
  * It was about 20% faster than using the JavaScriptCore C API for functions with 1 argument
  *
- * Note: there is no wrapper function here
+ * There is no wrapper function. It does zero bounds checking on the arguments.
+ * It does not check for exceptions. It does not check for return value.
+ * It is the caller's responsibility to not buffer overflow the arguments
+ * For all those reasons, this shouldn't be used directly.
  */
 class JSFFIFunction final : public JSC::JSFunction {
 public:

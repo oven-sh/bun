@@ -27,9 +27,9 @@ it("ffi print", async () => {
     import.meta.dir + "/ffi.test.fixture.receiver.c",
     viewSource(
       {
-        callback: {
-          return_type: 13,
-          args: ["ptr"],
+        not_a_callback: {
+          return_type: "float",
+          args: [],
         },
       },
       false
@@ -71,14 +71,14 @@ it("ffi run", () => {
       return_type: "char",
       args: [],
     },
-    // returns_42_float: {
-    //   return_type: "float",
-    //   args: [],
-    // },
-    // returns_42_double: {
-    //   return_type: "double",
-    //   args: [],
-    // },
+    returns_42_float: {
+      return_type: "float",
+      args: [],
+    },
+    returns_42_double: {
+      return_type: "double",
+      args: [],
+    },
     returns_42_uint8_t: {
       return_type: "uint8_t",
       args: [],
@@ -116,18 +116,18 @@ it("ffi run", () => {
       return_type: "char",
       args: ["char"],
     },
-    // identity_float: {
-    //   return_type: "float",
-    //   args: ["float"],
-    // },
+    identity_float: {
+      return_type: "float",
+      args: ["float"],
+    },
     identity_bool: {
       return_type: "bool",
       args: ["bool"],
     },
-    // identity_double: {
-    //   return_type: "double",
-    //   args: ["double"],
-    // },
+    identity_double: {
+      return_type: "double",
+      args: ["double"],
+    },
     identity_int8_t: {
       return_type: "int8_t",
       args: ["int8_t"],
@@ -340,8 +340,10 @@ it("ffi run", () => {
   expect(returns_true()).toBe(true);
   expect(returns_false()).toBe(false);
   expect(returns_42_char()).toBe(42);
-  //   expect(returns_42_float()).toBe(42);
-  //   expect(returns_42_double()).toBe(42);
+
+  expect(Math.fround(returns_42_float())).toBe(Math.fround(42.41999804973602));
+
+  expect(returns_42_double()).toBe(42.42);
   expect(returns_42_uint8_t()).toBe(42);
   expect(returns_neg_42_int8_t()).toBe(-42);
   expect(returns_42_uint16_t()).toBe(42);
@@ -352,20 +354,20 @@ it("ffi run", () => {
   expect(identity_int32_t(10)).toBe(10);
   //   expect(returns_neg_42_int64_t()).toBe(-42);
   expect(identity_char(10)).toBe(10);
-  //   expect(identity_float(10.1)).toBe(10.1);
+  expect(identity_float(10.199999809265137)).toBe(10.199999809265137);
   expect(identity_bool(true)).toBe(true);
   expect(identity_bool(false)).toBe(false);
-  //   expect(identity_double(10.1)).toBe(10.1);
+  expect(identity_double(10.100000000000364)).toBe(10.100000000000364);
   expect(identity_int8_t(10)).toBe(10);
   expect(identity_int16_t(10)).toBe(10);
-
+  console.log("here");
   //   expect(identity_int64_t(10)).toBe(10);
   expect(identity_uint8_t(10)).toBe(10);
   expect(identity_uint16_t(10)).toBe(10);
   expect(identity_uint32_t(10)).toBe(10);
   expect(add_char(1, 1)).toBe(2);
-  //   expect(add_float(1.1, 1.1)).toBe(2.2);
-  //   expect(add_double(1.1, 1.1)).toBe(2.2);
+  expect(add_float(2.4, 2.8)).toBe(Math.fround(5.2));
+  expect(add_double(4.2, 0.1)).toBe(4.3);
   expect(add_int8_t(1, 1)).toBe(2);
   expect(add_int16_t(1, 1)).toBe(2);
   expect(add_int32_t(1, 1)).toBe(2);

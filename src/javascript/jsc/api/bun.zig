@@ -1477,7 +1477,7 @@ pub fn nanoseconds(
     _: JSC.C.ExceptionRef,
 ) JSC.C.JSValueRef {
     const ns = JSC.VirtualMachine.vm.origin_timer.read();
-    JSC.JSValue.jsNumberFromUint64(ns).asObjectRef();
+    return JSC.JSValue.jsNumberFromUint64(ns).asObjectRef();
 }
 
 pub fn serve(

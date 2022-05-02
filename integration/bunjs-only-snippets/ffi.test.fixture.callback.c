@@ -100,6 +100,7 @@ typedef union EncodedJSValue {
 #endif
 
   void* asPtr;
+  double asDouble;
 } EncodedJSValue;
 
 EncodedJSValue ValueUndefined = { TagValueUndefined };
@@ -115,6 +116,7 @@ extern int64_t bun_call(JSContext, void* func,  void* thisValue, size_t len, con
 JSContext cachedJSContext;
 void* cachedCallbackFunction;
 #endif
+
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inline__));
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) __attribute__((__always_inline__));
@@ -149,19 +151,16 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
    return res;
 }
 
+
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
-  EncodedJSValue res;
-#ifdef USES_FLOAT
-   res.asInt64 = trunc(val) == val ?  val : val - DoubleEncodeOffset;
-#else 
-// should never get here
-  res.asInt64 = 0xa;
-#endif
+   EncodedJSValue res;
+   res.asDouble = val;
+   res.asInt64 += DoubleEncodeOffset;
    return res;
 }
 
 static EncodedJSValue FLOAT_TO_JSVALUE(float val) {
-  return DOUBLE_TO_JSVALUE(val);
+  return DOUBLE_TO_JSVALUE((double)val);
 }
 
 static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) {
@@ -172,7 +171,8 @@ static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) {
 
 
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) {
-  return val.asInt64 + DoubleEncodeOffset;
+  val.asInt64 -= DoubleEncodeOffset;
+  return val.asDouble;
 }
 
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) {

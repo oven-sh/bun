@@ -1,4 +1,4 @@
-#define HAS_ARGUMENTS
+#define USES_FLOAT 1
 // This file is part of Bun!
 // You can find the original source:
 // https://github.com/Jarred-Sumner/bun/blob/main/src/javascript/jsc/api/FFI.h#L2
@@ -100,6 +100,7 @@ typedef union EncodedJSValue {
 #endif
 
   void* asPtr;
+  double asDouble;
 } EncodedJSValue;
 
 EncodedJSValue ValueUndefined = { TagValueUndefined };
@@ -115,6 +116,7 @@ extern int64_t bun_call(JSContext, void* func,  void* thisValue, size_t len, con
 JSContext cachedJSContext;
 void* cachedCallbackFunction;
 #endif
+
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inline__));
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) __attribute__((__always_inline__));
@@ -149,19 +151,16 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
    return res;
 }
 
+
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
-  EncodedJSValue res;
-#ifdef USES_FLOAT
-   res.asInt64 = trunc(val) == val ?  val : val - DoubleEncodeOffset;
-#else 
-// should never get here
-  res.asInt64 = 0xa;
-#endif
+   EncodedJSValue res;
+   res.asDouble = val;
+   res.asInt64 += DoubleEncodeOffset;
    return res;
 }
 
 static EncodedJSValue FLOAT_TO_JSVALUE(float val) {
-  return DOUBLE_TO_JSVALUE(val);
+  return DOUBLE_TO_JSVALUE((double)val);
 }
 
 static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) {
@@ -172,7 +171,8 @@ static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) {
 
 
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) {
-  return val.asInt64 + DoubleEncodeOffset;
+  val.asInt64 -= DoubleEncodeOffset;
+  return val.asDouble;
 }
 
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) {
@@ -193,19 +193,14 @@ void* JSFunctionCall(void* globalObject, void* callFrame);
 
 // --- Generated Code ---
 /* --- The Function To Call */
-void callback(void* arg0);
+float not_a_callback();
 
 /* ---- Your Wrapper Function ---- */
 void* JSFunctionCall(void* globalObject, void* callFrame) {
 #ifdef HAS_ARGUMENTS
   LOAD_ARGUMENTS_FROM_CALL_FRAME;
 #endif
-#ifdef INJECT_BEFORE
-//Bun_FFI_PointerOffsetToArgumentsList: 6
-//Bun_FFI_PointerOffsetToArgumentsCount: 0
-#endif
-    callback(    JSVALUE_TO_PTR(arg(0)));
-
-    return ValueUndefined.asPtr;
+    float return_value = not_a_callback();
+    return FLOAT_TO_JSVALUE(return_value).asPtr;
 }
 

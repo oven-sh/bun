@@ -740,7 +740,6 @@ pub const FFI = struct {
             }
 
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
-            CompilerRT.inject(state);
 
             const compilation_result = TCC.tcc_compile_string(
                 state,
@@ -763,6 +762,7 @@ pub const FFI = struct {
             _ = TCC.tcc_add_symbol(state, "bun_call", JSC.C.JSObjectCallAsFunction);
             _ = TCC.tcc_add_symbol(state, "cachedJSContext", js_context);
             _ = TCC.tcc_add_symbol(state, "cachedCallbackFunction", js_function);
+            CompilerRT.inject(state);
 
             var relocation_size = TCC.tcc_relocate(state, null);
             if (relocation_size == 0) return;

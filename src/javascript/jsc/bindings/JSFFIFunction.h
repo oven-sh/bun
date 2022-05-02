@@ -23,6 +23,19 @@ using namespace JSC;
 
 using FFIFunction = JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
+/**
+ * Call a C function with low overhead, modeled after JSC::JSNativeStdFunction
+ *
+ * The C function is expected to know how to get the arguments out of the JSC::CallFrame and
+ * return a JSC::EncodedJSValue. To do that, the argumentOffset is inlined at compile-time
+ * into Bun's binary and again inlined into the C function.
+ *
+ * This is used by functions compiled with TinyCC
+ *
+ * It was about 20% faster than using the JavaScriptCore C API for functions with 1 argument
+ *
+ * Note: there is no wrapper function here
+ */
 class JSFFIFunction final : public JSC::JSFunction {
 public:
     using Base = JSFunction;

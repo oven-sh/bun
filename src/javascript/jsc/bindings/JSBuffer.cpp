@@ -797,6 +797,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGl
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 1) {
         return JSValue::encode(castedThis);
@@ -805,7 +806,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
     auto value = callFrame->uncheckedArgument(0);
 
     if (!value.isString()) {
-        auto value_ = value.toInt32() & 0xFF;
+        auto value_ = value.toInt32(lexicalGlobalObject) & 0xFF;
 
         auto value_uint8 = static_cast<uint8_t>(value_);
         auto length = castedThis->byteLength();
@@ -815,21 +816,21 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
             if (auto start_ = callFrame->uncheckedArgument(1).tryGetAsUint32Index()) {
                 start = start_.value();
             } else {
-                return throwVMError(lexicalGlobalObject, JSC::throwScope, createRangeError(lexicalGlobalObject, "start out of range"_s));
+                return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "start out of range"_s));
             }
             if (callFrame->argumentCount() > 2) {
                 if (auto end_ = callFrame->uncheckedArgument(2).tryGetAsUint32Index()) {
                     end = end_.value();
                 } else {
-                    return throwVMError(lexicalGlobalObject, JSC::throwScope, createRangeError(lexicalGlobalObject, "end out of range"_s));
+                    return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "end out of range"_s));
                 }
             }
         }
         if (start > end) {
-            return throwVMError(lexicalGlobalObject, JSC::throwScope, createRangeError(lexicalGlobalObject, "start out of range"_s));
+            return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "start out of range"_s));
         }
         if (end > length) {
-            return throwVMError(lexicalGlobalObject, JSC::throwScope, createRangeError(lexicalGlobalObject, "end out of range"_s));
+            return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "end out of range"_s));
         }
         auto startPtr = castedThis->typedVector() + start;
         auto endPtr = castedThis->typedVector() + end;
@@ -848,14 +849,14 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
             if (auto start_ = callFrame->uncheckedArgument(1).tryGetAsUint32Index()) {
                 start = start_.value();
             } else {
-                throwVMError(lexicalGlobalObject, JSC::throwScope, createRangeError(lexicalGlobalObject, "start out of range"_s));
+                throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "start out of range"_s));
                 return JSC::JSValue::encode(jsUndefined());
             }
             if (callFrame->argumentCount() > 2) {
                 if (auto end_ = callFrame->uncheckedArgument(2).tryGetAsUint32Index()) {
                     end = end_.value();
                 } else {
-                    throwVMError(lexicalGlobalObject, JSC::throwScope, createRangeError(lexicalGlobalObject, "end out of range"_s));
+                    throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "end out of range"_s));
                     return JSC::JSValue::encode(jsUndefined());
                 }
             }
@@ -863,9 +864,9 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
             if (callFrame->argumentCount() > 3) {
                 auto encoding_ = callFrame->uncheckedArgument(3).toString(lexicalGlobalObject);
 
-                std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
+                std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encoding_);
                 if (!encoded) {
-                    throwTypeError(lexicalGlobalObject, scope, "Invalid encoding");
+                    throwTypeError(lexicalGlobalObject, throwScope, "Invalid encoding");
                     return JSC::JSValue::encode(jsUndefined());
                 }
 
@@ -873,24 +874,24 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
             }
         }
         if (start > end) {
-            throwVMError(lexicalGlobalObject, JSC::throwScope, createRangeError(lexicalGlobalObject, "start out of range"_s));
+            throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "start out of range"_s));
             return JSC::JSValue::encode(jsUndefined());
         }
         if (end > length) {
-            throwVMError(lexicalGlobalObject, JSC::throwScope, createRangeError(lexicalGlobalObject, "end out of range"_s));
+            throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "end out of range"_s));
             return JSC::JSValue::encode(jsUndefined());
         }
 
         auto startPtr = castedThis->typedVector() + start;
 
-        ZigString str = Zig::toString(value.toString(lexicalGlobalObject));
+        // ZigString str = Zig::toString(value.toString(lexicalGlobalObject));
 
-        Bun__ArrayBuffer buf;
-        JSC__JSValue__asArrayBuffer_(JSC::JSValue::encode(castedThis), lexicalGlobalObject,
-            &buf);
-        Bun__Buffer_fill(lexicalGlobalObject, &buf, &str, start, end, encoding);
+        // Bun__ArrayBuffer buf;
+        // JSC__JSValue__asArrayBuffer_(JSC::JSValue::encode(castedThis), lexicalGlobalObject,
+        //     &buf);
+        // Bun__Buffer_fill(lexicalGlobalObject, &buf, &str, start, end, encoding);
 
-        return JSValue::encode(castedThis);
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis));
     }
 }
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)

@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "mitata": "^0.0.10",
     "peechy": "0.4.32",
     "react": "^17.0.2"
   },

@@ -1,3 +1,4 @@
+#define IS_CALLBACK 1
 // This file is part of Bun!
 // You can find the original source:
 // https://github.com/Jarred-Sumner/bun/blob/main/src/javascript/jsc/api/FFI.h#L2
@@ -191,3 +192,20 @@ void* JSFunctionCall(void* globalObject, void* callFrame);
 
 
 // --- Generated Code ---
+
+ 
+/* --- The Callback Function */
+/* --- The Callback Function */
+bool my_callback_function(void* arg0);
+
+bool my_callback_function(, void* arg0) {
+#ifdef INJECT_BEFORE
+INJECT_BEFORE;
+#endif
+  EncodedJSValue arguments[1] = {
+void*    PTR_TO_JSVALUE(arg0)
+  };
+    EncodedJSValue return_value = {bun_call(cachedJSContext, cachedCallbackFunction, (void*)0, 1, arguments, 0)};
+  return JSVALUE_TO_BOOL(return_value);
+}
+

@@ -517,7 +517,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                         \\
                         \\#ifndef INCLUDED_{s}
                         \\#define INCLUDED_{s}
-                        \\#include {s}
+                        \\#include "{s}"
                         \\#endif
                         \\
                         \\extern "C" const size_t {s} = sizeof({s});

@@ -371,7 +371,12 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |compiled| {
-                    var cb = JSC.C.JSObjectMakeFunctionWithCallback(global.ref(), null, @ptrCast(JSC.C.JSObjectCallAsFunctionCallback, compiled.ptr));
+                    var cb = Bun__CreateFFIFunction(
+                        global,
+                        &ZigString.init(std.mem.span(function.base_name)),
+                        @intCast(u32, function.arg_types.items.len),
+                        compiled.ptr,
+                    );
 
                     obj.put(global, &ZigString.init(std.mem.span(function.base_name)), JSC.JSValue.cast(cb));
                 },
@@ -408,7 +413,7 @@ pub const FFI = struct {
                 if (val.isAnyInt()) {
                     const int = val.toInt32();
                     switch (int) {
-                        0...13 => {
+                        0...14 => {
                             abi_types.appendAssumeCapacity(@intToEnum(ABIType, int));
                             continue;
                         },
@@ -439,7 +444,7 @@ pub const FFI = struct {
             if (ret_value.isAnyInt()) {
                 const int = ret_value.toInt32();
                 switch (int) {
-                    0...13 => {
+                    0...14 => {
                         return_type = @intToEnum(ABIType, int);
                         break :brk;
                     },
@@ -612,6 +617,19 @@ pub const FFI = struct {
             }
 
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
+            const Sizes = @import("../bindings/sizes.zig");
+
+            var symbol_buf: [256]u8 = undefined;
+            TCC.tcc_define_symbol(
+                state,
+                "Bun_FFI_PointerOffsetToArgumentsList",
+                std.fmt.bufPrintZ(&symbol_buf, "{d}", .{Sizes.Bun_FFI_PointerOffsetToArgumentsList}) catch unreachable,
+            );
+            // TCC.tcc_define_symbol(
+            //     state,
+            //     "Bun_FFI_PointerOffsetToArgumentsCount",
+            //     std.fmt.bufPrintZ(symbol_buf[8..], "{d}", .{Bun_FFI_PointerOffsetToArgumentsCount}) catch unreachable,
+            // );
 
             const compilation_result = TCC.tcc_compile_string(
                 state,
@@ -629,6 +647,7 @@ pub const FFI = struct {
             }
             CompilerRT.inject(state);
             _ = TCC.tcc_add_symbol(state, this.base_name, this.symbol_from_dynamic_library.?);
+
             if (this.step == .failed) {
                 return;
             }
@@ -658,9 +677,7 @@ pub const FFI = struct {
                 pthread_jit_write_protect_np(true);
             }
 
-            var formatted_symbol_name = try std.fmt.allocPrintZ(allocator, "bun_gen_{s}", .{std.mem.span(this.base_name)});
-            defer allocator.free(formatted_symbol_name);
-            var symbol = TCC.tcc_get_symbol(state, formatted_symbol_name) orelse {
+            var symbol = TCC.tcc_get_symbol(state, "JSFunctionCall") orelse {
                 this.step = .{ .failed = .{ .msg = "missing generated symbol in source code" } };
 
                 return;
@@ -787,6 +804,10 @@ pub const FFI = struct {
             this: *Function,
             writer: anytype,
         ) !void {
+            if (this.arg_types.items.len > 0) {
+                try writer.writeAll("#define HAS_ARGUMENTS\n");
+            }
+
             brk: {
                 if (this.return_type.isFloatingPoint()) {
                     try writer.writeAll("#define USES_FLOAT 1\n");
@@ -826,27 +847,20 @@ pub const FFI = struct {
             try writer.writeAll(");\n\n");
 
             // -- Generate JavaScriptCore's C wrapper function
-            try writer.writeAll("/* ---- Your Wrapper Function ---- */\nvoid* bun_gen_");
-            try writer.writeAll(std.mem.span(this.base_name));
-            try writer.writeAll("(JSContext ctx, void* function, void* thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception);\n\n");
+            try writer.writeAll(
+                \\/* ---- Your Wrapper Function ---- */
+                \\void* JSFunctionCall(void* globalObject, void* callFrame) {
+                \\#ifdef HAS_ARGUMENTS
+                \\  LOAD_ARGUMENTS_FROM_CALL_FRAME;
+                \\#endif
+                \\
+            );
 
-            try writer.writeAll("void* bun_gen_");
-            try writer.writeAll(std.mem.span(this.base_name));
-            try writer.writeAll("(JSContext ctx, void* function, void* thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception) {\n\n");
-            if (comptime Environment.isDebug) {
-                try writer.writeAll("#ifdef INJECT_BEFORE\n");
-                try writer.writeAll("INJECT_BEFORE;\n");
-                try writer.writeAll("#endif\n");
-            }
+            // try writer.writeAll(
+            //     "(JSContext ctx, void* function, void* thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception);\n\n",
+            // );
+
             var arg_buf: [512]u8 = undefined;
-            arg_buf[0.."arguments[".len].* = "arguments[".*;
-            for (this.arg_types.items) |arg, i| {
-                try writer.writeAll("    ");
-                try arg.typename(writer);
-                var printed = std.fmt.bufPrintIntToSlice(arg_buf["arguments[".len..], i, 10, .lower, .{});
-                arg_buf["arguments[".len + printed.len] = ']';
-                try writer.print(" arg{d} = {};\n", .{ i, arg.toC(arg_buf[0 .. printed.len + "arguments[]".len]) });
-            }
 
             try writer.writeAll("    ");
             if (!(this.return_type == .void)) {
@@ -855,14 +869,20 @@ pub const FFI = struct {
             }
             try writer.print("{s}(", .{std.mem.span(this.base_name)});
             first = true;
-            for (this.arg_types.items) |_, i| {
+            arg_buf[0..4].* = "arg(".*;
+            for (this.arg_types.items) |arg, i| {
                 if (!first) {
                     try writer.writeAll(", ");
                 }
                 first = false;
-                try writer.print("arg{d}", .{i});
+
+                try writer.writeAll("    ");
+                _ = std.fmt.bufPrintIntToSlice(arg_buf["arg(".len..], i, 10, .lower, .{});
+                arg_buf["arg(N".len] = ')';
+                try writer.print("{}", .{arg.toC(arg_buf[0..6])});
             }
             try writer.writeAll(");\n");
+
             if (!first) try writer.writeAll("\n");
 
             try writer.writeAll("    ");
@@ -1014,6 +1034,8 @@ pub const FFI = struct {
 
         @"void" = 13,
 
+        cstring = 14,
+
         const map = .{
             .{ "bool", ABIType.bool },
             .{ "c_int", ABIType.int32_t },
@@ -1047,6 +1069,7 @@ pub const FFI = struct {
             .{ "ptr", ABIType.ptr },
             .{ "pointer", ABIType.ptr },
             .{ "void", ABIType.@"void" },
+            .{ "cstring", ABIType.@"cstring" },
         };
         pub const label = ComptimeStringMap(ABIType, map);
         const EnumMapFormatter = struct {
@@ -1110,7 +1133,7 @@ pub const FFI = struct {
                     },
                     .int64_t => {},
                     .uint64_t => {},
-                    .ptr => {
+                    .cstring, .ptr => {
                         try writer.print("JSVALUE_TO_PTR({s})", .{self.symbol});
                     },
                     .double => {
@@ -1138,7 +1161,7 @@ pub const FFI = struct {
                     },
                     .int64_t => {},
                     .uint64_t => {},
-                    .ptr => {
+                    .cstring, .ptr => {
                         try writer.print("PTR_TO_JSVALUE({s})", .{self.symbol});
                     },
                     .double => {
@@ -1171,7 +1194,7 @@ pub const FFI = struct {
 
         pub fn typenameLabel(this: ABIType) []const u8 {
             return switch (this) {
-                .ptr => "void*",
+                .cstring, .ptr => "void*",
                 .bool => "bool",
                 .int8_t => "int8_t",
                 .uint8_t => "uint8_t",
@@ -1189,3 +1212,10 @@ pub const FFI = struct {
         }
     };
 };
+
+extern fn Bun__CreateFFIFunction(
+    globalObject: *JSGlobalObject,
+    symbolName: *const ZigString,
+    argCount: u32,
+    functionPointer: *anyopaque,
+) *anyopaque;

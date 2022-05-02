@@ -312,6 +312,14 @@ declare module "bun:ffi" {
      *
      */
     void = 13,
+
+    /**
+     * When used as a `return_type`, this will automatically become a {@link CString}.
+     *
+     * When used in `args` it is equivalent to {@link FFIType.pointer}
+     *
+     */
+    cstring = 14,
   }
   export type FFITypeOrString =
     | FFIType
@@ -340,7 +348,8 @@ declare module "bun:ffi" {
     | "bool"
     | "ptr"
     | "pointer"
-    | "void";
+    | "void"
+    | "cstring";
 
   interface FFIFunction {
     /**
@@ -546,6 +555,24 @@ declare module "bun:ffi" {
      * undefined behavior. Use with care!
      */
     constructor(ptr: number, byteOffset?: number, byteLength?: number): string;
+
+    /**
+     * The ptr to the C string
+     *
+     * This `CString` instance is a clone of the string, so it
+     * is safe to continue using this instance after the `ptr` has been
+     * freed.
+     */
+    ptr: number;
+    byteOffset?: number;
+    byteLength?: number;
+
+    /**
+     * Get the {@link ptr} as an `ArrayBuffer`
+     *
+     * `null` or empty ptrs returns an `ArrayBuffer` with `byteLength` 0
+     */
+    get arrayBuffer(): ArrayBuffer;
   }
 
   /**

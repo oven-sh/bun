@@ -673,6 +673,19 @@ const char* const s_jsBufferPrototypeToJSONCode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_jsBufferPrototypeSubarrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeSubarrayCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsBufferPrototypeSubarrayCodeLength = 196;
+static const JSC::Intrinsic s_jsBufferPrototypeSubarrayCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeSubarrayCode =
+    "(function (start, end) {\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    "    Buffer[Symbol.species] ??= Buffer;\n" \
+    "    return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_jsBufferPrototypeInitializeBunBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeConstructorKind = JSC::ConstructorKind::None;
 const int s_jsBufferPrototypeInitializeBunBufferCodeLength = 45;

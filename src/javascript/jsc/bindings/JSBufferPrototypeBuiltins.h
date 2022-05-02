@@ -1,3 +1,4 @@
+//clang-format off
 /*
  * Copyright (c) 2016 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
@@ -262,6 +263,10 @@ extern const char* const s_jsBufferPrototypeToJSONCode;
 extern const int s_jsBufferPrototypeToJSONCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeToJSONCodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind;
+extern const char* const s_jsBufferPrototypeSubarrayCode;
+extern const int s_jsBufferPrototypeSubarrayCodeLength;
+extern const JSC::ConstructAbility s_jsBufferPrototypeSubarrayCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsBufferPrototypeSubarrayCodeConstructorKind;
 extern const char* const s_jsBufferPrototypeInitializeBunBufferCode;
 extern const int s_jsBufferPrototypeInitializeBunBufferCodeLength;
 extern const JSC::ConstructAbility s_jsBufferPrototypeInitializeBunBufferCodeConstructAbility;
@@ -323,6 +328,7 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeCons
     macro(base64urlSlice, jsBufferPrototypeBase64urlSlice, 2) \
     macro(hexSlice, jsBufferPrototypeHexSlice, 2) \
     macro(toJSON, jsBufferPrototypeToJSON, 0) \
+    macro(subarray, jsBufferPrototypeSubarray, 2) \
     macro(initializeBunBuffer, jsBufferPrototypeInitializeBunBuffer, 1) \
 
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SETBIGUINT64 1
@@ -380,6 +386,7 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeCons
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_BASE64URLSLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_HEXSLICE 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_TOJSON 1
+#define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_SUBARRAY 1
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_INITIALIZEBUNBUFFER 1
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_CODE(macro) \
@@ -438,6 +445,7 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeCons
     macro(jsBufferPrototypeBase64urlSliceCode, base64urlSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64urlSliceCodeLength) \
     macro(jsBufferPrototypeHexSliceCode, hexSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeHexSliceCodeLength) \
     macro(jsBufferPrototypeToJSONCode, toJSON, static_cast<const char*>(nullptr), s_jsBufferPrototypeToJSONCodeLength) \
+    macro(jsBufferPrototypeSubarrayCode, subarray, static_cast<const char*>(nullptr), s_jsBufferPrototypeSubarrayCodeLength) \
     macro(jsBufferPrototypeInitializeBunBufferCode, initializeBunBuffer, static_cast<const char*>(nullptr), s_jsBufferPrototypeInitializeBunBufferCodeLength) \
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_FUNCTION_NAME(macro) \
@@ -472,6 +480,7 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeCons
     macro(readUInt8) \
     macro(setBigUint64) \
     macro(slice) \
+    macro(subarray) \
     macro(toJSON) \
     macro(ucs2Slice) \
     macro(ucs2Write) \

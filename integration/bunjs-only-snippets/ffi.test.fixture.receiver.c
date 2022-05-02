@@ -1,3 +1,4 @@
+#define HAS_ARGUMENTS
 // This file is part of Bun!
 // You can find the original source:
 // https://github.com/Jarred-Sumner/bun/blob/main/src/javascript/jsc/api/FFI.h#L2
@@ -191,3 +192,20 @@ void* JSFunctionCall(void* globalObject, void* callFrame);
 
 
 // --- Generated Code ---
+/* --- The Function To Call */
+void callback(void* arg0);
+
+/* ---- Your Wrapper Function ---- */
+void* JSFunctionCall(void* globalObject, void* callFrame) {
+#ifdef HAS_ARGUMENTS
+  LOAD_ARGUMENTS_FROM_CALL_FRAME;
+#endif
+#ifdef INJECT_BEFORE
+//Bun_FFI_PointerOffsetToArgumentsList: 6
+//Bun_FFI_PointerOffsetToArgumentsCount: 0
+#endif
+    callback(    JSVALUE_TO_PTR(arg(0)));
+
+    return ValueUndefined.asPtr;
+}
+

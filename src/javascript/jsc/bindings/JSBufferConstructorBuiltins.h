@@ -1,3 +1,4 @@
+//clang-format off
 /*
  * Copyright (c) 2016 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.

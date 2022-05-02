@@ -14,17 +14,17 @@ import {
 
 it("ffi print", async () => {
   await Bun.write(
-    "ffi.test.fixture.callback.c",
+    import.meta.dir + "/ffi.test.fixture.callback.c",
     viewSource(
       {
         return_type: "bool",
-        args: [],
+        args: ["ptr"],
       },
       true
     )
   );
   await Bun.write(
-    "ffi.test.fixture.receiver.c",
+    import.meta.dir + "/ffi.test.fixture.receiver.c",
     viewSource(
       {
         callback: {
@@ -349,6 +349,7 @@ it("ffi run", () => {
   //   expect(returns_42_uint64_t()).toBe(42);
   expect(returns_neg_42_int16_t()).toBe(-42);
   expect(returns_neg_42_int32_t()).toBe(-42);
+  expect(identity_int32_t(10)).toBe(10);
   //   expect(returns_neg_42_int64_t()).toBe(-42);
   expect(identity_char(10)).toBe(10);
   //   expect(identity_float(10.1)).toBe(10.1);
@@ -357,7 +358,7 @@ it("ffi run", () => {
   //   expect(identity_double(10.1)).toBe(10.1);
   expect(identity_int8_t(10)).toBe(10);
   expect(identity_int16_t(10)).toBe(10);
-  expect(identity_int32_t(10)).toBe(10);
+
   //   expect(identity_int64_t(10)).toBe(10);
   expect(identity_uint8_t(10)).toBe(10);
   expect(identity_uint16_t(10)).toBe(10);
@@ -383,7 +384,7 @@ it("ffi run", () => {
     42
   );
   expect(ptr(buffer)).toBe(cptr);
-  expect(new CString(cptr, 0, 1)).toBe("*");
+  expect(new CString(cptr, 0, 1).toString()).toBe("*");
   expect(identity_ptr(cptr)).toBe(cptr);
   const second_ptr = ptr(new Buffer(8));
   expect(identity_ptr(second_ptr)).toBe(second_ptr);

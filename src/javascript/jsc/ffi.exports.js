@@ -1,27 +1,70 @@
+// --- FFIType ---
+
 export const ptr = globalThis.Bun.FFI.ptr;
 export const toBuffer = globalThis.Bun.FFI.toBuffer;
 export const toArrayBuffer = globalThis.Bun.FFI.toArrayBuffer;
-export const CString = globalThis.Bun.FFI.CString;
 export const viewSource = globalThis.Bun.FFI.viewSource;
 
+const BunCString = globalThis.Bun.FFI.CString;
+
+export class CString extends String {
+  constructor(ptr, byteOffset, byteLength) {
+    super(
+      ptr
+        ? typeof byteLength === "number" && Number.isSafeInteger(byteLength)
+          ? new BunCString(ptr, byteOffset || 0, byteLength)
+          : new BunCString(ptr)
+        : ""
+    );
+    this.ptr = typeof ptr === "number" ? ptr : 0;
+    if (typeof byteOffset !== "undefined") {
+      this.byteOffset = byteOffset;
+    }
+    if (typeof byteLength !== "undefined") {
+      this.byteLength = byteLength;
+    }
+  }
+
+  ptr;
+  byteOffset;
+  byteLength;
+  #cachedArrayBuffer;
+
+  get arrayBuffer() {
+    return (this.#cachedArrayBuffer ||= toArrayBuffer.apply(
+      null,
+      typeof this.byteOffset === "number" &&
+        typeof this.byteLength === typeof this.byteOffset
+        ? [this.ptr, this.byteOffset, this.byteLength]
+        : [this.ptr]
+    ));
+  }
+}
+Object.defineProperty(globalThis, "__GlobalBunCString", {
+  value: CString,
+  enumerable: false,
+  configurable: false,
+});
+
 const ffiWrappers = new Array(15);
-ffiWrappers.fill((val) => val | 0);
-ffiWrappers[2] = function uint8(val) {
+var char = (val) => val | 0;
+ffiWrappers.fill(char);
+ffiWrappers[FFIType.uint8_t] = function uint8(val) {
   return val < 0 ? 0 : val >= 255 ? 255 : val | 0;
 };
-ffiWrappers[3] = function int16(val) {
+ffiWrappers[FFIType.int16_t] = function int16(val) {
   return val <= -8192 ? -8192 : val >= 8192 ? 8192 : val | 0;
 };
-ffiWrappers[4] = function uint16(val) {
+ffiWrappers[FFIType.uint16_t] = function uint16(val) {
   return val <= 0 ? 0 : val >= 16384 ? 16384 : val | 0;
 };
-ffiWrappers[5] = function int32(val) {
+ffiWrappers[FFIType.int32_t] = function int32(val) {
   return val | 0;
 };
-ffiWrappers[6] = function uint32(val) {
+ffiWrappers[FFIType.uint32_t] = function uint32(val) {
   return val <= 0 ? 0 : val >= 0xffffffff ? 0xffffffff : val;
 };
-ffiWrappers[7] = function int64(val) {
+ffiWrappers[FFIType.int64_t] = function int64(val) {
   if (typeof val === "bigint") {
     if (val < Number.MAX_VALUE) {
       return Number(val).valueOf();
@@ -35,7 +78,7 @@ ffiWrappers[7] = function int64(val) {
   return val;
 };
 
-ffiWrappers[8] = function uint64(val) {
+ffiWrappers[FFIType.uint16_t] = function uint64(val) {
   if (typeof val === "bigint") {
     if (val < Number.MAX_VALUE) {
       return Math.abs(Number(val).valueOf());
@@ -49,7 +92,7 @@ ffiWrappers[8] = function uint64(val) {
   return Math.abs(val);
 };
 
-ffiWrappers[9] = function double(val) {
+ffiWrappers[FFIType.double] = function double(val) {
   if (typeof val === "bigint") {
     if (val.valueOf() < BigInt(Number.MAX_VALUE)) {
       return (
@@ -65,22 +108,22 @@ ffiWrappers[9] = function double(val) {
   return val + 0.00000000000001 - 0.00000000000001;
 };
 
-ffiWrappers[10] = function float(val) {
+ffiWrappers[FFIType.float] = ffiWrappers[10] = function float(val) {
   return Math.fround(val);
 };
-ffiWrappers[11] = function bool(val) {
+ffiWrappers[FFIType.bool] = function bool(val) {
   return !!val;
 };
 
-ffiWrappers[12] = function pointer(val) {
+ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(
+  val
+) {
   if (typeof val === "number") return val;
   if (!val) {
     return 0;
   }
 
-  if (ArrayBuffer.isView(val)) {
-    return ptr(val);
-  } else if (val instanceof ArrayBuffer) {
+  if (ArrayBuffer.isView(val) || val instanceof ArrayBuffer) {
     return ptr(val);
   }
 
@@ -92,17 +135,22 @@ ffiWrappers[12] = function pointer(val) {
 
   throw new TypeError(`Unable to convert ${val} to a pointer`);
 };
-ffiWrappers[13] = (val) => val;
+
+function cstringReturnType(val) {
+  return new __GlobalBunCString(val);
+}
 
 function FFIBuilder(params, returnType, functionToCall, name) {
   const hasReturnType =
-    FFIType[returnType] && FFIType[returnType] !== FFIType.void;
+    typeof FFIType[returnType] === "number" &&
+    FFIType[returnType] !== FFIType.void;
   var paramNames = new Array(params.length);
   var args = new Array(params.length);
   for (let i = 0; i < params.length; i++) {
     paramNames[i] = `p${i}`;
     const wrapper = ffiWrappers[FFIType[params[i]]];
     if (wrapper) {
+      // doing this inline benchmarked about 4x faster than referencing
       args[i] = `(${wrapper.toString()})(p${i})`;
     } else {
       throw new TypeError(
@@ -115,8 +163,11 @@ function FFIBuilder(params, returnType, functionToCall, name) {
 
   var code = `functionToCall(${args.join(", ")})`;
   if (hasReturnType) {
-    const ffiWrapper = ffiWrappers[FFIType[returnType]];
-    code = `return (${ffiWrapper.toString()})(${code});`;
+    if (FFIType[returnType] === FFIType.cstring) {
+      code = `return (${cstringReturnType.toString()})(${code})`;
+    } else {
+      code = `return ${code}`;
+    }
   }
 
   var func = new Function("functionToCall", ...paramNames, code);
@@ -141,7 +192,10 @@ export function dlopen(path, options) {
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args || options[key]?.return_type) {
+    if (
+      options[key]?.args?.length ||
+      FFIType[options[key]?.return_type] === FFIType.cstring
+    ) {
       result.symbols[key] = FFIBuilder(
         options[key].args ?? [],
         options[key].return_type ?? FFIType.void,
@@ -155,6 +209,9 @@ export function dlopen(path, options) {
           ? `${key} (${path.split("/").pop()})`
           : `${key} (${path})`
       );
+    } else {
+      // consistentcy
+      result.native = result;
     }
   }
 
@@ -175,5 +232,3 @@ export function callback(options) {
 
   return result;
 }
-
-// --- FFIType ---

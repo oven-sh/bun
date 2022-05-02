@@ -3,7 +3,17 @@
 #include <iostream>
 using namespace std;
 
+#include "root.h"
+
+#include "ZigGlobalObject.h"
+
+#include "Path.h"
+
+#include "DOMURL.h"
+
 #include "headers-cpp.h"
+
+#include "JavaScriptCore/CallFrame.h"
 
 int main() {
   time_t rawtime;
@@ -44,6 +54,7 @@ int main() {
     cout << "pub const " << names[i] << " = " << sizes[i] << ";\n";
     cout << "pub const " << names[i] << "_align = " << aligns[i] << ";\n";
   }
-
+  cout << "pub const Bun_FFI_PointerOffsetToArgumentsList = << "
+       << JSC::CallFrame::argumentOffset(0) << ";\n";
   return 0;
 }

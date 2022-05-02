@@ -89,6 +89,11 @@
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #include "WebCoreJSBuiltinInternals.h"
 #include "JSBuffer.h"
+#include "JSFFIFunction.h"
+#include "JavaScriptCore/InternalFunction.h"
+#include "JavaScriptCore/LazyClassStructure.h"
+#include "JavaScriptCore/LazyClassStructureInlines.h"
+#include "JavaScriptCore/FunctionPrototype.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -857,6 +862,11 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
 
+    m_JSFFIFunctionStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
+        });
+
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
         JSC::PropertyAttribute::CustomAccessor | 0);
 
@@ -923,7 +933,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(constructor);
 
     // thisObject->m_builtinInternalFunctions.visit(visitor);
-
+    thisObject->m_JSFFIFunctionStructure.visit(visitor);
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
 }

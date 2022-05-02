@@ -17,6 +17,7 @@ public:
     DOMIsoSubspaces() = default;
     /*-- BUN --*/
     std::unique_ptr<IsoSubspace> m_subspaceForBuffer;
+    std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
     /*-- BUN --*/
 
     // std::unique_ptr<IsoSubspace> m_subspaceForTouch;

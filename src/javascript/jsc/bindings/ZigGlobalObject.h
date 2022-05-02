@@ -6,6 +6,7 @@
 namespace JSC {
 class Structure;
 class Identifier;
+class LazyClassStructure;
 
 } // namespace JSC
 
@@ -127,6 +128,7 @@ public:
     void setConsole(void* console);
     void installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm);
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
+    JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
 
 private:
     void addBuiltinGlobals(JSC::VM&);
@@ -139,6 +141,7 @@ private:
     Lock m_gcLock;
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
+    LazyClassStructure m_JSFFIFunctionStructure;
 };
 
 class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {

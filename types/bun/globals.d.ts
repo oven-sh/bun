@@ -849,6 +849,18 @@ declare var performance: {
    *
    */
   now: () => number;
+
+  /**
+   * Nanoseconds since Bun.js started
+   *
+   * This is an integer up until approximately 14 weeks of uptime. After 14 weeks, it returns a `bigint` to account
+   * for overflow.
+   *
+   * Uses a high-precision system timer to measure the time elapsed since the
+   * Bun.js runtime was initialized. The value is monotonically increasing
+   * during the lifetime of the runtime.
+   */
+  nowNanoseconds: () => number | bigint;
 };
 
 /**

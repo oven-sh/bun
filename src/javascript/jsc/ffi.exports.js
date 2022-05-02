@@ -31,12 +31,18 @@ export class CString extends String {
   #cachedArrayBuffer;
 
   get arrayBuffer() {
-    return (this.#cachedArrayBuffer ||= toArrayBuffer.apply(
-      null,
-      typeof this.byteOffset === "number" &&
-        typeof this.byteLength === typeof this.byteOffset
-        ? [this.ptr, this.byteOffset, this.byteLength]
-        : [this.ptr]
+    if (this.#cachedArrayBuffer) {
+      return this.#cachedArrayBuffer;
+    }
+
+    if (!this.ptr) {
+      return (this.#cachedArrayBuffer = new ArrayBuffer(0));
+    }
+
+    return (this.#cachedArrayBuffer = toArrayBuffer(
+      this.ptr,
+      this.byteOffset,
+      this.byteLength
     ));
   }
 }

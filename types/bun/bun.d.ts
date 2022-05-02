@@ -808,6 +808,16 @@ declare module "bun" {
   }
 
   /**
+   * Nanoseconds since Bun.js was started as an integer.
+   *
+   * This uses a high-resolution monotonic system timer.
+   *
+   * After 14 weeks of consecutive uptime, this function
+   * returns a `bigint` to prevent overflow
+   */
+  export function nanoseconds(): number | bigint;
+
+  /**
    * Generate a heap snapshot for seeing where the heap is being used
    */
   export function generateHeapSnapshot(): HeapSnapshot;
@@ -986,8 +996,6 @@ declare module "bun" {
      */
     static readonly byteLength: 32;
   }
-
-  export const FFI: typeof import("bun:ffi");
 }
 
 type TypedArray =

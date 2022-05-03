@@ -2,9 +2,15 @@ import { bench, run } from "mitata";
 
 import module from "module";
 
-const { plus100 } = module.createRequire(import.meta.url)("./plus100-napi");
+const { plus100, noop } = module.createRequire(import.meta.url)(
+  "./plus100-napi"
+);
 
-bench("plus100(1) (napi.rs)", () => {
+bench("plus100(1) ", () => {
   plus100(1);
 });
-run({ collect: false, percentiles: true });
+bench("noop() ", () => {
+  noop();
+});
+await run({ collect: false, percentiles: true });
+console.log("\n");

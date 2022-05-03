@@ -5,8 +5,8 @@
     "bench-deno": "deno run  --allow-ffi --unstable -A plus100.deno.js",
     "napi-setup": "bash download-napi-plus100.sh",
     "bench-napi": "node plus100.napi.mjs",
-    "bench-bun": "bun run ./plus100.bun.js",
+    "bench-bun": "bun ./plus100.bun.js",
     "compile": "clang -mtune=native -O3 -shared ./plus100.c -o plus100.dylib",
-    "bench": "echo -e '\n--- Bun:\n' && bun run bench-bun && echo -e '\n--- Node:\n' && bun run bench-napi && echo -e '\n--- Deno:\n' && bun run bench-deno"
+    "bench": "bun run bench-bun && bun run bench-napi && bun run bench-deno"
   }
 }

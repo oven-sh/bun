@@ -418,7 +418,7 @@ pub const FFI = struct {
         // var function
         var return_type = ABIType.@"void";
 
-        if (value.get(global, "return_type")) |ret_value| brk: {
+        if (value.get(global, "returns")) |ret_value| brk: {
             if (ret_value.isAnyInt()) {
                 const int = ret_value.toInt32();
                 switch (int) {

@@ -6,11 +6,10 @@ const {
 } = dlopen("./noop.dylib", {
   noop: {
     args: [],
-    return_type: "i32",
+    returns: "void",
   },
 });
-var raw = Object.keys(noop);
 bench("noop", () => {
-  raw();
+  noop();
 });
 run({ collect: false, percentiles: true });

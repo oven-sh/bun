@@ -937,6 +937,8 @@ pub const VirtualMachine = struct {
         this.resolved_count = 0;
     }
 
+    const shared_library_suffix = if (Environment.isMac) "dylib" else if (Environment.isLinux) "so" else "";
+
     inline fn _fetch(
         _: *JSGlobalObject,
         _specifier: string,
@@ -1081,7 +1083,14 @@ pub const VirtualMachine = struct {
         } else if (strings.eqlComptime(_specifier, "bun:ffi")) {
             return ResolvedSource{
                 .allocator = null,
-                .source_code = ZigString.init("export const FFIType = " ++ JSC.FFI.ABIType.map_to_js_object ++ ";\n\n" ++ @embedFile("ffi.exports.js") ++ "\n"),
+                .source_code = ZigString.init(
+                    "export const FFIType = " ++
+                        JSC.FFI.ABIType.map_to_js_object ++
+                        ";\n\n" ++
+                        "export const suffix = '" ++ shared_library_suffix ++ "';\n\n" ++
+                        @embedFile("ffi.exports.js") ++
+                        "\n",
+                ),
                 .specifier = ZigString.init("bun:ffi"),
                 .source_url = ZigString.init("bun:ffi"),
                 .hash = 0,

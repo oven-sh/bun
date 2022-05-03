@@ -1549,6 +1549,341 @@ await Bun.write(Bun.file("index.html"), await fetch("http://example.com"));
 await Bun.write("output.txt", Bun.file("input.txt"));
 ```
 
+### `bun:ffi` (Foreign Functions Interface)
+
+`bun:ffi` lets you efficiently call native libraries from JavaScript. It works with languages that support the C ABI (Zig, Rust, C/C++, C#, Nim, Kotlin, etc).
+
+Note: this is available in the next version of Bun (v0.0.79), which is not released yet.
+
+This snippet prints sqlite3's version number:
+
+```ts
+import { dlopen, FFIType, suffix } from "bun:ffi";
+
+// `suffix` is either "dylib", "so", or "dll" depending on the platform
+// you don't have to use "suffix", it's just there for convenience
+const path = `libsqlite3.${suffix}`;
+
+const {
+  symbols: {
+    // sqlite3_libversion is the function we will call
+    sqlite3_libversion,
+  },
+} =
+  // dlopen() expects:
+  // 1. a library name or file path
+  // 2. a map of symbols
+  dlopen(path, {
+    // `sqlite3_libversion` is a function that returns a string
+    sqlite3_libversion: {
+      // sqlite3_libversion takes no arguments
+      args: [],
+      // sqlite3_libversion returns a pointer to a string
+      returns: FFIType.cstring,
+    },
+  });
+
+console.log(`SQLite 3 version: ${sqlite3_libversion()}`);
+```
+
+#### Low-overhead FFI
+
+7ns to go from JavaScript <> native code with `bun:ffi` (on my machine, an M1X)
+
+- 2x faster than napi (Node v17.7.1)
+- 75x faster than Deno v1.21.1
+
+As measured in [this simple benchmark](./bench/ffi/plus100)
+
+<img width="699" alt="image" src="https://user-images.githubusercontent.com/709451/166412310-df3df42c-68af-40f0-aa7f-fb72895df72d.png">
+
+<details>
+
+<summary>Why is bun:ffi fast?</summary>
+
+Bun generates & just-in-time compiles C bindings that efficiently convert values between JavaScript types and native types.
+
+To compile C, Bun embeds [TinyCC](https://github.com/TinyCC/tinycc) a small and fast C compiler.
+
+</details>
+
+#### Usage
+
+With Zig:
+
+```zig
+// add.zig
+pub export fn add(a: i32, b: i32) i32 {
+  return a + b;
+}
+```
+
+To compile:
+
+```bash
+zig build-lib add.zig -dynamic -OReleaseFast
+```
+
+Pass `dlopen` the path to the shared library and the list of symbols you want to import.
+
+```ts
+import { dlopen, FFIType, suffix } from "bun:ffi";
+
+const path = `libadd.${suffix}`;
+
+const lib = dlopen(path, {
+  add: {
+    args: [FFIType.i32, FFIType.i32],
+    returns: FFIType.i32,
+  },
+});
+
+lib.symbols.add(1, 2);
+```
+
+With Rust:
+
+```rust
+// add.rs
+#[no_mangle]
+pub extern "C" fn add(a: isize, b: isize) -> isize {
+    a + b
+}
+```
+
+To compile:
+
+```bash
+rustc --crate-type cdylib add.rs
+```
+
+#### Supported FFI types (`FFIType`)
+
+| `FFIType` | C Type     | Aliases                     |
+| --------- | ---------- | --------------------------- |
+| cstring   | `char*`    |                             |
+| ptr       | `void*`    | `pointer`, `void*`, `char*` |
+| i8        | `int8_t`   | `int8_t`                    |
+| i16       | `int16_t`  | `int16_t`                   |
+| i32       | `int32_t`  | `int32_t`, `int`            |
+| i64       | `int64_t`  | `int32_t`                   |
+| u8        | `uint8_t`  | `uint8_t`                   |
+| u16       | `uint16_t` | `uint16_t`                  |
+| u32       | `uint32_t` | `uint32_t`                  |
+| u64       | `uint64_t` | `uint32_t`                  |
+| f32       | `float`    | `float`                     |
+| f64       | `double`   | `double`                    |
+| bool      | `bool`     |                             |
+| char      | `char`     |                             |
+
+#### Strings (`CString`)
+
+JavaScript strings and C-like strings are different, and that complicates using strings with native libraries.
+
+<details>
+<summary>How are JavaScript strings and C strings different?</summary>
+
+JavaScript strings:
+
+- UTF16 (2 bytes per letter) or potentially latin1, depending on the JavaScript engine &amp; what characters are used
+- `length` stored separately
+- Immutable
+
+C strings:
+
+- UTF8 (1 byte per letter), usually
+- The length is not stored. Instead, the string is null-terminated which means the length is the index of the first `\0` it finds
+- Mutable
+
+</details>
+
+To help with that, `bun:ffi` exports `CString` which extends JavaScript's builtin `String` with a few extras:
+
+```ts
+class CString extends String {
+  /**
+   * Given a `ptr`, this will automatically search for the closing `\0` character and transcode from UTF-8 to UTF-16 if necessary.
+   */
+  constructor(ptr: number, byteOffset?: number, byteLength?: number): string;
+
+  /**
+   * The ptr to the C string
+   *
+   * This `CString` instance is a clone of the string, so it
+   * is safe to continue using this instance after the `ptr` has been
+   * freed.
+   */
+  ptr: number;
+  byteOffset?: number;
+  byteLength?: number;
+}
+```
+
+To convert from a 0-terminated pointer to a JavaScript string:
+
+```ts
+const myString = new CString(ptr);
+```
+
+To convert from a pointer with a known length to a JavaScript string:
+
+```ts
+const myString = new CString(ptr, 0, byteLength);
+```
+
+`new CString` clones the C string, so it is safe to continue using `myString` after `ptr` has been freed.
+
+```ts
+my_library_free(myString.ptr);
+
+// this is safe because myString is a clone
+console.log(myString);
+```
+
+##### Returning a string
+
+When used in `returns`, `FFIType.cstring` coerces the pointer to a JavaScript `string`. When used in `args`, `cstring` is identical to `ptr`.
+
+#### Pointers
+
+Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_programming)>) as a `number` in JavaScript.
+
+<details>
+
+<summary>How does a 64 bit pointer fit in a JavaScript number?</summary>
+
+64-bit processors support up to [52 bits of addressible space](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors).
+
+[JavaScript numbers](https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64) support 63 bits of usable space, so that leaves us with about 11 bits of extra space.
+
+Why not `BigInt`?
+
+`BigInt` is slower. JavaScript engines allocate a separate `BigInt` which means they can't just fit in a regular javascript value.
+
+If you pass a `BigInt` to a function, it will be converted to a `number`
+
+</details>
+
+**To convert from a TypedArray to a pointer**:
+
+```ts
+import { ptr } from "bun:ffi";
+var myTypedArray = new Uint8Array(32);
+const myPtr = ptr(myTypedArray);
+```
+
+**To convert from a pointer to an ArrayBuffer**:
+
+```ts
+import { ptr, toArrayBuffer } from "bun:ffi";
+var myTypedArray = new Uint8Array(32);
+const myPtr = ptr(myTypedArray);
+
+// toTypedArray accepts a `byteOffset` and `byteLength`
+// if `byteLength` is not provided, it is assumed to be a null-terminated pointer
+myTypedArray = new Uint8Array(toArrayBuffer(myPtr, 0, 32), 0, 32);
+```
+
+**Pointers & memory safety**
+
+Using raw pointers outside of FFI is extremely not recommended.
+
+A future version of bun may add a CLI flag to disable `bun:ffi` (or potentially a separate build of bun).
+
+**Pointer alignment**
+
+If an API expects a pointer sized to something other than `char` or `u8`, make sure the typed array is also that size.
+
+A `u64*` is not exactly the same as `[8]u8*` due to alignment
+
+##### Passing a pointer
+
+Where FFI functions expect a pointer, pass a TypedArray of equivalent size
+
+Easymode:
+
+```ts
+import { dlopen, FFIType } from "bun:ffi";
+
+const {
+  symbols: { encode_png },
+} = dlopen(myLibraryPath, {
+  encode_png: {
+    // FFIType's can be specified as strings too
+    args: ["ptr", "uint32_t"],
+    returns: FFIType.ptr,
+  },
+});
+
+const pixels = new Uint8ClampedArray(128 * 128 * 4);
+pixels.fill(254);
+pixels.subarray(0, 32 * 32 * 2).fill(0);
+
+const out = encode_png(
+  // pixels will be passed as a pointer
+  pixels,
+
+  pixels.byteLength
+);
+```
+
+The [generated wrapper](https://github.com/Jarred-Sumner/bun/blob/c6d732eee2721cd6191672cbe2c57fb17c3fffe4/src/javascript/jsc/ffi.exports.js#L146-L148) will automatically convert the pointer to a TypedArray.
+
+<details>
+
+<summary>Hardmode</summary>
+
+If you don't want the automatic conversion or you want a pointer to a specific byte offset within the TypedArray, you can also directly get the pointer to the TypedArray:
+
+```ts
+import { dlopen, FFIType, ptr } from "bun:ffi";
+
+const {
+  symbols: { encode_png },
+} = dlopen(myLibraryPath, {
+  encode_png: {
+    // FFIType's can be specified as strings too
+    args: ["ptr", "u32", "u32"],
+    returns: FFIType.ptr,
+  },
+});
+
+const pixels = new Uint8ClampedArray(128 * 128 * 4);
+pixels.fill(254);
+
+// this returns a number! not a BigInt!
+const myPtr = ptr(pixels);
+
+const out = encode_png(
+  myPtr,
+
+  // dimensions:
+  128,
+  128
+);
+```
+
+</details>
+
+##### Reading pointers
+
+```ts
+const out = encode_png(
+  // pixels will be passed as a pointer
+  pixels,
+
+  // dimensions:
+  128,
+  128
+);
+
+// assuming it is 0-terminated, it can be read like this:
+var png = new Uint8Array(toArrayBuffer(out));
+
+// save it to disk:
+await Bun.write("out.png", png);
+```
+
 ### `Bun.Transpiler`
 
 `Bun.Transpiler` lets you use Bun's transpiler from JavaScript (available in Bun.js)

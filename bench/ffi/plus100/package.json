@@ -1,0 +1,12 @@
+{
+  "name": "plus100",
+  "scripts": {
+    "setup": "bun run napi-setup && bun run compile",
+    "bench-deno": "deno run  --allow-ffi --unstable -A plus100.deno.js",
+    "napi-setup": "bash download-napi-plus100.sh",
+    "bench-napi": "node plus100.napi.mjs",
+    "bench-bun": "bun run ./plus100.bun.js",
+    "compile": "clang -mtune=native -O3 -shared ./plus100.c -o plus100.dylib",
+    "bench": "echo -e '\n--- Bun:\n' && bun run bench-bun && echo -e '\n--- Node:\n' && bun run bench-napi && echo -e '\n--- Deno:\n' && bun run bench-deno"
+  }
+}

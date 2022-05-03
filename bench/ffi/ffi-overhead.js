@@ -12,221 +12,221 @@ import { bench, group, run } from "mitata";
 
 const types = {
   returns_true: {
-    return_type: "bool",
+    returns: "bool",
     args: [],
   },
   returns_false: {
-    return_type: "bool",
+    returns: "bool",
     args: [],
   },
   returns_42_char: {
-    return_type: "char",
+    returns: "char",
     args: [],
   },
   // returns_42_float: {
-  //   return_type: "float",
+  //   returns: "float",
   //   args: [],
   // },
   // returns_42_double: {
-  //   return_type: "double",
+  //   returns: "double",
   //   args: [],
   // },
   returns_42_uint8_t: {
-    return_type: "uint8_t",
+    returns: "uint8_t",
     args: [],
   },
   returns_neg_42_int8_t: {
-    return_type: "int8_t",
+    returns: "int8_t",
     args: [],
   },
   returns_42_uint16_t: {
-    return_type: "uint16_t",
+    returns: "uint16_t",
     args: [],
   },
   returns_42_uint32_t: {
-    return_type: "uint32_t",
+    returns: "uint32_t",
     args: [],
   },
   // // returns_42_uint64_t: {
-  // //   return_type: "uint64_t",
+  // //   returns: "uint64_t",
   // //   args: [],
   // // },
   returns_neg_42_int16_t: {
-    return_type: "int16_t",
+    returns: "int16_t",
     args: [],
   },
   returns_neg_42_int32_t: {
-    return_type: "int32_t",
+    returns: "int32_t",
     args: [],
   },
   // returns_neg_42_int64_t: {
-  //   return_type: "int64_t",
+  //   returns: "int64_t",
   //   args: [],
   // },
 
   identity_char: {
-    return_type: "char",
+    returns: "char",
     args: ["char"],
   },
   // identity_float: {
-  //   return_type: "float",
+  //   returns: "float",
   //   args: ["float"],
   // },
   identity_bool: {
-    return_type: "bool",
+    returns: "bool",
     args: ["bool"],
   },
   // identity_double: {
-  //   return_type: "double",
+  //   returns: "double",
   //   args: ["double"],
   // },
   identity_int8_t: {
-    return_type: "int8_t",
+    returns: "int8_t",
     args: ["int8_t"],
   },
   identity_int16_t: {
-    return_type: "int16_t",
+    returns: "int16_t",
     args: ["int16_t"],
   },
   identity_int32_t: {
-    return_type: "int32_t",
+    returns: "int32_t",
     args: ["int32_t"],
   },
   // identity_int64_t: {
-  //   return_type: "int64_t",
+  //   returns: "int64_t",
   //   args: ["int64_t"],
   // },
   identity_uint8_t: {
-    return_type: "uint8_t",
+    returns: "uint8_t",
     args: ["uint8_t"],
   },
   identity_uint16_t: {
-    return_type: "uint16_t",
+    returns: "uint16_t",
     args: ["uint16_t"],
   },
   identity_uint32_t: {
-    return_type: "uint32_t",
+    returns: "uint32_t",
     args: ["uint32_t"],
   },
   // identity_uint64_t: {
-  //   return_type: "uint64_t",
+  //   returns: "uint64_t",
   //   args: ["uint64_t"],
   // },
 
   add_char: {
-    return_type: "char",
+    returns: "char",
     args: ["char", "char"],
   },
   add_float: {
-    return_type: "float",
+    returns: "float",
     args: ["float", "float"],
   },
   add_double: {
-    return_type: "double",
+    returns: "double",
     args: ["double", "double"],
   },
   add_int8_t: {
-    return_type: "int8_t",
+    returns: "int8_t",
     args: ["int8_t", "int8_t"],
   },
   add_int16_t: {
-    return_type: "int16_t",
+    returns: "int16_t",
     args: ["int16_t", "int16_t"],
   },
   add_int32_t: {
-    return_type: "int32_t",
+    returns: "int32_t",
     args: ["int32_t", "int32_t"],
   },
   // add_int64_t: {
-  //   return_type: "int64_t",
+  //   returns: "int64_t",
   //   args: ["int64_t", "int64_t"],
   // },
   add_uint8_t: {
-    return_type: "uint8_t",
+    returns: "uint8_t",
     args: ["uint8_t", "uint8_t"],
   },
   add_uint16_t: {
-    return_type: "uint16_t",
+    returns: "uint16_t",
     args: ["uint16_t", "uint16_t"],
   },
   add_uint32_t: {
-    return_type: "uint32_t",
+    returns: "uint32_t",
     args: ["uint32_t", "uint32_t"],
   },
 
   does_pointer_equal_42_as_int32_t: {
-    return_type: "bool",
+    returns: "bool",
     args: ["ptr"],
   },
 
   ptr_should_point_to_42_as_int32_t: {
-    return_type: "ptr",
+    returns: "ptr",
     args: [],
   },
   identity_ptr: {
-    return_type: "ptr",
+    returns: "ptr",
     args: ["ptr"],
   },
   // add_uint64_t: {
-  //   return_type: "uint64_t",
+  //   returns: "uint64_t",
   //   args: ["uint64_t", "uint64_t"],
   // },
 
   cb_identity_true: {
-    return_type: "bool",
+    returns: "bool",
     args: ["ptr"],
   },
   cb_identity_false: {
-    return_type: "bool",
+    returns: "bool",
     args: ["ptr"],
   },
   cb_identity_42_char: {
-    return_type: "char",
+    returns: "char",
     args: ["ptr"],
   },
   // cb_identity_42_float: {
-  // return_type: "float",
+  // returns: "float",
   // args: ["ptr"],
   // },
   // cb_identity_42_double: {
-  // return_type: "double",
+  // returns: "double",
   // args: ["ptr"],
   // },
   cb_identity_42_uint8_t: {
-    return_type: "uint8_t",
+    returns: "uint8_t",
     args: ["ptr"],
   },
   cb_identity_neg_42_int8_t: {
-    return_type: "int8_t",
+    returns: "int8_t",
     args: ["ptr"],
   },
   cb_identity_42_uint16_t: {
-    return_type: "uint16_t",
+    returns: "uint16_t",
     args: ["ptr"],
   },
   cb_identity_42_uint32_t: {
-    return_type: "uint32_t",
+    returns: "uint32_t",
     args: ["ptr"],
   },
   // cb_identity_42_uint64_t: {
-  // return_type: "uint64_t",
+  // returns: "uint64_t",
   // args: ["ptr"],
   // },
   cb_identity_neg_42_int16_t: {
-    return_type: "int16_t",
+    returns: "int16_t",
     args: ["ptr"],
   },
   cb_identity_neg_42_int32_t: {
-    return_type: "int32_t",
+    returns: "int32_t",
     args: ["ptr"],
   },
   // cb_identity_neg_42_int64_t: {
-  // return_type: "int64_t",
+  // returns: "int64_t",
   // args: ["ptr"],
   // },
 
   return_a_function_ptr_to_function_that_returns_true: {
-    return_type: "ptr",
+    returns: "ptr",
     args: [],
   },
 };

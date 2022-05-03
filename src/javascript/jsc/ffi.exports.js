@@ -214,11 +214,11 @@ export function dlopen(path, options) {
     var symbol = result.symbols[key];
     if (
       options[key]?.args?.length ||
-      FFIType[options[key]?.return_type] === FFIType.cstring
+      FFIType[options[key]?.returns] === FFIType.cstring
     ) {
       result.symbols[key] = FFIBuilder(
         options[key].args ?? [],
-        options[key].return_type ?? FFIType.void,
+        options[key].returns ?? FFIType.void,
         symbol,
         // in stacktraces:
         // instead of

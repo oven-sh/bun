@@ -1,5 +1,5 @@
-// clang -O3 -shared -undefined dynamic_lookup ./noop.c -o noop.dylib
+// clang -O3 -shared -mtune=native ./noop.c -o noop.dylib
 
-int noop();
+void noop();
 
-int noop() { return 1; }
+void noop() {}

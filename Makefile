@@ -12,7 +12,7 @@ endif
 MIN_MACOS_VERSION = 10.14
 
 
-MARCH_NATIVE =
+MARCH_NATIVE = -mtune=native
 
 ARCH_NAME :=
 DOCKER_BUILDARCH =
@@ -21,11 +21,12 @@ ifeq ($(ARCH_NAME_RAW),arm64)
    DOCKER_BUILDARCH = arm64
    BREW_PREFIX_PATH = /opt/homebrew
    MIN_MACOS_VERSION = 11.0
+   MARCH_NATIVE = -mtune=native
 else
    ARCH_NAME = x64
    DOCKER_BUILDARCH = amd64
    BREW_PREFIX_PATH = /usr/local
-   MARCH_NATIVE = -march=native
+   MARCH_NATIVE = -march=native -mtune=native
 endif
 
 AR=
@@ -102,7 +103,7 @@ LIBICONV_PATH =
 AR=llvm-ar-13
 endif
 
-OPTIMIZATION_LEVEL=-O3
+OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
 CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(BITCODE_OR_SECTIONS) -g $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
@@ -416,7 +417,7 @@ boringssl: boringssl-build boringssl-copy
 boringssl-debug: boringssl-build-debug boringssl-copy
 
 compile-ffi-test:
-	clang -O3 -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test$(SHARED_LIB_EXTENSION) ./integration/bunjs-only-snippets/ffi-test.c
+	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test$(SHARED_LIB_EXTENSION) ./integration/bunjs-only-snippets/ffi-test.c
 
 libbacktrace:
 	cd $(BUN_DEPS_DIR)/libbacktrace && \

@@ -314,7 +314,7 @@ declare module "bun:ffi" {
     void = 13,
 
     /**
-     * When used as a `return_type`, this will automatically become a {@link CString}.
+     * When used as a `returns`, this will automatically become a {@link CString}.
      *
      * When used in `args` it is equivalent to {@link FFIType.pointer}
      *
@@ -365,7 +365,7 @@ declare module "bun:ffi" {
      * const lib = dlopen('add', {
      *    // FFIType can be used or you can pass string labels.
      *    args: [FFIType.i32, "i32"],
-     *    return_type: "i32",
+     *    returns: "i32",
      * });
      * lib.symbols.add(1, 2)
      * ```
@@ -389,7 +389,7 @@ declare module "bun:ffi" {
      * ```js
      * const lib = dlopen('z', {
      *    version: {
-     *      return_type: "ptr",
+     *      returns: "ptr",
      *   }
      * });
      * console.log(new CString(lib.symbols.version()));
@@ -402,18 +402,18 @@ declare module "bun:ffi" {
      * }
      * ```
      */
-    return_type?: FFITypeOrString;
+    returns?: FFITypeOrString;
   }
 
   type Symbols = Record<string, FFIFunction>;
 
-  /**
-   * Compile a callback function
-   *
-   * Returns a function pointer
-   *
-   */
-  export function callback(ffi: FFIFunction, cb: Function): number;
+  // /**
+  //  * Compile a callback function
+  //  *
+  //  * Returns a function pointer
+  //  *
+  //  */
+  // export function callback(ffi: FFIFunction, cb: Function): number;
 
   export interface Library {
     symbols: Record<string, CallableFunction>;
@@ -583,4 +583,21 @@ declare module "bun:ffi" {
    */
   export function viewSource(symbols: Symbols, is_callback?: false): string[];
   export function viewSource(callback: FFIFunction, is_callback: true): string;
+
+  /**
+   * Platform-specific file extension name for dynamic libraries
+   *
+   * "." is not included
+   *
+   * @example
+   * ```js
+   * "dylib" // macOS
+   * ```
+   *
+   * @example
+   * ```js
+   * "so" // linux
+   * ```
+   */
+  export const suffix: string;
 }

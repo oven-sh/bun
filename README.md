@@ -1588,14 +1588,14 @@ console.log(`SQLite 3 version: ${sqlite3_libversion()}`);
 
 #### Low-overhead FFI
 
-7ns to go from JavaScript <> native code with `bun:ffi` (on my machine, an M1X)
+3ns to go from JavaScript <> native code with `bun:ffi` (on my machine, an M1X)
 
-- 2x faster than napi (Node v17.7.1)
-- 75x faster than Deno v1.21.1
+- 5x faster than napi (Node v17.7.1)
+- 100x faster than Deno v1.21.1
 
 As measured in [this simple benchmark](./bench/ffi/plus100)
 
-<img width="699" alt="image" src="https://user-images.githubusercontent.com/709451/166412310-df3df42c-68af-40f0-aa7f-fb72895df72d.png">
+<img src="https://user-images.githubusercontent.com/709451/166429741-e6d83ca5-3808-4397-acb7-bb2c9f4329be.png" height="400">
 
 <details>
 

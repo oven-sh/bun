@@ -8,20 +8,15 @@
 // It must be kept in sync with JSCJSValue.h
 // https://github.com/Jarred-Sumner/WebKit/blob/72c2052b781cbfd4af867ae79ac9de460e392fba/Source/JavaScriptCore/runtime/JSCJSValue.h#L455-L458
 #ifdef IS_CALLBACK
-// #define INJECT_BEFORE printf("bun_call %p cachedJSContext %p cachedCallbackFunction %p\n", &bun_call, cachedJSContext, cachedCallbackFunction);
+#define INJECT_BEFORE int c = 500; // This is a callback, so we need to inject code before the call
 #endif
 
 #define IS_BIG_ENDIAN 0
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
 
-// #include <stdint.h>
-#ifdef INJECT_BEFORE
-// #include <stdio.h>
-#endif
-// #include <tcclib.h>
 
-// // /* 7.18.1.1  Exact-width integer types */
+// /* 7.18.1.1  Exact-width integer types */
 typedef unsigned char uint8_t;
 typedef signed char int8_t;
 typedef short int16_t;
@@ -30,13 +25,20 @@ typedef int int32_t;
 typedef unsigned int uint32_t;
 typedef long long int64_t;
 typedef unsigned long long uint64_t;
-typedef uint64_t size_t;
+typedef unsigned long long size_t;
 typedef long intptr_t;
 typedef uint64_t uintptr_t;
 typedef _Bool bool;
 
 #define true 1
 #define false 0
+
+
+#ifdef INJECT_BEFORE
+// #include <stdint.h>
+#endif
+// #include <tcclib.h>
+
 
 
 // This value is 2^49, used to encode doubles such that the encoded value will
@@ -50,6 +52,10 @@ typedef _Bool bool;
 #define TagValueTrue             (OtherTag | BoolTag | true)
 #define TagValueUndefined        (OtherTag | UndefinedTag)
 #define TagValueNull             (OtherTag)
+#define NotCellMask  NumberTag | OtherTag
+
+#define MAX_INT32 2147483648
+#define MAX_INT52 9007199254740991
 
 // If all bits in the mask are set, this indicates an integer number,
 // if any but not all are set this value is a double precision number.
@@ -59,8 +65,8 @@ typedef  void* JSCell;
 
 typedef union EncodedJSValue {
   int64_t asInt64;
-#if USE_JSVALUE32_64
-#elif USE_JSVALUE64
+
+#if USE_JSVALUE64
   JSCell *ptr;
 #endif
 
@@ -85,7 +91,13 @@ EncodedJSValue ValueTrue = { TagValueTrue };
 
 typedef void* JSContext;
 
-#define LOAD_ARGUMENTS_FROM_CALL_FRAME EncodedJSValue* args = (EncodedJSValue*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList);
+// Bun_FFI_PointerOffsetToArgumentsList is injected into the build 
+// The value is generated in `make sizegen`
+// The value is 6.
+// On ARM64_32, the value is something else but it really doesn't matter for our case
+// However, I don't want this to subtly break amidst future upgrades to JavaScriptCore
+#define LOAD_ARGUMENTS_FROM_CALL_FRAME \
+  int64_t *argsPtr = (int64_t*)((size_t*)callFrame + Bun_FFI_PointerOffsetToArgumentsList)
 
 
 #ifdef IS_CALLBACK
@@ -94,11 +106,20 @@ JSContext cachedJSContext;
 void* cachedCallbackFunction;
 #endif
 
-uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value);
-int64_t JSVALUE_TO_INT64(EncodedJSValue value);
+static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));
+static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
+static bool JSVALUE_IS_NUMBER(EncodedJSValue val) __attribute__((__always_inline__));
 
-EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val);
-EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val);
+static uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value) __attribute__((__always_inline__));
+static int64_t  JSVALUE_TO_INT64(EncodedJSValue value) __attribute__((__always_inline__));
+uint64_t JSVALUE_TO_UINT64_SLOW(void* globalObject, EncodedJSValue value);
+int64_t  JSVALUE_TO_INT64_SLOW(EncodedJSValue value);
+
+EncodedJSValue UINT64_TO_JSVALUE_SLOW(void* globalObject, uint64_t val);
+EncodedJSValue INT64_TO_JSVALUE_SLOW(void* globalObject, int64_t val);
+static EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val) __attribute__((__always_inline__));
+static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) __attribute__((__always_inline__));
+
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) __attribute__((__always_inline__));
 static EncodedJSValue DOUBLE_TO_JSVALUE(double val) __attribute__((__always_inline__));
@@ -111,6 +132,19 @@ static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inli
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__));
+
+static bool JSVALUE_IS_CELL(EncodedJSValue val) {
+  return !(val.asInt64 & NotCellMask);
+}
+
+static bool JSVALUE_IS_INT32(EncodedJSValue val) {
+  return (val.asInt64 & NumberTag) == NumberTag;
+}
+
+static bool JSVALUE_IS_NUMBER(EncodedJSValue val) {
+  return val.asInt64 & NumberTag;
+}
+
 
 static void* JSVALUE_TO_PTR(EncodedJSValue val) {
   // must be a double
@@ -165,9 +199,57 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
   return val.asInt64 == TagValueTrue;
 }
 
-#define arg(i) ((EncodedJSValue*)args)[i]
+
+static uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value) {
+  if (JSVALUE_IS_INT32(value)) {
+    return (uint64_t)JSVALUE_TO_INT32(value);
+  }
+
+  if (JSVALUE_IS_NUMBER(value)) {
+    return (uint64_t)JSVALUE_TO_DOUBLE(value);
+  }
+
+  return JSVALUE_TO_UINT64_SLOW(globalObject, value);
+}
+static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
+  if (JSVALUE_IS_INT32(value)) {
+    return (int64_t)JSVALUE_TO_INT32(value);
+  }
+
+  if (JSVALUE_IS_NUMBER(value)) {
+    return (int64_t)JSVALUE_TO_DOUBLE(value);
+  }
+
+  return JSVALUE_TO_INT64_SLOW(value);
+}
+
+static EncodedJSValue UINT64_TO_JSVALUE(void* globalObject, uint64_t val) {
+  if (val < MAX_INT32) {
+    return INT32_TO_JSVALUE((int32_t)val);
+  }
+
+  if (val < MAX_INT52) {
+    return DOUBLE_TO_JSVALUE((double)val);
+  }
+
+  return UINT64_TO_JSVALUE_SLOW(globalObject, val);
+}
+
+static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) {
+  if (val >= -MAX_INT32 && val <= MAX_INT32) {
+    return INT32_TO_JSVALUE((int32_t)val);
+  }
+
+  if (val >= -MAX_INT52 && val <= MAX_INT52) {
+    return DOUBLE_TO_JSVALUE((double)val);
+  }
+
+  return INT64_TO_JSVALUE_SLOW(globalObject, val);
+}
+
 #ifndef IS_CALLBACK
 void* JSFunctionCall(void* globalObject, void* callFrame);
+
 #endif
 
 
@@ -178,14 +260,14 @@ void* JSFunctionCall(void* globalObject, void* callFrame);
 /* --- The Callback Function */
 bool my_callback_function(void* arg0);
 
-bool my_callback_function(, void* arg0) {
+bool my_callback_function(void* arg0) {
 #ifdef INJECT_BEFORE
 INJECT_BEFORE;
 #endif
   EncodedJSValue arguments[1] = {
-void*    PTR_TO_JSVALUE(arg0)
+    PTR_TO_JSVALUE(arg0)
   };
-    EncodedJSValue return_value = {bun_call(cachedJSContext, cachedCallbackFunction, (void*)0, 1, arguments, 0)};
+  EncodedJSValue return_value = {bun_call(cachedJSContext, cachedCallbackFunction, (void*)0, 1, &arguments[0], (void*)0)};
   return JSVALUE_TO_BOOL(return_value);
 }
 

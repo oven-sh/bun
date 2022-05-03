@@ -79,28 +79,6 @@ const ComptimeStringMap = @import("../../../comptime_string_map.zig").ComptimeSt
 
 const TCC = @import("../../../../tcc.zig");
 
-/// This is the entry point for generated FFI callback functions
-/// We want to avoid potentially causing LLVM to not inline our regular calls to JSC.C.JSObjectCallAsFunction
-/// to do that, we use a different pointer for the callback function
-/// which is this noinline wrapper
-noinline fn bun_call(
-    ctx: JSC.C.JSContextRef,
-    function: JSC.C.JSObjectRef,
-    count: usize,
-    argv: [*c]const JSC.C.JSValueRef,
-) callconv(.C) JSC.C.JSObjectRef {
-    var exception = [1]JSC.C.JSValueRef{null};
-    Output.debug("[bun_call] {d} args\n", .{count});
-    return JSC.C.JSObjectCallAsFunction(ctx, function, JSC.JSValue.jsUndefined().asObjectRef(), count, argv, &exception);
-}
-
-comptime {
-    if (!JSC.is_bindgen) {
-        _ = bun_call;
-        @export(bun_call, .{ .name = "bun_call" });
-    }
-}
-
 pub const FFI = struct {
     dylib: std.DynLib,
     functions: std.StringArrayHashMapUnmanaged(Function) = .{},
@@ -596,6 +574,7 @@ pub const FFI = struct {
             JSVALUE_TO_UINT64: fn (JSValue0: JSC.JSValue) callconv(.C) u64,
             INT64_TO_JSVALUE: fn (arg0: [*c]JSC.JSGlobalObject, arg1: i64) callconv(.C) JSC.JSValue,
             UINT64_TO_JSVALUE: fn (arg0: [*c]JSC.JSGlobalObject, arg1: u64) callconv(.C) JSC.JSValue,
+            bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
         };
         const headers = @import("../bindings/headers.zig");
 
@@ -604,9 +583,10 @@ pub const FFI = struct {
             .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
             .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
             .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
+            .bun_call = &JSC.C.JSObjectCallAsFunction,
         };
 
-        const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols";
+        const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols" ++ if (Environment.isDebug) " -g" else "";
 
         pub fn compile(
             this: *Function,
@@ -663,31 +643,7 @@ pub const FFI = struct {
             }
             CompilerRT.inject(state);
             _ = TCC.tcc_add_symbol(state, this.base_name, this.symbol_from_dynamic_library.?);
-            _ = TCC.tcc_add_symbol(
-                state,
-                "JSVALUE_TO_INT64",
-                workaround.JSVALUE_TO_INT64,
-            );
-            _ = TCC.tcc_add_symbol(
-                state,
-                "JSVALUE_TO_UINT64",
-                workaround.JSVALUE_TO_UINT64,
-            );
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
-            std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
 
-            _ = TCC.tcc_add_symbol(
-                state,
-                "INT64_TO_JSVALUE",
-                workaround.INT64_TO_JSVALUE,
-            );
-            _ = TCC.tcc_add_symbol(
-                state,
-                "UINT64_TO_JSVALUE",
-                workaround.UINT64_TO_JSVALUE,
-            );
             if (this.step == .failed) {
                 return;
             }
@@ -731,7 +687,6 @@ pub const FFI = struct {
             };
             return;
         }
-
         const CompilerRT = struct {
             noinline fn memset(
                 dest: [*]u8,
@@ -752,6 +707,31 @@ pub const FFI = struct {
             pub fn inject(state: *TCC.TCCState) void {
                 _ = TCC.tcc_add_symbol(state, "memset", &memset);
                 _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
+
+                _ = TCC.tcc_add_symbol(
+                    state,
+                    "JSVALUE_TO_INT64_SLOW",
+                    workaround.JSVALUE_TO_INT64,
+                );
+                _ = TCC.tcc_add_symbol(
+                    state,
+                    "JSVALUE_TO_UINT64_SLOW",
+                    workaround.JSVALUE_TO_UINT64,
+                );
+                std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
+                std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
+                std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
+                std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
+                _ = TCC.tcc_add_symbol(
+                    state,
+                    "INT64_TO_JSVALUE_SLOW",
+                    workaround.INT64_TO_JSVALUE,
+                );
+                _ = TCC.tcc_add_symbol(
+                    state,
+                    "UINT64_TO_JSVALUE_SLOW",
+                    workaround.UINT64_TO_JSVALUE,
+                );
             }
         };
 
@@ -797,12 +777,12 @@ pub const FFI = struct {
 
                 return;
             }
-            Output.debug("here", .{});
+            CompilerRT.inject(state);
 
-            _ = TCC.tcc_add_symbol(state, "bun_call", JSC.C.JSObjectCallAsFunction);
+            Output.debug("here", .{});
+            _ = TCC.tcc_add_symbol(state, "bun_call", workaround.bun_call.*);
             _ = TCC.tcc_add_symbol(state, "cachedJSContext", js_context);
             _ = TCC.tcc_add_symbol(state, "cachedCallbackFunction", js_function);
-            CompilerRT.inject(state);
 
             var relocation_size = TCC.tcc_relocate(state, null);
             if (relocation_size == 0) return;
@@ -826,14 +806,11 @@ pub const FFI = struct {
 
                 return;
             };
-            Output.debug("symbol: {*}", .{symbol});
-            Output.debug("bun_call: {*}", .{&bun_call});
-            Output.debug("js_function: {*}", .{js_function});
 
             this.step = .{
                 .compiled = .{
                     .ptr = symbol,
-                    .buf = &[_]u8{},
+                    .buf = bytes,
                     .js_function = js_function,
                     .js_context = js_context,
                 },
@@ -884,17 +861,68 @@ pub const FFI = struct {
                 try arg.typename(writer);
                 try writer.print(" arg{d}", .{i});
             }
-            try writer.writeAll(");\n\n");
-
-            // -- Generate JavaScriptCore's C wrapper function
             try writer.writeAll(
+                \\);
+                \\
+                \\
                 \\/* ---- Your Wrapper Function ---- */
                 \\void* JSFunctionCall(void* globalObject, void* callFrame) {
-                \\#ifdef HAS_ARGUMENTS
-                \\  LOAD_ARGUMENTS_FROM_CALL_FRAME;
-                \\#endif
                 \\
             );
+
+            if (this.arg_types.items.len > 0) {
+                try writer.writeAll(
+                    \\  LOAD_ARGUMENTS_FROM_CALL_FRAME;
+                    \\
+                );
+                for (this.arg_types.items) |arg, i| {
+                    if (arg.needsACastInC()) {
+                        if (i < this.arg_types.items.len - 1) {
+                            try writer.print(
+                                \\  EncodedJSValue arg{d};
+                                \\  arg{d}.asInt64 = *argsPtr++;
+                                \\
+                            ,
+                                .{
+                                    i,
+                                    i,
+                                },
+                            );
+                        } else {
+                            try writer.print(
+                                \\  EncodedJSValue arg{d};
+                                \\  arg{d}.asInt64 = *argsPtr;
+                                \\
+                            ,
+                                .{
+                                    i,
+                                    i,
+                                },
+                            );
+                        }
+                    } else {
+                        if (i < this.arg_types.items.len - 1) {
+                            try writer.print(
+                                \\  int64_t arg{d} = *argsPtr++;
+                                \\
+                            ,
+                                .{
+                                    i,
+                                },
+                            );
+                        } else {
+                            try writer.print(
+                                \\  int64_t arg{d} = *argsPtr;
+                                \\
+                            ,
+                                .{
+                                    i,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
 
             // try writer.writeAll(
             //     "(JSContext ctx, void* function, void* thisObject, size_t argumentCount, const EncodedJSValue arguments[], void* exception);\n\n",
@@ -909,7 +937,7 @@ pub const FFI = struct {
             }
             try writer.print("{s}(", .{std.mem.span(this.base_name)});
             first = true;
-            arg_buf[0..4].* = "arg(".*;
+            arg_buf[0..3].* = "arg".*;
             for (this.arg_types.items) |arg, i| {
                 if (!first) {
                     try writer.writeAll(", ");
@@ -917,9 +945,13 @@ pub const FFI = struct {
                 first = false;
 
                 try writer.writeAll("    ");
-                _ = std.fmt.bufPrintIntToSlice(arg_buf["arg(".len..], i, 10, .lower, .{});
-                arg_buf["arg(N".len] = ')';
-                try writer.print("{}", .{arg.toC(arg_buf[0..6])});
+                const lengthBuf = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
+                const argName = arg_buf[0 .. 3 + lengthBuf.len];
+                if (arg.needsACastInC()) {
+                    try writer.print("{}", .{arg.toC(argName)});
+                } else {
+                    try writer.writeAll(argName);
+                }
             }
             try writer.writeAll(");\n");
 
@@ -982,6 +1014,7 @@ pub const FFI = struct {
             }
             try writer.writeAll(");\n\n");
 
+            first = true;
             try this.return_type.typename(writer);
 
             try writer.writeAll(" my_callback_function");
@@ -1010,7 +1043,6 @@ pub const FFI = struct {
                 var arg_buf: [512]u8 = undefined;
                 arg_buf[0.."arg".len].* = "arg".*;
                 for (this.arg_types.items) |arg, i| {
-                    try arg.typename(writer);
                     const printed = std.fmt.bufPrintIntToSlice(arg_buf["arg".len..], i, 10, .lower, .{});
                     const arg_name = arg_buf[0 .. "arg".len + printed.len];
                     try writer.print("    {}", .{arg.toJS(arg_name)});
@@ -1025,7 +1057,7 @@ pub const FFI = struct {
 
             try writer.writeAll("  ");
             if (!(this.return_type == .void)) {
-                try writer.writeAll("  EncodedJSValue return_value = {");
+                try writer.writeAll("EncodedJSValue return_value = {");
             }
             // JSC.C.JSObjectCallAsFunction(
             //     ctx,
@@ -1037,9 +1069,9 @@ pub const FFI = struct {
             // );
             try writer.writeAll("bun_call(cachedJSContext, cachedCallbackFunction, (void*)0, ");
             if (this.arg_types.items.len > 0) {
-                try writer.print("{d}, arguments, 0)", .{this.arg_types.items.len});
+                try writer.print("{d}, &arguments[0], (void*)0)", .{this.arg_types.items.len});
             } else {
-                try writer.writeAll("0, arguments, (void*)0)");
+                try writer.writeAll("0, &arguments[0], (void*)0)");
             }
 
             if (this.return_type != .void) {
@@ -1075,6 +1107,14 @@ pub const FFI = struct {
         @"void" = 13,
 
         cstring = 14,
+
+        /// Types that we can directly pass through as an `int64_t`
+        pub fn needsACastInC(this: ABIType) bool {
+            return switch (this) {
+                .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => false,
+                else => true,
+            };
+        }
 
         const map = .{
             .{ "bool", ABIType.bool },

@@ -72,7 +72,7 @@ ffiWrappers[FFIType.uint32_t] = function uint32(val) {
 };
 ffiWrappers[FFIType.int64_t] = function int64(val) {
   if (typeof val === "bigint") {
-    if (val < Number.MAX_VALUE) {
+    if (val < BigInt(Number.MAX_VALUE)) {
       return Number(val).valueOf();
     }
   }
@@ -86,7 +86,7 @@ ffiWrappers[FFIType.int64_t] = function int64(val) {
 
 ffiWrappers[FFIType.uint64_t] = function int64(val) {
   if (typeof val === "bigint") {
-    if (val < Number.MAX_VALUE && val > 0) {
+    if (val < BigInt(Number.MAX_VALUE) && val > 0) {
       return Number(val).valueOf();
     }
   }
@@ -100,7 +100,7 @@ ffiWrappers[FFIType.uint64_t] = function int64(val) {
 
 ffiWrappers[FFIType.uint16_t] = function uint64(val) {
   if (typeof val === "bigint") {
-    if (val < Number.MAX_VALUE) {
+    if (val < BigInt(Number.MAX_VALUE)) {
       return Math.abs(Number(val).valueOf());
     }
   }
@@ -238,17 +238,6 @@ export function dlopen(path, options) {
   return result;
 }
 
-export function callback(options) {
-  const result = nativeCallback(options);
-
-  if (options.args || options.return_type) {
-    return FFIBuilder(
-      options.args ?? [],
-      options.return_type ?? FFIType.void,
-      result,
-      "callback"
-    );
-  }
-
-  return result;
+export function callback(options, cb) {
+  return nativeCallback(options, cb);
 }

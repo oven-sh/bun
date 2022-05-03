@@ -128,6 +128,24 @@ WORKDIR $BUN_DIR
 
 RUN make boringssl && rm -rf src/deps/boringssl Makefile
 
+FROM bunbunbunbun/bun-base:latest as base64
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/base64 ${BUN_DIR}/src/base64
+
+WORKDIR $BUN_DIR
+
+RUN make base64 && rm -rf src/base64 Makefile
+
 FROM bunbunbunbun/bun-base:latest as uws
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -171,6 +189,7 @@ WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR && \
     make picohttp
+
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as identifier_cache
 
@@ -244,6 +263,7 @@ COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=libbacktrace ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
 

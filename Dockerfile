@@ -71,6 +71,26 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make libarchive && rm -rf src/deps/libarchive Makefile
 
+FROM bunbunbunbun/bun-base:latest as tinycc
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY src/deps/tinycc ${BUN_DIR}/src/deps/tinycc
+
+WORKDIR $BUN_DIR
+
+RUN cd $BUN_DIR && \
+    make tinycc && rm -rf src/deps/tinycc Makefile
+
+
 FROM bunbunbunbun/bun-base:latest as libbacktrace
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -223,6 +243,7 @@ COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=libbacktrace ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
 

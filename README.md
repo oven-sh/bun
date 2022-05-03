@@ -1885,6 +1885,13 @@ var png = new Uint8Array(toArrayBuffer(out));
 await Bun.write("out.png", png);
 ```
 
+##### Not implemented yet
+
+`bun:ffi` has a few more things planned but not implemented yet:
+
+- callback functions
+- async functions
+
 ### `Bun.Transpiler`
 
 `Bun.Transpiler` lets you use Bun's transpiler from JavaScript (available in Bun.js)
@@ -2150,6 +2157,7 @@ bun also statically links these libraries:
 - [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api), which is MIT licensed
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is MIT licensed
 - [`uSockets`](https://github.com/uNetworking/uSockets), which is MIT licensed
+- [`tinycc`](https://github.com/tinycc/tinycc), which is LGPL v2.1 licensed
 
 For compatibiltiy reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 

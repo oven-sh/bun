@@ -46,3 +46,8 @@
 	url = https://github.com/Jarred-Sumner/uWebSockets
 	ignore = dirty
 	depth = 1
+[submodule "src/deps/tinycc"]
+	path = src/deps/tinycc
+	url = https://github.com/Jarred-Sumner/tinycc.git
+	ignore = dirty
+	depth = 1

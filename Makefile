@@ -304,8 +304,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		-larchive \
 		-lssl \
 		-lbase64 \
-		-ltcc \
-		-L$(TINYCC_DIR)
+		-ltcc
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 
@@ -367,7 +366,8 @@ tinycc:
 	cd $(TINYCC_DIR) && \
 		make clean && \
 		AR=$(AR) CC=$(CC) CFLAGS='$(CFLAGS) -emit-llvm $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CC) --ar=$(AR) --config-predefs=yes  && \
-		make -j10
+		make -j10 && \
+		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 		
 generate-builtins:
 	rm -f src/javascript/jsc/bindings/WebCoreBuiltins.cpp src/javascript/jsc/bindings/WebCoreBuiltins.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCore*Builtins* || echo ""
@@ -391,7 +391,7 @@ generate-builtins:
 # We will get duplicate symbols if we don't delete it
 	rm src/javascript/jsc/bindings/WebCoreJSBuiltins.cpp
 
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64
+vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
 prepare-types:
 	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) types/bun/bundle.ts packages/bun-types
@@ -810,7 +810,7 @@ ifeq ($(OS_NAME),linux)
 release-bin-push-dsym:
 endif
 
-TINYCC_DIR ?= $(realpath $(HOME)/Build/tinycc)
+TINYCC_DIR ?= $(realpath $(BUN_DEPS_DIR)/tinycc)
 
 release-bin-push: release-bin-push-bin release-bin-push-dsym
 generate-release-bin-as-zip: release-bin-generate release-bin-codesign

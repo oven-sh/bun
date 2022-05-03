@@ -1810,7 +1810,7 @@ const {
 } = dlopen(myLibraryPath, {
   encode_png: {
     // FFIType's can be specified as strings too
-    args: ["ptr", "uint32_t"],
+    args: ["ptr", "u32", "u32"],
     returns: FFIType.ptr,
   },
 });
@@ -1823,7 +1823,8 @@ const out = encode_png(
   // pixels will be passed as a pointer
   pixels,
 
-  pixels.byteLength
+  128,
+  128
 );
 ```
 

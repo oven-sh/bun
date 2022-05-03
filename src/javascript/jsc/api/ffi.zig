@@ -77,7 +77,7 @@ const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
 const ComptimeStringMap = @import("../../../comptime_string_map.zig").ComptimeStringMap;
 
-const TCC = @import("../../../../tcc.zig");
+const TCC = @import("../../../tcc.zig");
 
 pub const FFI = struct {
     dylib: std.DynLib,

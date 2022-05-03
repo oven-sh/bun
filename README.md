@@ -1828,7 +1828,7 @@ const out = encode_png(
 );
 ```
 
-The [generated wrapper](https://github.com/Jarred-Sumner/bun/blob/c6d732eee2721cd6191672cbe2c57fb17c3fffe4/src/javascript/jsc/ffi.exports.js#L146-L148) will automatically convert the pointer to a TypedArray.
+The [auto-generated wrapper](https://github.com/Jarred-Sumner/bun/blob/c6d732eee2721cd6191672cbe2c57fb17c3fffe4/src/javascript/jsc/ffi.exports.js#L146-L148) converts the pointer to a TypedArray
 
 <details>
 

@@ -416,7 +416,15 @@ declare module "bun:ffi" {
   // export function callback(ffi: FFIFunction, cb: Function): number;
 
   export interface Library {
-    symbols: Record<string, CallableFunction>;
+    symbols: Record<
+      string,
+      CallableFunction & {
+        /**
+         * The function without a wrapper
+         */
+        native: CallableFunction;
+      }
+    >;
 
     /**
      * `dlclose` the library, unloading the symbols and freeing allocated memory.

@@ -24,3 +24,7 @@ bench("noop() ", () => {
 // collect option collects benchmark returned values into array
 // prevents gc and can help with jit optimizing out functions
 await run({ collect: false, percentiles: true });
+
+if (plus100(1) !== 101) {
+  throw new Error("plus100(1) !== 101");
+}

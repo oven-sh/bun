@@ -14,3 +14,7 @@ bench("noop() ", () => {
 });
 await run({ collect: false, percentiles: true });
 console.log("\n");
+
+if (plus100(1) !== 101) {
+  throw new Error("plus100(1) !== 101");
+}

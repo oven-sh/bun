@@ -1118,6 +1118,9 @@ pub const FFI = struct {
 
         cstring = 14,
 
+        i64_fast = 15,
+        u64_fast = 16,
+
         /// Types that we can directly pass through as an `int64_t`
         pub fn needsACastInC(this: ABIType) bool {
             return switch (this) {
@@ -1160,6 +1163,8 @@ pub const FFI = struct {
             .{ "pointer", ABIType.ptr },
             .{ "void", ABIType.@"void" },
             .{ "cstring", ABIType.@"cstring" },
+            .{ "i64_fast", ABIType.i64_fast },
+            .{ "u64_fast", ABIType.u64_fast },
         };
         pub const label = ComptimeStringMap(ABIType, map);
         const EnumMapFormatter = struct {
@@ -1221,10 +1226,10 @@ pub const FFI = struct {
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
                         try writer.print("JSVALUE_TO_INT32({s})", .{self.symbol});
                     },
-                    .int64_t => {
+                    .i64_fast, .int64_t => {
                         try writer.print("JSVALUE_TO_INT64({s})", .{self.symbol});
                     },
-                    .uint64_t => {
+                    .u64_fast, .uint64_t => {
                         try writer.print("JSVALUE_TO_UINT64(globalObject, {s})", .{self.symbol});
                     },
                     .cstring, .ptr => {
@@ -1253,11 +1258,17 @@ pub const FFI = struct {
                     .char, .int8_t, .uint8_t, .int16_t, .uint16_t, .int32_t, .uint32_t => {
                         try writer.print("INT32_TO_JSVALUE({s})", .{self.symbol});
                     },
-                    .int64_t => {
+                    .i64_fast => {
                         try writer.print("INT64_TO_JSVALUE(globalObject, {s})", .{self.symbol});
                     },
-                    .uint64_t => {
+                    .int64_t => {
+                        try writer.print("INT64_TO_JSVALUE_SLOW(globalObject, {s})", .{self.symbol});
+                    },
+                    .u64_fast => {
                         try writer.print("UINT64_TO_JSVALUE(globalObject, {s})", .{self.symbol});
+                    },
+                    .uint64_t => {
+                        try writer.print("UINT64_TO_JSVALUE_SLOW(globalObject, {s})", .{self.symbol});
                     },
                     .cstring, .ptr => {
                         try writer.print("PTR_TO_JSVALUE({s})", .{self.symbol});
@@ -1300,8 +1311,8 @@ pub const FFI = struct {
                 .uint16_t => "uint16_t",
                 .int32_t => "int32_t",
                 .uint32_t => "uint32_t",
-                .int64_t => "int64_t",
-                .uint64_t => "uint64_t",
+                .i64_fast, .int64_t => "int64_t",
+                .u64_fast, .uint64_t => "uint64_t",
                 .double => "double",
                 .float => "float",
                 .char => "char",

@@ -320,6 +320,30 @@ declare module "bun:ffi" {
      *
      */
     cstring = 14,
+
+    /**
+     * Attempt to coerce `BigInt` into a `Number` if it fits. This improves performance
+     * but means you might get a `BigInt` or you might get a `number`.
+     *
+     * In C, this always becomes `int64_t`
+     *
+     * In JavaScript, this could be number or it could be BigInt, depending on what
+     * value is passed in.
+     *
+     */
+    i64_fast = 15,
+
+    /**
+     * Attempt to coerce `BigInt` into a `Number` if it fits. This improves performance
+     * but means you might get a `BigInt` or you might get a `number`.
+     *
+     * In C, this always becomes `uint64_t`
+     *
+     * In JavaScript, this could be number or it could be BigInt, depending on what
+     * value is passed in.
+     *
+     */
+    u64_fast = 16,
   }
   export type FFITypeOrString =
     | FFIType

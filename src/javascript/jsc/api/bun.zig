@@ -981,121 +981,150 @@ pub const Class = NewClass(
             },
         },
     },
-    .{ .match = .{
-        .rfn = Router.match,
-        .ts = Router.match_type_definition,
-    }, .sleepSync = .{
-        .rfn = sleepSync,
-    }, .fetch = .{
-        .rfn = Fetch.call,
-        .ts = d.ts{},
-    }, .getImportedStyles = .{
-        .rfn = Bun.getImportedStyles,
-        .ts = d.ts{
-            .name = "getImportedStyles",
-            .@"return" = "string[]",
+    .{
+        .match = .{
+            .rfn = Router.match,
+            .ts = Router.match_type_definition,
         },
-    }, .inspect = .{
-        .rfn = Bun.inspect,
-        .ts = d.ts{
-            .name = "inspect",
-            .@"return" = "string",
+        .sleepSync = .{
+            .rfn = sleepSync,
         },
-    }, .getRouteFiles = .{
-        .rfn = Bun.getRouteFiles,
-        .ts = d.ts{
-            .name = "getRouteFiles",
-            .@"return" = "string[]",
+        .fetch = .{
+            .rfn = Fetch.call,
+            .ts = d.ts{},
         },
-    }, ._Path = .{
-        .rfn = Bun.newPath,
-        .ts = d.ts{},
-    }, .getRouteNames = .{
-        .rfn = Bun.getRouteNames,
-        .ts = d.ts{
-            .name = "getRouteNames",
-            .@"return" = "string[]",
+        .getImportedStyles = .{
+            .rfn = Bun.getImportedStyles,
+            .ts = d.ts{
+                .name = "getImportedStyles",
+                .@"return" = "string[]",
+            },
         },
-    }, .readFile = .{
-        .rfn = Bun.readFileAsString,
-        .ts = d.ts{
-            .name = "readFile",
-            .@"return" = "string",
+        .inspect = .{
+            .rfn = Bun.inspect,
+            .ts = d.ts{
+                .name = "inspect",
+                .@"return" = "string",
+            },
         },
-    }, .resolveSync = .{
-        .rfn = Bun.resolveSync,
-        .ts = d.ts{
-            .name = "resolveSync",
-            .@"return" = "string",
+        .getRouteFiles = .{
+            .rfn = Bun.getRouteFiles,
+            .ts = d.ts{
+                .name = "getRouteFiles",
+                .@"return" = "string[]",
+            },
         },
-    }, .resolve = .{
-        .rfn = Bun.resolve,
-        .ts = d.ts{
-            .name = "resolve",
-            .@"return" = "string",
+        ._Path = .{
+            .rfn = Bun.newPath,
+            .ts = d.ts{},
         },
-    }, .readFileBytes = .{
-        .rfn = Bun.readFileAsBytes,
-        .ts = d.ts{
-            .name = "readFile",
-            .@"return" = "Uint8Array",
+        .getRouteNames = .{
+            .rfn = Bun.getRouteNames,
+            .ts = d.ts{
+                .name = "getRouteNames",
+                .@"return" = "string[]",
+            },
         },
-    }, .getPublicPath = .{
-        .rfn = Bun.getPublicPathJS,
-        .ts = d.ts{
-            .name = "getPublicPath",
-            .@"return" = "string",
+        .readFile = .{
+            .rfn = Bun.readFileAsString,
+            .ts = d.ts{
+                .name = "readFile",
+                .@"return" = "string",
+            },
         },
-    }, .registerMacro = .{
-        .rfn = Bun.registerMacro,
-        .ts = d.ts{
-            .name = "registerMacro",
-            .@"return" = "undefined",
+        .resolveSync = .{
+            .rfn = Bun.resolveSync,
+            .ts = d.ts{
+                .name = "resolveSync",
+                .@"return" = "string",
+            },
         },
-        .enumerable = false,
-    }, .fs = .{
-        .rfn = Bun.createNodeFS,
-        .ts = d.ts{},
-        .enumerable = false,
-    }, .jest = .{
-        .rfn = @import("../test/jest.zig").Jest.call,
-        .ts = d.ts{},
-        .enumerable = false,
-    }, .gc = .{
-        .rfn = Bun.runGC,
-        .ts = d.ts{},
-    }, .allocUnsafe = .{
-        .rfn = Bun.allocUnsafe,
-        .ts = .{},
-    }, .mmap = .{
-        .rfn = Bun.mmapFile,
-        .ts = .{},
-    }, .generateHeapSnapshot = .{
-        .rfn = Bun.generateHeapSnapshot,
-        .ts = d.ts{},
-    }, .shrink = .{
-        .rfn = Bun.shrink,
-        .ts = d.ts{},
-    }, .openInEditor = .{
-        .rfn = Bun.openInEditor,
-        .ts = d.ts{},
-    }, .readAllStdinSync = .{
-        .rfn = Bun.readAllStdinSync,
-        .ts = d.ts{},
-    }, .serve = .{
-        .rfn = Bun.serve,
-        .ts = d.ts{},
-    }, .file = .{
-        .rfn = JSC.WebCore.Blob.constructFile,
-        .ts = d.ts{},
-    }, .write = .{
-        .rfn = JSC.WebCore.Blob.writeFile,
-        .ts = d.ts{},
-    }, .sha = .{
-        .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash", false, false, true),
-    }, .nanoseconds = .{
-        .rfn = nanoseconds,
-    } },
+        .resolve = .{
+            .rfn = Bun.resolve,
+            .ts = d.ts{
+                .name = "resolve",
+                .@"return" = "string",
+            },
+        },
+        .readFileBytes = .{
+            .rfn = Bun.readFileAsBytes,
+            .ts = d.ts{
+                .name = "readFile",
+                .@"return" = "Uint8Array",
+            },
+        },
+        .getPublicPath = .{
+            .rfn = Bun.getPublicPathJS,
+            .ts = d.ts{
+                .name = "getPublicPath",
+                .@"return" = "string",
+            },
+        },
+        .registerMacro = .{
+            .rfn = Bun.registerMacro,
+            .ts = d.ts{
+                .name = "registerMacro",
+                .@"return" = "undefined",
+            },
+            .enumerable = false,
+        },
+        .fs = .{
+            .rfn = Bun.createNodeFS,
+            .ts = d.ts{},
+            .enumerable = false,
+        },
+        .jest = .{
+            .rfn = @import("../test/jest.zig").Jest.call,
+            .ts = d.ts{},
+            .enumerable = false,
+        },
+        .gc = .{
+            .rfn = Bun.runGC,
+            .ts = d.ts{},
+        },
+        .allocUnsafe = .{
+            .rfn = Bun.allocUnsafe,
+            .ts = .{},
+        },
+        .mmap = .{
+            .rfn = Bun.mmapFile,
+            .ts = .{},
+        },
+        .generateHeapSnapshot = .{
+            .rfn = Bun.generateHeapSnapshot,
+            .ts = d.ts{},
+        },
+        .shrink = .{
+            .rfn = Bun.shrink,
+            .ts = d.ts{},
+        },
+        .openInEditor = .{
+            .rfn = Bun.openInEditor,
+            .ts = d.ts{},
+        },
+        .readAllStdinSync = .{
+            .rfn = Bun.readAllStdinSync,
+            .ts = d.ts{},
+        },
+        .serve = .{
+            .rfn = Bun.serve,
+            .ts = d.ts{},
+        },
+        .file = .{
+            .rfn = JSC.WebCore.Blob.constructFile,
+            .ts = d.ts{},
+        },
+        .write = .{
+            .rfn = JSC.WebCore.Blob.writeFile,
+            .ts = d.ts{},
+        },
+        .sha = .{
+            .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash", false, false, true),
+        },
+        .nanoseconds = .{
+            .rfn = nanoseconds,
+        },
+    },
     .{
         .main = .{
             .get = getMain,

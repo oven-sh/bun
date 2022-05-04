@@ -58,8 +58,10 @@ it("ffi print", async () => {
   ).toBe(true);
 });
 
-it("ffi run", () => {
-  const types = {
+function getTypes(fast) {
+  const int64_t = fast ? "i64_fast" : "int64_t";
+  const uint64_t = fast ? "u64_fast" : "uint64_t";
+  return {
     returns_true: {
       returns: "bool",
       args: [],
@@ -97,7 +99,7 @@ it("ffi run", () => {
       args: [],
     },
     returns_42_uint64_t: {
-      returns: "uint64_t",
+      returns: uint64_t,
       args: [],
     },
     returns_neg_42_int16_t: {
@@ -109,7 +111,7 @@ it("ffi run", () => {
       args: [],
     },
     returns_neg_42_int64_t: {
-      returns: "int64_t",
+      returns: int64_t,
       args: [],
     },
 
@@ -142,8 +144,8 @@ it("ffi run", () => {
       args: ["int32_t"],
     },
     identity_int64_t: {
-      returns: "int64_t",
-      args: ["int64_t"],
+      returns: int64_t,
+      args: [int64_t],
     },
     identity_uint8_t: {
       returns: "uint8_t",
@@ -158,8 +160,8 @@ it("ffi run", () => {
       args: ["uint32_t"],
     },
     identity_uint64_t: {
-      returns: "uint64_t",
-      args: ["uint64_t"],
+      returns: uint64_t,
+      args: [uint64_t],
     },
 
     add_char: {
@@ -187,8 +189,8 @@ it("ffi run", () => {
       args: ["int32_t", "int32_t"],
     },
     add_int64_t: {
-      returns: "int64_t",
-      args: ["int64_t", "int64_t"],
+      returns: int64_t,
+      args: [int64_t, int64_t],
     },
     add_uint8_t: {
       returns: "uint8_t",
@@ -217,8 +219,8 @@ it("ffi run", () => {
       args: ["ptr"],
     },
     add_uint64_t: {
-      returns: "uint64_t",
-      args: ["uint64_t", "uint64_t"],
+      returns: uint64_t,
+      args: [uint64_t, uint64_t],
     },
 
     cb_identity_true: {
@@ -258,7 +260,7 @@ it("ffi run", () => {
       args: ["ptr"],
     },
     cb_identity_42_uint64_t: {
-      returns: "uint64_t",
+      returns: uint64_t,
       args: ["ptr"],
     },
     cb_identity_neg_42_int16_t: {
@@ -270,7 +272,7 @@ it("ffi run", () => {
       args: ["ptr"],
     },
     cb_identity_neg_42_int64_t: {
-      returns: "int64_t",
+      returns: int64_t,
       args: ["ptr"],
     },
 
@@ -279,6 +281,9 @@ it("ffi run", () => {
       args: [],
     },
   };
+}
+
+function ffiRunner(types) {
   const {
     symbols: {
       returns_true,
@@ -514,4 +519,12 @@ it("ffi run", () => {
   // ).toBe(-42);
 
   close();
+}
+
+it("run ffi fast", () => {
+  ffiRunner(getTypes(true));
+});
+
+it("run ffi", () => {
+  ffiRunner(getTypes(false));
 });

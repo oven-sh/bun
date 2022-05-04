@@ -10,7 +10,6 @@
 #ifdef IS_CALLBACK
 #define INJECT_BEFORE int c = 500; // This is a callback, so we need to inject code before the call
 #endif
-
 #define IS_BIG_ENDIAN 0
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
@@ -38,8 +37,6 @@ typedef _Bool bool;
 // #include <stdint.h>
 #endif
 // #include <tcclib.h>
-
-
 
 // This value is 2^49, used to encode doubles such that the encoded value will
 // begin with a 15-bit pattern within the range 0x0002..0xFFFC.

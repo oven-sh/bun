@@ -818,6 +818,16 @@ declare module "bun" {
   }
 
   /**
+   * Nanoseconds since Bun.js was started as an integer.
+   *
+   * This uses a high-resolution monotonic system timer.
+   *
+   * After 14 weeks of consecutive uptime, this function
+   * returns a `bigint` to prevent overflow
+   */
+  export function nanoseconds(): number | bigint;
+
+  /**
    * Generate a heap snapshot for seeing where the heap is being used
    */
   export function generateHeapSnapshot(): HeapSnapshot;
@@ -1035,14 +1045,13 @@ declare var Bun: typeof import("bun");
 
 /**
  * `bun:ffi` lets you efficiently call C functions & FFI functions from JavaScript
- *  without writing any C code yourself.
+ *  without writing bindings yourself.
  *
  * ```js
  * import {dlopen, CString, ptr} from 'bun:ffi';
  *
- * const lib = dlopen('libsqlite3', {});
- *
- *
+ * const lib = dlopen('libsqlite3', {
+ * });
  * ```
  *
  * This is powered by just-in-time compiling C wrappers
@@ -1054,17 +1063,158 @@ declare var Bun: typeof import("bun");
 declare module "bun:ffi" {
   export enum FFIType {
     char = 0,
-
+    /**
+     * 8-bit signed integer
+     *
+     * Must be a value between -127 and 127
+     *
+     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     *
+     * In C:
+     * ```c
+     * signed char
+     * char // on x64 & aarch64 macOS
+     * ```
+     *
+     * In JavaScript:
+     * ```js
+     * var num = 0;
+     * ```
+     */
     int8_t = 1,
+    /**
+     * 8-bit signed integer
+     *
+     * Must be a value between -127 and 127
+     *
+     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     *
+     * In C:
+     * ```c
+     * signed char
+     * char // on x64 & aarch64 macOS
+     * ```
+     *
+     * In JavaScript:
+     * ```js
+     * var num = 0;
+     * ```
+     */
     i8 = 1,
 
+    /**
+     * 8-bit unsigned integer
+     *
+     * Must be a value between 0 and 255
+     *
+     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     *
+     * In C:
+     * ```c
+     * unsigned char
+     * ```
+     *
+     * In JavaScript:
+     * ```js
+     * var num = 0;
+     * ```
+     */
     uint8_t = 2,
+    /**
+     * 8-bit unsigned integer
+     *
+     * Must be a value between 0 and 255
+     *
+     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     *
+     * In C:
+     * ```c
+     * unsigned char
+     * ```
+     *
+     * In JavaScript:
+     * ```js
+     * var num = 0;
+     * ```
+     */
     u8 = 2,
 
+    /**
+     * 16-bit signed integer
+     *
+     * Must be a value between -32768 and 32767
+     *
+     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     *
+     * In C:
+     * ```c
+     * in16_t
+     * short // on arm64 & x64
+     * ```
+     *
+     * In JavaScript:
+     * ```js
+     * var num = 0;
+     * ```
+     */
     int16_t = 3,
+    /**
+     * 16-bit signed integer
+     *
+     * Must be a value between -32768 and 32767
+     *
+     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     *
+     * In C:
+     * ```c
+     * in16_t
+     * short // on arm64 & x64
+     * ```
+     *
+     * In JavaScript:
+     * ```js
+     * var num = 0;
+     * ```
+     */
     i16 = 3,
 
+    /**
+     * 16-bit unsigned integer
+     *
+     * Must be a value between 0 and 65535, inclusive.
+     *
+     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     *
+     * In C:
+     * ```c
+     * uint16_t
+     * unsigned short // on arm64 & x64
+     * ```
+     *
+     * In JavaScript:
+     * ```js
+     * var num = 0;
+     * ```
+     */
     uint16_t = 4,
+    /**
+     * 16-bit unsigned integer
+     *
+     * Must be a value between 0 and 65535, inclusive.
+     *
+     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     *
+     * In C:
+     * ```c
+     * uint16_t
+     * unsigned short // on arm64 & x64
+     * ```
+     *
+     * In JavaScript:
+     * ```js
+     * var num = 0;
+     * ```
+     */
     u16 = 4,
 
     /**
@@ -1083,69 +1233,246 @@ declare module "bun:ffi" {
      * 32-bit signed integer
      *
      * The same as `int` in C
+     *
+     * ```c
+     * int
+     * ```
      */
     int = 5,
 
+    /**
+     * 32-bit unsigned integer
+     *
+     * The same as `unsigned int` in C (on x64 & arm64)
+     *
+     * C:
+     * ```c
+     * unsigned int
+     * ```
+     * JavaScript:
+     * ```js
+     * ptr(new Uint32Array(1))
+     * ```
+     */
     uint32_t = 6,
+    /**
+     * 32-bit unsigned integer
+     *
+     * Alias of {@link FFIType.uint32_t}
+     */
     u32 = 6,
 
+    /**
+     * int64 is a 64-bit signed integer
+     *
+     * This is not implemented yet!
+     */
     int64_t = 7,
+    /**
+     * i64 is a 64-bit signed integer
+     *
+     * This is not implemented yet!
+     */
     i64 = 7,
 
+    /**
+     * 64-bit unsigned integer
+     *
+     * This is not implemented yet!
+     */
     uint64_t = 8,
+    /**
+     * 64-bit unsigned integer
+     *
+     * This is not implemented yet!
+     */
     u64 = 8,
 
+    /**
+     * Doubles are not supported yet!
+     */
     double = 9,
+    /**
+     * Doubles are not supported yet!
+     */
     f64 = 9,
-
+    /**
+     * Floats are not supported yet!
+     */
     float = 10,
+    /**
+     * Floats are not supported yet!
+     */
     f32 = 10,
 
+    /**
+     * Booelan value
+     *
+     * Must be `true` or `false`. `0` and `1` type coercion is not supported.
+     *
+     * In C, this corresponds to:
+     * ```c
+     * bool
+     * _Bool
+     * ```
+     *
+     *
+     */
     bool = 11,
 
+    /**
+     * Pointer value
+     *
+     * See {@link Bun.FFI.ptr} for more information
+     *
+     * In C:
+     * ```c
+     * void*
+     * ```
+     *
+     * In JavaScript:
+     * ```js
+     * ptr(new Uint8Array(1))
+     * ```
+     */
     ptr = 12,
+    /**
+     * Pointer value
+     *
+     * alias of {@link FFIType.ptr}
+     */
     pointer = 12,
 
+    /**
+     * void value
+     *
+     * void arguments are not supported
+     *
+     * void return type is the default return type
+     *
+     * In C:
+     * ```c
+     * void
+     * ```
+     *
+     */
     void = 13,
-  }
-
-  type Symbols = Record<
-    string,
-    {
-      /**
-       * Arguments to a C function
-       *
-       * Defaults to an empty array, which means no arguments.
-       *
-       * To pass a pointer, use "ptr" or "pointer" as the type name. To get a pointer, see {@link ptr}.
-       *
-       * @example
-       * From JavaScript:
-       * ```js
-       * const lib = dlopen('add', {
-       *    // FFIType can be used or you can pass string labels.
-       *    args: [FFIType.i32, "i32"],
-       *    return_type: "i32",
-       * });
-       * lib.symbols.add(1, 2)
-       * ```
-       * In C:
-       * ```c
-       * int add(int a, int b) {
-       *   return a + b;
-       * }
-       * ```
-       */
-      args?: FFIType[];
-      return_type?: FFIType;
-    }
-  >;
-
-  export interface Library {
-    symbols: Record<string, CallableFunction>;
 
     /**
-     * `dlclose` the library, unloading the symbols and freeing memory allocated.
+     * When used as a `returns`, this will automatically become a {@link CString}.
+     *
+     * When used in `args` it is equivalent to {@link FFIType.pointer}
+     *
+     */
+    cstring = 14,
+  }
+  export type FFITypeOrString =
+    | FFIType
+    | "char"
+    | "int8_t"
+    | "i8"
+    | "uint8_t"
+    | "u8"
+    | "int16_t"
+    | "i16"
+    | "uint16_t"
+    | "u16"
+    | "int32_t"
+    | "i32"
+    | "int"
+    | "uint32_t"
+    | "u32"
+    | "int64_t"
+    | "i64"
+    | "uint64_t"
+    | "u64"
+    | "double"
+    | "f64"
+    | "float"
+    | "f32"
+    | "bool"
+    | "ptr"
+    | "pointer"
+    | "void"
+    | "cstring";
+
+  interface FFIFunction {
+    /**
+     * Arguments to a FFI function (C ABI)
+     *
+     * Defaults to an empty array, which means no arguments.
+     *
+     * To pass a pointer, use "ptr" or "pointer" as the type name. To get a pointer, see {@link ptr}.
+     *
+     * @example
+     * From JavaScript:
+     * ```js
+     * const lib = dlopen('add', {
+     *    // FFIType can be used or you can pass string labels.
+     *    args: [FFIType.i32, "i32"],
+     *    returns: "i32",
+     * });
+     * lib.symbols.add(1, 2)
+     * ```
+     * In C:
+     * ```c
+     * int add(int a, int b) {
+     *   return a + b;
+     * }
+     * ```
+     */
+    args?: FFITypeOrString[];
+    /**
+     * Return type to a FFI function (C ABI)
+     *
+     * Defaults to {@link FFIType.void}
+     *
+     * To pass a pointer, use "ptr" or "pointer" as the type name. To get a pointer, see {@link ptr}.
+     *
+     * @example
+     * From JavaScript:
+     * ```js
+     * const lib = dlopen('z', {
+     *    version: {
+     *      returns: "ptr",
+     *   }
+     * });
+     * console.log(new CString(lib.symbols.version()));
+     * ```
+     * In C:
+     * ```c
+     * char* version()
+     * {
+     *  return "1.0.0";
+     * }
+     * ```
+     */
+    returns?: FFITypeOrString;
+  }
+
+  type Symbols = Record<string, FFIFunction>;
+
+  // /**
+  //  * Compile a callback function
+  //  *
+  //  * Returns a function pointer
+  //  *
+  //  */
+  // export function callback(ffi: FFIFunction, cb: Function): number;
+
+  export interface Library {
+    symbols: Record<
+      string,
+      CallableFunction & {
+        /**
+         * The function without a wrapper
+         */
+        native: CallableFunction;
+      }
+    >;
+
+    /**
+     * `dlclose` the library, unloading the symbols and freeing allocated memory.
      *
      * Once called, the library is no longer usable.
      *
@@ -1214,11 +1541,11 @@ declare module "bun:ffi" {
    * ```js
    * const array = new Uint8Array(10);
    * const rawPtr = ptr(array);
-   * myCFunction(rawPtr);
+   * myFFIFunction(rawPtr);
    * ```
    * To C:
    * ```c
-   * void myCFunction(char* rawPtr) {
+   * void myFFIFunction(char* rawPtr) {
    *  // Do something with rawPtr
    * }
    * ```
@@ -1251,7 +1578,8 @@ declare module "bun:ffi" {
    * reading beyond the bounds of the pointer will crash the program or cause
    * undefined behavior. Use with care!
    */
-  export interface CString {
+
+  export class CString extends String {
     /**
      * Get a string from a UTF-8 encoded C string
      * If `byteLength` is not provided, the string is assumed to be null-terminated.
@@ -1279,7 +1607,25 @@ declare module "bun:ffi" {
      * reading beyond the bounds of the pointer will crash the program or cause
      * undefined behavior. Use with care!
      */
-    new (ptr: number, byteOffset?: number, byteLength?: number): string;
+    constructor(ptr: number, byteOffset?: number, byteLength?: number): string;
+
+    /**
+     * The ptr to the C string
+     *
+     * This `CString` instance is a clone of the string, so it
+     * is safe to continue using this instance after the `ptr` has been
+     * freed.
+     */
+    ptr: number;
+    byteOffset?: number;
+    byteLength?: number;
+
+    /**
+     * Get the {@link ptr} as an `ArrayBuffer`
+     *
+     * `null` or empty ptrs returns an `ArrayBuffer` with `byteLength` 0
+     */
+    get arrayBuffer(): ArrayBuffer;
   }
 
   /**
@@ -1288,7 +1634,25 @@ declare module "bun:ffi" {
    * You probably won't need this unless there's a bug in the FFI bindings
    * generator or you're just curious.
    */
-  export function viewSource(symbols: Symbols): string[];
+  export function viewSource(symbols: Symbols, is_callback?: false): string[];
+  export function viewSource(callback: FFIFunction, is_callback: true): string;
+
+  /**
+   * Platform-specific file extension name for dynamic libraries
+   *
+   * "." is not included
+   *
+   * @example
+   * ```js
+   * "dylib" // macOS
+   * ```
+   *
+   * @example
+   * ```js
+   * "so" // linux
+   * ```
+   */
+  export const suffix: string;
 }
 
 

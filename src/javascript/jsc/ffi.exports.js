@@ -52,7 +52,7 @@ Object.defineProperty(globalThis, "__GlobalBunCString", {
   configurable: false,
 });
 
-const ffiWrappers = new Array(15);
+const ffiWrappers = new Array(16);
 var char = (val) => val | 0;
 ffiWrappers.fill(char);
 ffiWrappers[FFIType.uint8_t] = function uint8(val) {
@@ -67,13 +67,14 @@ ffiWrappers[FFIType.uint16_t] = function uint16(val) {
 ffiWrappers[FFIType.int32_t] = function int32(val) {
   return val | 0;
 };
+// we never want to return NaN
 ffiWrappers[FFIType.uint32_t] = function uint32(val) {
-  return val <= 0 ? 0 : val >= 0xffffffff ? 0xffffffff : val;
+  return val <= 0 ? 0 : val >= 0xffffffff ? 0xffffffff : +val || 0;
 };
-ffiWrappers[FFIType.int64_t] = function int64(val) {
+ffiWrappers[FFIType.i64_fast] = function int64(val) {
   if (typeof val === "bigint") {
     if (val < BigInt(Number.MAX_VALUE)) {
-      return Number(val).valueOf();
+      return Number(val).valueOf() || 0;
     }
   }
 
@@ -81,13 +82,13 @@ ffiWrappers[FFIType.int64_t] = function int64(val) {
     return 0;
   }
 
-  return val;
+  return +val || 0;
 };
 
-ffiWrappers[FFIType.uint64_t] = function int64(val) {
+ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
   if (typeof val === "bigint") {
     if (val < BigInt(Number.MAX_VALUE) && val > 0) {
-      return Number(val).valueOf();
+      return Number(val).valueOf() || 0;
     }
   }
 
@@ -95,21 +96,48 @@ ffiWrappers[FFIType.uint64_t] = function int64(val) {
     return 0;
   }
 
-  return val;
+  return +val || 0;
 };
 
-ffiWrappers[FFIType.uint16_t] = function uint64(val) {
+ffiWrappers[FFIType.int64_t] = function int64(val) {
   if (typeof val === "bigint") {
-    if (val < BigInt(Number.MAX_VALUE)) {
-      return Math.abs(Number(val).valueOf());
-    }
+    return val;
   }
 
-  if (!val) {
-    return 0;
+  if (typeof val === "number") {
+    return BigInt(val);
   }
 
-  return Math.abs(val);
+  return BigInt(+val || 0);
+};
+
+ffiWrappers[FFIType.uint64_t] = function uint64(val) {
+  if (typeof val === "bigint") {
+    return val;
+  }
+
+  if (typeof val === "number") {
+    return val <= 0 ? BigInt(0) : BigInt(val);
+  }
+
+  return BigInt(+val || 0);
+};
+
+ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
+  if (typeof val === "bigint") {
+    return val < BigInt(Number.MAX_VALUE)
+      ? val <= BigInt(0)
+        ? 0
+        : Number(val)
+      : val;
+  }
+
+  return typeof val === "number" ? (val <= 0 ? 0 : +val || 0) : +val || 0;
+};
+
+ffiWrappers[FFIType.uint16_t] = function uint16(val) {
+  const ret = (typeof val === "bigint" ? Number(val) : val) | 0;
+  return ret <= 0 ? 0 : ret > 0xffff ? 0xffff : ret;
 };
 
 ffiWrappers[FFIType.double] = function double(val) {
@@ -231,7 +259,7 @@ export function dlopen(path, options) {
       );
     } else {
       // consistentcy
-      result.native = result;
+      result.symbols[key].native = result.symbols[key];
     }
   }
 

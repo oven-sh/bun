@@ -675,7 +675,7 @@ devcontainer: clone-submodules mimalloc zlib libarchive boringssl picohttp ident
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 
 
-jsc-bindings-headers-run: 
+jsc-bindings-headers: 
 	rm -f /tmp/build-jsc-headers src/javascript/jsc/bindings/headers.zig
 	touch src/javascript/jsc/bindings/headers.zig
 	mkdir -p src/javascript/jsc/bindings-obj/
@@ -697,7 +697,6 @@ jsc-bindings-headers-run:
 	cat src/javascript/jsc/bindings/headers-replacements.zig /tmp/headers.zig > src/javascript/jsc/bindings/headers.zig
 	$(ZIG) fmt src/javascript/jsc/bindings/headers.zig
 
-jsc-bindings-headers: jsc-bindings-headers-run generate-builtins	
 
 MIMALLOC_OVERRIDE_FLAG ?= 
 

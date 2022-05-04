@@ -61,6 +61,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [`bun completions`](#bun-completions)
   - [`Bun.serve`](#bunserve---fast-http-server)
   - [`Bun.write`](#bunwrite--optimizing-io)
+  - [`bun:ffi` (Foreign functions interface)](#bunffi-foreign-functions-interface)
   - [`Bun.Transpiler`](#buntranspiler)
     - [`transformSync`](#buntranspilertransformsync)
     - [`transform`](#buntranspilertransform)
@@ -1552,8 +1553,6 @@ await Bun.write("output.txt", Bun.file("input.txt"));
 ### `bun:ffi` (Foreign Functions Interface)
 
 `bun:ffi` lets you efficiently call native libraries from JavaScript. It works with languages that support the C ABI (Zig, Rust, C/C++, C#, Nim, Kotlin, etc).
-
-Note: this is available in the next version of Bun (v0.0.79), which is not released yet.
 
 This snippet prints sqlite3's version number:
 

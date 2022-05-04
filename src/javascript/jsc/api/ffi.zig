@@ -327,10 +327,11 @@ pub const FFI = struct {
                         allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
-                    symbols.clearAndFree(allocator);
-                    dylib.close();
+
                     const res = ZigString.init(err.msg).toErrorInstance(global);
                     function.deinit(allocator);
+                    symbols.clearAndFree(allocator);
+                    dylib.close();
                     return res;
                 },
                 .pending => {
@@ -618,6 +619,7 @@ pub const FFI = struct {
                 "Bun_FFI_PointerOffsetToArgumentsList",
                 std.fmt.bufPrintZ(&symbol_buf, "{d}", .{Sizes.Bun_FFI_PointerOffsetToArgumentsList}) catch unreachable,
             );
+            CompilerRT.define(state);
 
             // TCC.tcc_define_symbol(
             //     state,
@@ -702,13 +704,17 @@ pub const FFI = struct {
                 @memcpy(dest, source, byte_count);
             }
 
+            pub fn define(state: *TCC.TCCState) void {
+                if (comptime Environment.isX64) {
+                    _ = TCC.tcc_define_symbol(state, "NEEDS_COMPILER_RT_FUNCTIONS", "1");
+                    // there
+                    _ = TCC.tcc_compile_string(state, @embedFile(("libtcc1.c")));
+                }
+            }
+
             pub fn inject(state: *TCC.TCCState) void {
                 _ = TCC.tcc_add_symbol(state, "memset", &memset);
                 _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
-
-                if (comptime Environment.isX64) {
-                    _ = TCC.tcc_define_symbol(state, "NEEDS_COMPILER_RT_FUNCTIONS", "1");
-                }
 
                 _ = TCC.tcc_add_symbol(
                     state,
@@ -763,6 +769,8 @@ pub const FFI = struct {
 
             _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
 
+            CompilerRT.define(state);
+
             const compilation_result = TCC.tcc_compile_string(
                 state,
                 source_code.items.ptr,
@@ -779,8 +787,8 @@ pub const FFI = struct {
 
                 return;
             }
-            CompilerRT.inject(state);
 
+            CompilerRT.inject(state);
             Output.debug("here", .{});
             _ = TCC.tcc_add_symbol(state, "bun_call", workaround.bun_call.*);
             _ = TCC.tcc_add_symbol(state, "cachedJSContext", js_context);

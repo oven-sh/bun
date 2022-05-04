@@ -37,39 +37,6 @@ typedef _Bool bool;
 #endif
 // #include <tcclib.h>
 
-// x64
-#ifdef NEEDS_COMPILER_RT_FUNCTIONS
-
-double __floatundidf(unsigned long a);
-
-double __floatundidf(unsigned long a)
-{
-	static const double twop52 = 0x1.0p52;
-	static const double twop84 = 0x1.0p84;
-	static const double twop84_plus_twop52 = 0x1.00000001p84;
-	
-	union { uint64_t x; double d; } high = { .d = twop84 };
-	union { uint64_t x; double d; } low = { .d = twop52 };
-	
-	high.x |= a >> 32;
-	low.x |= a & 0x00000000ffffffff;
-	
-	const double result = (high.d - twop84_plus_twop52) + low.d;
-	return result;
-}
-
-uint64_t __fixunsdfdi(double a);
-
-uint64_t __fixunsdfdi(double a)
-{
-      if (a <= 0.0) return 0;
-    unsigned high = a/0x1p32f;
-    unsigned low = a - (double)high*0x1p32f;
-    return ((unsigned long long)high << 32) | low;
-}
-
-#endif NEEDS_COMPILER_RT_FUNCTIONS
-
 // This value is 2^49, used to encode doubles such that the encoded value will
 // begin with a 15-bit pattern within the range 0x0002..0xFFFC.
 #define DoubleEncodeOffsetBit 49

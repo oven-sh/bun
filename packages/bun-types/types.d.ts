@@ -1365,6 +1365,30 @@ declare module "bun:ffi" {
      *
      */
     cstring = 14,
+
+    /**
+     * Attempt to coerce `BigInt` into a `Number` if it fits. This improves performance
+     * but means you might get a `BigInt` or you might get a `number`.
+     *
+     * In C, this always becomes `int64_t`
+     *
+     * In JavaScript, this could be number or it could be BigInt, depending on what
+     * value is passed in.
+     *
+     */
+    i64_fast = 15,
+
+    /**
+     * Attempt to coerce `BigInt` into a `Number` if it fits. This improves performance
+     * but means you might get a `BigInt` or you might get a `number`.
+     *
+     * In C, this always becomes `uint64_t`
+     *
+     * In JavaScript, this could be number or it could be BigInt, depending on what
+     * value is passed in.
+     *
+     */
+    u64_fast = 16,
   }
   export type FFITypeOrString =
     | FFIType
@@ -1481,7 +1505,7 @@ declare module "bun:ffi" {
     close(): void;
   }
 
-  export function dlopen(libraryName: string, symbols: Symbols): Library<T>;
+  export function dlopen(libraryName: string, symbols: Symbols): Library;
 
   /**
    * Read a pointer as a {@link Buffer}
@@ -1607,7 +1631,7 @@ declare module "bun:ffi" {
      * reading beyond the bounds of the pointer will crash the program or cause
      * undefined behavior. Use with care!
      */
-    constructor(ptr: number, byteOffset?: number, byteLength?: number): string;
+    constructor(ptr: number, byteOffset?: number, byteLength?: number);
 
     /**
      * The ptr to the C string

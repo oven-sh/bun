@@ -291,13 +291,13 @@ pub const FFI = struct {
 
         var obj = JSC.JSValue.c(JSC.C.JSObjectMake(global.ref(), null, null));
         JSC.C.JSValueProtect(global.ref(), obj.asObjectRef());
-        // var has_checked = false;
         defer JSC.C.JSValueUnprotect(global.ref(), obj.asObjectRef());
         for (symbols.values()) |*function| {
-            var resolved_symbol = dylib.lookup(*anyopaque, function.base_name) orelse {
-                const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ std.mem.span(function.base_name), name_slice.slice() }, global.ref());
+            const function_name = function.base_name.?;
+            var resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
+                const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ std.mem.span(function_name), name_slice.slice() }, global.ref());
                 for (symbols.values()) |*value| {
-                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name)));
+                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
                 }
                 symbols.clearAndFree(allocator);
@@ -306,21 +306,15 @@ pub const FFI = struct {
             };
 
             function.symbol_from_dynamic_library = resolved_symbol;
-            // if (!has_checked and VirtualMachine.vm.rareData().needs_to_copy_libtcc1 orelse true) {
-            //     has_checked = true;
-            //     VirtualMachine.vm.rareData().needs_to_copy_libtcc1 = false;
-            //     if (VirtualMachine.vm.bundler.env.get("BUN_INSTALL")) |bun_install_dir| {
-            //         maybeCopyLibtcc1(bun_install_dir);
-            //     }
-            // }
+
             function.compile(allocator) catch |err| {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
                     std.mem.span(@errorName(err)),
-                    std.mem.span(function.base_name),
+                    std.mem.span(function_name),
                     name_slice.slice(),
                 }, global.ref());
                 for (symbols.values()) |*value| {
-                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name)));
+                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
                 }
                 symbols.clearAndFree(allocator);
@@ -330,7 +324,7 @@ pub const FFI = struct {
             switch (function.step) {
                 .failed => |err| {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name)));
+                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
@@ -341,7 +335,7 @@ pub const FFI = struct {
                 },
                 .pending => {
                     for (symbols.values()) |*value| {
-                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name)));
+                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
@@ -351,12 +345,12 @@ pub const FFI = struct {
                 .compiled => |compiled| {
                     var cb = Bun__CreateFFIFunction(
                         global,
-                        &ZigString.init(std.mem.span(function.base_name)),
+                        &ZigString.init(std.mem.span(function_name)),
                         @intCast(u32, function.arg_types.items.len),
                         compiled.ptr,
                     );
 
-                    obj.put(global, &ZigString.init(std.mem.span(function.base_name)), JSC.JSValue.cast(cb));
+                    obj.put(global, &ZigString.init(std.mem.span(function_name)), JSC.JSValue.cast(cb));
                 },
             }
         }
@@ -442,7 +436,7 @@ pub const FFI = struct {
         }
 
         function.* = Function{
-            .base_name = "",
+            .base_name = null,
             .arg_types = abi_types,
             .return_type = return_type,
         };
@@ -476,7 +470,7 @@ pub const FFI = struct {
             }
             function.base_name = try allocator.dupeZ(u8, prop);
 
-            symbols.putAssumeCapacity(std.mem.span(function.base_name), function);
+            symbols.putAssumeCapacity(std.mem.span(function.base_name.?), function);
         }
 
         return null;
@@ -484,7 +478,7 @@ pub const FFI = struct {
 
     pub const Function = struct {
         symbol_from_dynamic_library: ?*anyopaque = null,
-        base_name: [:0]const u8 = "",
+        base_name: ?[:0]const u8 = null,
         state: ?*TCC.TCCState = null,
 
         return_type: ABIType,
@@ -494,7 +488,11 @@ pub const FFI = struct {
         pub var lib_dirZ: [*:0]const u8 = "";
 
         pub fn deinit(val: *Function, allocator: std.mem.Allocator) void {
-            if (std.mem.span(val.base_name).len > 0) allocator.free(bun.constStrToU8(std.mem.span(val.base_name)));
+            if (val.base_name) |base_name| {
+                if (std.mem.span(base_name).len > 0) {
+                    allocator.free(bun.constStrToU8(std.mem.span(base_name)));
+                }
+            }
 
             val.arg_types.deinit(allocator);
 
@@ -642,7 +640,7 @@ pub const FFI = struct {
                 return;
             }
             CompilerRT.inject(state);
-            _ = TCC.tcc_add_symbol(state, this.base_name, this.symbol_from_dynamic_library.?);
+            _ = TCC.tcc_add_symbol(state, this.base_name.?, this.symbol_from_dynamic_library.?);
 
             if (this.step == .failed) {
                 return;
@@ -850,7 +848,7 @@ pub const FFI = struct {
             try writer.writeAll("/* --- The Function To Call */\n");
             try this.return_type.typename(writer);
             try writer.writeAll(" ");
-            try writer.writeAll(std.mem.span(this.base_name));
+            try writer.writeAll(std.mem.span(this.base_name.?));
             try writer.writeAll("(");
             var first = true;
             for (this.arg_types.items) |arg, i| {
@@ -935,7 +933,7 @@ pub const FFI = struct {
                 try this.return_type.typename(writer);
                 try writer.writeAll(" return_value = ");
             }
-            try writer.print("{s}(", .{std.mem.span(this.base_name)});
+            try writer.print("{s}(", .{std.mem.span(this.base_name.?)});
             first = true;
             arg_buf[0..3].* = "arg".*;
             for (this.arg_types.items) |arg, i| {

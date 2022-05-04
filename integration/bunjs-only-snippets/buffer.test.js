@@ -8,6 +8,8 @@ it("buffer", () => {
   expect(Object.keys(buf).length > 0).toBe(true);
   gc();
   expect(buf.write("hello world ")).toBe(12);
+  expect(buf.write("hello world ", "utf8")).toBe(12);
+
   gc();
   expect(buf.toString("utf8", 0, "hello world ".length)).toBe("hello world ");
   gc();

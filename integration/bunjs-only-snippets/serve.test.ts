@@ -32,23 +32,26 @@ it("should work for a file", async () => {
   server.stop();
 });
 
-// var count = 200;
-// it(`should work for a file ${count} times`, async () => {
-//   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
-//   const textToExpect = readFileSync(fixture, "utf-8");
-//   var ran = 0;
-//   const server = serve({
-//     port: port++,
-//     async fetch(req) {
-//       console.log(`Ran ${ran++}`);
-//       return new Response(file(fixture));
-//     },
-//   });
+var count = 200;
+it(`should work for a file ${count} times`, async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+  const textToExpect = readFileSync(fixture, "utf-8");
+  var ran = 0;
+  const server = serve({
+    port: port++,
+    async fetch(req) {
+      return new Response(file(fixture));
+    },
+  });
 
-//   for (let i = 0; i < count; i++) {
-//     const response = await fetch(`http://localhost:${server.port}`);
-//     expect(await response.text()).toBe(textToExpect);
-//   }
+  // this gets stuck if run about 200 times awaiting all the promises
+  // when the promises are run altogether, instead of one at a time
+  // it's hard to say if this only happens here due to some weird stuff with the test runner
+  // or if it's "real" issue
+  for (let i = 0; i < count; i++) {
+    const response = await fetch(`http://localhost:${server.port}`);
+    expect(await response.text()).toBe(textToExpect);
+  }
 
-//   server.stop();
-// });
+  server.stop();
+});

@@ -101,7 +101,7 @@ pub const FFI = struct {
         }
 
         const allocator = VirtualMachine.vm.allocator;
-        var function: Function = undefined;
+        var function: Function = .{};
         var func = &function;
 
         if (generateSymbolForFunction(globalThis, allocator, interface, func) catch ZigString.init("Out of memory").toErrorInstance(globalThis)) |val| {
@@ -159,7 +159,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected an object", .{}, global.ref());
         }
 
-        var function: Function = undefined;
+        var function: Function = .{};
         if (generateSymbolForFunction(global, allocator, object, &function) catch ZigString.init("Out of memory").toErrorInstance(global)) |val| {
             return val;
         }
@@ -464,7 +464,7 @@ pub const FFI = struct {
                 return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{s}\"", .{prop}, global.ref());
             }
 
-            var function: Function = undefined;
+            var function: Function = .{};
             if (try generateSymbolForFunction(global, allocator, value, &function)) |val| {
                 return val;
             }
@@ -481,7 +481,7 @@ pub const FFI = struct {
         base_name: ?[:0]const u8 = null,
         state: ?*TCC.TCCState = null,
 
-        return_type: ABIType,
+        return_type: ABIType = ABIType.@"void",
         arg_types: std.ArrayListUnmanaged(ABIType) = .{},
         step: Step = Step{ .pending = {} },
 
@@ -494,7 +494,7 @@ pub const FFI = struct {
                 }
             }
 
-            val.arg_types.deinit(allocator);
+            val.arg_types.clearAndFree(allocator);
 
             if (val.state) |state| {
                 TCC.tcc_delete(state);
@@ -705,6 +705,10 @@ pub const FFI = struct {
             pub fn inject(state: *TCC.TCCState) void {
                 _ = TCC.tcc_add_symbol(state, "memset", &memset);
                 _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
+
+                if (comptime Environment.isX64) {
+                    _ = TCC.tcc_define_symbol(state, "NEEDS_COMPILER_RT_FUNCTIONS", "1");
+                }
 
                 _ = TCC.tcc_add_symbol(
                     state,

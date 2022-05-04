@@ -460,7 +460,7 @@ declare module "bun:ffi" {
     close(): void;
   }
 
-  export function dlopen(libraryName: string, symbols: Symbols): Library<T>;
+  export function dlopen(libraryName: string, symbols: Symbols): Library;
 
   /**
    * Read a pointer as a {@link Buffer}
@@ -586,7 +586,7 @@ declare module "bun:ffi" {
      * reading beyond the bounds of the pointer will crash the program or cause
      * undefined behavior. Use with care!
      */
-    constructor(ptr: number, byteOffset?: number, byteLength?: number): string;
+    constructor(ptr: number, byteOffset?: number, byteLength?: number);
 
     /**
      * The ptr to the C string

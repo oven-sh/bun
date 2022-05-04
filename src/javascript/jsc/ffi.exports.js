@@ -76,13 +76,11 @@ ffiWrappers[FFIType.i64_fast] = function int64(val) {
     if (val < BigInt(Number.MAX_VALUE)) {
       return Number(val).valueOf() || 0;
     }
+
+    return val;
   }
 
-  if (!val) {
-    return 0;
-  }
-
-  return +val || 0;
+  return !val ? 0 : +val || 0;
 };
 
 ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
@@ -90,13 +88,11 @@ ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
     if (val < BigInt(Number.MAX_VALUE) && val > 0) {
       return Number(val).valueOf() || 0;
     }
+
+    return val;
   }
 
-  if (!val) {
-    return 0;
-  }
-
-  return +val || 0;
+  return !val ? 0 : +val || 0;
 };
 
 ffiWrappers[FFIType.int64_t] = function int64(val) {
@@ -105,7 +101,7 @@ ffiWrappers[FFIType.int64_t] = function int64(val) {
   }
 
   if (typeof val === "number") {
-    return BigInt(val);
+    return BigInt(val || 0);
   }
 
   return BigInt(+val || 0);
@@ -117,7 +113,7 @@ ffiWrappers[FFIType.uint64_t] = function uint64(val) {
   }
 
   if (typeof val === "number") {
-    return val <= 0 ? BigInt(0) : BigInt(val);
+    return val <= 0 ? BigInt(0) : BigInt(val || 0);
   }
 
   return BigInt(+val || 0);

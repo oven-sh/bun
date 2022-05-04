@@ -5,9 +5,9 @@ var INTERVAL = 9999999;
 var time = (name, fn) => {
   for (let i = 0; i < INTERVAL; i++) fn();
 
-  console.time(name.padEnd("DataView.readBigUInt64 (LE)".length));
+  console.time(name.padEnd('Buffer.write(string, "latin1")'.length));
   for (let i = 0; i < INTERVAL; i++) fn();
-  console.timeEnd(name.padEnd("DataView.readBigUInt64 (LE)".length));
+  console.timeEnd(name.padEnd('Buffer.write(string, "latin1")'.length));
 };
 
 console.log(
@@ -15,6 +15,13 @@ console.log(
   "\n"
 );
 
+const stringToWrite = "hellooooohellooooo";
+
+time('Buffer.write(string, "utf8")', () => buf.write(stringToWrite, "utf8"));
+time('Buffer.write(string, "ascii")', () => buf.write(stringToWrite, "ascii"));
+time('Buffer.write(string, "latin1")', () =>
+  buf.write(stringToWrite, "latin1")
+);
 time("Buffer.readBigInt64BE     ", () => buf.readBigInt64BE(0));
 // time("DataView.getBigInt64 (BE)", () => view.getBigInt64(0, false));
 // console.log("");

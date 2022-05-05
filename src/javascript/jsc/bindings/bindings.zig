@@ -2281,6 +2281,13 @@ pub const JSValue = enum(u64) {
         };
     }
 
+    pub fn isInstanceOf(this: JSValue, global: *JSGlobalObject, constructor: JSValue) bool {
+        if (this.isEmptyOrUndefinedOrNull())
+            return false;
+
+        return JSC.C.JSValueIsInstanceOfConstructor(global.ref(), this.asObjectRef(), constructor.ref(), null);
+    }
+
     pub fn jsType(
         this: JSValue,
     ) JSType {

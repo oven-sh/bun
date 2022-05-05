@@ -570,9 +570,46 @@ pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value
     result.* = lhs.isSameValue(rhs, env);
     return .ok;
 }
-pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
-pub extern fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
-pub extern fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: *bool) napi_status;
+pub export fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
+    var exception = [_]JSC.C.JSValueRef{null};
+    result.* = JSValue.c(
+        JSC.C.JSObjectCallAsFunctionReturnValue(
+            env.ref(),
+            func.asObjectRef(),
+            recv.asObjectRef(),
+            argc,
+            @ptrCast([*]const JSC.C.JSValueRef, argv),
+            &exception,
+        ),
+    );
+    if (exception.* != null) {
+        return .generic_failure;
+    }
+
+    return .ok;
+}
+pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
+    var exception = [_]JSC.C.JSValueRef{null};
+    result.* = JSValue.c(
+        JSC.C.JSObjectCallAsConstructor(
+            env.ref(),
+            constructor.asObjectRef(),
+            argc,
+            @ptrCast([*]const JSC.C.JSValueRef, argv),
+            &exception,
+        ),
+    );
+    if (exception.* != null) {
+        return .generic_failure;
+    }
+
+    return .ok;
+}
+pub export fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: *bool) napi_status {
+    // TODO: does this throw object_expected in node?
+    result.* = object.isInstanceOf(env, constructor);
+    return .ok;
+}
 pub extern fn napi_get_cb_info(env: napi_env, cbinfo: napi_callback_info, argc: [*c]usize, argv: *napi_value, this_arg: *napi_value, data: [*]*anyopaque) napi_status;
 pub extern fn napi_get_new_target(env: napi_env, cbinfo: napi_callback_info, result: *napi_value) napi_status;
 pub extern fn napi_define_class(env: napi_env, utf8name: [*c]const u8, length: usize, constructor: napi_callback, data: ?*anyopaque, property_count: usize, properties: [*c]const napi_property_descriptor, result: *napi_value) napi_status;
@@ -712,7 +749,20 @@ pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool)
     is_promise.* = value.asPromise() != null or value.asInternalPromise() != null;
     return .ok;
 }
-pub extern fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status;
+pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {
+    // TODO: don't copy
+    var ref = JSC.C.JSValueToStringCopy(env, script.asObjectRef(), TODO_EXCEPTION);
+    defer JSC.C.JSStringRelease(ref);
+
+    var exception = [_]JSC.C.JSValueRef{null};
+    const val = JSC.C.JSEvaluateScript(env.ref(), script, env, null, 0, &exception);
+    if (exception[0] != null) {
+        return .generic_failure;
+    }
+
+    result.* = JSValue.c(val);
+    return .ok;
+}
 pub extern fn napi_adjust_external_memory(env: napi_env, change_in_bytes: i64, adjusted_value: [*c]i64) napi_status;
 pub export fn napi_create_date(env: napi_env, time: f64, result: *napi_value) napi_status {
     var args = [_]JSC.C.JSValueRef{JSC.JSValue.jsNumber(time)};

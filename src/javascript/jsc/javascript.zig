@@ -480,11 +480,12 @@ pub const SavedSourceMap = struct {
 const uws = @import("uws");
 
 pub const AnyTask = struct {
-    ctx: *anyopaque,
+    ctx: ?*anyopaque,
     callback: fn (*anyopaque) void,
 
     pub fn run(this: *AnyTask) void {
-        this.callback(this.ctx);
+        @setRuntimeSafety(false);
+        this.callback(this.ctx.?);
     }
 
     pub fn New(comptime Type: type, comptime Callback: anytype) type {

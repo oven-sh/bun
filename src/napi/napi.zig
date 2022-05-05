@@ -291,7 +291,78 @@ pub export fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value
 }
 pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
-pub extern fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status;
+pub export fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status {
+    if (value.isEmpty()) {
+        result.* = .undefined;
+        return .ok;
+    }
+
+    //"undefined" = 0,
+    //"null" = 1,
+    //"boolean" = 2,
+    //"number" = 3,
+    //"string" = 4,
+    //"symbol" = 5,
+    //"object" = 6,
+    //"function" = 7,
+    //"external" = 8,
+    //"bigint" = 9,
+
+    if (value.isUndefined()) {
+        result.* = .undefined;
+        return .ok;
+    }
+
+    if (value.isNull()) {
+        result.* = .null;
+        return .ok;
+    }
+
+    if (value.isBoolean()) {
+        result.* = .boolean;
+        return .ok;
+    }
+
+    if (value.isNumber()) {
+        result.* = .number;
+        return .ok;
+    }
+
+    if (value.isString()) {
+        result.* = .string;
+        return .ok;
+    }
+
+    if (value.isSymbol()) {
+        result.* = .symbol;
+        return .ok;
+    }
+
+    if (value.isBigInt()) {
+        result.* = .bigint;
+        return .ok;
+    }
+
+    if (value.jsType() == .JSProxy) {
+        result.* = .external;
+        return .ok;
+    }
+
+    if (value.isObject()) {
+        if (value.isCallable(env.vm())) {
+            result.* = .function;
+            return .ok;
+        }
+        result.* = .object;
+        return .ok;
+    }
+
+    if (value.isCell() and value.isCallable(env.vm())) {
+        result.* = .function;
+        return .ok;
+    }
+
+    return .invalid_arg;
 pub export fn napi_get_value_double(_: napi_env, value: napi_value, result: *f64) napi_status {
     result.* = value.to(f64);
     return .ok;

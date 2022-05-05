@@ -9,7 +9,7 @@ pub const napi_env = *JSC.JSGlobalObject;
 pub const napi_ref = struct_napi_ref__;
 pub const napi_handle_scope = struct_napi_handle_scope__;
 pub const napi_escapable_handle_scope = struct_napi_escapable_handle_scope__;
-pub const napi_callback_info = struct_napi_callback_info__;
+pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = struct_napi_deferred__;
 pub const napi_callback_scope = struct_napi_callback_scope__;
 pub const napi_async_context = struct_napi_async_context__;
@@ -22,7 +22,6 @@ pub const napi_value = JSC.JSValue;
 pub const struct_napi_ref__ = opaque {};
 pub const struct_napi_handle_scope__ = opaque {};
 pub const struct_napi_escapable_handle_scope__ = opaque {};
-pub const struct_napi_callback_info__ = opaque {};
 pub const struct_napi_deferred__ = opaque {};
 
 const char16_t = u16;
@@ -58,6 +57,26 @@ pub const napi_typedarray_type = enum(c_uint) {
     float64_array = 8,
     bigint64_array = 9,
     biguint64_array = 10,
+
+    pub fn toJSType(this: napi_typedarray_type) JSC.JSValue.JSType {
+        return switch (this) {
+            .int8_array => .Int8Array,
+            .uint8_array => .Uint8Array,
+            .uint8_clamped_array => .Uint8ClampedArray,
+            .int16_array => .Int16Array,
+            .uint16_array => .Uint16Array,
+            .int32_array => .Int32Array,
+            .uint32_array => .Uint32Array,
+            .float32_array => .Float32Array,
+            .float64_array => .Float64Array,
+            .bigint64_array => .BigInt64Array,
+            .biguint64_array => .BigUint64Array,
+        };
+    }
+
+    pub fn toC(this: napi_typedarray_type) JSC.C.JSTypedArrayType {
+        return this.toJSType().toC();
+    }
 };
 pub const napi_status = enum(c_uint) {
     ok = 0,
@@ -569,28 +588,83 @@ pub export fn napi_is_arraybuffer(_: napi_env, value: napi_value, result: *bool)
     result.* = value.jsTypeLoose() == .ArrayBuffer;
     return .ok;
 }
-pub extern fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]*anyopaque, result: *napi_value) napi_status;
-pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
+pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]const u8, result: *napi_value) napi_status {
+    var typed_array = JSC.C.JSObjectMakeTypedArray(env.ref(), .kJSTypedArrayTypeArrayBuffer, byte_length, TODO_EXCEPTION);
+    var array_buffer = JSValue.c(typed_array).asArrayBuffer(env) orelse return .generic_failure;
+    @memcpy(array_buffer.ptr, data, @minimum(array_buffer.len, @truncate(u32, byte_length)));
+    result.* = JSValue.c(typed_array);
+    return .ok;
+}
+
+pub export fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
+    var external = JSC.ExternalBuffer.create(
+        finalize_hint,
+        @ptrCast([*]u8, external_data).?[0..byte_length],
+        finalize_cb,
+        JSC.VirtualMachine.vm.allocator,
+    ) catch {
+        return .generic_failure;
+    };
+    result.* = external.toArrayBuffer(env);
+    return .ok;
+}
 pub extern fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: [*]*anyopaque, byte_length: [*c]usize) napi_status;
 pub export fn napi_is_typedarray(_: napi_env, value: napi_value, result: *bool) napi_status {
     result.* = value.jsTypeLoose().isTypedArray();
     return .ok;
 }
-pub extern fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_type, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;
+pub export fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_type, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status {
+    result.* = JSValue.c(
+        JSC.C.JSObjectMakeTypedArrayWithArrayBufferAndOffset(
+            env.ref(),
+            @"type".toC(),
+            arraybuffer.asObjectRef(),
+            byte_offset,
+            length,
+            TODO_EXCEPTION,
+        ),
+    );
+    return .ok;
+}
 pub extern fn napi_get_typedarray_info(env: napi_env, typedarray: napi_value, @"type": [*c]napi_typedarray_type, length: [*c]usize, data: [*]*anyopaque, arraybuffer: *napi_value, byte_offset: [*c]usize) napi_status;
 pub extern fn napi_create_dataview(env: napi_env, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;
-pub extern fn napi_is_dataview(env: napi_env, value: napi_value, result: *bool) napi_status;
+pub export fn napi_is_dataview(_: napi_env, value: napi_value, result: *bool) napi_status {
+    result.* = value.isEmptyOrUndefinedOrNull() and value.jsTypeLoose() == .DataView;
+    return .ok;
+}
 pub extern fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytelength: [*c]usize, data: [*]*anyopaque, arraybuffer: *napi_value, byte_offset: [*c]usize) napi_status;
 pub extern fn napi_get_version(env: napi_env, result: [*c]u32) napi_status;
 pub extern fn napi_create_promise(env: napi_env, deferred: [*c]napi_deferred, promise: *napi_value) napi_status;
 pub extern fn napi_resolve_deferred(env: napi_env, deferred: napi_deferred, resolution: napi_value) napi_status;
 pub extern fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejection: napi_value) napi_status;
-pub extern fn napi_is_promise(env: napi_env, value: napi_value, is_promise: *bool) napi_status;
+pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool) napi_status {
+    if (value.isEmptyOrUndefinedOrNull()) {
+        is_promise.* = false;
+        return .ok;
+    }
+
+    is_promise.* = value.asPromise() != null or value.asInternalPromise() != null;
+    return .ok;
+}
 pub extern fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_adjust_external_memory(env: napi_env, change_in_bytes: i64, adjusted_value: [*c]i64) napi_status;
-pub extern fn napi_create_date(env: napi_env, time: f64, result: *napi_value) napi_status;
-pub extern fn napi_is_date(env: napi_env, value: napi_value, is_date: *bool) napi_status;
-pub extern fn napi_get_date_value(env: napi_env, value: napi_value, result: [*c]f64) napi_status;
+pub export fn napi_create_date(env: napi_env, time: f64, result: *napi_value) napi_status {
+    var args = [_]JSC.C.JSValueRef{JSC.JSValue.jsNumber(time)};
+    result.* = JSC.C.JSObjectMakeDate(env.ref(), 1, &args, TODO_EXCEPTION);
+    return .ok;
+}
+pub export fn napi_is_date(_: napi_env, value: napi_value, is_date: *bool) napi_status {
+    is_date.* = value.jsTypeLoose() == .JSDate;
+    return .ok;
+}
+pub export fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64) napi_status {
+    const getTimeFunction = value.get(env, "getTime") orelse {
+        return .date_expected;
+    };
+
+    result.* = JSValue.c(JSC.C.JSObjectCallAsFunction(env.ref(), getTimeFunction.asObjectRef(), value.asObjectRef, 0, null, TODO_EXCEPTION)).asNumber();
+    return .ok;
+}
 pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*c]napi_ref) napi_status;
 pub extern fn napi_create_bigint_int64(env: napi_env, value: i64, result: *napi_value) napi_status;
 pub extern fn napi_create_bigint_uint64(env: napi_env, value: u64, result: *napi_value) napi_status;
@@ -651,9 +725,31 @@ pub extern fn napi_async_init(env: napi_env, async_resource: napi_value, async_r
 pub extern fn napi_async_destroy(env: napi_env, async_context: napi_async_context) napi_status;
 pub extern fn napi_make_callback(env: napi_env, async_context: napi_async_context, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
 pub extern fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaque, result: *napi_value) napi_status;
-pub extern fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
-pub extern fn napi_create_buffer_copy(env: napi_env, length: usize, data: ?*const anyopaque, result_data: [*]*anyopaque, result: *napi_value) napi_status;
-pub extern fn napi_is_buffer(env: napi_env, value: napi_value, result: *bool) napi_status;
+pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
+    var buf = JSC.ExternalBuffer.create(finalize_hint, @ptrCast([*]u8, data.?)[0..length], env, finalize_cb, JSC.VirtualMachine.vm.allocator) catch {
+        return .generic_failure;
+    };
+
+    result.* = buf.toJS(env);
+    return .ok;
+}
+pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result: *napi_value) napi_status {
+    var duped = JSC.VirtualMachine.vm.allocator.alloc(u8, data[0..length]) catch {
+        return .generic_failure;
+    };
+    @memcpy(duped.ptr, data, length);
+    if (result_data) |res| {
+        res.* = duped.ptr;
+    }
+
+    result.* = JSC.JSValue.createBuffer(env, duped, JSC.VirtualMachine.vm.allocator);
+
+    return .ok;
+}
+pub export fn napi_is_buffer(env: napi_env, value: napi_value, result: *bool) napi_status {
+    result.* = value.isBuffer(env);
+    return .ok;
+}
 pub extern fn napi_get_buffer_info(env: napi_env, value: napi_value, data: [*]*anyopaque, length: [*c]usize) napi_status;
 pub extern fn napi_create_async_work(env: napi_env, async_resource: napi_value, async_resource_name: napi_value, execute: napi_async_execute_callback, complete: napi_async_complete_callback, data: ?*anyopaque, result: [*c]napi_async_work) napi_status;
 pub extern fn napi_delete_async_work(env: napi_env, work: napi_async_work) napi_status;

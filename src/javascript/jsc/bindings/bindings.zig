@@ -2324,6 +2324,11 @@ pub const JSValue = enum(u64) {
         return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
+    extern fn JSBuffer__isBuffer(*JSGlobalObject, JSValue) bool;
+    pub fn isBuffer(value: JSValue, global: *JSGlobalObject) bool {
+        return JSBuffer__isBuffer(value, global);
+    }
+
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
         if (!ZigType.Class.isLoaded() or value.isUndefinedOrNull())
             return null;
@@ -2353,6 +2358,12 @@ pub const JSValue = enum(u64) {
         } else {
             return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, null);
         }
+    }
+
+    pub fn createBufferWithCtx(globalObject: *JSGlobalObject, slice: []u8, ptr: *anyopaque, func: JSC.C.JSTypedArrayBytesDeallocator) JSValue {
+        if (comptime JSC.is_bindgen) unreachable;
+        @setRuntimeSafety(false);
+        return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, ptr, func);
     }
 
     extern fn JSBuffer__bufferFromPointerAndLengthAndDeinit(*JSGlobalObject, [*]u8, usize, ?*anyopaque, JSC.C.JSTypedArrayBytesDeallocator) JSValue;

@@ -296,11 +296,57 @@ pub fn IOTask(comptime Context: type) type {
     };
 }
 
+pub fn AsyncNativeCallbackTask(comptime Context: type) type {
+    return struct {
+        const This = @This();
+        ctx: *Context,
+        task: WorkPoolTask = .{ .callback = runFromThreadPool },
+        event_loop: *VirtualMachine.EventLoop,
+        allocator: std.mem.Allocator,
+        globalThis: *JSGlobalObject,
+
+        pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
+            var this = try allocator.create(This);
+            this.* = .{
+                .event_loop = VirtualMachine.vm.eventLoop(),
+                .ctx = value,
+                .allocator = allocator,
+                .globalThis = globalThis,
+            };
+            return this;
+        }
+
+        pub fn runFromThreadPool(task: *WorkPoolTask) void {
+            var this = @fieldParentPtr(This, "task", task);
+            Context.run(this.ctx, this);
+        }
+
+        pub fn runFromJS(this: This) void {
+            this.ctx.runFromJS(this.globalThis);
+        }
+
+        pub fn schedule(this: *This) void {
+            WorkPool.get().schedule(WorkPool.schedule(&this.task));
+        }
+
+        pub fn onFinish(this: *This) void {
+            this.event_loop.enqueueTaskConcurrent(Task.init(this));
+        }
+
+        pub fn deinit(this: *This) void {
+            var allocator = this.allocator;
+            this.* = undefined;
+            allocator.destroy(this);
+        }
+    };
+}
+
 const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = @import("./api/transpiler.zig").TransformTask.AsyncTransformTask;
 const BunTimerTimeoutTask = Bun.Timer.Timeout.TimeoutTask;
 const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.Store.WriteFile.WriteFileTask;
+const napi_async_work = JSC.napi.napi_async_work;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -311,6 +357,7 @@ pub const Task = TaggedPointerUnion(.{
     CopyFilePromiseTask,
     WriteFileTask,
     AnyTask,
+    napi_async_work,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -576,6 +623,12 @@ pub const VirtualMachine = struct {
                         var transform_task: *CopyFilePromiseTask = task.get(CopyFilePromiseTask).?;
                         transform_task.*.runFromJS();
                         transform_task.deinit();
+                        finished += 1;
+                        vm_.active_tasks -|= 1;
+                    },
+                    @field(Task.Tag, @typeName(JSC.napi.napi_async_work)) => {
+                        var transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
+                        transform_task.*.runFromJS();
                         finished += 1;
                         vm_.active_tasks -|= 1;
                     },

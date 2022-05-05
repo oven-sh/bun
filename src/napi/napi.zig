@@ -12,11 +12,6 @@ pub const napi_handle_scope = napi_env;
 pub const napi_escapable_handle_scope = struct_napi_escapable_handle_scope__;
 pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = *JSC.JSPromise;
-pub const napi_callback_scope = struct_napi_callback_scope__;
-pub const napi_async_context = struct_napi_async_context__;
-pub const napi_async_work = struct_napi_async_work__;
-pub const napi_threadsafe_function = struct_napi_threadsafe_function__;
-pub const napi_async_cleanup_hook_handle = struct_napi_async_cleanup_hook_handle__;
 pub const uv_loop_s = struct_uv_loop_s;
 
 pub const napi_value = JSC.JSValue;
@@ -363,6 +358,7 @@ pub export fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuet
     }
 
     return .invalid_arg;
+}
 pub export fn napi_get_value_double(_: napi_env, value: napi_value, result: *f64) napi_status {
     result.* = value.to(f64);
     return .ok;
@@ -868,12 +864,97 @@ pub extern fn napi_type_tag_object(env: napi_env, value: napi_value, type_tag: [
 pub extern fn napi_check_object_type_tag(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag, result: *bool) napi_status;
 pub extern fn napi_object_freeze(env: napi_env, object: napi_value) napi_status;
 pub extern fn napi_object_seal(env: napi_env, object: napi_value) napi_status;
-pub const struct_napi_callback_scope__ = opaque {};
-pub const napi_callback_scope = ?*struct_napi_callback_scope__;
-pub const struct_napi_async_context__ = opaque {};
-pub const napi_async_context = ?*struct_napi_async_context__;
 pub const struct_napi_async_work__ = opaque {};
-pub const napi_async_work = ?*struct_napi_async_work__;
+const WorkPool = @import("../work_pool.zig").WorkPool;
+
+/// must be globally allocated
+pub const napi_async_work = struct {
+    task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
+    completion_task: ?*anyopaque = null,
+    event_loop: *JSC.VirtualMachine.EventLoop,
+    global: napi_env,
+    execute: napi_async_execute_callback = null,
+    complete: napi_async_complete_callback = null,
+    ctx: ?*anyopaque = null,
+    status: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    can_deinit: bool = false,
+    wait_for_deinit: bool = false,
+    scheduled: bool = false,
+    pub const Status = enum(u32) {
+        pending = 0,
+        started = 1,
+        completed = 2,
+        cancelled = 3,
+    };
+
+    pub fn create(global: napi_env, execute: napi_async_execute_callback, complete: napi_async_complete_callback, ctx: ?*anyopaque) !*napi_async_work {
+        var work = try bun.default_allocator.create(napi_async_work);
+        work.* = .{
+            .global = global,
+            .execute = execute,
+            .complete = complete,
+            .ctx = ctx,
+        };
+        return work;
+    }
+
+    pub fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
+        var this = @fieldParentPtr(napi_async_work, "task", task);
+
+        this.run();
+    }
+    pub fn run(this: *napi_async_work) void {
+        if (this.status.compareAndSwap(@enumToInt(Status.pending), @enumToInt(Status.started), .SeqCst, .SeqCst)) |state| {
+            if (state == @enumToInt(Status.cancelled)) {
+                if (this.wait_for_deinit) {
+                    // this might cause a segfault due to Task using a linked list!
+                    bun.default_allocator.destroy(this);
+                }
+            }
+            return;
+        }
+        this.execute.?(this.global, this.ctx);
+        this.status.store(@enumToInt(Status.completed), .SeqCst);
+
+        this.event_loop.enqueueTaskConcurrent(JSC.Task.from(JSC.Task.init(this)));
+    }
+
+    pub fn schedule(this: *napi_async_work) void {
+        if (this.scheduled) return;
+        this.scheduled = true;
+        WorkPool.get().schedule(&this.task);
+    }
+
+    pub fn cancel(this: *napi_async_work) bool {
+        const prev_status = @intToEnum(
+            Status,
+            this.status.compareAndSwap(@enumToInt(Status.cancelled), @enumToInt(Status.pending), .SeqCst, .SeqCst),
+        );
+        if (prev_status == Status.pending) {
+            return true;
+        }
+        return false;
+    }
+
+    pub fn deinit(this: *napi_async_work) void {
+        if (this.can_deinit) {
+            bun.default_allocator.destroy(this);
+            return;
+        }
+        this.wait_for_deinit = true;
+    }
+
+    pub fn runFromJS(this: *napi_async_work) void {
+        this.complete.?(
+            this.global,
+            if (this.status.load(.SeqCst) == @enumToInt(Status.cancelled))
+                napi_status.cancelled
+            else
+                napi_status.ok,
+            this.ctx,
+        );
+    }
+};
 pub const struct_napi_threadsafe_function__ = opaque {};
 pub const napi_threadsafe_function = ?*struct_napi_threadsafe_function__;
 pub const napi_tsfn_release: c_int = 0;
@@ -961,10 +1042,37 @@ pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u
     length.* = array_buf.length;
     return .ok;
 }
-pub extern fn napi_create_async_work(env: napi_env, async_resource: napi_value, async_resource_name: napi_value, execute: napi_async_execute_callback, complete: napi_async_complete_callback, data: ?*anyopaque, result: [*c]napi_async_work) napi_status;
-pub extern fn napi_delete_async_work(env: napi_env, work: napi_async_work) napi_status;
-pub extern fn napi_queue_async_work(env: napi_env, work: napi_async_work) napi_status;
-pub extern fn napi_cancel_async_work(env: napi_env, work: napi_async_work) napi_status;
+pub export fn napi_create_async_work(
+    env: napi_env,
+    _: napi_value,
+    _: [*:0]const u8,
+    execute: napi_async_execute_callback,
+    complete: napi_async_complete_callback,
+    data: ?*anyopaque,
+    result: *napi_async_work,
+) napi_status {
+    result.* = napi_async_work.create(env, execute, complete, data) catch {
+        return .generic_failure;
+    };
+    return .ok;
+}
+pub export fn napi_delete_async_work(env: napi_env, work: *napi_async_work) napi_status {
+    std.debug.assert(env == work.global);
+    work.deinit();
+}
+pub export fn napi_queue_async_work(env: napi_env, work: *napi_async_work) napi_status {
+    std.debug.assert(env == work.global);
+    work.schedule();
+    return .ok;
+}
+pub export fn napi_cancel_async_work(env: napi_env, work: *napi_async_work) napi_status {
+    std.debug.assert(env == work.global);
+    if (work.cancel()) {
+        return .ok;
+    }
+
+    return napi_status.generic_failure;
+}
 pub export fn napi_get_node_version(_: napi_env, version: **const napi_node_version) napi_status {
     version.* = &napi_node_version.global;
     return .ok;

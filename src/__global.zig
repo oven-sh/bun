@@ -33,6 +33,12 @@ pub inline fn getStartTime() i128 {
     return @import("root").start_time;
 }
 
+pub const version: @import("./install/semver.zig").Version = .{
+    .major = 0,
+    .minor = 0,
+    .patch = @truncate(u32, build_id),
+};
+
 pub fn setThreadName(name: StringTypes.stringZ) void {
     if (Environment.isLinux) {
         _ = std.os.prctl(.SET_NAME, .{@ptrToInt(name.ptr)}) catch 0;

@@ -1,6 +1,7 @@
 const std = @import("std");
 const JSC = @import("javascript_core");
 const strings = @import("strings");
+const bun = @import("../global.zig");
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 const TODO_EXCEPTION: JSC.C.ExceptionRef = null;
@@ -633,7 +634,12 @@ pub export fn napi_is_dataview(_: napi_env, value: napi_value, result: *bool) na
     return .ok;
 }
 pub extern fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytelength: [*c]usize, data: [*]*anyopaque, arraybuffer: *napi_value, byte_offset: [*c]usize) napi_status;
-pub extern fn napi_get_version(env: napi_env, result: [*c]u32) napi_status;
+pub export fn napi_get_version(_: napi_env, result: [*]u32) napi_status {
+    result[0] = bun.Global.version.major;
+    result[1] = bun.Global.version.minor;
+    result[2] = bun.Global.version.patch;
+    return .ok;
+}
 pub extern fn napi_create_promise(env: napi_env, deferred: [*c]napi_deferred, promise: *napi_value) napi_status;
 pub extern fn napi_resolve_deferred(env: napi_env, deferred: napi_deferred, resolution: napi_value) napi_status;
 pub extern fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejection: napi_value) napi_status;
@@ -724,7 +730,14 @@ pub extern fn napi_fatal_error(location: [*c]const u8, location_len: usize, mess
 pub extern fn napi_async_init(env: napi_env, async_resource: napi_value, async_resource_name: napi_value, result: [*c]napi_async_context) napi_status;
 pub extern fn napi_async_destroy(env: napi_env, async_context: napi_async_context) napi_status;
 pub extern fn napi_make_callback(env: napi_env, async_context: napi_async_context, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
-pub extern fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaque, result: *napi_value) napi_status;
+pub export fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaque, result: *napi_value) napi_status {
+    var buf = JSC.ExternalBuffer.create(null, @ptrCast([*]u8, data.?)[0..length], env, null, JSC.VirtualMachine.vm.allocator) catch {
+        return .generic_failure;
+    };
+
+    result.* = buf.toJS(env);
+    return .ok;
+}
 pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
     var buf = JSC.ExternalBuffer.create(finalize_hint, @ptrCast([*]u8, data.?)[0..length], env, finalize_cb, JSC.VirtualMachine.vm.allocator) catch {
         return .generic_failure;

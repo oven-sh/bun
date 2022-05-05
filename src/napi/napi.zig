@@ -1077,10 +1077,48 @@ pub export fn napi_get_node_version(_: napi_env, version: **const napi_node_vers
     version.* = &napi_node_version.global;
     return .ok;
 }
-pub extern fn napi_get_uv_event_loop(env: napi_env, loop: [*]*struct_uv_loop_s) napi_status;
+pub export fn napi_get_uv_event_loop(_: napi_env, loop: *?*struct_uv_loop_s) napi_status {
+    // lol
+    loop.* = JSC.VirtualMachine.vm.eventLoop();
+}
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
-pub extern fn napi_add_env_cleanup_hook(env: napi_env, fun: ?fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status;
-pub extern fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status;
+
+// We use a linked list here because we assume removing these is relatively rare
+// and array reallocations are relatively expensive.
+pub export fn napi_add_env_cleanup_hook(env: napi_env, fun: ?fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
+    if (fun == null)
+        return .ok;
+
+    JSC.VirtualMachine.vm.rareData().pushCleanupHook(env, arg, fun);
+    return .ok;
+}
+pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
+    if (JSC.VirtualMachine.vm.rare_data == null or fun == null)
+        return .ok;
+
+    var rare_data = JSC.VirtualMachine.vm.rare_data.?;
+    var hook = rare_data.cleanup_hook orelse return .ok;
+    const cmp = JSC.RareData.CleanupHook.from(env, arg, fun.?);
+    if (hook.eql(cmp)) {
+        JSC.VirtualMachine.vm.allocator.destroy(hook);
+        rare_data.cleanup_hook = null;
+        rare_data.tail_cleanup_hook = null;
+    }
+    while (hook.next) |current| {
+        if (hook.eql(cmp)) {
+            if (current.next) |next| {
+                hook.next = next;
+            } else {
+                hook.next = null;
+            }
+            JSC.VirtualMachine.vm.allocator.destroy(current);
+            return .ok;
+        }
+        hook = current;
+    }
+
+    return .ok;
+}
 pub extern fn napi_open_callback_scope(env: napi_env, resource_object: napi_value, context: napi_async_context, result: [*c]napi_callback_scope) napi_status;
 pub extern fn napi_close_callback_scope(env: napi_env, scope: napi_callback_scope) napi_status;
 pub extern fn napi_create_threadsafe_function(env: napi_env, func: napi_value, async_resource: napi_value, async_resource_name: napi_value, max_queue_size: usize, initial_thread_count: usize, thread_finalize_data: ?*anyopaque, thread_finalize_cb: napi_finalize, context: ?*anyopaque, call_js_cb: napi_threadsafe_function_call_js, result: [*c]napi_threadsafe_function) napi_status;
@@ -1090,8 +1128,15 @@ pub extern fn napi_acquire_threadsafe_function(func: napi_threadsafe_function) n
 pub extern fn napi_release_threadsafe_function(func: napi_threadsafe_function, mode: napi_threadsafe_function_release_mode) napi_status;
 pub extern fn napi_unref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status;
 pub extern fn napi_ref_threadsafe_function(env: napi_env, func: napi_threadsafe_function) napi_status;
-pub extern fn napi_add_async_cleanup_hook(env: napi_env, hook: napi_async_cleanup_hook, arg: ?*anyopaque, remove_handle: [*c]napi_async_cleanup_hook_handle) napi_status;
-pub extern fn napi_remove_async_cleanup_hook(remove_handle: napi_async_cleanup_hook_handle) napi_status;
+
+pub export fn napi_add_async_cleanup_hook(_: napi_env, _: napi_async_cleanup_hook, _: ?*anyopaque, _: [*c]napi_async_cleanup_hook_handle) napi_status {
+    // TODO:
+    return .ok;
+}
+pub export fn napi_remove_async_cleanup_hook(_: napi_async_cleanup_hook_handle) napi_status {
+    // TODO:
+    return .ok;
+}
 
 pub const NAPI_VERSION_EXPERIMENTAL = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483647, .decimal);
 pub const NAPI_VERSION = @as(c_int, 8);

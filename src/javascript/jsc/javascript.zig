@@ -584,6 +584,16 @@ pub const VirtualMachine = struct {
         return this.event_loop;
     }
 
+    pub fn onExit(this: *VirtualMachine) void {
+        var rare_data = this.rare_data orelse return;
+        var hook = rare_data.cleanup_hook orelse return;
+        hook.execute();
+        while (hook.next) |next| {
+            next.execute();
+            hook = next;
+        }
+    }
+
     pub const EventLoop = struct {
         ready_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
         pending_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),

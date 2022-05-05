@@ -159,6 +159,8 @@ pub const Run = struct {
             }
         }
 
+        this.vm.onExit();
+
         Global.exit(0);
     }
 };

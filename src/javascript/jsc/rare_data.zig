@@ -14,6 +14,55 @@ stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
+// TODO: make this per JSGlobalObject instead of global
+// This does not handle ShadowRealm correctly!
+tail_cleanup_hook: ?*CleanupHook = null,
+cleanup_hook: ?*CleanupHook = null,
+
+pub const CleanupHook = struct {
+    next: ?*CleanupHook = null,
+    ctx: ?*anyopaque,
+    func: Function,
+    globalThis: *JSC.JSGlobalObject,
+
+    pub fn eql(self: CleanupHook, other: CleanupHook) bool {
+        return self.ctx == other.ctx and self.func == other.func and self.globalThis == other.globalThis;
+    }
+
+    pub fn from(
+        globalThis: *JSC.JSGlobalObject,
+        ctx: ?*anyopaque,
+        func: CleanupHook.Function,
+    ) CleanupHook {
+        return .{
+            .next = null,
+            .ctx = ctx,
+            .func = func,
+            .globalThis = globalThis,
+        };
+    }
+
+    pub const Function = fn (?*anyopaque) callconv(.C) void;
+};
+
+pub fn pushCleanupHook(
+    this: *RareData,
+    globalThis: *JSC.JSGlobalObject,
+    ctx: ?*anyopaque,
+    func: CleanupHook.Function,
+) void {
+    var hook = JSC.VirtualMachine.vm.allocator.create(CleanupHook) catch unreachable;
+    hook.* = CleanupHook.from(globalThis, ctx, func);
+    if (this.cleanup_hook == null) {
+        this.cleanup_hook = hook;
+        this.tail_cleanup_hook = hook;
+    } else {
+        this.cleanup_hook.?.next = hook;
+    }
+
+    return hook;
+}
+
 pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
     return rare.boring_ssl_engine orelse brk: {
         rare.boring_ssl_engine = BoringSSL.ENGINE_new();

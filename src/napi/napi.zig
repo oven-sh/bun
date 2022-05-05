@@ -508,11 +508,32 @@ pub export fn napi_get_element(env: napi_env, object: napi_value, index: u32, re
     result.* = JSC.JSObject.getIndex(object, env, index);
     return .ok;
 }
-pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *bool) napi_status;
+pub export fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *bool) napi_status {
+    if (!object.jsType().isIndexable()) {
+        return .array_expected;
+    }
+
+    // TODO: this might be incorrect because I don't know if this API supports numbers, it may only support strings
+    result.* = JSC.C.JSObjectDeleteProperty(env.ref(), object.asObjectRef(), JSC.JSValue.jsNumber(index), TODO_EXCEPTION);
+    return .ok;
+}
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
-pub extern fn napi_is_array(env: napi_env, value: napi_value, result: *bool) napi_status;
-pub extern fn napi_get_array_length(env: napi_env, value: napi_value, result: [*c]u32) napi_status;
-pub extern fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value, result: *bool) napi_status;
+pub export fn napi_is_array(_: napi_env, value: napi_value, result: *bool) napi_status {
+    result.* = value.jsType().isArray();
+    return .ok;
+}
+pub export fn napi_get_array_length(env: napi_env, value: napi_value, result: [*c]u32) napi_status {
+    if (!value.jsType().isArray()) {
+        return .array_expected;
+    }
+
+    result.* = value.getLengthOfArray(env);
+    return .ok;
+}
+pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value, result: *bool) napi_status {
+    result.* = lhs.isSameValue(rhs, env);
+    return .ok;
+}
 pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
 pub extern fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
 pub extern fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: *bool) napi_status;
@@ -538,14 +559,23 @@ pub extern fn napi_throw(env: napi_env, @"error": napi_value) napi_status;
 pub extern fn napi_throw_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_type_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_range_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
-pub extern fn napi_is_error(env: napi_env, value: napi_value, result: *bool) napi_status;
+pub export fn napi_is_error(env: napi_env, value: napi_value, result: *bool) napi_status {
+    result.* = value.isAnyError(env);
+    return .ok;
+}
 pub extern fn napi_is_exception_pending(env: napi_env, result: *bool) napi_status;
 pub extern fn napi_get_and_clear_last_exception(env: napi_env, result: *napi_value) napi_status;
-pub extern fn napi_is_arraybuffer(env: napi_env, value: napi_value, result: *bool) napi_status;
+pub export fn napi_is_arraybuffer(_: napi_env, value: napi_value, result: *bool) napi_status {
+    result.* = value.jsTypeLoose() == .ArrayBuffer;
+    return .ok;
+}
 pub extern fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]*anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: [*]*anyopaque, byte_length: [*c]usize) napi_status;
-pub extern fn napi_is_typedarray(env: napi_env, value: napi_value, result: *bool) napi_status;
+pub export fn napi_is_typedarray(_: napi_env, value: napi_value, result: *bool) napi_status {
+    result.* = value.jsTypeLoose().isTypedArray();
+    return .ok;
+}
 pub extern fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_type, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;
 pub extern fn napi_get_typedarray_info(env: napi_env, typedarray: napi_value, @"type": [*c]napi_typedarray_type, length: [*c]usize, data: [*]*anyopaque, arraybuffer: *napi_value, byte_offset: [*c]usize) napi_status;
 pub extern fn napi_create_dataview(env: napi_env, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;

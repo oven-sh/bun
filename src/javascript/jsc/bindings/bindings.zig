@@ -2151,6 +2151,13 @@ pub const JSValue = enum(u64) {
             };
         }
 
+        pub fn isTypedArray(this: JSType) bool {
+            return switch (this) {
+                .Int8Array, .Int16Array, .Int32Array, .Uint8Array, .Uint8ClampedArray, .Uint16Array, .Uint32Array, .Float32Array, .Float64Array, .ArrayBuffer => true,
+                else => false,
+            };
+        }
+
         pub fn toC(this: JSType) C_API.JSTypedArrayType {
             return switch (this) {
                 .Int8Array => .kJSTypedArrayTypeInt8Array,

@@ -857,8 +857,14 @@ pub export fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64
     return .ok;
 }
 pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*c]napi_ref) napi_status;
-pub extern fn napi_create_bigint_int64(env: napi_env, value: i64, result: *napi_value) napi_status;
-pub extern fn napi_create_bigint_uint64(env: napi_env, value: u64, result: *napi_value) napi_status;
+pub export fn napi_create_bigint_int64(env: napi_env, value: i64, result: *napi_value) napi_status {
+    result.* = JSC.JSValue.fromInt64NoTruncate(env, value);
+    return .ok;
+}
+pub export fn napi_create_bigint_uint64(env: napi_env, value: u64, result: *napi_value) napi_status {
+    result.* = JSC.JSValue.fromUint64NoTruncate(env, value);
+    return .ok;
+}
 pub extern fn napi_create_bigint_words(env: napi_env, sign_bit: c_int, word_count: usize, words: [*c]const u64, result: *napi_value) napi_status;
 pub extern fn napi_get_value_bigint_int64(env: napi_env, value: napi_value, result: [*c]i64, lossless: *bool) napi_status;
 pub extern fn napi_get_value_bigint_uint64(env: napi_env, value: napi_value, result: [*c]u64, lossless: *bool) napi_status;

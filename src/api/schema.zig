@@ -359,6 +359,9 @@ pub const Api = struct {
         /// wasm
         wasm,
 
+        /// napi
+        napi,
+
         _,
 
         pub fn jsonStringify(self: *const @This(), opts: anytype, o: anytype) !void {

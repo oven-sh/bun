@@ -10,6 +10,7 @@ smol Loader {
     json = 7;
     toml = 8;
     wasm = 9;
+    napi = 10;
 }
 
 smol FrameworkEntryPointType {

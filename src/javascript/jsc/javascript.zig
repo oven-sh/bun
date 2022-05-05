@@ -84,7 +84,7 @@ const Config = @import("./config.zig");
 const URL = @import("../../url.zig").URL;
 const Transpiler = @import("./api/transpiler.zig");
 const Bun = JSC.API.Bun;
-
+const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 pub const GlobalConstructors = [_]type{
     WebCore.Blob.Constructor,
     WebCore.TextDecoder.Constructor,
@@ -358,6 +358,7 @@ pub const Task = TaggedPointerUnion(.{
     WriteFileTask,
     AnyTask,
     napi_async_work,
+    ThreadSafeFunction,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -497,12 +498,22 @@ pub const AnyTask = struct {
                 };
             }
 
-            pub fn wrap(this: *anyopaque) void {
-                Callback(@ptrCast(*Type, @alignCast(@alignOf(Type), this)));
+            pub fn wrap(this: ?*anyopaque) void {
+                Callback(@ptrCast(*Type, @alignCast(@alignOf(Type), this.?)));
             }
         };
     }
 };
+
+pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
+    return JSC.VirtualMachine.vm.global;
+}
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = Bun__getDefaultGlobal;
+    }
+}
 
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
 // We can see that it's sort of like std.mem.Allocator but for JSGlobalContextRef, to support Automatic Reference Counting
@@ -1291,6 +1302,8 @@ pub const VirtualMachine = struct {
                     .hash = 0,
                 };
             },
+            // provideFetch() should be called
+            .napi => unreachable,
             // .wasm => {
             //     jsc_vm.transpiled_count += 1;
             //     var fd: ?StoredFileDescriptorType = null;

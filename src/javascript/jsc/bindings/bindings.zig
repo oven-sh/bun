@@ -2285,7 +2285,7 @@ pub const JSValue = enum(u64) {
         if (this.isEmptyOrUndefinedOrNull())
             return false;
 
-        return JSC.C.JSValueIsInstanceOfConstructor(global.ref(), this.asObjectRef(), constructor.ref(), null);
+        return JSC.C.JSValueIsInstanceOfConstructor(global.ref(), this.asObjectRef(), constructor.asObjectRef(), null);
     }
 
     pub fn jsType(
@@ -2333,7 +2333,8 @@ pub const JSValue = enum(u64) {
 
     extern fn JSBuffer__isBuffer(*JSGlobalObject, JSValue) bool;
     pub fn isBuffer(value: JSValue, global: *JSGlobalObject) bool {
-        return JSBuffer__isBuffer(value, global);
+        if (comptime JSC.is_bindgen) unreachable;
+        return JSBuffer__isBuffer(global, value);
     }
 
     pub fn asCheckLoaded(value: JSValue, comptime ZigType: type) ?*ZigType {
@@ -2367,7 +2368,7 @@ pub const JSValue = enum(u64) {
         }
     }
 
-    pub fn createBufferWithCtx(globalObject: *JSGlobalObject, slice: []u8, ptr: *anyopaque, func: JSC.C.JSTypedArrayBytesDeallocator) JSValue {
+    pub fn createBufferWithCtx(globalObject: *JSGlobalObject, slice: []u8, ptr: ?*anyopaque, func: JSC.C.JSTypedArrayBytesDeallocator) JSValue {
         if (comptime JSC.is_bindgen) unreachable;
         @setRuntimeSafety(false);
         return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, ptr, func);
@@ -3568,6 +3569,8 @@ pub const WTF = struct {
     /// Encode a byte array to a URL-safe base64 string for use with JS
     /// Memory is managed by JavaScriptCore instead of us
     pub fn toBase64URLStringValue(bytes: []const u8, globalObject: *JSGlobalObject) JSValue {
+        if (comptime JSC.is_bindgen) unreachable;
+
         return WTF__toBase64URLStringValue(bytes.ptr, bytes.len, globalObject);
     }
 };

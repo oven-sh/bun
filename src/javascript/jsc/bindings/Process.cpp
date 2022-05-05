@@ -1,6 +1,8 @@
 #include "Process.h"
 #include "JavaScriptCore/JSMicrotask.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "node_api.h"
+#include <dlfcn.h>
 
 #pragma mark - Node.js Process
 
@@ -103,6 +105,54 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+static JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSC::VM& vm = globalObject->vm();
+
+    auto argCount = callFrame->argumentCount();
+    if (argCount < 2) {
+
+        JSC::throwTypeError(globalObject, scope, "dlopen requires 2 arguments"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    JSC::JSValue moduleValue = callFrame->uncheckedArgument(0);
+    if (!moduleValue.isObject()) {
+        JSC::throwTypeError(globalObject, scope, "dlopen requires an object as first argument"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    JSC::Identifier exportsSymbol = JSC::Identifier::fromString(vm, "exports"_s);
+    JSC::JSObject* exports = moduleValue.getObject()->getIfPropertyExists(globalObject, exportsSymbol).getObject();
+
+    WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
+    CString utf8 = filename.utf8();
+    void* handle = dlopen(utf8.data(), RTLD_LAZY);
+
+    if (!handle) {
+        WTF::String msg = WTF::String::fromUTF8(dlerror());
+        JSC::throwTypeError(globalObject, scope, msg);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
+        JSC::EncodedJSValue exports);
+
+    napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
+        JSC::EncodedJSValue)>(
+        dlsym(handle, "napi_register_module_v1"));
+
+    if (!napi_register_module_v1) {
+        dlclose(handle);
+        JSC::throwTypeError(globalObject, scope, "dlopen failed to napi_register_module_v1"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    return napi_register_module_v1(globalObject, JSC::JSValue::encode(exports));
+}
+
 static JSC_DECLARE_HOST_FUNCTION(Process_functionExit);
 static JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -164,8 +214,13 @@ void Process::finishCreation(JSC::VM& vm)
         static_cast<unsigned>(JSC::PropertyAttribute::CustomValue));
 
     this->putDirect(vm, clientData->builtinNames().nextTickPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
             WTF::String("nextTick"), Process_functionNextTick),
+        0);
+
+    this->putDirect(vm, JSC::Identifier::fromString(vm, "dlopen"_s),
+        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
+            WTF::String("dlopen"_s), Process_functionDlopen),
         0);
 
     this->putDirect(vm, clientData->builtinNames().cwdPublicName(),

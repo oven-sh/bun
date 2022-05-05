@@ -47,6 +47,8 @@ JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObjec
     : Base(vm, executable, globalObject, structure)
     , m_function(WTFMove(function))
 {
+    // used in NAPI
+    dataPtr = nullptr;
 }
 
 template<typename Visitor>

@@ -8,6 +8,7 @@ const Loader = {
   7: 7,
   8: 8,
   9: 9,
+  10: 10,
   jsx: 1,
   js: 2,
   ts: 3,
@@ -17,6 +18,7 @@ const Loader = {
   json: 7,
   toml: 8,
   wasm: 9,
+  napi: 10,
 };
 const LoaderKeys = {
   1: "jsx",
@@ -28,6 +30,7 @@ const LoaderKeys = {
   7: "json",
   8: "toml",
   9: "wasm",
+  10: "napi",
   jsx: "jsx",
   js: "js",
   ts: "ts",
@@ -37,6 +40,7 @@ const LoaderKeys = {
   json: "json",
   toml: "toml",
   wasm: "wasm",
+  napi: "napi",
 };
 const FrameworkEntryPointType = {
   1: 1,

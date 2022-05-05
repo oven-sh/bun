@@ -23,6 +23,7 @@ export const enum Loader {
   json = 7,
   toml = 8,
   wasm = 9,
+  napi = 10,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -43,6 +44,8 @@ export const LoaderKeys: {
   toml: "toml";
   9: "wasm";
   wasm: "wasm";
+  10: "napi";
+  napi: "napi";
 };
 export const enum FrameworkEntryPointType {
   client = 1,

@@ -29,6 +29,10 @@ pub const CleanupHook = struct {
         return self.ctx == other.ctx and self.func == other.func and self.globalThis == other.globalThis;
     }
 
+    pub fn execute(self: CleanupHook) void {
+        self.func(self.ctx);
+    }
+
     pub fn from(
         globalThis: *JSC.JSGlobalObject,
         ctx: ?*anyopaque,
@@ -59,8 +63,6 @@ pub fn pushCleanupHook(
     } else {
         this.cleanup_hook.?.next = hook;
     }
-
-    return hook;
 }
 
 pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {

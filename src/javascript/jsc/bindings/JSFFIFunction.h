@@ -74,6 +74,8 @@ public:
 
     const FFIFunction function() { return m_function; }
 
+    void* dataPtr;
+
 private:
     JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, FFIFunction&&);
     void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name);

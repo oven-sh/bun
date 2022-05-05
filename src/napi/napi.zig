@@ -15,7 +15,6 @@ pub const napi_handle_scope = napi_env;
 pub const napi_escapable_handle_scope = struct_napi_escapable_handle_scope__;
 pub const napi_callback_info = *JSC.CallFrame;
 pub const napi_deferred = *JSC.JSPromise;
-pub const uv_loop_s = struct_uv_loop_s;
 
 pub const napi_value = JSC.JSValue;
 pub const struct_napi_ref__ = opaque {};
@@ -167,7 +166,7 @@ pub export fn napi_get_boolean(_: napi_env, value: bool, result: *napi_value) na
     return .ok;
 }
 pub export fn napi_create_object(env: napi_env, result: *napi_value) napi_status {
-    result.* = JSValue.c(JSC.C.JSObjectMake(env.ref(), null, null));
+    result.* = JSValue.createEmptyObject(env, 0);
     return .ok;
 }
 pub export fn napi_create_array(env: napi_env, result: *napi_value) napi_status {
@@ -193,7 +192,7 @@ pub export fn napi_create_array_with_length(env: napi_env, length: usize, result
     for (undefined_args) |_, i| {
         undefined_args[i] = JSValue.jsUndefined().asObjectRef();
     }
-    result.* = JSValue.c(JSC.C.JSObjectMakeArray(env.ptr(), length, undefined_args.ptr, null));
+    result.* = JSValue.c(JSC.C.JSObjectMakeArray(env.ref(), length, undefined_args.ptr, null));
 
     return .ok;
 }
@@ -216,7 +215,7 @@ pub export fn napi_create_int64(_: napi_env, value: i64, result: *napi_value) na
 pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
     var len = length;
     if (NAPI_AUTO_LENGTH == length) {
-        len = std.mem.sliceTo(str, 0).len;
+        len = std.mem.sliceTo(std.meta.assumeSentinel(str, 0), 0).len;
     }
     result.* = JSC.ZigString.init(str[0..len]).toValueGC(env);
     return .ok;
@@ -224,7 +223,7 @@ pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length:
 pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
     var len = length;
     if (NAPI_AUTO_LENGTH == length) {
-        len = std.mem.sliceTo(str, 0).len;
+        len = std.mem.sliceTo(std.meta.assumeSentinel(str, 0), 0).len;
     }
     result.* = JSC.ZigString.init(str[0..len]).withEncoding().toValueGC(env);
     return .ok;
@@ -232,15 +231,15 @@ pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: u
 pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, length: usize, result: *napi_value) napi_status {
     var len = length;
     if (NAPI_AUTO_LENGTH == length) {
-        len = std.mem.sliceTo(str, 0).len;
+        len = std.mem.sliceTo(std.meta.assumeSentinel(str, 0), 0).len;
     }
-    result.* = JSC.ZigString.from16(str, len, env).toValueGC(env);
+    result.* = JSC.ZigString.from16(str, len).toValueGC(env);
     return .ok;
 }
 pub export fn napi_create_symbol(env: napi_env, description: napi_value, result: *napi_value) napi_status {
-    var string_ref = JSC.C.JSValueToStringCopy(env, description, null);
+    var string_ref = JSC.C.JSValueToStringCopy(env.ref(), description.asObjectRef(), null);
     defer JSC.C.JSStringRelease(string_ref);
-    result.* = JSValue.c(JSC.C.JSValueMakeSymbol(env, string_ref));
+    result.* = JSValue.c(JSC.C.JSValueMakeSymbol(env.ref(), string_ref));
     return .ok;
 }
 // const wrapped_callback_function_class_def = JSC.C.JSClassDefinition{
@@ -277,7 +276,7 @@ pub export fn napi_create_symbol(env: napi_env, description: napi_value, result:
 
 // pub fn getWrappedCallbackFunctionClass(env: napi_env) JSC.C.JSClassRef {}
 // pub export fn napi_create_function(env: napi_env, utf8name: [*c]const u8, length: usize, cb: napi_callback, data: ?*anyopaque, result: *napi_value) napi_status {
-//     //  JSC.C.JSObjectMakeFunctionWithCallback(ctx: JSContextRef, name: JSStringRef, callAsFunction: JSObjectCallAsFunctionCallback)
+//      JSC.C.JSObject
 // }
 pub export fn napi_create_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status {
     const system_error = JSC.SystemError{
@@ -291,7 +290,7 @@ pub extern fn napi_create_type_error(env: napi_env, code: napi_value, msg: napi_
 pub extern fn napi_create_range_error(env: napi_env, code: napi_value, msg: napi_value, result: *napi_value) napi_status;
 pub export fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuetype) napi_status {
     if (value.isEmpty()) {
-        result.* = .undefined;
+        result.* = .@"undefined";
         return .ok;
     }
 
@@ -307,12 +306,12 @@ pub export fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuet
     //"bigint" = 9,
 
     if (value.isUndefined()) {
-        result.* = .undefined;
+        result.* = .@"undefined";
         return .ok;
     }
 
     if (value.isNull()) {
-        result.* = .null;
+        result.* = .@"null";
         return .ok;
     }
 
@@ -341,10 +340,10 @@ pub export fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuet
         return .ok;
     }
 
-    if (value.jsType() == .JSProxy) {
-        result.* = .external;
-        return .ok;
-    }
+    // if (value.jsType() == .JSProxy) {
+    //     result.* = .external;
+    //     return .ok;
+    // }
 
     if (value.isObject()) {
         if (value.isCallable(env.vm())) {
@@ -363,7 +362,7 @@ pub export fn napi_typeof(env: napi_env, value: napi_value, result: *napi_valuet
     return .invalid_arg;
 }
 pub export fn napi_get_value_double(_: napi_env, value: napi_value, result: *f64) napi_status {
-    result.* = value.to(f64);
+    result.* = value.asNumber();
     return .ok;
 }
 pub export fn napi_get_value_int32(_: napi_env, value: napi_value, result: *i32) napi_status {
@@ -426,20 +425,20 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf:
     }
 
     const to_copy = @minimum(zig_str.len, bufsize);
-    @memcpy(buf[0..], zig_str.utf16SliceAligned().ptr, to_copy);
+    @memcpy(std.mem.sliceAsBytes(buf[0..bufsize]).ptr, std.mem.sliceAsBytes(zig_str.utf16SliceAligned()).ptr, to_copy * 2);
     result.* = to_copy;
     return .ok;
 }
 pub export fn napi_coerce_to_bool(_: napi_env, value: napi_value, result: *napi_value) napi_status {
-    result.* = value.to(bool);
+    result.* = JSValue.jsBoolean(value.to(bool));
     return .ok;
 }
 pub export fn napi_coerce_to_number(env: napi_env, value: napi_value, result: *napi_value) napi_status {
-    result.* = JSValue.from(JSC.C.JSValueToNumber(env.ref(), value.asObjectRef(), TODO_EXCEPTION));
+    result.* = JSC.JSValue.jsNumber(JSC.C.JSValueToNumber(env.ref(), value.asObjectRef(), TODO_EXCEPTION));
     return .ok;
 }
 pub export fn napi_coerce_to_object(env: napi_env, value: napi_value, result: *napi_value) napi_status {
-    result.* = JSValue.from(JSC.C.JSValueToObject(env.ref(), value.asObjectRef(), TODO_EXCEPTION));
+    result.* = JSValue.c(JSC.C.JSValueToObject(env.ref(), value.asObjectRef(), TODO_EXCEPTION));
     return .ok;
 }
 // pub export fn napi_coerce_to_string(env: napi_env, value: napi_value, result: *napi_value) napi_status {
@@ -452,7 +451,7 @@ pub export fn napi_get_prototype(env: napi_env, object: napi_value, result: *nap
         return .object_expected;
     }
 
-    result.* = JSValue.from(JSC.C.JSObjectGetPrototype(env.ref(), object.asObjectRef()));
+    result.* = JSValue.c(JSC.C.JSObjectGetPrototype(env.ref(), object.asObjectRef()));
     return .ok;
 }
 // TODO: bind JSC::ownKeys
@@ -471,9 +470,16 @@ pub export fn napi_set_property(env: napi_env, object: napi_value, key: napi_val
     if (name.len == 0 or value.isEmpty()) {
         return .invalid_arg;
     }
-    var exception: ?JSC.C.JSValueRef = null;
-    JSC.C.JSObjectSetPropertyForKey(env.ref(), object.asObjectRef(), key.asObjectRef(), value, JSC.C.JSPropertyAttributes.kJSPropertyAttributeNone, &exception);
-    return if (exception == null)
+    var exception = [_]JSC.C.JSValueRef{null};
+    JSC.C.JSObjectSetPropertyForKey(
+        env.ref(),
+        object.asObjectRef(),
+        key.asObjectRef(),
+        value.asObjectRef(),
+        JSC.C.JSPropertyAttributes.kJSPropertyAttributeNone,
+        &exception,
+    );
+    return if (exception[0] == null)
         .ok
     else
         .generic_failure;
@@ -489,10 +495,10 @@ pub export fn napi_has_property(env: napi_env, object: napi_value, key: napi_val
         return .invalid_arg;
     }
     // TODO: bind hasOwnProperty
-    result.* = object.get(env, &name_slice) != null;
+    result.* = object.get(env, name_slice.slice()) != null;
     return .ok;
 }
-pub export fn napi_get_property(env: napi_env, object: napi_value, key: napi_value, result: ?*napi_value) napi_status {
+pub export fn napi_get_property(env: napi_env, object: napi_value, key: napi_value, result: *napi_value) napi_status {
     if (!object.isObject()) {
         return .object_expected;
     }
@@ -508,7 +514,7 @@ pub export fn napi_get_property(env: napi_env, object: napi_value, key: napi_val
         return .invalid_arg;
     }
     // TODO: DECLARE_THROW_SCOPE
-    result.* = object.get(env, &name_slice);
+    result.* = object.get(env, name_slice.slice()) orelse JSC.JSValue.@"undefined";
     return .ok;
 }
 pub export fn napi_delete_property(env: napi_env, object: napi_value, key: napi_value, result: *bool) napi_status {
@@ -520,7 +526,7 @@ pub export fn napi_delete_property(env: napi_env, object: napi_value, key: napi_
         return .invalid_arg;
     }
 
-    result.* = JSC.C.JSObjectDeletePropertyForKey(env, object.asObjectRef(), key.asObjectRef(), null);
+    result.* = JSC.C.JSObjectDeletePropertyForKey(env.ref(), object.asObjectRef(), key.asObjectRef(), null);
     return .ok;
 }
 pub export fn napi_has_own_property(env: napi_env, object: napi_value, key: napi_value, result: *bool) napi_status {
@@ -532,9 +538,11 @@ pub export fn napi_has_own_property(env: napi_env, object: napi_value, key: napi
         return .invalid_arg;
     }
 
-    result.* = JSC.C.JSObjectHasPropertyForKey(env, object.asObjectRef(), key.asObjectRef(), null);
+    result.* = JSC.C.JSObjectHasPropertyForKey(env.ref(), object.asObjectRef(), key.asObjectRef(), null);
     return .ok;
 }
+
+fn noop_finalizer(_: ?*anyopaque, _: JSC.C.JSStringRef, _: *anyopaque, _: usize) callconv(.C) void {}
 pub export fn napi_set_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, value: napi_value) napi_status {
     if (!object.isObject()) {
         return .object_expected;
@@ -548,9 +556,9 @@ pub export fn napi_set_named_property(env: napi_env, object: napi_value, utf8nam
     if (str.len == 0)
         return .invalid_arg;
 
-    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, null);
+    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, noop_finalizer);
     defer JSC.C.JSStringRelease(ext);
-    JSC.C.JSObjectSetProperty(env.ref(), object.asObjectRef, ext, value.asObjectRef(), 0, TODO_EXCEPTION);
+    JSC.C.JSObjectSetProperty(env.ref(), object.asObjectRef(), ext, value.asObjectRef(), 0, TODO_EXCEPTION);
     return .ok;
 }
 pub export fn napi_has_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, result: *bool) napi_status {
@@ -566,9 +574,9 @@ pub export fn napi_has_named_property(env: napi_env, object: napi_value, utf8nam
     if (str.len == 0)
         return .invalid_arg;
 
-    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, null);
+    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, noop_finalizer);
     defer JSC.C.JSStringRelease(ext);
-    result.* = JSC.C.JSObjectHasProperty(env.ref(), object.asObjectRef, ext);
+    result.* = JSC.C.JSObjectHasProperty(env.ref(), object.asObjectRef(), ext);
     return .ok;
 }
 pub export fn napi_get_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, result: *napi_value) napi_status {
@@ -584,9 +592,9 @@ pub export fn napi_get_named_property(env: napi_env, object: napi_value, utf8nam
     if (str.len == 0)
         return .invalid_arg;
 
-    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, null);
+    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, noop_finalizer);
     defer JSC.C.JSStringRelease(ext);
-    result.* = JSValue.from(JSC.C.JSObjectGetProperty(env.ref(), object.asObjectRef, ext, TODO_EXCEPTION));
+    result.* = JSValue.c(JSC.C.JSObjectGetProperty(env.ref(), object.asObjectRef(), ext, TODO_EXCEPTION));
     return .ok;
 }
 pub export fn napi_set_element(env: napi_env, object: napi_value, index: c_uint, value: napi_value) napi_status {
@@ -595,7 +603,7 @@ pub export fn napi_set_element(env: napi_env, object: napi_value, index: c_uint,
     }
     if (value.isEmpty())
         return .invalid_arg;
-    JSC.C.JSObjectSetPropertyAtIndex(env.ref(), object.asObjectRef(), index, value, TODO_EXCEPTION);
+    JSC.C.JSObjectSetPropertyAtIndex(env.ref(), object.asObjectRef(), index, value.asObjectRef(), TODO_EXCEPTION);
     return .ok;
 }
 pub export fn napi_has_element(env: napi_env, object: napi_value, index: c_uint, result: *bool) napi_status {
@@ -614,15 +622,15 @@ pub export fn napi_get_element(env: napi_env, object: napi_value, index: u32, re
     result.* = JSC.JSObject.getIndex(object, env, index);
     return .ok;
 }
-pub export fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *bool) napi_status {
-    if (!object.jsType().isIndexable()) {
-        return .array_expected;
-    }
+// pub export fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *bool) napi_status {
+//     if (!object.jsType().isIndexable()) {
+//         return .array_expected;
+//     }
 
-    // TODO: this might be incorrect because I don't know if this API supports numbers, it may only support strings
-    result.* = JSC.C.JSObjectDeleteProperty(env.ref(), object.asObjectRef(), JSC.JSValue.jsNumber(index), TODO_EXCEPTION);
-    return .ok;
-}
+//     // TODO: this might be incorrect because I don't know if this API supports numbers, it may only support strings
+//     // result.* = JSC.C.Delete(env.ref(), object.asObjectRef(), JSC.JSValue.jsNumber(index), TODO_EXCEPTION);
+//     return .ok;
+// }
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
 pub export fn napi_is_array(_: napi_env, value: napi_value, result: *bool) napi_status {
     result.* = value.jsType().isArray();
@@ -642,18 +650,17 @@ pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value
     return .ok;
 }
 pub export fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
+    if (comptime JSC.is_bindgen) unreachable;
     var exception = [_]JSC.C.JSValueRef{null};
-    result.* = JSValue.c(
+    result.* =
         JSC.C.JSObjectCallAsFunctionReturnValue(
-            env.ref(),
-            func.asObjectRef(),
-            recv.asObjectRef(),
-            argc,
-            @ptrCast([*]const JSC.C.JSValueRef, argv),
-            &exception,
-        ),
+        env.ref(),
+        func.asObjectRef(),
+        recv.asObjectRef(),
+        argc,
+        @ptrCast([*]const JSC.C.JSValueRef, argv),
     );
-    if (exception.* != null) {
+    if (exception[0] != null) {
         return .generic_failure;
     }
 
@@ -670,7 +677,7 @@ pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: us
             &exception,
         ),
     );
-    if (exception.* != null) {
+    if (exception[0] != null) {
         return .generic_failure;
     }
 
@@ -683,7 +690,16 @@ pub export fn napi_instanceof(env: napi_env, object: napi_value, constructor: na
 }
 pub extern fn napi_get_cb_info(env: napi_env, cbinfo: napi_callback_info, argc: [*c]usize, argv: *napi_value, this_arg: *napi_value, data: [*]*anyopaque) napi_status;
 pub extern fn napi_get_new_target(env: napi_env, cbinfo: napi_callback_info, result: *napi_value) napi_status;
-pub extern fn napi_define_class(env: napi_env, utf8name: [*c]const u8, length: usize, constructor: napi_callback, data: ?*anyopaque, property_count: usize, properties: [*c]const napi_property_descriptor, result: *napi_value) napi_status;
+pub extern fn napi_define_class(
+    env: napi_env,
+    utf8name: [*c]const u8,
+    length: usize,
+    constructor: napi_callback,
+    data: ?*anyopaque,
+    property_count: usize,
+    properties: [*c]const napi_property_descriptor,
+    result: *napi_value,
+) napi_status;
 pub extern fn napi_wrap(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*c]napi_ref) napi_status;
 pub extern fn napi_unwrap(env: napi_env, js_object: napi_value, result: [*]*anyopaque) napi_status;
 pub extern fn napi_remove_wrap(env: napi_env, js_object: napi_value, result: [*]*anyopaque) napi_status;
@@ -734,7 +750,8 @@ pub export fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [
 pub export fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
     var external = JSC.ExternalBuffer.create(
         finalize_hint,
-        @ptrCast([*]u8, external_data).?[0..byte_length],
+        @ptrCast([*]u8, external_data.?)[0..byte_length],
+        env,
         finalize_cb,
         JSC.VirtualMachine.vm.allocator,
     ) catch {
@@ -777,7 +794,7 @@ pub export fn napi_get_typedarray_info(
     byte_offset: *usize,
 ) napi_status {
     const array_buffer = arraybuffer.asArrayBuffer(env) orelse return .invalid_arg;
-    @"type" = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return .invalid_arg;
+    @"type".* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return .invalid_arg;
     var slice = array_buffer.slice();
 
     data.* = slice.ptr;
@@ -830,11 +847,11 @@ pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise: *bool)
 }
 pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status {
     // TODO: don't copy
-    var ref = JSC.C.JSValueToStringCopy(env, script.asObjectRef(), TODO_EXCEPTION);
+    var ref = JSC.C.JSValueToStringCopy(env.ref(), script.asObjectRef(), TODO_EXCEPTION);
     defer JSC.C.JSStringRelease(ref);
 
     var exception = [_]JSC.C.JSValueRef{null};
-    const val = JSC.C.JSEvaluateScript(env.ref(), script, env, null, 0, &exception);
+    const val = JSC.C.JSEvaluateScript(env.ref(), ref, env.ref(), null, 0, &exception);
     if (exception[0] != null) {
         return .generic_failure;
     }
@@ -844,8 +861,8 @@ pub export fn napi_run_script(env: napi_env, script: napi_value, result: *napi_v
 }
 pub extern fn napi_adjust_external_memory(env: napi_env, change_in_bytes: i64, adjusted_value: [*c]i64) napi_status;
 pub export fn napi_create_date(env: napi_env, time: f64, result: *napi_value) napi_status {
-    var args = [_]JSC.C.JSValueRef{JSC.JSValue.jsNumber(time)};
-    result.* = JSC.C.JSObjectMakeDate(env.ref(), 1, &args, TODO_EXCEPTION);
+    var args = [_]JSC.C.JSValueRef{JSC.JSValue.jsNumber(time).asObjectRef()};
+    result.* = JSValue.c(JSC.C.JSObjectMakeDate(env.ref(), 1, &args, TODO_EXCEPTION));
     return .ok;
 }
 pub export fn napi_is_date(_: napi_env, value: napi_value, is_date: *bool) napi_status {
@@ -857,7 +874,9 @@ pub export fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64
         return .date_expected;
     };
 
-    result.* = JSValue.c(JSC.C.JSObjectCallAsFunction(env.ref(), getTimeFunction.asObjectRef(), value.asObjectRef, 0, null, TODO_EXCEPTION)).asNumber();
+    result.* = JSValue.c(
+        JSC.C.JSObjectCallAsFunction(env.ref(), getTimeFunction.asObjectRef(), value.asObjectRef(), 0, null, TODO_EXCEPTION),
+    ).asNumber();
     return .ok;
 }
 pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*c]napi_ref) napi_status;
@@ -866,7 +885,7 @@ pub export fn napi_create_bigint_int64(env: napi_env, value: i64, result: *napi_
     return .ok;
 }
 pub export fn napi_create_bigint_uint64(env: napi_env, value: u64, result: *napi_value) napi_status {
-    result.* = JSC.JSValue.fromUint64NoTruncate(env, value);
+    result.* = JSC.JSValue.fromUInt64NoTruncate(env, value);
     return .ok;
 }
 pub extern fn napi_create_bigint_words(env: napi_env, sign_bit: c_int, word_count: usize, words: [*c]const u64, result: *napi_value) napi_status;
@@ -888,14 +907,15 @@ pub extern fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) na
 pub extern fn napi_is_detached_arraybuffer(env: napi_env, value: napi_value, result: *bool) napi_status;
 pub extern fn napi_type_tag_object(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag) napi_status;
 pub extern fn napi_check_object_type_tag(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag, result: *bool) napi_status;
-pub extern fn napi_object_freeze(env: napi_env, object: napi_value) napi_status;
-pub extern fn napi_object_seal(env: napi_env, object: napi_value) napi_status;
+// pub extern fn napi_object_freeze(env: napi_env, object: napi_value) napi_status;
+// pub extern fn napi_object_seal(env: napi_env, object: napi_value) napi_status;
 pub const struct_napi_async_work__ = opaque {};
 const WorkPool = @import("../work_pool.zig").WorkPool;
+const WorkPoolTask = @import("../work_pool.zig").Task;
 
 /// must be globally allocated
 pub const napi_async_work = struct {
-    task: JSC.WorkPoolTask = .{ .callback = runFromThreadPool },
+    task: WorkPoolTask = .{ .callback = runFromThreadPool },
     completion_task: ?*anyopaque = null,
     event_loop: *JSC.VirtualMachine.EventLoop,
     global: napi_env,
@@ -918,13 +938,14 @@ pub const napi_async_work = struct {
         work.* = .{
             .global = global,
             .execute = execute,
+            .event_loop = JSC.VirtualMachine.vm.eventLoop(),
             .complete = complete,
             .ctx = ctx,
         };
         return work;
     }
 
-    pub fn runFromThreadPool(task: *JSC.WorkPoolTask) void {
+    pub fn runFromThreadPool(task: *WorkPoolTask) void {
         var this = @fieldParentPtr(napi_async_work, "task", task);
 
         this.run();
@@ -942,24 +963,17 @@ pub const napi_async_work = struct {
         this.execute.?(this.global, this.ctx);
         this.status.store(@enumToInt(Status.completed), .SeqCst);
 
-        this.event_loop.enqueueTaskConcurrent(JSC.Task.from(JSC.Task.init(this)));
+        this.event_loop.enqueueTaskConcurrent(JSC.Task.init(this));
     }
 
     pub fn schedule(this: *napi_async_work) void {
         if (this.scheduled) return;
         this.scheduled = true;
-        WorkPool.get().schedule(&this.task);
+        WorkPool.schedule(&this.task);
     }
 
     pub fn cancel(this: *napi_async_work) bool {
-        const prev_status = @intToEnum(
-            Status,
-            this.status.compareAndSwap(@enumToInt(Status.cancelled), @enumToInt(Status.pending), .SeqCst, .SeqCst),
-        );
-        if (prev_status == Status.pending) {
-            return true;
-        }
-        return false;
+        return this.status.compareAndSwap(@enumToInt(Status.cancelled), @enumToInt(Status.pending), .SeqCst, .SeqCst) != null;
     }
 
     pub fn deinit(this: *napi_async_work) void {
@@ -977,7 +991,7 @@ pub const napi_async_work = struct {
                 napi_status.cancelled
             else
                 napi_status.ok,
-            this.ctx,
+            this.ctx.?,
         );
     }
 };
@@ -986,8 +1000,8 @@ pub const napi_threadsafe_function_release_mode = enum(c_uint) {
     release = 0,
     abort = 1,
 };
-pub const napi_tsfn_nonblocking: c_int = 0;
-pub const napi_tsfn_blocking: c_int = 1;
+pub const napi_tsfn_nonblocking = 0;
+pub const napi_tsfn_blocking = 1;
 pub const napi_threadsafe_function_call_mode = c_uint;
 pub const napi_async_execute_callback = ?fn (napi_env, ?*anyopaque) callconv(.C) void;
 pub const napi_async_complete_callback = ?fn (napi_env, napi_status, ?*anyopaque) callconv(.C) void;
@@ -1008,7 +1022,7 @@ pub const napi_node_version = extern struct {
 pub const struct_napi_async_cleanup_hook_handle__ = opaque {};
 pub const napi_async_cleanup_hook_handle = ?*struct_napi_async_cleanup_hook_handle__;
 pub const napi_async_cleanup_hook = ?fn (napi_async_cleanup_hook_handle, ?*anyopaque) callconv(.C) void;
-pub const struct_uv_loop_s = opaque {};
+
 pub const napi_addon_register_func = ?fn (napi_env, napi_value) callconv(.C) napi_value;
 pub const struct_napi_module = extern struct {
     nm_version: c_int,
@@ -1020,13 +1034,42 @@ pub const struct_napi_module = extern struct {
     reserved: [4]?*anyopaque,
 };
 pub const napi_module = struct_napi_module;
-pub extern fn napi_module_register(mod: [*c]napi_module) void;
-pub extern fn napi_fatal_error(location: [*c]const u8, location_len: usize, message: [*c]const u8, message_len: usize) noreturn;
-pub extern fn napi_async_init(env: napi_env, async_resource: napi_value, async_resource_name: napi_value, result: [*c]napi_async_context) napi_status;
-pub extern fn napi_async_destroy(env: napi_env, async_context: napi_async_context) napi_status;
-pub extern fn napi_make_callback(env: napi_env, async_context: napi_async_context, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
+// C++
+// pub export fn napi_module_register(mod: *napi_module) void {
+//     const register = mod.nm_register_func orelse return;
+//     var ref = JSC.C.JSObjectMake(JSC.VirtualMachine.vm.global, null, null);
+//     register(JSC.VirtualMachine.vm.global, JSC.JSValue.c(ref));
+// }
+pub export fn napi_fatal_error(location: ?[*]const u8, location_len: usize, message: ?[*]const u8, message_len: usize) noreturn {
+    var message_: []const u8 = "fatal error";
+    if (message_len > 0) {
+        if (message) |msg| {
+            message_ = msg[0..message_len];
+        }
+    }
+
+    if (location) |loc| {
+        if (location_len > 0) {
+            bun.Global.panic("napi: {s}\n  {s}", .{ message_, loc[0..location_len] });
+        }
+    }
+
+    bun.Global.panic("napi: {s}", .{message_});
+}
+
+// pub extern fn napi_async_init(_: napi_env, _: napi_value, _: napi_value, result: ?*fake_async_hook) napi_status;
+//  {
+
+// }
+// pub extern fn napi_async_destroy(_: napi_env, _: ?*anyopaque) napi_status; //
+
+// pub export fn napi_make_callback(env: napi_env, _: ?*anyopaque, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status {
+//     // TODO: potentially make this run on next tick?
+//     // there is some nuance with task queue order here i don't fully understand right now
+//     // JSC.C.JSObjectCallAsFunction(env.ref(), func.asObjectRef(), recv.asObjectRef(), argc, @ptrCast([*]const JSC.C.JSValueRef), exception: ExceptionRef)
+// }
 pub export fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaque, result: *napi_value) napi_status {
-    var buf = JSC.ExternalBuffer.create(null, @ptrCast([*]u8, data.?)[0..length], env, null, JSC.VirtualMachine.vm.allocator) catch {
+    var buf = JSC.ExternalBuffer.create(null, @ptrCast([*]u8, data)[0..length], env, null, JSC.VirtualMachine.vm.allocator) catch {
         return .generic_failure;
     };
 
@@ -1042,7 +1085,7 @@ pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*
     return .ok;
 }
 pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result: *napi_value) napi_status {
-    var duped = JSC.VirtualMachine.vm.allocator.alloc(u8, data[0..length]) catch {
+    var duped = JSC.VirtualMachine.vm.allocator.alloc(u8, length) catch {
         return .generic_failure;
     };
     @memcpy(duped.ptr, data, length);
@@ -1065,7 +1108,7 @@ pub export fn napi_get_buffer_info(env: napi_env, value: napi_value, data: *[*]u
     };
 
     data.* = array_buf.ptr;
-    length.* = array_buf.length;
+    length.* = array_buf.byte_len;
     return .ok;
 }
 pub export fn napi_create_async_work(
@@ -1075,7 +1118,7 @@ pub export fn napi_create_async_work(
     execute: napi_async_execute_callback,
     complete: napi_async_complete_callback,
     data: ?*anyopaque,
-    result: *napi_async_work,
+    result: **napi_async_work,
 ) napi_status {
     result.* = napi_async_work.create(env, execute, complete, data) catch {
         return .generic_failure;
@@ -1085,6 +1128,7 @@ pub export fn napi_create_async_work(
 pub export fn napi_delete_async_work(env: napi_env, work: *napi_async_work) napi_status {
     std.debug.assert(env == work.global);
     work.deinit();
+    return .ok;
 }
 pub export fn napi_queue_async_work(env: napi_env, work: *napi_async_work) napi_status {
     std.debug.assert(env == work.global);
@@ -1103,9 +1147,10 @@ pub export fn napi_get_node_version(_: napi_env, version: **const napi_node_vers
     version.* = &napi_node_version.global;
     return .ok;
 }
-pub export fn napi_get_uv_event_loop(_: napi_env, loop: *?*struct_uv_loop_s) napi_status {
+pub export fn napi_get_uv_event_loop(_: napi_env, loop: **JSC.VirtualMachine.EventLoop) napi_status {
     // lol
     loop.* = JSC.VirtualMachine.vm.eventLoop();
+    return .ok;
 }
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
 
@@ -1115,7 +1160,7 @@ pub export fn napi_add_env_cleanup_hook(env: napi_env, fun: ?fn (?*anyopaque) ca
     if (fun == null)
         return .ok;
 
-    JSC.VirtualMachine.vm.rareData().pushCleanupHook(env, arg, fun);
+    JSC.VirtualMachine.vm.rareData().pushCleanupHook(env, arg, fun.?);
     return .ok;
 }
 pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
@@ -1165,10 +1210,9 @@ pub const ThreadSafeFunction = struct {
     /// prevent it from being destroyed.
     ref_for_process_exit: bool = false,
 
-    owning_threads: std.AutoArrayHashMapUnmanaged(u64) = .{},
+    owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
     owning_thread_lock: Lock = Lock.init(),
     event_loop: *JSC.VirtualMachine.EventLoop,
-    finalizer: ?*Finalizer = null,
 
     javascript_function: JSValue,
     finalizer_task: JSC.AnyTask = undefined,
@@ -1182,22 +1226,22 @@ pub const ThreadSafeFunction = struct {
     const ThreadSafeFunctionTask = JSC.AnyTask.New(@This(), call);
     pub const Queue = union(enum) {
         sized: Channel(?*anyopaque, .Slice),
-        unsized: Channel(?*anyopaque, .Slice),
+        unsized: Channel(?*anyopaque, .Dynamic),
 
         pub fn isClosed(this: *const @This()) bool {
             return @atomicLoad(
                 bool,
-                switch (this) {
-                    .sized => &this.size.is_closed,
+                switch (this.*) {
+                    .sized => &this.sized.is_closed,
                     .unsized => &this.unsized.is_closed,
                 },
                 .SeqCst,
             );
         }
 
-        pub fn close(this: *@This()) bool {
-            switch (this) {
-                .sized => this.size.close(),
+        pub fn close(this: *@This()) void {
+            switch (this.*) {
+                .sized => this.sized.close(),
                 .unsized => this.unsized.close(),
             }
         }
@@ -1226,24 +1270,24 @@ pub const ThreadSafeFunction = struct {
         }
 
         pub fn readItem(this: *@This()) !?*anyopaque {
-            switch (this.*) {
+            return switch (this.*) {
                 .sized => try this.sized.readItem(),
                 .unsized => try this.unsized.readItem(),
-            }
+            };
         }
 
         pub fn tryWriteItem(this: *@This(), value: ?*anyopaque) !bool {
-            switch (this.*) {
+            return switch (this.*) {
                 .sized => try this.sized.tryWriteItem(value),
                 .unsized => try this.unsized.tryWriteItem(value),
-            }
+            };
         }
 
         pub fn tryReadItem(this: *@This()) !??*anyopaque {
-            switch (this.*) {
+            return switch (this.*) {
                 .sized => try this.sized.tryReadItem(),
                 .unsized => try this.unsized.tryReadItem(),
-            }
+            };
         }
     };
 
@@ -1266,20 +1310,20 @@ pub const ThreadSafeFunction = struct {
 
     pub fn enqueue(this: *ThreadSafeFunction, ctx: ?*anyopaque, block: bool) !void {
         if (block) {
-            try this.channel.writeItem(JSC.AnyTask{ .ctx = ctx, .run = this.call });
+            try this.channel.writeItem(ctx);
         } else {
-            if (!this.channel.tryWriteItem(JSC.AnyTask{ .ctx = ctx, .run = this.call })) {
+            if (!try this.channel.tryWriteItem(ctx)) {
                 return error.WouldBlock;
             }
         }
 
-        this.event_loop.enqueueTaskConcurrent(ThreadSafeFunction.init(this));
+        this.event_loop.enqueueTaskConcurrent(JSC.Task.init(this));
     }
 
     pub fn finalize(opaq: *anyopaque) void {
         var this = bun.cast(*ThreadSafeFunction, opaq);
         if (this.finalizer.fun) |fun| {
-            fun(this.finalizer.ctx);
+            fun(this.event_loop.global, opaq, this.finalizer.ctx);
         }
 
         JSC.C.JSValueUnprotect(this.event_loop.global.ref(), this.javascript_function.asObjectRef());
@@ -1314,13 +1358,14 @@ pub const ThreadSafeFunction = struct {
 
         if (this.owning_threads.count() == 0) {
             this.finalizer_task = JSC.AnyTask{ .ctx = this, .callback = finalize };
-            this.event_loop.enqueueTaskConcurrent(&this.finalizer_task);
+            this.event_loop.enqueueTaskConcurrent(JSC.Task.init(&this.finalizer_task));
             return;
         }
     }
 };
-pub extern fn napi_open_callback_scope(env: napi_env, resource_object: napi_value, context: napi_async_context, result: [*c]napi_callback_scope) napi_status;
-pub extern fn napi_close_callback_scope(env: napi_env, scope: napi_callback_scope) napi_status;
+
+// pub extern fn napi_open_callback_scope(env: napi_env, resource_object: napi_value, context: napi_async_context, result: [*c]napi_callback_scope) napi_status;
+// pub extern fn napi_close_callback_scope(env: napi_env, scope: napi_callback_scope) napi_status;
 pub export fn napi_create_threadsafe_function(
     env: napi_env,
     func: napi_value,
@@ -1343,7 +1388,7 @@ pub export fn napi_create_threadsafe_function(
         .javascript_function = func,
         .call_js = call_js_cb,
         .ctx = context,
-        .queue = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
+        .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),
         .owning_threads = .{},
     };
     function.owning_threads.ensureTotalCapacity(bun.default_allocator, initial_thread_count) catch return .generic_failure;
@@ -1356,14 +1401,13 @@ pub export fn napi_get_threadsafe_function_context(func: napi_threadsafe_functio
     return .ok;
 }
 pub export fn napi_call_threadsafe_function(func: napi_threadsafe_function, data: ?*anyopaque, is_blocking: napi_threadsafe_function_call_mode) napi_status {
-    func.enqueue(data, is_blocking) catch |err| {
+    func.enqueue(data, is_blocking == napi_tsfn_blocking) catch |err| {
         switch (err) {
             error.WouldBlock => {
                 return napi_status.queue_full;
             },
-            error.Closing => {
-                return napi_status.closing;
-            },
+
+            else => return .closing,
         }
     };
     return .ok;
@@ -1403,3 +1447,210 @@ pub const NAPI_VERSION = @as(c_int, 8);
 pub const NAPI_AUTO_LENGTH = std.math.maxInt(usize);
 pub const SRC_NODE_API_TYPES_H_ = "";
 pub const NAPI_MODULE_VERSION = @as(c_int, 1);
+
+pub fn fixDeadCodeElimination() void {
+    if (comptime JSC.is_bindgen) unreachable;
+    std.mem.doNotOptimizeAway(napi_get_undefined);
+    std.mem.doNotOptimizeAway(napi_get_null);
+    std.mem.doNotOptimizeAway(napi_get_boolean);
+    std.mem.doNotOptimizeAway(napi_create_object);
+    std.mem.doNotOptimizeAway(napi_create_array);
+    std.mem.doNotOptimizeAway(napi_create_array_with_length);
+    std.mem.doNotOptimizeAway(napi_create_double);
+    std.mem.doNotOptimizeAway(napi_create_int32);
+    std.mem.doNotOptimizeAway(napi_create_uint32);
+    std.mem.doNotOptimizeAway(napi_create_int64);
+    std.mem.doNotOptimizeAway(napi_create_string_latin1);
+    std.mem.doNotOptimizeAway(napi_create_string_utf8);
+    std.mem.doNotOptimizeAway(napi_create_string_utf16);
+    std.mem.doNotOptimizeAway(napi_create_symbol);
+    // std.mem.doNotOptimizeAway(napi_create_function);
+    std.mem.doNotOptimizeAway(napi_create_error);
+    std.mem.doNotOptimizeAway(napi_typeof);
+    std.mem.doNotOptimizeAway(napi_get_value_double);
+    std.mem.doNotOptimizeAway(napi_get_value_int32);
+    std.mem.doNotOptimizeAway(napi_get_value_uint32);
+    std.mem.doNotOptimizeAway(napi_get_value_int64);
+    std.mem.doNotOptimizeAway(napi_get_value_bool);
+    std.mem.doNotOptimizeAway(napi_get_value_string_latin1);
+    std.mem.doNotOptimizeAway(napi_get_value_string_utf8);
+    std.mem.doNotOptimizeAway(napi_get_value_string_utf16);
+    std.mem.doNotOptimizeAway(napi_coerce_to_bool);
+    std.mem.doNotOptimizeAway(napi_coerce_to_number);
+    std.mem.doNotOptimizeAway(napi_coerce_to_object);
+    // std.mem.doNotOptimizeAway(napi_coerce_to_string);
+    std.mem.doNotOptimizeAway(napi_get_prototype);
+    // std.mem.doNotOptimizeAway(napi_get_property_names);
+    std.mem.doNotOptimizeAway(napi_set_property);
+    std.mem.doNotOptimizeAway(napi_has_property);
+    std.mem.doNotOptimizeAway(napi_get_property);
+    std.mem.doNotOptimizeAway(napi_delete_property);
+    std.mem.doNotOptimizeAway(napi_has_own_property);
+    std.mem.doNotOptimizeAway(napi_set_named_property);
+    std.mem.doNotOptimizeAway(napi_has_named_property);
+    std.mem.doNotOptimizeAway(napi_get_named_property);
+    std.mem.doNotOptimizeAway(napi_set_element);
+    std.mem.doNotOptimizeAway(napi_has_element);
+    std.mem.doNotOptimizeAway(napi_get_element);
+    // std.mem.doNotOptimizeAway(napi_delete_element);
+    std.mem.doNotOptimizeAway(napi_is_array);
+    std.mem.doNotOptimizeAway(napi_get_array_length);
+    std.mem.doNotOptimizeAway(napi_strict_equals);
+    std.mem.doNotOptimizeAway(napi_call_function);
+    std.mem.doNotOptimizeAway(napi_new_instance);
+    std.mem.doNotOptimizeAway(napi_instanceof);
+    std.mem.doNotOptimizeAway(napi_open_handle_scope);
+    std.mem.doNotOptimizeAway(napi_close_handle_scope);
+    std.mem.doNotOptimizeAway(napi_is_error);
+    std.mem.doNotOptimizeAway(napi_is_arraybuffer);
+    std.mem.doNotOptimizeAway(napi_create_arraybuffer);
+    std.mem.doNotOptimizeAway(napi_create_external_arraybuffer);
+    std.mem.doNotOptimizeAway(napi_get_arraybuffer_info);
+    std.mem.doNotOptimizeAway(napi_is_typedarray);
+    std.mem.doNotOptimizeAway(napi_create_typedarray);
+    std.mem.doNotOptimizeAway(napi_get_typedarray_info);
+    std.mem.doNotOptimizeAway(napi_is_dataview);
+    std.mem.doNotOptimizeAway(napi_get_dataview_info);
+    std.mem.doNotOptimizeAway(napi_get_version);
+    std.mem.doNotOptimizeAway(napi_create_promise);
+    std.mem.doNotOptimizeAway(napi_resolve_deferred);
+    std.mem.doNotOptimizeAway(napi_reject_deferred);
+    std.mem.doNotOptimizeAway(napi_is_promise);
+    std.mem.doNotOptimizeAway(napi_run_script);
+    std.mem.doNotOptimizeAway(napi_create_date);
+    std.mem.doNotOptimizeAway(napi_is_date);
+    std.mem.doNotOptimizeAway(napi_get_date_value);
+    std.mem.doNotOptimizeAway(napi_create_bigint_int64);
+    std.mem.doNotOptimizeAway(napi_create_bigint_uint64);
+    std.mem.doNotOptimizeAway(napi_get_value_bigint_int64);
+    std.mem.doNotOptimizeAway(napi_get_value_bigint_uint64);
+    // std.mem.doNotOptimizeAway(napi_module_register);
+    std.mem.doNotOptimizeAway(napi_fatal_error);
+    // std.mem.doNotOptimizeAway(napi_make_callback);
+    std.mem.doNotOptimizeAway(napi_create_buffer);
+    std.mem.doNotOptimizeAway(napi_create_external_buffer);
+    std.mem.doNotOptimizeAway(napi_create_buffer_copy);
+    std.mem.doNotOptimizeAway(napi_is_buffer);
+    std.mem.doNotOptimizeAway(napi_get_buffer_info);
+    std.mem.doNotOptimizeAway(napi_create_async_work);
+    std.mem.doNotOptimizeAway(napi_delete_async_work);
+    std.mem.doNotOptimizeAway(napi_queue_async_work);
+    std.mem.doNotOptimizeAway(napi_cancel_async_work);
+    std.mem.doNotOptimizeAway(napi_get_node_version);
+    std.mem.doNotOptimizeAway(napi_get_uv_event_loop);
+    std.mem.doNotOptimizeAway(napi_add_env_cleanup_hook);
+    std.mem.doNotOptimizeAway(napi_remove_env_cleanup_hook);
+    std.mem.doNotOptimizeAway(napi_create_threadsafe_function);
+    std.mem.doNotOptimizeAway(napi_get_threadsafe_function_context);
+    std.mem.doNotOptimizeAway(napi_call_threadsafe_function);
+    std.mem.doNotOptimizeAway(napi_acquire_threadsafe_function);
+    std.mem.doNotOptimizeAway(napi_release_threadsafe_function);
+    std.mem.doNotOptimizeAway(napi_unref_threadsafe_function);
+    std.mem.doNotOptimizeAway(napi_ref_threadsafe_function);
+    std.mem.doNotOptimizeAway(napi_add_async_cleanup_hook);
+    std.mem.doNotOptimizeAway(napi_remove_async_cleanup_hook);
+}
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = napi_get_undefined;
+        _ = napi_get_null;
+        _ = napi_get_boolean;
+        _ = napi_create_object;
+        _ = napi_create_array;
+        _ = napi_create_array_with_length;
+        _ = napi_create_double;
+        _ = napi_create_int32;
+        _ = napi_create_uint32;
+        _ = napi_create_int64;
+        _ = napi_create_string_latin1;
+        _ = napi_create_string_utf8;
+        _ = napi_create_string_utf16;
+        _ = napi_create_symbol;
+        // _ = napi_create_function;
+        _ = napi_create_error;
+        _ = napi_typeof;
+        _ = napi_get_value_double;
+        _ = napi_get_value_int32;
+        _ = napi_get_value_uint32;
+        _ = napi_get_value_int64;
+        _ = napi_get_value_bool;
+        _ = napi_get_value_string_latin1;
+        _ = napi_get_value_string_utf8;
+        _ = napi_get_value_string_utf16;
+        _ = napi_coerce_to_bool;
+        _ = napi_coerce_to_number;
+        _ = napi_coerce_to_object;
+        // _ = napi_coerce_to_string;
+        _ = napi_get_prototype;
+        // _ = napi_get_property_names;
+        _ = napi_set_property;
+        _ = napi_has_property;
+        _ = napi_get_property;
+        _ = napi_delete_property;
+        _ = napi_has_own_property;
+        _ = napi_set_named_property;
+        _ = napi_has_named_property;
+        _ = napi_get_named_property;
+        _ = napi_set_element;
+        _ = napi_has_element;
+        _ = napi_get_element;
+        // _ = napi_delete_element;
+        _ = napi_is_array;
+        _ = napi_get_array_length;
+        _ = napi_strict_equals;
+        _ = napi_call_function;
+        _ = napi_new_instance;
+        _ = napi_instanceof;
+        _ = napi_open_handle_scope;
+        _ = napi_close_handle_scope;
+        _ = napi_is_error;
+        _ = napi_is_arraybuffer;
+        _ = napi_create_arraybuffer;
+        _ = napi_create_external_arraybuffer;
+        _ = napi_get_arraybuffer_info;
+        _ = napi_is_typedarray;
+        _ = napi_create_typedarray;
+        _ = napi_get_typedarray_info;
+        _ = napi_is_dataview;
+        _ = napi_get_dataview_info;
+        _ = napi_get_version;
+        _ = napi_create_promise;
+        _ = napi_resolve_deferred;
+        _ = napi_reject_deferred;
+        _ = napi_is_promise;
+        _ = napi_run_script;
+        _ = napi_create_date;
+        _ = napi_is_date;
+        _ = napi_get_date_value;
+        _ = napi_create_bigint_int64;
+        _ = napi_create_bigint_uint64;
+        _ = napi_get_value_bigint_int64;
+        _ = napi_get_value_bigint_uint64;
+        // _ = napi_module_register;
+        _ = napi_fatal_error;
+        // _ = napi_make_callback;
+        _ = napi_create_buffer;
+        _ = napi_create_external_buffer;
+        _ = napi_create_buffer_copy;
+        _ = napi_is_buffer;
+        _ = napi_get_buffer_info;
+        _ = napi_create_async_work;
+        _ = napi_delete_async_work;
+        _ = napi_queue_async_work;
+        _ = napi_cancel_async_work;
+        _ = napi_get_node_version;
+        _ = napi_get_uv_event_loop;
+        _ = napi_add_env_cleanup_hook;
+        _ = napi_remove_env_cleanup_hook;
+        _ = napi_create_threadsafe_function;
+        _ = napi_get_threadsafe_function_context;
+        _ = napi_call_threadsafe_function;
+        _ = napi_acquire_threadsafe_function;
+        _ = napi_release_threadsafe_function;
+        _ = napi_unref_threadsafe_function;
+        _ = napi_ref_threadsafe_function;
+        _ = napi_add_async_cleanup_hook;
+        _ = napi_remove_async_cleanup_hook;
+    }
+}

@@ -632,6 +632,8 @@ pub const Loader = enum(u4) {
     json,
     toml,
     wasm,
+    napi,
+
     pub const Map = std.EnumArray(Loader, string);
     pub const stdin_name: Map = brk: {
         var map = Map.initFill("");
@@ -644,6 +646,7 @@ pub const Loader = enum(u4) {
         map.set(Loader.json, "input.json");
         map.set(Loader.toml, "input.toml");
         map.set(Loader.wasm, "input.wasm");
+        map.set(Loader.napi, "input.node");
         break :brk map;
     };
 
@@ -686,6 +689,7 @@ pub const Loader = enum(u4) {
             LoaderMatcher.case("json") => Loader.json,
             LoaderMatcher.case("toml") => Loader.toml,
             LoaderMatcher.case("wasm") => Loader.wasm,
+            LoaderMatcher.case("node") => Loader.napi,
             else => null,
         };
     }
@@ -707,6 +711,7 @@ pub const Loader = enum(u4) {
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
+            .napi => .napi,
             else => .file,
         };
     }
@@ -757,6 +762,7 @@ pub const defaultLoaders = ComptimeStringMap(Loader, .{
 
     .{ ".toml", Loader.toml },
     .{ ".wasm", Loader.wasm },
+    .{ ".node", Loader.napi },
 });
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
@@ -1032,23 +1038,43 @@ pub fn definesFromTransformOptions(
     );
 }
 
-pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap) !std.StringHashMap(Loader) {
+pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.LoaderMap, platform: Platform) !std.StringHashMap(Loader) {
     var input_loaders = _loaders orelse std.mem.zeroes(Api.LoaderMap);
     var loader_values = try allocator.alloc(Loader, input_loaders.loaders.len);
-    for (loader_values) |_, i| {
-        const loader = switch (input_loaders.loaders[i]) {
-            .jsx => Loader.jsx,
-            .js => Loader.js,
-            .ts => Loader.ts,
-            .css => Loader.css,
-            .tsx => Loader.tsx,
-            .json => Loader.json,
-            .toml => Loader.toml,
-            .wasm => Loader.wasm,
-            else => unreachable,
-        };
 
-        loader_values[i] = loader;
+    if (platform.isBun()) {
+        for (loader_values) |_, i| {
+            const loader = switch (input_loaders.loaders[i]) {
+                .jsx => Loader.jsx,
+                .js => Loader.js,
+                .ts => Loader.ts,
+                .css => Loader.css,
+                .tsx => Loader.tsx,
+                .json => Loader.json,
+                .toml => Loader.toml,
+                .wasm => Loader.wasm,
+                .napi => Loader.napi,
+                else => unreachable,
+            };
+
+            loader_values[i] = loader;
+        }
+    } else {
+        for (loader_values) |_, i| {
+            const loader = switch (input_loaders.loaders[i]) {
+                .jsx => Loader.jsx,
+                .js => Loader.js,
+                .ts => Loader.ts,
+                .css => Loader.css,
+                .tsx => Loader.tsx,
+                .json => Loader.json,
+                .toml => Loader.toml,
+                .wasm => Loader.wasm,
+                else => unreachable,
+            };
+
+            loader_values[i] = loader;
+        }
     }
 
     var loaders = try stringHashMapFromArrays(
@@ -1069,9 +1095,19 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
         ".toml", ".wasm",
     };
 
+    const default_loader_ext_bun = [_]string{".node"};
+
     inline for (default_loader_ext) |ext| {
         if (!loaders.contains(ext)) {
             try loaders.put(ext, defaultLoaders.get(ext).?);
+        }
+    }
+
+    if (platform.isBun()) {
+        inline for (default_loader_ext_bun) |ext| {
+            if (!loaders.contains(ext)) {
+                try loaders.put(ext, defaultLoaders.get(ext).?);
+            }
         }
     }
 
@@ -1258,7 +1294,7 @@ pub const BundleOptions = struct {
             .log = log,
             .resolve_mode = transform.resolve orelse .dev,
             .define = undefined,
-            .loaders = try loadersFromTransformOptions(allocator, transform.loaders),
+            .loaders = try loadersFromTransformOptions(allocator, transform.loaders, Platform.from(transform.platform)),
             .output_dir = transform.output_dir orelse "out",
             .platform = Platform.from(transform.platform),
             .write = transform.write orelse false,

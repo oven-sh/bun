@@ -210,7 +210,7 @@ LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 UWS_INCLUDE_DIR := -I$(BUN_DEPS_DIR)/uws/uSockets/src -I$(BUN_DEPS_DIR)/uws/src -I$(BUN_DEPS_DIR)
 
 
-INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include
+INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -Isrc/napi
 
 
 ifeq ($(OS_NAME),linux)
@@ -345,7 +345,7 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 		
 
 
-BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS}
+BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS} -exported_symbols_list $(realpath src/symbols.txt)
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -1127,6 +1127,7 @@ wasm-return1:
 
 
 
+EMIT_LLVM_FOR_RELEASE=
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
@@ -1136,7 +1137,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
-		-emit-llvm \
+		$(EMIT_LLVM_FOR_RELEASE) \
 		-g3 -c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
@@ -1145,7 +1146,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
-		-emit-llvm \
+		$(EMIT_LLVM_FOR_RELEASE) \
 		-g3 -c -o $@ $<
 		
 sizegen:

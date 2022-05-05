@@ -835,7 +835,7 @@ pub const Bundler = struct {
 
                 output_file.value = .{ .move = file_op };
             },
-            .wasm, .file => {
+            .wasm, .file, .napi => {
                 var hashed_name = try bundler.linker.getHashedFilename(file_path, null);
                 var pathname = try bundler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 std.mem.copy(u8, pathname, hashed_name);

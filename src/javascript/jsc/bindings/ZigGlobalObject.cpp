@@ -1132,6 +1132,10 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
     JSValue sentValue, JSValue resumeMode)
 {
 
+    if (UNLIKELY(scriptFetcher && scriptFetcher.isObject())) {
+        return scriptFetcher;
+    }
+
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue,
         scriptFetcher, sentValue, resumeMode);
 

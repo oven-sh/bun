@@ -170,6 +170,10 @@ pub const ZigString = extern struct {
         return @ptrCast([*]align(1) const u16, untagged(this.ptr))[0..this.len];
     }
 
+    pub inline fn utf16SliceAligned(this: *const ZigString) []const u16 {
+        return @ptrCast([*]const u16, @alignCast(@alignOf(u16), untagged(this.ptr)))[0..this.len];
+    }
+
     pub inline fn isEmpty(this: *const ZigString) bool {
         return this.len == 0;
     }
@@ -203,6 +207,12 @@ pub const ZigString = extern struct {
 
     pub fn from(slice_: JSC.C.JSValueRef, ctx: JSC.C.JSContextRef) ZigString {
         return JSC.JSValue.fromRef(slice_).getZigString(ctx.ptr());
+    }
+
+    pub fn from16(slice_: [*]const u16, len: usize) ZigString {
+        var str = init(@ptrCast([*]const u8, slice_)[0..len]);
+        str.markUTF16();
+        return str;
     }
 
     pub fn toBase64DataURL(this: ZigString, allocator: std.mem.Allocator) ![]const u8 {
@@ -2003,6 +2013,7 @@ pub const String = extern struct {
 };
 
 pub const JSValue = enum(u64) {
+    @"undefined" = 0xa,
     _,
 
     pub const shim = Shimmer("JSC", "JSValue", @This());
@@ -2230,6 +2241,7 @@ pub const JSValue = enum(u64) {
             u52 => @truncate(u52, this.to(u64)),
 
             u64 => @intCast(u64, @maximum(toInt64(this), 0)),
+            f64 => asNUmber(this),
 
             u8 => @truncate(u8, toU32(this)),
             i16 => @truncate(i16, toInt32(this)),
@@ -2238,6 +2250,7 @@ pub const JSValue = enum(u64) {
 
             // TODO: BigInt64
             i64 => @as(i64, toInt32(this)),
+            bool => this.toBoolean(),
             else => @compileError("Not implemented yet"),
         };
     }
@@ -2374,8 +2387,8 @@ pub const JSValue = enum(u64) {
     pub fn jsNull() JSValue {
         return cppFn("jsNull", .{});
     }
-    pub fn jsUndefined() JSValue {
-        return cppFn("jsUndefined", .{});
+    pub inline fn jsUndefined() JSValue {
+        return JSValue.@"undefined";
     }
     pub fn jsTDZValue() JSValue {
         return cppFn("jsTDZValue", .{});
@@ -2603,7 +2616,7 @@ pub const JSValue = enum(u64) {
     }
 
     // On exception, this returns null, to make exception checks faster.
-    pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) *JSString {
+    pub fn toStringOrNull(this: JSValue, globalThis: *JSGlobalObject) ?*JSString {
         return cppFn("toStringOrNull", .{ this, globalThis });
     }
     pub fn toPropertyKey(this: JSValue, globalThis: *JSGlobalObject) Identifier {

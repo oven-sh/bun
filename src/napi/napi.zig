@@ -787,7 +787,15 @@ pub export fn napi_is_dataview(_: napi_env, value: napi_value, result: *bool) na
     result.* = !value.isEmptyOrUndefinedOrNull() and value.jsTypeLoose() == .DataView;
     return .ok;
 }
-pub extern fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytelength: [*c]usize, data: [*]*anyopaque, arraybuffer: *napi_value, byte_offset: [*c]usize) napi_status;
+pub export fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytelength: *usize, data: *?[*]u8, arraybuffer: *napi_value, byte_offset: *usize) napi_status {
+    var array_buffer = dataview.asArrayBuffer(env) orelse return .object_expected;
+    bytelength.* = array_buffer.byte_len;
+    data.* = array_buffer.ptr;
+    // TODO: will this work? will it fail due to being a DataView instead of a TypedArray?
+    arraybuffer.* = JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), dataview.asObjectRef(), null));
+    byte_offset.* = array_buffer.offset;
+    return .ok;
+}
 pub export fn napi_get_version(_: napi_env, result: [*]u32) napi_status {
     result[0] = bun.Global.version.major;
     result[1] = bun.Global.version.minor;

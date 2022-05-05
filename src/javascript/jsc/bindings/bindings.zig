@@ -2207,6 +2207,26 @@ pub const JSValue = enum(u64) {
                 else => false,
             };
         }
+
+        pub inline fn isIndexable(this: JSType) bool {
+            return switch (this) {
+                .Object,
+                .FinalObject,
+                .Int8Array,
+                .Int16Array,
+                .Int32Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                .Uint16Array,
+                .Uint32Array,
+                .Float32Array,
+                .Float64Array,
+                .Array,
+                .DerivedArray,
+                => true,
+                else => false,
+            };
+        }
     };
 
     pub inline fn cast(ptr: anytype) JSValue {
@@ -2241,7 +2261,6 @@ pub const JSValue = enum(u64) {
             u52 => @truncate(u52, this.to(u64)),
 
             u64 => @intCast(u64, @maximum(toInt64(this), 0)),
-            f64 => asNUmber(this),
 
             u8 => @truncate(u8, toU32(this)),
             i16 => @truncate(i16, toInt32(this)),

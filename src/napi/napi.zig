@@ -324,7 +324,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf:
     result.* = to_copy;
     return .ok;
 }
-pub export fn napi_coerce_to_bool(env: napi_env, value: napi_value, result: *napi_value) napi_status {
+pub export fn napi_coerce_to_bool(_: napi_env, value: napi_value, result: *napi_value) napi_status {
     result.* = value.to(bool);
     return .ok;
 }
@@ -333,33 +333,189 @@ pub export fn napi_coerce_to_number(env: napi_env, value: napi_value, result: *n
     return .ok;
 }
 pub export fn napi_coerce_to_object(env: napi_env, value: napi_value, result: *napi_value) napi_status {
-        result.* = JSValue.from(JSC.C.JSValueToObject(env.ref(), value.asObjectRef(), TODO_EXCEPTION));
+    result.* = JSValue.from(JSC.C.JSValueToObject(env.ref(), value.asObjectRef(), TODO_EXCEPTION));
     return .ok;
 }
-pub export fn napi_coerce_to_string(env: napi_env, value: napi_value, result: *napi_value) napi_status {
-    result.* = value.to(bool)
+// pub export fn napi_coerce_to_string(env: napi_env, value: napi_value, result: *napi_value) napi_status {
+
+//     // result.* =  .?(env.ref(), value.asObjectRef(), TODO_EXCEPTION));
+//     // return .ok;
+// }
+pub export fn napi_get_prototype(env: napi_env, object: napi_value, result: *napi_value) napi_status {
+    if (!object.isObject()) {
+        return .object_expected;
+    }
+
+    result.* = JSValue.from(JSC.C.JSObjectGetPrototype(env.ref(), object.asObjectRef()));
+    return .ok;
 }
-pub extern fn napi_get_prototype(env: napi_env, object: napi_value, result: *napi_value) napi_status;
-pub extern fn napi_get_property_names(env: napi_env, object: napi_value, result: *napi_value) napi_status;
-pub extern fn napi_set_property(env: napi_env, object: napi_value, key: napi_value, value: napi_value) napi_status;
-pub extern fn napi_has_property(env: napi_env, object: napi_value, key: napi_value, result: [*c]bool) napi_status;
-pub extern fn napi_get_property(env: napi_env, object: napi_value, key: napi_value, result: *napi_value) napi_status;
-pub extern fn napi_delete_property(env: napi_env, object: napi_value, key: napi_value, result: [*c]bool) napi_status;
-pub extern fn napi_has_own_property(env: napi_env, object: napi_value, key: napi_value, result: [*c]bool) napi_status;
-pub extern fn napi_set_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, value: napi_value) napi_status;
-pub extern fn napi_has_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, result: [*c]bool) napi_status;
-pub extern fn napi_get_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, result: *napi_value) napi_status;
-pub extern fn napi_set_element(env: napi_env, object: napi_value, index: u32, value: napi_value) napi_status;
-pub extern fn napi_has_element(env: napi_env, object: napi_value, index: u32, result: [*c]bool) napi_status;
-pub extern fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status;
-pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: [*c]bool) napi_status;
+// TODO: bind JSC::ownKeys
+// pub export fn napi_get_property_names(env: napi_env, object: napi_value, result: *napi_value) napi_status {
+//     if (!object.isObject()) {
+//         return .object_expected;
+//     }
+
+//     result.* =
+// }
+pub export fn napi_set_property(env: napi_env, object: napi_value, key: napi_value, value: napi_value) napi_status {
+    if (!object.isObject()) {
+        return .object_expected;
+    }
+    var name = key.getZigString(env);
+    if (name.len == 0 or value.isEmpty()) {
+        return .invalid_arg;
+    }
+    var exception: ?JSC.C.JSValueRef = null;
+    JSC.C.JSObjectSetPropertyForKey(env.ref(), object.asObjectRef(), key.asObjectRef(), value, JSC.C.JSPropertyAttributes.kJSPropertyAttributeNone, &exception);
+    return if (exception == null)
+        .ok
+    else
+        .generic_failure;
+}
+pub export fn napi_has_property(env: napi_env, object: napi_value, key: napi_value, result: *bool) napi_status {
+    if (!object.isObject()) {
+        return .object_expected;
+    }
+    var name = key.getZigString(env);
+    var name_slice = name.toSlice(JSC.VirtualMachine.vm.allocator);
+    defer name_slice.deinit();
+    if (name.len == 0) {
+        return .invalid_arg;
+    }
+    // TODO: bind hasOwnProperty
+    result.* = object.get(env, &name_slice) != null;
+    return .ok;
+}
+pub export fn napi_get_property(env: napi_env, object: napi_value, key: napi_value, result: ?*napi_value) napi_status {
+    if (!object.isObject()) {
+        return .object_expected;
+    }
+
+    if (!key.isString()) {
+        return .invalid_arg;
+    }
+
+    var name = key.getZigString(env);
+    var name_slice = name.toSlice(JSC.VirtualMachine.vm.allocator);
+    defer name_slice.deinit();
+    if (name.len == 0) {
+        return .invalid_arg;
+    }
+    // TODO: DECLARE_THROW_SCOPE
+    result.* = object.get(env, &name_slice);
+    return .ok;
+}
+pub export fn napi_delete_property(env: napi_env, object: napi_value, key: napi_value, result: *bool) napi_status {
+    if (!object.isObject()) {
+        return .object_expected;
+    }
+
+    if (!key.isString()) {
+        return .invalid_arg;
+    }
+
+    result.* = JSC.C.JSObjectDeletePropertyForKey(env, object.asObjectRef(), key.asObjectRef(), null);
+    return .ok;
+}
+pub export fn napi_has_own_property(env: napi_env, object: napi_value, key: napi_value, result: *bool) napi_status {
+    if (!object.isObject()) {
+        return .object_expected;
+    }
+
+    if (!key.isString()) {
+        return .invalid_arg;
+    }
+
+    result.* = JSC.C.JSObjectHasPropertyForKey(env, object.asObjectRef(), key.asObjectRef(), null);
+    return .ok;
+}
+pub export fn napi_set_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, value: napi_value) napi_status {
+    if (!object.isObject()) {
+        return .object_expected;
+    }
+
+    if (utf8name == null) {
+        return .invalid_arg;
+    }
+
+    const str = std.mem.span(utf8name);
+    if (str.len == 0)
+        return .invalid_arg;
+
+    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, null);
+    defer JSC.C.JSStringRelease(ext);
+    JSC.C.JSObjectSetProperty(env.ref(), object.asObjectRef, ext, value.asObjectRef(), 0, TODO_EXCEPTION);
+    return .ok;
+}
+pub export fn napi_has_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, result: *bool) napi_status {
+    if (!object.isObject()) {
+        return .object_expected;
+    }
+
+    if (utf8name == null) {
+        return .invalid_arg;
+    }
+
+    const str = std.mem.span(utf8name);
+    if (str.len == 0)
+        return .invalid_arg;
+
+    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, null);
+    defer JSC.C.JSStringRelease(ext);
+    result.* = JSC.C.JSObjectHasProperty(env.ref(), object.asObjectRef, ext);
+    return .ok;
+}
+pub export fn napi_get_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, result: *napi_value) napi_status {
+    if (!object.isObject()) {
+        return .object_expected;
+    }
+
+    if (utf8name == null) {
+        return .invalid_arg;
+    }
+
+    const str = std.mem.span(utf8name);
+    if (str.len == 0)
+        return .invalid_arg;
+
+    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, null);
+    defer JSC.C.JSStringRelease(ext);
+    result.* = JSValue.from(JSC.C.JSObjectGetProperty(env.ref(), object.asObjectRef, ext, TODO_EXCEPTION));
+    return .ok;
+}
+pub export fn napi_set_element(env: napi_env, object: napi_value, index: c_uint, value: napi_value) napi_status {
+    if (!object.jsType().isIndexable()) {
+        return .array_expected;
+    }
+    if (value.isEmpty())
+        return .invalid_arg;
+    JSC.C.JSObjectSetPropertyAtIndex(env.ref(), object.asObjectRef(), index, value, TODO_EXCEPTION);
+    return .ok;
+}
+pub export fn napi_has_element(env: napi_env, object: napi_value, index: c_uint, result: *bool) napi_status {
+    if (!object.jsType().isIndexable()) {
+        return .array_expected;
+    }
+
+    result.* = object.getLengthOfArray(env) > index;
+    return .ok;
+}
+pub export fn napi_get_element(env: napi_env, object: napi_value, index: u32, result: *napi_value) napi_status {
+    if (!object.jsType().isIndexable()) {
+        return .array_expected;
+    }
+
+    result.* = JSC.JSObject.getIndex(object, env, index);
+    return .ok;
+}
+pub extern fn napi_delete_element(env: napi_env, object: napi_value, index: u32, result: *bool) napi_status;
 pub extern fn napi_define_properties(env: napi_env, object: napi_value, property_count: usize, properties: [*c]const napi_property_descriptor) napi_status;
-pub extern fn napi_is_array(env: napi_env, value: napi_value, result: [*c]bool) napi_status;
+pub extern fn napi_is_array(env: napi_env, value: napi_value, result: *bool) napi_status;
 pub extern fn napi_get_array_length(env: napi_env, value: napi_value, result: [*c]u32) napi_status;
-pub extern fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value, result: [*c]bool) napi_status;
+pub extern fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value, result: *bool) napi_status;
 pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
 pub extern fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
-pub extern fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: [*c]bool) napi_status;
+pub extern fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result: *bool) napi_status;
 pub extern fn napi_get_cb_info(env: napi_env, cbinfo: napi_callback_info, argc: [*c]usize, argv: *napi_value, this_arg: *napi_value, data: [*]*anyopaque) napi_status;
 pub extern fn napi_get_new_target(env: napi_env, cbinfo: napi_callback_info, result: *napi_value) napi_status;
 pub extern fn napi_define_class(env: napi_env, utf8name: [*c]const u8, length: usize, constructor: napi_callback, data: ?*anyopaque, property_count: usize, properties: [*c]const napi_property_descriptor, result: *napi_value) napi_status;
@@ -382,43 +538,43 @@ pub extern fn napi_throw(env: napi_env, @"error": napi_value) napi_status;
 pub extern fn napi_throw_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_type_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
 pub extern fn napi_throw_range_error(env: napi_env, code: [*c]const u8, msg: [*c]const u8) napi_status;
-pub extern fn napi_is_error(env: napi_env, value: napi_value, result: [*c]bool) napi_status;
-pub extern fn napi_is_exception_pending(env: napi_env, result: [*c]bool) napi_status;
+pub extern fn napi_is_error(env: napi_env, value: napi_value, result: *bool) napi_status;
+pub extern fn napi_is_exception_pending(env: napi_env, result: *bool) napi_status;
 pub extern fn napi_get_and_clear_last_exception(env: napi_env, result: *napi_value) napi_status;
-pub extern fn napi_is_arraybuffer(env: napi_env, value: napi_value, result: [*c]bool) napi_status;
+pub extern fn napi_is_arraybuffer(env: napi_env, value: napi_value, result: *bool) napi_status;
 pub extern fn napi_create_arraybuffer(env: napi_env, byte_length: usize, data: [*]*anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*anyopaque, byte_length: usize, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_get_arraybuffer_info(env: napi_env, arraybuffer: napi_value, data: [*]*anyopaque, byte_length: [*c]usize) napi_status;
-pub extern fn napi_is_typedarray(env: napi_env, value: napi_value, result: [*c]bool) napi_status;
+pub extern fn napi_is_typedarray(env: napi_env, value: napi_value, result: *bool) napi_status;
 pub extern fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_type, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;
 pub extern fn napi_get_typedarray_info(env: napi_env, typedarray: napi_value, @"type": [*c]napi_typedarray_type, length: [*c]usize, data: [*]*anyopaque, arraybuffer: *napi_value, byte_offset: [*c]usize) napi_status;
 pub extern fn napi_create_dataview(env: napi_env, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;
-pub extern fn napi_is_dataview(env: napi_env, value: napi_value, result: [*c]bool) napi_status;
+pub extern fn napi_is_dataview(env: napi_env, value: napi_value, result: *bool) napi_status;
 pub extern fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytelength: [*c]usize, data: [*]*anyopaque, arraybuffer: *napi_value, byte_offset: [*c]usize) napi_status;
 pub extern fn napi_get_version(env: napi_env, result: [*c]u32) napi_status;
 pub extern fn napi_create_promise(env: napi_env, deferred: [*c]napi_deferred, promise: *napi_value) napi_status;
 pub extern fn napi_resolve_deferred(env: napi_env, deferred: napi_deferred, resolution: napi_value) napi_status;
 pub extern fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejection: napi_value) napi_status;
-pub extern fn napi_is_promise(env: napi_env, value: napi_value, is_promise: [*c]bool) napi_status;
+pub extern fn napi_is_promise(env: napi_env, value: napi_value, is_promise: *bool) napi_status;
 pub extern fn napi_run_script(env: napi_env, script: napi_value, result: *napi_value) napi_status;
 pub extern fn napi_adjust_external_memory(env: napi_env, change_in_bytes: i64, adjusted_value: [*c]i64) napi_status;
 pub extern fn napi_create_date(env: napi_env, time: f64, result: *napi_value) napi_status;
-pub extern fn napi_is_date(env: napi_env, value: napi_value, is_date: [*c]bool) napi_status;
+pub extern fn napi_is_date(env: napi_env, value: napi_value, is_date: *bool) napi_status;
 pub extern fn napi_get_date_value(env: napi_env, value: napi_value, result: [*c]f64) napi_status;
 pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*c]napi_ref) napi_status;
 pub extern fn napi_create_bigint_int64(env: napi_env, value: i64, result: *napi_value) napi_status;
 pub extern fn napi_create_bigint_uint64(env: napi_env, value: u64, result: *napi_value) napi_status;
 pub extern fn napi_create_bigint_words(env: napi_env, sign_bit: c_int, word_count: usize, words: [*c]const u64, result: *napi_value) napi_status;
-pub extern fn napi_get_value_bigint_int64(env: napi_env, value: napi_value, result: [*c]i64, lossless: [*c]bool) napi_status;
-pub extern fn napi_get_value_bigint_uint64(env: napi_env, value: napi_value, result: [*c]u64, lossless: [*c]bool) napi_status;
+pub extern fn napi_get_value_bigint_int64(env: napi_env, value: napi_value, result: [*c]i64, lossless: *bool) napi_status;
+pub extern fn napi_get_value_bigint_uint64(env: napi_env, value: napi_value, result: [*c]u64, lossless: *bool) napi_status;
 pub extern fn napi_get_value_bigint_words(env: napi_env, value: napi_value, sign_bit: [*c]c_int, word_count: [*c]usize, words: [*c]u64) napi_status;
 pub extern fn napi_get_all_property_names(env: napi_env, object: napi_value, key_mode: napi_key_collection_mode, key_filter: napi_key_filter, key_conversion: napi_key_conversion, result: *napi_value) napi_status;
 pub extern fn napi_set_instance_data(env: napi_env, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque) napi_status;
 pub extern fn napi_get_instance_data(env: napi_env, data: [*]*anyopaque) napi_status;
 pub extern fn napi_detach_arraybuffer(env: napi_env, arraybuffer: napi_value) napi_status;
-pub extern fn napi_is_detached_arraybuffer(env: napi_env, value: napi_value, result: [*c]bool) napi_status;
+pub extern fn napi_is_detached_arraybuffer(env: napi_env, value: napi_value, result: *bool) napi_status;
 pub extern fn napi_type_tag_object(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag) napi_status;
-pub extern fn napi_check_object_type_tag(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag, result: [*c]bool) napi_status;
+pub extern fn napi_check_object_type_tag(env: napi_env, value: napi_value, type_tag: [*c]const napi_type_tag, result: *bool) napi_status;
 pub extern fn napi_object_freeze(env: napi_env, object: napi_value) napi_status;
 pub extern fn napi_object_seal(env: napi_env, object: napi_value) napi_status;
 pub const struct_napi_callback_scope__ = opaque {};
@@ -467,7 +623,7 @@ pub extern fn napi_make_callback(env: napi_env, async_context: napi_async_contex
 pub extern fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status;
 pub extern fn napi_create_buffer_copy(env: napi_env, length: usize, data: ?*const anyopaque, result_data: [*]*anyopaque, result: *napi_value) napi_status;
-pub extern fn napi_is_buffer(env: napi_env, value: napi_value, result: [*c]bool) napi_status;
+pub extern fn napi_is_buffer(env: napi_env, value: napi_value, result: *bool) napi_status;
 pub extern fn napi_get_buffer_info(env: napi_env, value: napi_value, data: [*]*anyopaque, length: [*c]usize) napi_status;
 pub extern fn napi_create_async_work(env: napi_env, async_resource: napi_value, async_resource_name: napi_value, execute: napi_async_execute_callback, complete: napi_async_complete_callback, data: ?*anyopaque, result: [*c]napi_async_work) napi_status;
 pub extern fn napi_delete_async_work(env: napi_env, work: napi_async_work) napi_status;

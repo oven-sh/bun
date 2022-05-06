@@ -1,13 +1,11 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:wrap";
-Bun.activate(false);
-
+} from "http://localhost:3000/bun:wrap";
+Bun.activate(true);
 import {
 __HMRModule as HMR
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 var hmr = new HMR(650094581, "type-only-imports.ts"), exports = hmr.exports;
-
 (hmr._load = function() {
   var baconator = true;
   var SilentSymbolCollisionsAreOkayInTypeScript = true;
@@ -35,4 +33,4 @@ export {
   $$hmr_test as test
 };
 
-//# sourceMappingURL=http://localhost:8080/type-only-imports.ts.map
+//# sourceMappingURL=http://localhost:3000/type-only-imports.ts.map

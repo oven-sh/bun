@@ -317,7 +317,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Ex
 
     if (value.isString()) {
         var str = JSAst.E.String{
-            .utf8 = std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis)}) catch unreachable,
+            .data = std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis)}) catch unreachable,
         };
         var out = bun.default_allocator.create(JSAst.E.String) catch unreachable;
         out.* = str;

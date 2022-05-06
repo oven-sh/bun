@@ -198,8 +198,8 @@ var inf_val = js_ast.E.Number{ .value = std.math.inf_f64 };
 
 const __dirname_str: string = std.fs.path.sep_str ++ "__dirname_is_not_implemented";
 const __filename_str: string = "__filename_is_not_implemented.js";
-var __dirname = js_ast.E.String{ .utf8 = __dirname_str };
-var __filename = js_ast.E.String{ .utf8 = __filename_str };
+var __dirname = js_ast.E.String.init(__dirname_str);
+var __filename = js_ast.E.String.init(__filename_str);
 
 pub const Define = struct {
     identifiers: std.StringHashMap(IdentifierDefine),

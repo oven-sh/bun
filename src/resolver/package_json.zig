@@ -356,7 +356,7 @@ pub const PackageJSON = struct {
                             var count: usize = 0;
                             const items = array.items.slice();
                             for (items) |item| {
-                                count += @boolToInt(item.data == .e_string and item.data.e_string.utf8.len > 0);
+                                count += @boolToInt(item.data == .e_string and item.data.e_string.data.len > 0);
                             }
                             switch (count) {
                                 0 => {},
@@ -374,7 +374,7 @@ pub const PackageJSON = struct {
 
                                     var list_i: usize = 0;
                                     for (items) |item| {
-                                        if (item.data == .e_string and item.data.e_string.utf8.len > 0) {
+                                        if (item.data == .e_string and item.data.e_string.data.len > 0) {
                                             list[list_i] = item.data.e_string.string(allocator) catch unreachable;
                                             list_i += 1;
                                         }
@@ -398,7 +398,7 @@ pub const PackageJSON = struct {
                         while (array.next()) |expr| {
                             if (expr.data != .e_string) continue;
                             const e_str: *const js_ast.E.String = expr.data.e_string;
-                            if (e_str.utf8.len == 0 or e_str.utf8[0] != '.') continue;
+                            if (e_str.data.len == 0 or e_str.data[0] != '.') continue;
                             valid_count += 1;
                         }
 
@@ -411,8 +411,8 @@ pub const PackageJSON = struct {
                             while (array.next()) |expr| {
                                 if (expr.data != .e_string) continue;
                                 const e_str: *const js_ast.E.String = expr.data.e_string;
-                                if (e_str.utf8.len == 0 or e_str.utf8[0] != '.') continue;
-                                extensions[i] = e_str.utf8;
+                                if (e_str.data.len == 0 or e_str.data[0] != '.') continue;
+                                extensions[i] = e_str.data;
                                 i += 1;
                             }
                         }
@@ -512,7 +512,7 @@ pub const PackageJSON = struct {
             for (remap_properties) |remap| {
                 const import_name = remap.key.?.asString(allocator) orelse continue;
                 const remap_value = remap.value.?;
-                if (remap_value.data != .e_string or remap_value.data.e_string.utf8.len == 0) {
+                if (remap_value.data != .e_string or remap_value.data.e_string.data.len == 0) {
                     log.addWarningFmt(
                         json_source,
                         remap_value.loc,
@@ -523,7 +523,7 @@ pub const PackageJSON = struct {
                     continue;
                 }
 
-                const remap_value_str = remap_value.data.e_string.utf8;
+                const remap_value_str = remap_value.data.e_string.data;
 
                 map.putAssumeCapacityNoClobber(import_name, remap_value_str);
             }

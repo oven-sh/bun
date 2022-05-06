@@ -77,7 +77,7 @@ const UnsupportedPackages = struct {
     pub fn update(this: *UnsupportedPackages, expr: js_ast.Expr) void {
         for (expr.data.e_object.properties.slice()) |prop| {
             inline for (comptime std.meta.fieldNames(UnsupportedPackages)) |field_name| {
-                if (strings.eqlComptime(prop.key.?.data.e_string.utf8, comptime field_name)) {
+                if (strings.eqlComptime(prop.key.?.data.e_string.data, comptime field_name)) {
                     @field(this, field_name) = true;
                 }
             }
@@ -747,7 +747,7 @@ pub const CreateCommand = struct {
                 if (package_json_expr.asProperty("name")) |name_expr| {
                     if (name_expr.expr.data == .e_string) {
                         var basename = std.fs.path.basename(destination);
-                        name_expr.expr.data.e_string.utf8 = @intToPtr([*]u8, @ptrToInt(basename.ptr))[0..basename.len];
+                        name_expr.expr.data.e_string.data = @intToPtr([*]u8, @ptrToInt(basename.ptr))[0..basename.len];
                     }
                 }
 
@@ -786,7 +786,7 @@ pub const CreateCommand = struct {
                         var i: usize = 0;
                         var out_i: usize = 0;
                         while (i < list.len) : (i += 1) {
-                            const key = list[i].key.?.data.e_string.utf8;
+                            const key = list[i].key.?.data.e_string.data;
 
                             const do_prune = packages.has(key);
                             prune_count += @intCast(u16, @boolToInt(do_prune));
@@ -844,7 +844,7 @@ pub const CreateCommand = struct {
                                 is_nextjs = true;
                                 needs.bun_bun_for_nextjs = true;
 
-                                next_q.expr.data.e_string.utf8 = constStrToU8(target_nextjs_version);
+                                next_q.expr.data.e_string.data = constStrToU8(target_nextjs_version);
                             }
 
                             has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
@@ -935,17 +935,17 @@ pub const CreateCommand = struct {
                     const macros_string = "macros";
                     const bun_macros_relay_path = "bun-macro-relay";
 
-                    pub var dependencies_e_string = E.String{ .utf8 = dependencies_string };
-                    pub var devDependencies_e_string = E.String{ .utf8 = dev_dependencies_string };
-                    pub var bun_e_string = E.String{ .utf8 = bun_string };
-                    pub var macros_e_string = E.String{ .utf8 = macros_string };
-                    pub var react_relay_string = E.String{ .utf8 = "react-relay" };
-                    pub var bun_macros_relay_path_string = E.String{ .utf8 = "bun-macro-relay" };
-                    pub var babel_plugin_relay_macro = E.String{ .utf8 = "babel-plugin-relay/macro" };
-                    pub var babel_plugin_relay_macro_js = E.String{ .utf8 = "babel-plugin-relay/macro.js" };
-                    pub var graphql_string = E.String{ .utf8 = "graphql" };
+                    pub var dependencies_e_string = E.String.init(dependencies_string);
+                    pub var devDependencies_e_string = E.String.init(dev_dependencies_string);
+                    pub var bun_e_string = E.String.init(bun_string);
+                    pub var macros_e_string = E.String.init(macros_string);
+                    pub var react_relay_string = E.String.init("react-relay");
+                    pub var bun_macros_relay_path_string = E.String.init("bun-macro-relay");
+                    pub var babel_plugin_relay_macro = E.String.init("babel-plugin-relay/macro");
+                    pub var babel_plugin_relay_macro_js = E.String.init("babel-plugin-relay/macro.js");
+                    pub var graphql_string = E.String.init("graphql");
 
-                    var npx_react_scripts_build_str = E.String{ .utf8 = "npx react-scripts build" };
+                    var npx_react_scripts_build_str = E.String.init("npx react-scripts build");
 
                     pub const npx_react_scripts_build = js_ast.Expr{ .data = .{ .e_string = &npx_react_scripts_build_str }, .loc = logger.Loc.Empty };
 
@@ -1019,7 +1019,7 @@ pub const CreateCommand = struct {
                         .properties = undefined,
                     };
 
-                    var bun_macros_relay_only_object_string = js_ast.E.String{ .utf8 = "macros" };
+                    var bun_macros_relay_only_object_string = js_ast.E.String.init("macros");
                     pub var bun_macros_relay_only_object_properties = [_]js_ast.G.Property{
                         js_ast.G.Property{
                             .key = js_ast.Expr{
@@ -1038,7 +1038,7 @@ pub const CreateCommand = struct {
                     };
                     pub var bun_macros_relay_only_object = E.Object{ .properties = undefined };
 
-                    var bun_only_macros_string = js_ast.E.String{ .utf8 = "bun" };
+                    var bun_only_macros_string = js_ast.E.String.init("bun");
                     pub var bun_only_macros_relay_property = js_ast.G.Property{
                         .key = js_ast.Expr{
                             .data = .{
@@ -1054,8 +1054,8 @@ pub const CreateCommand = struct {
                         },
                     };
 
-                    pub var bun_framework_next_string = js_ast.E.String{ .utf8 = "bun-framework-next" };
-                    pub var bun_framework_next_version = js_ast.E.String{ .utf8 = "latest" };
+                    pub var bun_framework_next_string = js_ast.E.String.init("bun-framework-next");
+                    pub var bun_framework_next_version = js_ast.E.String.init("latest");
                     pub var bun_framework_next_property = js_ast.G.Property{
                         .key = js_ast.Expr{
                             .data = .{
@@ -1071,8 +1071,8 @@ pub const CreateCommand = struct {
                         },
                     };
 
-                    pub var bun_macro_relay_dependency_string = js_ast.E.String{ .utf8 = "bun-macro-relay" };
-                    pub var bun_macro_relay_dependency_version = js_ast.E.String{ .utf8 = "latest" };
+                    pub var bun_macro_relay_dependency_string = js_ast.E.String.init("bun-macro-relay");
+                    pub var bun_macro_relay_dependency_version = js_ast.E.String.init("latest");
 
                     pub var bun_macro_relay_dependency = js_ast.G.Property{
                         .key = js_ast.Expr{
@@ -1089,8 +1089,8 @@ pub const CreateCommand = struct {
                         },
                     };
 
-                    pub var refresh_runtime_string = js_ast.E.String{ .utf8 = "react-refresh" };
-                    pub var refresh_runtime_version = js_ast.E.String{ .utf8 = "0.10.0" };
+                    pub var refresh_runtime_string = js_ast.E.String.init("react-refresh");
+                    pub var refresh_runtime_version = js_ast.E.String.init("0.10.0");
                     pub var react_refresh_dependency = js_ast.G.Property{
                         .key = js_ast.Expr{
                             .data = .{
@@ -1350,7 +1350,7 @@ pub const CreateCommand = struct {
                                 var script_property_out_i: usize = 0;
 
                                 while (script_property_i < scripts_properties.len) : (script_property_i += 1) {
-                                    const script = scripts_properties[script_property_i].value.?.data.e_string.utf8;
+                                    const script = scripts_properties[script_property_i].value.?.data.e_string.data;
 
                                     if (strings.contains(script, "react-scripts start") or
                                         strings.contains(script, "next dev") or
@@ -2079,14 +2079,14 @@ pub const Example = struct {
 
                 var list = try ctx.allocator.alloc(Example, count);
                 for (q.expr.data.e_object.properties.slice()) |property, i| {
-                    const name = property.key.?.data.e_string.utf8;
+                    const name = property.key.?.data.e_string.data;
                     list[i] = Example{
                         .name = if (std.mem.indexOfScalar(u8, name, '/')) |slash|
                             name[slash + 1 ..]
                         else
                             name,
-                        .version = property.value.?.asProperty("version").?.expr.data.e_string.utf8,
-                        .description = property.value.?.asProperty("description").?.expr.data.e_string.utf8,
+                        .version = property.value.?.asProperty("version").?.expr.data.e_string.data,
+                        .description = property.value.?.asProperty("description").?.expr.data.e_string.data,
                     };
                 }
                 return list;

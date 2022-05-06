@@ -517,7 +517,7 @@ pub const Loader = struct {
                             const key_str = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
                             e_strings[0] = js_ast.E.String{
-                                .utf8 = if (value.len > 0)
+                                .data = if (value.len > 0)
                                     @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
                                 else
                                     &[_]u8{},
@@ -564,7 +564,7 @@ pub const Loader = struct {
 
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
                                 e_strings[0] = js_ast.E.String{
-                                    .utf8 = if (value.len > 0)
+                                    .data = if (value.len > 0)
                                         @intToPtr([*]u8, @ptrToInt(value.ptr))[0..value.len]
                                     else
                                         &[_]u8{},
@@ -614,7 +614,7 @@ pub const Loader = struct {
                         const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
                         e_strings[0] = js_ast.E.String{
-                            .utf8 = if (entry.value_ptr.*.len > 0)
+                            .data = if (entry.value_ptr.*.len > 0)
                                 @intToPtr([*]u8, @ptrToInt(entry.value_ptr.*.ptr))[0..value.len]
                             else
                                 &[_]u8{},
@@ -1167,8 +1167,8 @@ test "DotEnv Loader - copyForDefine" {
     );
 
     try expect(env_defines.get("process.env.BACON") != null);
-    try expectString(env_defines.get("process.env.BACON").?.value.e_string.utf8, "false");
-    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.utf8, "example.com");
+    try expectString(env_defines.get("process.env.BACON").?.value.e_string.data, "false");
+    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.data, "example.com");
     try expect(env_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") != null);
 
     user_defines = UserDefine.init(default_allocator);
@@ -1176,6 +1176,6 @@ test "DotEnv Loader - copyForDefine" {
 
     buf = try loader.copyForDefine(UserDefine, &user_defines, UserDefinesArray, &env_defines, framework, .prefix, "HO", default_allocator);
 
-    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.utf8, "example.com");
+    try expectString(env_defines.get("process.env.HOSTNAME").?.value.e_string.data, "example.com");
     try expect(env_defines.get("process.env.THIS_SHOULDNT_BE_IN_DEFINES_MAP") == null);
 }

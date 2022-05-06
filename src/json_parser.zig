@@ -167,10 +167,7 @@ fn JSONLikeParser_(
                 .t_string_literal => {
                     var str: E.String = p.lexer.toEString();
                     if (comptime force_utf8) {
-                        if (str.value.len > 0) {
-                            str.utf8 = p.lexer.utf16ToString(str.value);
-                            str.value = &[_]u16{};
-                        }
+                        str.toUTF8(p.allocator) catch unreachable;
                     }
 
                     try p.lexer.next();
@@ -469,21 +466,21 @@ pub const PackageJSONVersionChecker = struct {
                         // if you have multiple "name" fields in the package.json....
                         // first one wins
                         if (key.data == .e_string and value.data == .e_string) {
-                            if (!p.has_found_name and strings.eqlComptime(key.data.e_string.utf8, "name")) {
+                            if (!p.has_found_name and strings.eqlComptime(key.data.e_string.data, "name")) {
                                 const len = @minimum(
-                                    value.data.e_string.utf8.len,
+                                    value.data.e_string.data.len,
                                     p.found_name_buf.len,
                                 );
 
-                                std.mem.copy(u8, &p.found_name_buf, value.data.e_string.utf8[0..len]);
+                                std.mem.copy(u8, &p.found_name_buf, value.data.e_string.data[0..len]);
                                 p.found_name = p.found_name_buf[0..len];
                                 p.has_found_name = true;
-                            } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.utf8, "version")) {
+                            } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.data, "version")) {
                                 const len = @minimum(
-                                    value.data.e_string.utf8.len,
+                                    value.data.e_string.data.len,
                                     p.found_version_buf.len,
                                 );
-                                std.mem.copy(u8, &p.found_version_buf, value.data.e_string.utf8[0..len]);
+                                std.mem.copy(u8, &p.found_version_buf, value.data.e_string.data[0..len]);
                                 p.found_version = p.found_version_buf[0..len];
                                 p.has_found_version = true;
                             }
@@ -570,7 +567,7 @@ pub fn toAST(
             },
             .Slice => {
                 if (ptr_info.child == u8) {
-                    return Expr.init(js_ast.E.String, js_ast.E.String{ .utf8 = value }, logger.Loc.Empty);
+                    return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
                 }
 
                 var exprs = try allocator.alloc(Expr, value.len);
@@ -584,7 +581,7 @@ pub fn toAST(
         },
         .Array => |Array| {
             if (Array.child == u8) {
-                return Expr.init(js_ast.E.String, js_ast.E.String{ .utf8 = value }, logger.Loc.Empty);
+                return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
             }
 
             var exprs = try allocator.alloc(Expr, value.len);
@@ -600,7 +597,7 @@ pub fn toAST(
             var property_i: usize = 0;
             inline for (fields) |field| {
                 properties[property_i] = G.Property{
-                    .key = Expr.init(E.String, E.String{ .utf8 = field.name }, logger.Loc.Empty),
+                    .key = Expr.init(E.String, E.String{ .data = field.name }, logger.Loc.Empty),
                     .value = try toAST(allocator, field.field_type, @field(value, field.name)),
                 };
                 property_i += 1;
@@ -697,7 +694,7 @@ const JSONParserForMacro = JSONLikeParser(
 
 var empty_object = E.Object{};
 var empty_array = E.Array{};
-var empty_string = E.String{ .utf8 = "" };
+var empty_string = E.String{};
 var empty_string_data = Expr.Data{ .e_string = &empty_string };
 var empty_object_data = Expr.Data{ .e_object = &empty_object };
 var empty_array_data = Expr.Data{ .e_array = &empty_array };

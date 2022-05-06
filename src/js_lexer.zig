@@ -1853,17 +1853,19 @@ fn NewLexer_(
 
         pub fn toEString(lexer: *LexerType) js_ast.E.String {
             if (lexer.string_literal_is_ascii) {
-                return js_ast.E.String{ .utf8 = lexer.string_literal_slice };
+                return js_ast.E.String.init(lexer.string_literal_slice);
             } else {
-                return js_ast.E.String{ .value = lexer.allocator.dupe(u16, lexer.string_literal) catch unreachable };
+                return js_ast.E.String.init(lexer.allocator.dupe(u16, lexer.string_literal) catch unreachable);
             }
         }
 
         pub fn toUTF8EString(lexer: *LexerType) js_ast.E.String {
             if (lexer.string_literal_is_ascii) {
-                return js_ast.E.String{ .utf8 = lexer.string_literal_slice };
+                return js_ast.E.String.init(lexer.string_literal_slice);
             } else {
-                return js_ast.E.String{ .utf8 = lexer.utf16ToString(lexer.string_literal) };
+                var e_str = js_ast.E.String.init(lexer.string_literal);
+                e_str.toUTF8(lexer.allocator) catch unreachable;
+                return e_str;
             }
         }
 

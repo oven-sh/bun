@@ -103,6 +103,29 @@ pub const AllocatedNamesPool = ObjectPool(
     4,
 );
 
+fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
+    switch (lhs.data) {
+        .e_string => |left| {
+            if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
+                lhs.data.e_string.push(rhs.data.e_string);
+                return lhs;
+            }
+        },
+        .e_binary => |bin| {
+
+            // 123 + "bar" + "baz"
+            if (bin.op == .bin_add) {
+                if (foldStringAddition(bin.right, rhs)) |out| {
+                    return Expr.init(E.Binary, E.Binary{ .op = bin.op, .left = bin.left, .right = out }, lhs.loc);
+                }
+            }
+        },
+        else => {},
+    }
+
+    return null;
+}
+
 // If we are currently in a hoisted child of the module scope, relocate these
 // declarations to the top level and return an equivalent assignment statement.
 // Make sure to check that the declaration kind is "var" before calling this.
@@ -222,7 +245,7 @@ const JSXTag = struct {
         if (strings.containsComptime(name, "-:") or (p.lexer.token != .t_dot and name[0] >= 'a' and name[0] <= 'z')) {
             return JSXTag{
                 .data = Data{ .tag = p.e(E.String{
-                    .utf8 = name,
+                    .data = name,
                 }, loc) },
                 .range = tag_range,
             };
@@ -2287,6 +2310,7 @@ pub const Parser = struct {
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
         var p: ParserType = undefined;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
+        p.should_fold_numeric_constants = self.options.features.should_fold_numeric_constants;
         defer p.lexer.deinit();
         var result: js_ast.Result = undefined;
 
@@ -2577,7 +2601,7 @@ pub const Parser = struct {
                                     },
                                     loc,
                                 ),
-                                .value = p.e(E.String{ .utf8 = p.source.path.pretty }, loc),
+                                .value = p.e(E.String{ .data = p.source.path.pretty }, loc),
                             };
                             decl_i += 1;
                         }
@@ -3032,7 +3056,7 @@ pub const Prefill = struct {
             Expr{ .data = .{ .e_boolean = E.Boolean{ .value = false } }, .loc = logger.Loc.Empty },
         };
         pub var ActivateString = E.String{
-            .utf8 = "activate",
+            .data = "activate",
         };
         pub var ActivateIndex = E.Index{
             .index = .{
@@ -3056,11 +3080,11 @@ pub const Prefill = struct {
         pub const Zero = E.Number{ .value = 0.0 };
     };
     pub const String = struct {
-        pub var Key = E.String{ .utf8 = &Prefill.StringLiteral.Key };
-        pub var Children = E.String{ .utf8 = &Prefill.StringLiteral.Children };
-        pub var Filename = E.String{ .utf8 = &Prefill.StringLiteral.Filename };
-        pub var LineNumber = E.String{ .utf8 = &Prefill.StringLiteral.LineNumber };
-        pub var ColumnNumber = E.String{ .utf8 = &Prefill.StringLiteral.ColumnNumber };
+        pub var Key = E.String{ .data = &Prefill.StringLiteral.Key };
+        pub var Children = E.String{ .data = &Prefill.StringLiteral.Children };
+        pub var Filename = E.String{ .data = &Prefill.StringLiteral.Filename };
+        pub var LineNumber = E.String{ .data = &Prefill.StringLiteral.LineNumber };
+        pub var ColumnNumber = E.String{ .data = &Prefill.StringLiteral.ColumnNumber };
     };
     pub const Data = struct {
         pub var BMissing = B{ .b_missing = BMissing_ };
@@ -7883,7 +7907,7 @@ fn NewParser_(
 
                     try p.lexer.next();
 
-                    key = p.e(E.String{ .utf8 = name }, loc);
+                    key = p.e(E.String{ .data = name }, loc);
 
                     if (p.lexer.token != .t_colon and p.lexer.token != .t_open_paren) {
                         const ref = p.storeNameInRef(name) catch unreachable;
@@ -7997,7 +8021,7 @@ fn NewParser_(
                 if (p.lexer.token == .t_string_literal) {
                     value.name = p.lexer.toEString();
                 } else if (p.lexer.isIdentifierOrKeyword()) {
-                    value.name = E.String{ .utf8 = p.lexer.identifier };
+                    value.name = E.String{ .data = p.lexer.identifier };
                     needs_symbol = true;
                 } else {
                     try p.lexer.expect(.t_identifier);
@@ -9276,7 +9300,7 @@ fn NewParser_(
                         }
                     }
 
-                    key = p.e(E.String{ .utf8 = name }, name_range.loc);
+                    key = p.e(E.String{ .data = name }, name_range.loc);
 
                     // Parse a shorthand property
                     const isShorthandProperty = !opts.is_class and
@@ -11307,7 +11331,7 @@ fn NewParser_(
 
             if (comptime only_scan_imports_and_do_not_visit) {
                 if (value.data == .e_string and value.data.e_string.isUTF8() and value.data.e_string.isPresent()) {
-                    const import_record_index = p.addImportRecord(.dynamic, value.loc, value.data.e_string.utf8);
+                    const import_record_index = p.addImportRecord(.dynamic, value.loc, value.data.e_string.slice(p.allocator));
 
                     return p.e(E.Import{
                         .expr = value,
@@ -11390,7 +11414,7 @@ fn NewParser_(
                                 continue;
                             }
 
-                            const prop_name = p.e(E.String{ .utf8 = prop_name_literal }, key_range.loc);
+                            const prop_name = p.e(E.String{ .data = prop_name_literal }, key_range.loc);
 
                             // Parse the value
                             var value: Expr = undefined;
@@ -11430,13 +11454,13 @@ fn NewParser_(
                                     const key = brk: {
                                         switch (expr.data) {
                                             .e_import_identifier => |ident| {
-                                                break :brk p.e(E.String{ .utf8 = p.loadNameFromRef(ident.ref) }, expr.loc);
+                                                break :brk p.e(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
                                             },
                                             .e_identifier => |ident| {
-                                                break :brk p.e(E.String{ .utf8 = p.loadNameFromRef(ident.ref) }, expr.loc);
+                                                break :brk p.e(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
                                             },
                                             .e_dot => |dot| {
-                                                break :brk p.e(E.String{ .utf8 = dot.name }, dot.name_loc);
+                                                break :brk p.e(E.String{ .data = dot.name }, dot.name_loc);
                                             },
                                             .e_index => |index| {
                                                 if (index.index.data == .e_string) {
@@ -12088,14 +12112,14 @@ fn NewParser_(
                             const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
                             var children_count = e_.children.len;
 
-                            const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.utf8);
+                            const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.slice(p.allocator));
 
                             children_count = if (is_childless_tag) 0 else children_count;
 
                             if (children_count != e_.children.len) {
                                 // Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
                                 // ^ from react-dom
-                                p.log.addWarningFmt(p.source, tag.loc, p.allocator, "<{s} /> is a void element and must not have \"children\"", .{tag.data.e_string.utf8}) catch {};
+                                p.log.addWarningFmt(p.source, tag.loc, p.allocator, "<{s} /> is a void element and must not have \"children\"", .{tag.data.e_string.slice(p.allocator)}) catch {};
                             }
 
                             // TODO: maybe we should split these into two different AST Nodes
@@ -12395,7 +12419,7 @@ fn NewParser_(
                                 const jsx_element = e_.right.data.e_jsx_element;
                                 if (jsx_element.tag) |tag| {
                                     if (tag.data == .e_string) {
-                                        const tag_string = tag.data.e_string.utf8;
+                                        const tag_string = tag.data.e_string.slice(p.allocator);
                                         if (js_ast.Macro.JSNode.Tag.names.get(tag_string)) |node_tag| {
                                             call_args[1] = Expr{ .loc = tag.loc, .data = js_ast.Macro.JSNode.Tag.ids.get(node_tag) };
                                         } else {
@@ -12420,7 +12444,7 @@ fn NewParser_(
                                 const jsx_element = e_.left.data.e_jsx_element;
                                 if (jsx_element.tag) |tag| {
                                     if (tag.data == .e_string) {
-                                        const tag_string = tag.data.e_string.utf8;
+                                        const tag_string = tag.data.e_string.slice(p.allocator);
                                         if (js_ast.Macro.JSNode.Tag.names.get(tag_string)) |node_tag| {
                                             call_args[0] = Expr{ .loc = tag.loc, .data = js_ast.Macro.JSNode.Tag.ids.get(node_tag) };
                                         } else {
@@ -12632,7 +12656,9 @@ fn NewParser_(
                                 }
                             }
 
-                            // TODO: fold string addition
+                            if (foldStringAddition(e_.left, e_.right)) |res| {
+                                return res;
+                            }
                         },
                         .bin_sub => {
                             if (p.should_fold_numeric_constants) {
@@ -12822,11 +12848,9 @@ fn NewParser_(
                     }
 
                     if (e_.optional_chain == null and e_.index.data == .e_string and e_.index.data.e_string.isUTF8()) {
-                        const literal = e_.index.data.e_string.utf8;
+                        const literal = e_.index.data.e_string.slice(p.allocator);
                         if (p.maybeRewritePropertyAccess(
                             expr.loc,
-                            in.assign_target,
-                            is_delete_target,
                             e_.target,
                             literal,
                             e_.index.loc,
@@ -12857,8 +12881,14 @@ fn NewParser_(
                                 }
                             }
                         }
+                        // "foo"[2]
+                    } else if (e_.optional_chain == null and target.data == .e_string and e_.index.data == .e_number and target.data.e_string.isUTF8() and e_.index.data.e_number.value >= 0) {
+                        const literal = target.data.e_string.slice(p.allocator);
+                        const index = e_.index.data.e_number.toUsize();
+                        if (literal.len > index) {
+                            return p.e(E.String{ .data = literal[index .. index + 1] }, expr.loc);
+                        }
                     }
-
                     // Create an error for assigning to an import namespace when bundling. Even
                     // though this is a run-time error, we make it a compile-time error when
                     // bundling because scope hoisting means these will no longer be run-time
@@ -12894,7 +12924,7 @@ fn NewParser_(
                             }
 
                             if (SideEffects.typeof(e_.value.data)) |typeof| {
-                                return p.e(E.String{ .utf8 = typeof }, expr.loc);
+                                return p.e(E.String{ .data = typeof }, expr.loc);
                             }
                         },
                         .un_delete => {
@@ -13023,8 +13053,6 @@ fn NewParser_(
                     if (e_.optional_chain == null) {
                         if (p.maybeRewritePropertyAccess(
                             expr.loc,
-                            in.assign_target,
-                            is_delete_target,
                             e_.target,
                             e_.name,
                             e_.name_loc,
@@ -13034,11 +13062,9 @@ fn NewParser_(
                         }
 
                         if (comptime allow_macros) {
-                            if (p.macro_call_count > 0) {
-                                if (e_.target.data == .e_object and e_.target.data.e_object.was_originally_macro) {
-                                    if (e_.target.get(e_.name)) |obj| {
-                                        return obj;
-                                    }
+                            if (p.macro_call_count > 0 and e_.target.data == .e_object and e_.target.data.e_object.was_originally_macro) {
+                                if (e_.target.get(e_.name)) |obj| {
+                                    return obj;
                                 }
                             }
                         }
@@ -13166,7 +13192,7 @@ fn NewParser_(
                                 key.data.isStringValue() and
                                 strings.eqlComptime(
                                 // __proto__ is utf8, assume it lives in refs
-                                key.data.e_string.utf8,
+                                key.data.e_string.slice(p.allocator),
                                 "__proto__",
                             )) {
                                 if (has_proto) {
@@ -13869,8 +13895,6 @@ fn NewParser_(
         fn maybeRewritePropertyAccess(
             p: *P,
             loc: logger.Loc,
-            _: js_ast.AssignTarget,
-            _: bool,
             target: js_ast.Expr,
             name: string,
             name_loc: logger.Loc,
@@ -13894,6 +13918,12 @@ fn NewParser_(
                                 return p.e(E.Number{ .value = enum_value }, loc);
                             }
                         }
+                    }
+                },
+                .e_string => |str| {
+                    // minify "long-string".length to 11
+                    if (strings.eqlComptime(name, "length")) {
+                        return p.e(E.Number{ .value = @intToFloat(f64, str.len()) }, loc);
                     }
                 },
                 else => {},
@@ -15513,7 +15543,7 @@ fn NewParser_(
                         }
 
                         const last = parts.len - 1;
-                        const is_tail_match = strings.eql(parts[last], index.index.data.e_string.utf8);
+                        const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
                         return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
                     }
                 },
@@ -15906,7 +15936,7 @@ fn NewParser_(
             p.expr_list.appendAssumeCapacity(p.e(E.Identifier{
                 .ref = ref,
             }, loc));
-            p.expr_list.appendAssumeCapacity(p.e(E.String{ .utf8 = name }, loc));
+            p.expr_list.appendAssumeCapacity(p.e(E.String{ .data = name }, loc));
             return p.s(S.SExpr{
                 // I believe that this is a spot we can do $RefreshReg$(name)
                 .value = p.callRuntime(loc, "__name", p.expr_list.items[start..p.expr_list.items.len]),
@@ -16431,7 +16461,7 @@ fn NewParser_(
                         sourcefile_name = sourcefile_name[end..];
                     }
                 }
-                commonjs_wrapper.data.e_call.args.ptr[1] = p.e(E.String{ .utf8 = sourcefile_name }, logger.Loc.Empty);
+                commonjs_wrapper.data.e_call.args.ptr[1] = p.e(E.String{ .data = sourcefile_name }, logger.Loc.Empty);
 
                 new_stmts_list[imports_list.len] = p.s(
                     S.ExportDefault{
@@ -16558,7 +16588,7 @@ fn NewParser_(
 
                 new_call_args[0] = p.e(E.Number{ .value = @intToFloat(f64, p.options.filepath_hash_for_hmr) }, logger.Loc.Empty);
                 // This helps us provide better error messages
-                new_call_args[1] = p.e(E.String{ .utf8 = p.source.path.pretty }, logger.Loc.Empty);
+                new_call_args[1] = p.e(E.String{ .data = p.source.path.pretty }, logger.Loc.Empty);
                 if (p.options.features.react_fast_refresh) {
                     new_call_args[2] = p.e(E.Identifier{ .ref = p.jsx_refresh_runtime.ref }, logger.Loc.Empty);
                 }
@@ -16685,7 +16715,7 @@ fn NewParser_(
                     );
 
                     export_properties[named_export_i] = G.Property{
-                        .key = p.e(E.String{ .utf8 = named_export.key_ptr.* }, logger.Loc.Empty),
+                        .key = p.e(E.String{ .data = named_export.key_ptr.* }, logger.Loc.Empty),
                         .value = p.e(
                             E.Arrow{
                                 .args = &[_]G.Arg{},

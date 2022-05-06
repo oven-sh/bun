@@ -275,6 +275,7 @@ pub const Runtime = struct {
         allow_runtime: bool = true,
 
         trim_unused_imports: bool = false,
+        should_fold_numeric_constants: bool = false,
 
         replace_exports: ReplaceableExport.Map = .{},
 

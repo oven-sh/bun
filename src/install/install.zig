@@ -3041,7 +3041,7 @@ pub const PackageManager = struct {
                             new_dependencies[k].key = JSAst.Expr.init(
                                 JSAst.E.String,
                                 JSAst.E.String{
-                                    .utf8 = update.name,
+                                    .data = update.name,
                                 },
                                 logger.Loc.Empty,
                             );
@@ -3050,7 +3050,7 @@ pub const PackageManager = struct {
                                 JSAst.E.String,
                                 JSAst.E.String{
                                     // we set it later
-                                    .utf8 = "",
+                                    .data = "",
                                 },
                                 logger.Loc.Empty,
                             );
@@ -3098,7 +3098,7 @@ pub const PackageManager = struct {
                         .key = JSAst.Expr.init(
                             JSAst.E.String,
                             JSAst.E.String{
-                                .utf8 = dependency_list,
+                                .data = dependency_list,
                             },
                             logger.Loc.Empty,
                         ),
@@ -3111,7 +3111,7 @@ pub const PackageManager = struct {
                     root_properties[root_properties.len - 1].key = JSAst.Expr.init(
                         JSAst.E.String,
                         JSAst.E.String{
-                            .utf8 = dependency_list,
+                            .data = dependency_list,
                         },
                         logger.Loc.Empty,
                     );
@@ -3127,9 +3127,9 @@ pub const PackageManager = struct {
                 var str = update.e_string.?;
 
                 if (update.version.tag == .uninitialized) {
-                    str.utf8 = latest;
+                    str.data = latest;
                 } else {
-                    str.utf8 = update.version.literal.slice(update.version_buf);
+                    str.data = update.version.literal.slice(update.version_buf);
                 }
             }
         }

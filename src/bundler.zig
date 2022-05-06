@@ -1077,6 +1077,8 @@ pub const Bundler = struct {
             .ts,
             .tsx,
             => {
+                const platform = bundler.options.platform;
+
                 var jsx = this_parse.jsx;
                 jsx.parse = loader.isJSX();
                 var opts = js_parser.Parser.Options.init(jsx, loader);
@@ -1084,6 +1086,7 @@ pub const Bundler = struct {
                 opts.transform_require_to_import = bundler.options.allow_runtime;
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
+                opts.features.should_fold_numeric_constants = platform.isBun();
 
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
 
@@ -1094,7 +1097,7 @@ pub const Bundler = struct {
                 // or you're running in SSR
                 // or the file is a node_module
                 opts.features.hot_module_reloading = bundler.options.hot_module_reloading and
-                    bundler.options.platform.isNotBun() and
+                    platform.isNotBun() and
                     (!opts.can_import_from_bundle or
                     (opts.can_import_from_bundle and !path.isNodeModule()));
                 opts.features.react_fast_refresh = opts.features.hot_module_reloading and
@@ -1102,7 +1105,7 @@ pub const Bundler = struct {
                     bundler.options.jsx.supports_fast_refresh;
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
-                opts.warn_about_unbundled_modules = bundler.options.platform.isNotBun();
+                opts.warn_about_unbundled_modules = platform.isNotBun();
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
@@ -1114,7 +1117,7 @@ pub const Bundler = struct {
 
                 opts.macro_context = &bundler.macro_context.?;
 
-                opts.features.is_macro_runtime = bundler.options.platform == .bun_macro;
+                opts.features.is_macro_runtime = platform == .bun_macro;
                 opts.features.replace_exports = this_parse.replace_exports;
 
                 const value = (bundler.resolver.caches.js.parse(

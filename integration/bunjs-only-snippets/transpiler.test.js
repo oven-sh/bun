@@ -124,6 +124,19 @@ describe("Bun.Transpiler", () => {
     },
     platform: "browser",
   });
+  const bunTranspiler = new Bun.Transpiler({
+    loader: "tsx",
+    define: {
+      "process.env.NODE_ENV": JSON.stringify("development"),
+      user_undefined: "undefined",
+    },
+    platform: "bun",
+    macro: {
+      react: {
+        bacon: `${import.meta.dir}/macro-check.js`,
+      },
+    },
+  });
 
   const code = `import { useParams } from "remix";
   import type { LoaderFunction, ActionFunction } from "remix";
@@ -344,12 +357,17 @@ describe("Bun.Transpiler", () => {
     });
   });
 
-  const parsed = (code, trim = true, autoExport = false) => {
+  const parsed = (
+    code,
+    trim = true,
+    autoExport = false,
+    transpiler_ = transpiler
+  ) => {
     if (autoExport) {
       code = "export default (" + code + ")";
     }
 
-    var out = transpiler.transformSync(code, "js");
+    var out = transpiler_.transformSync(code, "js");
     if (autoExport && out.startsWith("export default ")) {
       out = out.substring("export default ".length);
     }
@@ -373,6 +391,10 @@ describe("Bun.Transpiler", () => {
 
   const expectPrinted_ = (code, out) => {
     expect(parsed(code, !out.endsWith(";\n"), false)).toBe(out);
+  };
+
+  const expectBunPrinted_ = (code, out) => {
+    expect(parsed(code, !out.endsWith(";\n"), false, bunTranspiler)).toBe(out);
   };
 
   const expectParseError = (code, message) => {
@@ -564,6 +586,46 @@ describe("Bun.Transpiler", () => {
       expectPrinted_(
         `import { name } from 'mod\\u1011';`,
         `import {name} from "mod\\u1011"`
+      );
+    });
+
+    it("fold string addition", () => {
+      expectPrinted_(
+        `export const foo = "a" + "b";`,
+        `export const foo = "ab"`
+      );
+      expectPrinted_(
+        `export const foo = "F" + "0" + "F" + "0123456789" + "ABCDEF" + "0123456789ABCDEFF0123456789ABCDEF00" + "b";`,
+        `export const foo = "F0F0123456789ABCDEF0123456789ABCDEFF0123456789ABCDEF00b"`
+      );
+      expectPrinted_(
+        `export const foo = "a" + 1 + "b";`,
+        `export const foo = "a" + 1 + "b"`
+      );
+      expectPrinted_(
+        `export const foo = "a" + "b" + 1 + "b";`,
+        `export const foo = "ab" + 1 + "b"`
+      );
+      expectPrinted_(
+        `export const foo = "a" + "b" + 1 + "b" + "c";`,
+        `export const foo = "ab" + 1 + "bc"`
+      );
+    });
+
+    it("numeric constants", () => {
+      expectBunPrinted_("export const foo = 1 + 2", "export const foo = 3");
+      expectBunPrinted_("export const foo = 1 - 2", "export const foo = -1");
+      expectBunPrinted_("export const foo = 1 * 2", "export const foo = 2");
+    });
+
+    it("rewrite string to length", () => {
+      expectPrinted_(
+        `export const foo = "a".length + "b".length;`,
+        `export const foo = 1 + 1`
+      );
+      expectBunPrinted_(
+        `export const foo = "a".length + "b".length;`,
+        `export const foo = 2`
       );
     });
 

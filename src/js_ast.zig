@@ -1328,6 +1328,11 @@ pub const E = struct {
             return @floatToInt(u64, @maximum(@trunc(self.value), 0));
         }
 
+        pub inline fn toUsize(self: Number) usize {
+            @setRuntimeSafety(false);
+            return @floatToInt(usize, @maximum(@trunc(self.value), 0));
+        }
+
         pub inline fn toU32(self: Number) u32 {
             @setRuntimeSafety(false);
             return @floatToInt(u32, @maximum(@trunc(self.value), 0));
@@ -1421,7 +1426,7 @@ pub const E = struct {
         pub const SetError = error{ OutOfMemory, Clobber };
 
         pub fn set(self: *const Object, key: Expr, allocator: std.mem.Allocator, value: Expr) SetError!void {
-            if (self.hasProperty(key.data.e_string.utf8)) return error.Clobber;
+            if (self.hasProperty(key.data.e_string.data)) return error.Clobber;
             try self.properties.push(allocator, .{
                 .key = key,
                 .value = value,
@@ -1435,7 +1440,7 @@ pub const E = struct {
 
         // this is terribly, shamefully slow
         pub fn setRope(self: *Object, rope: *const Rope, allocator: std.mem.Allocator, value: Expr) SetError!void {
-            if (self.get(rope.head.data.e_string.utf8)) |existing| {
+            if (self.get(rope.head.data.e_string.data)) |existing| {
                 switch (existing.data) {
                     .e_array => |array| {
                         if (rope.next == null) {
@@ -1483,7 +1488,7 @@ pub const E = struct {
         }
 
         pub fn getOrPutObject(self: *Object, rope: *const Rope, allocator: std.mem.Allocator) SetError!Expr {
-            if (self.get(rope.head.data.e_string.utf8)) |existing| {
+            if (self.get(rope.head.data.e_string.data)) |existing| {
                 switch (existing.data) {
                     .e_array => |array| {
                         if (rope.next == null) {
@@ -1533,7 +1538,7 @@ pub const E = struct {
         }
 
         pub fn getOrPutArray(self: *Object, rope: *const Rope, allocator: std.mem.Allocator) SetError!Expr {
-            if (self.get(rope.head.data.e_string.utf8)) |existing| {
+            if (self.get(rope.head.data.e_string.data)) |existing| {
                 switch (existing.data) {
                     .e_array => |array| {
                         if (rope.next == null) {
@@ -1653,17 +1658,17 @@ pub const E = struct {
                     var rhs_key_size: u8 = @enumToInt(Fields.__fake);
 
                     if (lhs.key != null and lhs.key.?.data == .e_string) {
-                        lhs_key_size = @enumToInt(Map.get(lhs.key.?.data.e_string.utf8) orelse Fields.__fake);
+                        lhs_key_size = @enumToInt(Map.get(lhs.key.?.data.e_string.data) orelse Fields.__fake);
                     }
 
                     if (rhs.key != null and rhs.key.?.data == .e_string) {
-                        rhs_key_size = @enumToInt(Map.get(rhs.key.?.data.e_string.utf8) orelse Fields.__fake);
+                        rhs_key_size = @enumToInt(Map.get(rhs.key.?.data.e_string.data) orelse Fields.__fake);
                     }
 
                     return switch (std.math.order(lhs_key_size, rhs_key_size)) {
                         .lt => true,
                         .gt => false,
-                        .eq => strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.utf8, rhs.key.?.data.e_string.utf8),
+                        .eq => strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.data, rhs.key.?.data.e_string.data),
                     };
                 }
             };
@@ -1671,7 +1676,7 @@ pub const E = struct {
 
         const Sorter = struct {
             pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
-                return strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.utf8, rhs.key.?.data.e_string.utf8);
+                return strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.data, rhs.key.?.data.e_string.data);
             }
         };
     };
@@ -1682,36 +1687,110 @@ pub const E = struct {
     pub const String = struct {
         // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
         // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
-        value: []const u16 = &.{},
-        utf8: bun.string = &([_]u8{}),
+        data: []const u8 = "",
         prefer_template: bool = false,
 
-        pub var empty = String{};
-        pub var @"true" = String{ .utf8 = "true" };
-        pub var @"false" = String{ .utf8 = "false" };
-        pub var @"null" = String{ .utf8 = "null" };
-        pub var @"undefined" = String{ .utf8 = "undefined" };
+        // A very simple rope implementation
+        // We only use this for string folding, so this is kind of overkill
+        // We don't need to deal with substrings
+        next: ?*String = null,
+        end: ?*String = null,
+        rope_len: u32 = 0,
+        is_utf16: bool = false,
 
-        pub fn clone(str: *const String, allocator: std.mem.Allocator) !String {
-            if (str.isUTF8()) {
-                return String{
-                    .utf8 = try allocator.dupe(u8, str.utf8),
-                    .prefer_template = str.prefer_template,
-                };
+        pub fn push(this: *String, other: *String) void {
+            std.debug.assert(this.isUTF8());
+            std.debug.assert(other.isUTF8());
+
+            if (other.rope_len == 0) {
+                other.rope_len = @truncate(u32, other.data.len);
+            }
+
+            if (this.rope_len == 0) {
+                this.rope_len = @truncate(u32, this.data.len);
+            }
+
+            this.rope_len += other.rope_len;
+            if (this.next == null) {
+                this.next = other;
+                this.end = other;
             } else {
-                return String{
-                    .value = try allocator.dupe(u16, str.value),
-                    .prefer_template = str.prefer_template,
-                };
+                this.end.?.next = other;
+                this.end = other;
             }
         }
 
+        pub fn toUTF8(this: *String, allocator: std.mem.Allocator) !void {
+            if (!this.is_utf16) return;
+            this.data = try strings.toUTF8Alloc(allocator, this.slice16());
+            this.is_utf16 = false;
+        }
+
+        pub fn init(value: anytype) String {
+            const Value = @TypeOf(value);
+            if (Value == []u16 or Value == []const u16) {
+                return .{
+                    .data = @ptrCast([*]const u8, value.ptr)[0..value.len],
+                    .is_utf16 = true,
+                };
+            }
+            return .{
+                .data = value,
+            };
+        }
+
+        pub fn slice16(this: *const String) []const u16 {
+            std.debug.assert(this.is_utf16);
+            return @ptrCast([*]const u16, @alignCast(@alignOf(u16), this.data.ptr))[0..this.data.len];
+        }
+
+        pub fn resovleRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
+            if (this.next == null or !this.isUTF8()) return;
+            var bytes = allocator.alloc(u8, this.rope_len) catch unreachable;
+            var ptr = bytes.ptr;
+            var remain = bytes.len;
+            @memcpy(ptr, this.data.ptr, this.data.len);
+            ptr += this.data.len;
+            remain -= this.data.len;
+            var str = this.next;
+            while (str) |strin| {
+                @memcpy(ptr, strin.data.ptr, strin.data.len);
+                ptr += strin.data.len;
+                remain -= strin.data.len;
+                var prev = strin;
+                str = strin.next;
+                prev.next = null;
+                prev.end = null;
+            }
+            this.data = bytes;
+            this.next = null;
+        }
+
+        pub fn slice(this: *String, allocator: std.mem.Allocator) []const u8 {
+            this.resovleRopeIfNeeded(allocator);
+            return @ptrCast([*]const u8, @alignCast(@alignOf(u8), this.data.ptr))[0..this.data.len];
+        }
+
+        pub var empty = String{};
+        pub var @"true" = String{ .data = "true" };
+        pub var @"false" = String{ .data = "false" };
+        pub var @"null" = String{ .data = "null" };
+        pub var @"undefined" = String{ .data = "undefined" };
+
+        pub fn clone(str: *const String, allocator: std.mem.Allocator) !String {
+            return String{
+                .data = try allocator.dupe(u8, str.data),
+                .prefer_template = str.prefer_template,
+                .is_utf16 = !str.isUTF8(),
+            };
+        }
+
         pub inline fn len(s: *const String) usize {
-            return @maximum(s.utf8.len, s.value.len);
+            return if (s.rope_len > 0) s.rope_len else s.data.len;
         }
 
         pub inline fn isUTF8(s: *const String) bool {
-            return s.len() == s.utf8.len;
+            return !s.is_utf16;
         }
 
         pub inline fn isBlank(s: *const String) bool {
@@ -1727,16 +1806,16 @@ pub const E = struct {
                 switch (_t) {
                     @This() => {
                         if (other.isUTF8()) {
-                            return strings.eql(s.utf8, other.utf8);
+                            return strings.eql(s.data, other.data);
                         } else {
-                            return strings.utf16EqlString(other.value, s.utf8);
+                            return strings.utf16EqlString(other.slice16(), s.data);
                         }
                     },
                     bun.string => {
-                        return strings.eql(s.utf8, other);
+                        return strings.eql(s.data, other);
                     },
                     []u16, []const u16 => {
-                        return strings.utf16EqlString(other, s.utf8);
+                        return strings.utf16EqlString(other, s.data);
                     },
                     else => {
                         @compileError("Invalid type");
@@ -1746,16 +1825,16 @@ pub const E = struct {
                 switch (_t) {
                     @This() => {
                         if (other.isUTF8()) {
-                            return strings.utf16EqlString(s.value, other.utf8);
+                            return strings.utf16EqlString(s.slice16(), other.data);
                         } else {
-                            return std.mem.eql(u16, other.value, s.value);
+                            return std.mem.eql(u16, other.slice16(), s.slice16());
                         }
                     },
                     bun.string => {
-                        return strings.utf16EqlString(s.value, other);
+                        return strings.utf16EqlString(s.slice16(), other);
                     },
                     []u16, []const u16 => {
-                        return std.mem.eql(u16, other.value, s.value);
+                        return std.mem.eql(u16, other.slice16(), s.slice16());
                     },
                     else => {
                         @compileError("Invalid type");
@@ -1766,16 +1845,16 @@ pub const E = struct {
 
         pub fn eqlComptime(s: *const String, comptime value: anytype) bool {
             return if (s.isUTF8())
-                strings.eqlComptime(s.utf8, value)
+                strings.eqlComptime(s.data, value)
             else
-                strings.eqlComptimeUTF16(s.value, value);
+                strings.eqlComptimeUTF16(s.slice16(), value);
         }
 
         pub fn string(s: *const String, allocator: std.mem.Allocator) !bun.string {
             if (s.isUTF8()) {
-                return s.utf8;
+                return s.data;
             } else {
-                return strings.toUTF8Alloc(allocator, s.value);
+                return strings.toUTF8Alloc(allocator, s.slice16());
             }
         }
 
@@ -1784,17 +1863,17 @@ pub const E = struct {
 
             if (s.isUTF8()) {
                 // hash utf-8
-                return std.hash.Wyhash.hash(0, s.utf8);
+                return std.hash.Wyhash.hash(0, s.data);
             } else {
                 // hash utf-16
-                return std.hash.Wyhash.hash(0, @ptrCast([*]const u8, s.value.ptr)[0 .. s.value.len * 2]);
+                return std.hash.Wyhash.hash(0, @ptrCast([*]const u8, s.slice16().ptr)[0 .. s.slice16().len * 2]);
             }
         }
 
         pub fn jsonStringify(s: *const String, options: anytype, writer: anytype) !void {
             var buf = [_]u8{0} ** 4096;
             var i: usize = 0;
-            for (s.value) |char| {
+            for (s.slice16()) |char| {
                 buf[i] = @intCast(u8, char);
                 i += 1;
                 if (i >= 4096) {
@@ -2233,13 +2312,13 @@ pub const Expr = struct {
             if (list.len > 0) {
                 list = list[1 .. list.len - 1];
             }
-            return Expr.init(E.String, E.String{ .utf8 = list }, loc);
+            return Expr.init(E.String, E.String.init(list), loc);
         }
 
         return Expr.init(
             E.String,
             E.String{
-                .utf8 = try JSC.ZigString.init(bytes).toBase64DataURL(allocator),
+                .data = try JSC.ZigString.init(bytes).toBase64DataURL(allocator),
             },
             loc,
         );
@@ -2272,7 +2351,7 @@ pub const Expr = struct {
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
             const key_str = key.data.e_string;
-            if (strings.eqlAnyComptime(key_str.utf8, names)) return true;
+            if (strings.eqlAnyComptime(key_str.data, names)) return true;
         }
 
         return false;
@@ -2287,7 +2366,7 @@ pub const Expr = struct {
     }
 
     pub fn getRope(self: *const Expr, rope: *const E.Object.Rope) ?E.Object.RopeQuery {
-        if (self.get(rope.head.data.e_string.utf8)) |existing| {
+        if (self.get(rope.head.data.e_string.data)) |existing| {
             switch (existing.data) {
                 .e_array => |array| {
                     if (rope.next) |next| {
@@ -2358,7 +2437,7 @@ pub const Expr = struct {
 
         const key_str = expr.data.e_string;
 
-        return if (key_str.isUTF8()) key_str.utf8 else key_str.string(allocator) catch null;
+        return if (key_str.isUTF8()) key_str.data else key_str.string(allocator) catch null;
     }
 
     pub fn asBool(
@@ -2750,11 +2829,9 @@ pub const Expr = struct {
             E.String => {
                 if (comptime Environment.isDebug) {
                     // Sanity check: assert string is not a null ptr
-                    if (st.isUTF8() and st.utf8.len > 0) {
-                        std.debug.assert(@ptrToInt(st.utf8.ptr) > 0);
-                        std.debug.assert(st.utf8[0] > 0);
-                    } else if (st.value.len > 0) {
-                        std.debug.assert(@ptrToInt(st.value.ptr) > 0);
+                    if (st.data.len > 0 and st.isUTF8()) {
+                        std.debug.assert(@ptrToInt(st.data.ptr) > 0);
+                        std.debug.assert(st.data[0] > 0);
                     }
                 }
                 return Expr{
@@ -5051,9 +5128,9 @@ pub const Macro = struct {
                 }
 
                 if (str.isUTF8()) {
-                    return JSC.ZigString.init(str.utf8).toValue(ctx.ptr()).asRef();
+                    return JSC.ZigString.init(str.data).toValue(ctx.ptr()).asRef();
                 } else {
-                    return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
+                    return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.slice16().ptr, str.slice16().len));
                 }
             }
 
@@ -5198,9 +5275,9 @@ pub const Macro = struct {
                         }
 
                         if (str.isUTF8()) {
-                            return JSC.ZigString.init(str.utf8).toValue(ctx.ptr()).asRef();
+                            return JSC.ZigString.init(str.data).toValue(ctx.ptr()).asRef();
                         } else {
-                            return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.value.ptr, str.value.len));
+                            return js.JSValueMakeString(ctx, js.JSStringCreateWithCharactersNoCopy(str.slice16().ptr, str.slice16().len));
                         }
                     },
                     // .e_number => |number| {
@@ -5946,7 +6023,7 @@ pub const Macro = struct {
                     for (props) |prop, i| {
                         const key = prop.key orelse continue;
                         if (key.data != .e_string or !key.data.e_string.isUTF8()) continue;
-                        if (strings.eqlComptime(key.data.e_string.utf8, name)) return @intCast(u32, i);
+                        if (strings.eqlComptime(key.data.e_string.data, name)) return @intCast(u32, i);
                     }
 
                     return null;
@@ -5956,7 +6033,7 @@ pub const Macro = struct {
                     for (props) |prop| {
                         const key = prop.key orelse continue;
                         if (key.data != .e_string or !key.data.e_string.isUTF8()) continue;
-                        if (strings.eqlComptime(key.data.e_string.utf8, name)) return prop.value;
+                        if (strings.eqlComptime(key.data.e_string.data, name)) return prop.value;
                     }
 
                     return null;
@@ -6086,7 +6163,7 @@ pub const Macro = struct {
                                     return self.writeElement(el.*);
                                 },
                                 .e_string => |str| {
-                                    self.args.appendAssumeCapacity(Expr.init(E.BigInt, E.BigInt{ .value = std.mem.trimRight(u8, str.utf8, "n") }, value.loc));
+                                    self.args.appendAssumeCapacity(Expr.init(E.BigInt, E.BigInt{ .value = std.mem.trimRight(u8, str.data, "n") }, value.loc));
                                 },
                                 .e_big_int => {
                                     self.args.appendAssumeCapacity(value);
@@ -6316,7 +6393,7 @@ pub const Macro = struct {
 
                             switch (value.data) {
                                 .e_string => |str| {
-                                    self.args.appendAssumeCapacity(Expr.init(E.RegExp, E.RegExp{ .value = str.utf8 }, value.loc));
+                                    self.args.appendAssumeCapacity(Expr.init(E.RegExp, E.RegExp{ .value = str.data }, value.loc));
                                 },
                                 .e_reg_exp => {
                                     self.args.appendAssumeCapacity(value);
@@ -6687,17 +6764,17 @@ pub const Macro = struct {
                     const str = tag_expr.data.e_string;
                     var p = self.p;
 
-                    const node_type: JSNode.Tag = JSNode.Tag.names.get(str.utf8) orelse {
+                    const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
                         if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.value)}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
                         } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.utf8}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
                         }
                         return false;
                     };
 
                     if (!valid_tags.get(node_type)) {
-                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid here", .{str.utf8}) catch unreachable;
+                        self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid here", .{str.data}) catch unreachable;
                     }
 
                     return self.writeNodeType(node_type, element.properties.slice(), element.children.slice(), tag_expr.loc);
@@ -6709,11 +6786,11 @@ pub const Macro = struct {
                     const str = tag_expr.data.e_string;
                     var p = self.p;
 
-                    const node_type: JSNode.Tag = JSNode.Tag.names.get(str.utf8) orelse {
+                    const node_type: JSNode.Tag = JSNode.Tag.names.get(str.data) orelse {
                         if (!str.isUTF8()) {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.value)}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{strings.toUTF8Alloc(self.p.allocator, str.slice16())}) catch unreachable;
                         } else {
-                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.utf8}) catch unreachable;
+                            self.log.addErrorFmt(p.source, tag_expr.loc, p.allocator, "Tag \"{s}\" is invalid", .{str.data}) catch unreachable;
                         }
                         return false;
                     };
@@ -7142,9 +7219,9 @@ pub const Macro = struct {
                                 },
                             };
                         } else if (wtf_string.is8Bit()) {
-                            expr.* = Expr.init(E.String, E.String{ .utf8 = wtf_string.characters8()[0..wtf_string.length()] }, writer.loc);
+                            expr.* = Expr.init(E.String, E.String.init(wtf_string.characters8()[0..wtf_string.length()]), writer.loc);
                         } else if (wtf_string.is16Bit()) {
-                            expr.* = Expr.init(E.String, E.String{ .value = wtf_string.characters16()[0..wtf_string.length()] }, writer.loc);
+                            expr.* = Expr.init(E.String, E.String.init(wtf_string.characters16()[0..wtf_string.length()]), writer.loc);
                         } else {
                             unreachable;
                         }
@@ -7481,7 +7558,7 @@ pub const Macro = struct {
             for (properties) |property| {
                 const key = property.key orelse continue;
                 if (key.data != .e_string) continue;
-                const str = key.data.e_string.utf8;
+                const str = key.data.e_string.data;
 
                 if (strings.eql(property_slice, str)) {
                     const value = property.value orelse return js.JSValueMakeUndefined(ctx);
@@ -7508,7 +7585,7 @@ pub const Macro = struct {
             for (properties) |property| {
                 const key = property.key orelse continue;
                 if (key.data != .e_string) continue;
-                const str = key.data.e_string.utf8;
+                const str = key.data.e_string.data;
 
                 if (strings.eql(property_slice, str)) return true;
             }
@@ -7528,7 +7605,7 @@ pub const Macro = struct {
             for (properties) |property| {
                 const key = property.key orelse continue;
                 if (key.data != .e_string) continue;
-                const str = key.data.e_string.utf8;
+                const str = key.data.e_string.data;
                 js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreateStatic(str.ptr, str.len));
             }
         }
@@ -7926,10 +8003,10 @@ pub const Macro = struct {
                                 var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(array, i);
                                 defer JSC.C.JSStringRelease(property_name_ref);
                                 properties[i] = G.Property{
-                                    .key = Expr.init(E.String, E.String{ .utf8 = this.allocator.dupe(
+                                    .key = Expr.init(E.String, E.String.init(this.allocator.dupe(
                                         u8,
                                         JSC.C.JSStringGetCharacters8Ptr(property_name_ref)[0..JSC.C.JSStringGetLength(property_name_ref)],
-                                    ) catch unreachable }, this.caller.loc),
+                                    ) catch unreachable), this.caller.loc),
                                     .value = try this.run(
                                         JSC.JSValue.fromRef(JSC.C.JSObjectGetProperty(this.global.ref(), object, property_name_ref, null)),
                                     ),
@@ -7966,7 +8043,7 @@ pub const Macro = struct {
                             var zig_str = value.getZigString(this.global);
                             zig_str.detectEncoding();
                             var sliced = zig_str.toSlice(this.allocator);
-                            return Expr.init(E.String, E.String{ .utf8 = sliced.slice() }, this.caller.loc);
+                            return Expr.init(E.String, E.String.init(sliced.slice()), this.caller.loc);
                         },
                         .Promise => {
                             var _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;

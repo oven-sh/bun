@@ -926,9 +926,9 @@ pub fn NewPrinter(
 
         pub fn bestQuoteCharForEString(p: *Printer, str: *const E.String, allow_backtick: bool) u8 {
             if (str.isUTF8()) {
-                return p.bestQuoteCharForString(str.utf8, allow_backtick);
+                return p.bestQuoteCharForString(str.data, allow_backtick);
             } else {
-                return p.bestQuoteCharForString(str.value, allow_backtick);
+                return p.bestQuoteCharForString(str.slice16(), allow_backtick);
             }
         }
 
@@ -1928,6 +1928,7 @@ pub fn NewPrinter(
                     p.print(if (e.value) "true" else "false");
                 },
                 .e_string => |e| {
+                    e.resovleRopeIfNeeded(p.options.allocator);
 
                     // If this was originally a template literal, print it as one as long as we're not minifying
                     if (e.prefer_template) {
@@ -1956,14 +1957,17 @@ pub fn NewPrinter(
 
                     p.print("`");
                     if (e.head.isPresent()) {
+                        e.head.resovleRopeIfNeeded(p.options.allocator);
+
                         p.printStringContent(&e.head, '`');
                     }
 
-                    for (e.parts) |part| {
+                    for (e.parts) |*part| {
                         p.print("${");
                         p.printExpr(part.value, .lowest, ExprFlag.None());
                         p.print("}");
                         if (part.tail.isPresent()) {
+                            part.tail.resovleRopeIfNeeded(p.options.allocator);
                             p.printStringContent(&part.tail, '`');
                         }
                     }
@@ -2294,9 +2298,9 @@ pub fn NewPrinter(
         pub fn printStringContent(p: *Printer, str: *const E.String, c: u8) void {
             if (!str.isUTF8()) {
                 // its already quoted for us!
-                p.printQuotedUTF16(str.value, c);
+                p.printQuotedUTF16(str.slice16(), c);
             } else {
-                p.printUTF8StringEscapedQuotes(str.utf8, c);
+                p.printUTF8StringEscapedQuotes(str.data, c);
             }
         }
 
@@ -2479,6 +2483,7 @@ pub fn NewPrinter(
                 .e_string => |key| {
                     p.addSourceMapping(_key.loc);
                     if (key.isUTF8()) {
+                        key.resovleRopeIfNeeded(p.options.allocator);
                         p.printSpaceBeforeIdentifier();
                         var allow_shorthand: bool = true;
                         // In react/cjs/react.development.js, there's part of a function like this:
@@ -2489,16 +2494,16 @@ pub fn NewPrinter(
                         // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
                         // "=" and ":" are not valid
                         // So we need to check
-                        if ((comptime !is_json) and p.canPrintIdentifier(key.utf8)) {
-                            p.print(key.utf8);
+                        if ((comptime !is_json) and p.canPrintIdentifier(key.data)) {
+                            p.print(key.data);
                         } else {
                             allow_shorthand = false;
-                            const quote = p.bestQuoteCharForString(key.utf8, true);
+                            const quote = p.bestQuoteCharForString(key.data, true);
                             if (quote == '`') {
                                 p.print('[');
                             }
                             p.print(quote);
-                            p.printUTF8StringEscapedQuotes(key.utf8, quote);
+                            p.printUTF8StringEscapedQuotes(key.data, quote);
                             p.print(quote);
                             if (quote == '`') {
                                 p.print(']');
@@ -2521,7 +2526,7 @@ pub fn NewPrinter(
                                 .e_import_identifier => |e| {
                                     const ref = p.symbols.follow(e.ref);
                                     if (p.symbols.get(ref)) |symbol| {
-                                        if (symbol.namespace_alias == null and strings.eql(key.utf8, p.renamer.nameForSymbol(e.ref))) {
+                                        if (symbol.namespace_alias == null and strings.eql(key.data, p.renamer.nameForSymbol(e.ref))) {
                                             if (item.initializer) |initial| {
                                                 p.printInitializer(initial);
                                             }
@@ -2534,9 +2539,9 @@ pub fn NewPrinter(
                                 else => {},
                             }
                         }
-                    } else if (p.canPrintIdentifierUTF16(key.value)) {
+                    } else if (p.canPrintIdentifierUTF16(key.slice16())) {
                         p.printSpaceBeforeIdentifier();
-                        p.printIdentifierUTF16(key.value) catch unreachable;
+                        p.printIdentifierUTF16(key.slice16()) catch unreachable;
 
                         // Use a shorthand property if the names are the same
                         if (item.value) |val| {
@@ -2547,7 +2552,7 @@ pub fn NewPrinter(
                                     // esbuild doesn't have to do that...
                                     // maybe it's a symptom of some other underlying issue
                                     // or maybe, it's because i'm not lowering the same way that esbuild does.
-                                    if (item.flags.contains(.was_shorthand) or strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
+                                    if (item.flags.contains(.was_shorthand) or strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
                                         if (item.initializer) |initial| {
                                             p.printInitializer(initial);
                                         }
@@ -2558,7 +2563,7 @@ pub fn NewPrinter(
                                 .e_import_identifier => |e| {
                                     const ref = p.symbols.follow(e.ref);
                                     if (p.symbols.get(ref)) |symbol| {
-                                        if (symbol.namespace_alias == null and strings.utf16EqlString(key.value, p.renamer.nameForSymbol(e.ref))) {
+                                        if (symbol.namespace_alias == null and strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
                                             if (item.initializer) |initial| {
                                                 p.printInitializer(initial);
                                             }
@@ -2570,9 +2575,9 @@ pub fn NewPrinter(
                             }
                         }
                     } else {
-                        const c = p.bestQuoteCharForString(key.value, false);
+                        const c = p.bestQuoteCharForString(key.slice16(), false);
                         p.print(c);
-                        p.printQuotedUTF16(key.value, c);
+                        p.printQuotedUTF16(key.slice16(), c);
                         p.print(c);
                     }
                 },
@@ -2704,6 +2709,7 @@ pub fn NewPrinter(
 
                                 switch (property.key.data) {
                                     .e_string => |str| {
+                                        str.resovleRopeIfNeeded(p.options.allocator);
                                         p.addSourceMapping(property.key.loc);
 
                                         if (str.isUTF8()) {
@@ -2714,8 +2720,8 @@ pub fn NewPrinter(
                                             //              ^
                                             // That needs to be:
                                             //          "aria-label": ariaLabel,
-                                            if (p.canPrintIdentifier(str.utf8)) {
-                                                p.printIdentifier(str.utf8);
+                                            if (p.canPrintIdentifier(str.data)) {
+                                                p.printIdentifier(str.data);
 
                                                 // Use a shorthand property if the names are the same
                                                 switch (property.value.data) {
@@ -2728,16 +2734,16 @@ pub fn NewPrinter(
                                                     else => {},
                                                 }
                                             } else {
-                                                p.printQuotedUTF8(str.utf8, false);
+                                                p.printQuotedUTF8(str.data, false);
                                             }
-                                        } else if (p.canPrintIdentifierUTF16(str.value)) {
+                                        } else if (p.canPrintIdentifierUTF16(str.slice16())) {
                                             p.printSpaceBeforeIdentifier();
-                                            p.printIdentifierUTF16(str.value) catch unreachable;
+                                            p.printIdentifierUTF16(str.slice16()) catch unreachable;
 
                                             // Use a shorthand property if the names are the same
                                             switch (property.value.data) {
                                                 .b_identifier => |id| {
-                                                    if (strings.utf16EqlString(str.value, p.renamer.nameForSymbol(id.ref))) {
+                                                    if (strings.utf16EqlString(str.slice16(), p.renamer.nameForSymbol(id.ref))) {
                                                         p.maybePrintDefaultBindingValue(property);
                                                         continue;
                                                     }
@@ -2789,13 +2795,7 @@ pub fn NewPrinter(
         pub fn printStmt(p: *Printer, stmt: Stmt) !void {
             const prev_stmt_tag = p.prev_stmt_tag;
 
-            // Give an extra newline for readaiblity
             defer {
-                //
-                if (std.meta.activeTag(stmt.data) != .s_import and prev_stmt_tag == .s_import) {
-                    p.printNewline();
-                }
-
                 p.prev_stmt_tag = std.meta.activeTag(stmt.data);
             }
 
@@ -2879,6 +2879,8 @@ pub fn NewPrinter(
                     }
                 },
                 .s_empty => {
+                    if (p.prev_stmt_tag == .s_empty and p.options.indent == 0) return;
+
                     p.printIndent();
                     p.print(";");
                     p.printNewline();

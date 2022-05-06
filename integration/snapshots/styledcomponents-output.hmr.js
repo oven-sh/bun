@@ -5,7 +5,6 @@ import {
 __HMRClient as Bun
 } from "http://localhost:8080/bun:wrap";
 Bun.activate(false);
-
 import {
 __require as require
 } from "http://localhost:8080/bun:wrap";
@@ -15,7 +14,6 @@ __FastRefreshModule as FastHMR
 import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
 var JSX = require($2f488e5b);
 var jsx = require(JSX).jsxDEV;
-
 import * as $d4051a2e from "http://localhost:8080/node_modules/styled-components/dist/styled-components.browser.esm.js";
 var { default: styled} = require($d4051a2e);
 import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
@@ -23,7 +21,6 @@ var { default: React} = require($bbcd215f);
 import * as $5b3cea55 from "http://localhost:8080/node_modules/react-dom/index.js";
 var { default: ReactDOM} = require($5b3cea55);
 var hmr = new FastHMR(1290604342, "styledcomponents-output.js", FastRefresh), exports = hmr.exports;
-
 (hmr._load = function() {
   const ErrorScreenRoot = styled.div`
   font-family: "Muli", -apple-system, BlinkMacSystemFont, Helvetica, Arial,

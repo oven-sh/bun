@@ -5,6 +5,7 @@ const string = @import("string_types.zig").string;
 const stringZ = @import("string_types.zig").stringZ;
 const CodePoint = @import("string_types.zig").CodePoint;
 const bun = @import("global.zig");
+pub const joiner = @import("./string_joiner.zig");
 const assert = std.debug.assert;
 pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;

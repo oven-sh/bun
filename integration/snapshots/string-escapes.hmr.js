@@ -1,23 +1,21 @@
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __HMRClient as Bun
-} from "http://localhost:8080/bun:wrap";
-Bun.activate(false);
-
+} from "http://localhost:3000/bun:wrap";
+Bun.activate(true);
 import {
 __require as require
-} from "http://localhost:8080/bun:wrap";
+} from "http://localhost:3000/bun:wrap";
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:8080/bun:wrap";
-import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+} from "http://localhost:3000/bun:wrap";
+import * as $2f488e5b from "http://localhost:3000/node_modules/react/jsx-dev-runtime.js";
 var JSX = require($2f488e5b);
-import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
+import * as $bbcd215f from "http://localhost:3000/node_modules/react/index.js";
 var JSXClassic = require($bbcd215f);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;
-
 var hmr = new FastHMR(2482749838, "string-escapes.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var tab = "\t";
@@ -489,4 +487,4 @@ export {
   $$hmr_test as test
 };
 
-//# sourceMappingURL=http://localhost:8080/string-escapes.js.map
+//# sourceMappingURL=http://localhost:3000/string-escapes.js.map

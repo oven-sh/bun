@@ -1160,7 +1160,7 @@ pub const Lexer = struct {
     }
 
     pub inline fn toEString(lexer: *Lexer) js_ast.E.String {
-        return js_ast.E.String{ .utf8 = lexer.string_literal_slice };
+        return js_ast.E.String{ .data = lexer.string_literal_slice };
     }
 
     pub fn raw(self: *Lexer) []const u8 {

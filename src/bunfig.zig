@@ -49,7 +49,7 @@ pub const Bunfig = struct {
 
             switch (expr.data) {
                 .e_string => |str| {
-                    const url = URL.parse(str.utf8);
+                    const url = URL.parse(str.data);
                     // Token
                     if (url.username.len == 0 and url.password.len > 0) {
                         registry.token = url.password;
@@ -65,22 +65,22 @@ pub const Bunfig = struct {
                 .e_object => |obj| {
                     if (obj.get("url")) |url| {
                         try this.expect(url, .e_string);
-                        registry.url = url.data.e_string.utf8;
+                        registry.url = url.data.e_string.data;
                     }
 
                     if (obj.get("username")) |username| {
                         try this.expect(username, .e_string);
-                        registry.username = username.data.e_string.utf8;
+                        registry.username = username.data.e_string.data;
                     }
 
                     if (obj.get("password")) |password| {
                         try this.expect(password, .e_string);
-                        registry.password = password.data.e_string.utf8;
+                        registry.password = password.data.e_string.data;
                     }
 
                     if (obj.get("token")) |token| {
                         try this.expect(token, .e_string);
-                        registry.token = token.data.e_string.utf8;
+                        registry.token = token.data.e_string.data;
                     }
                 },
                 else => {

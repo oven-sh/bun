@@ -37,6 +37,8 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSInternalPromise.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/ArrayBuffer.h"
+#include "JavaScriptCore/JSArrayBuffer.h"
 #include "JSFFIFunction.h"
 
 #include <iostream>
@@ -118,7 +120,7 @@ extern "C" napi_status napi_get_cb_info(
     JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
     JSC::JSValue thisValue = callFrame->thisValue();
     *argc = callFrame->argumentCount();
-    *reinterpret_cast<JSC::EncodedJSValue**>(argv) = reinterpret_cast<JSC::EncodedJSValue*>(callFrame->addressOfArgumentsStart());
+    **reinterpret_cast<JSC::EncodedJSValue***>(argv) = reinterpret_cast<JSC::EncodedJSValue*>(callFrame->addressOfArgumentsStart());
     if (thisValue && this_arg != nullptr) {
         *this_arg = reinterpret_cast<napi_value>(JSC::JSValue::encode(thisValue));
     }
@@ -152,5 +154,193 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
     JSC::Strong<JSC::Unknown> data = { globalObject->vm(), JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(value)) };
     *reinterpret_cast<JSC::Strong<JSC::Unknown>*>(result) = data;
+    return napi_ok;
+}
+
+extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
+    napi_value arraybuffer,
+    bool* result)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(arraybuffer);
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject()) {
+        return napi_arraybuffer_expected;
+    }
+
+    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(vm, value);
+    if (!jsArrayBuffer) {
+        return napi_arraybuffer_expected;
+    }
+
+    auto arrayBuffer = jsArrayBuffer->impl();
+
+    *result = arrayBuffer->isDetached();
+    return napi_ok;
+}
+
+extern "C" napi_status napi_detach_arraybuffer(napi_env env,
+    napi_value arraybuffer)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(arraybuffer);
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject()) {
+        return napi_arraybuffer_expected;
+    }
+
+    JSC::JSArrayBuffer* jsArrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(vm, value);
+    if (!jsArrayBuffer) {
+        return napi_arraybuffer_expected;
+    }
+
+    auto arrayBuffer = jsArrayBuffer->impl();
+
+    if (arrayBuffer->isDetached()) {
+        return napi_ok;
+    }
+
+    arrayBuffer->detach(vm);
+
+    return napi_ok;
+}
+
+extern "C" napi_status napi_throw(napi_env env, napi_value error)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(error));
+    JSC::throwException(globalObject, throwScope, value);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_throw_type_error(napi_env env, const char* code,
+    const char* msg)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto message = WTF::String::fromUTF8(msg);
+    auto error = JSC::createTypeError(globalObject, message);
+    JSC::throwException(globalObject, throwScope, error);
+    return napi_ok;
+}
+extern "C" napi_status napi_throw_range_error(napi_env env, const char* code,
+    const char* msg)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto message = WTF::String::fromUTF8(msg);
+    auto error = JSC::createRangeError(globalObject, message);
+    JSC::throwException(globalObject, throwScope, error);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_object_freeze(napi_env env, napi_value object_value)
+{
+
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(object_value);
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject()) {
+        return napi_object_expected;
+    }
+
+    JSC::JSObject* object = JSC::jsCast<JSC::JSObject*>(value);
+    if (!hasIndexedProperties(object->indexingType())) {
+        object->freeze(vm);
+    }
+
+    RELEASE_AND_RETURN(throwScope, napi_ok);
+}
+extern "C" napi_status napi_object_seal(napi_env env, napi_value object_value)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(object_value);
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject()) {
+        return napi_object_expected;
+    }
+
+    JSC::JSObject* object = JSC::jsCast<JSC::JSObject*>(value);
+    if (!hasIndexedProperties(object->indexingType())) {
+        object->seal(vm);
+    }
+
+    RELEASE_AND_RETURN(throwScope, napi_ok);
+}
+
+extern "C" napi_status napi_get_global(napi_env env, napi_value* result)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+    *result = reinterpret_cast<napi_value>(globalObject->globalThis());
+    return napi_ok;
+}
+
+extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
+    napi_value msg,
+    napi_value* result)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::EncodedJSValue encodedCode = reinterpret_cast<JSC::EncodedJSValue>(code);
+    JSC::JSValue codeValue = JSC::JSValue::decode(encodedCode);
+
+    JSC::EncodedJSValue encodedMessage = reinterpret_cast<JSC::EncodedJSValue>(msg);
+    JSC::JSValue messageValue = JSC::JSValue::decode(encodedMessage);
+
+    auto error = JSC::createRangeError(globalObject, messageValue.toWTFString(globalObject));
+    *result = reinterpret_cast<napi_value>(error);
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_new_target(napi_env env,
+    napi_callback_info cbinfo,
+    napi_value* result)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+
+    CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
+    JSC::JSValue newTarget = callFrame->newTarget();
+    *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(newTarget));
+    return napi_ok;
+}
+
+extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
+    napi_value arraybuffer,
+    size_t byte_offset,
+    napi_value* result)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::EncodedJSValue encodedArraybuffer = reinterpret_cast<JSC::EncodedJSValue>(arraybuffer);
+    auto arraybufferValue = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(vm, JSC::JSValue::decode(encodedArraybuffer));
+    if (!arraybufferValue) {
+        return napi_invalid_arg;
+    }
+    auto dataView = JSC::DataView::create(arraybufferValue->impl(), byte_offset, length);
+    *result = reinterpret_cast<napi_value>(dataView->wrap(globalObject, globalObject));
     return napi_ok;
 }

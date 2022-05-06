@@ -118,16 +118,31 @@ extern "C" napi_status napi_get_cb_info(
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
     JSC::VM& vm = globalObject->vm();
     JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
-    JSC::JSValue thisValue = callFrame->thisValue();
-    *argc = callFrame->argumentCount();
-    **reinterpret_cast<JSC::EncodedJSValue***>(argv) = reinterpret_cast<JSC::EncodedJSValue*>(callFrame->addressOfArgumentsStart());
-    if (thisValue && this_arg != nullptr) {
+
+    auto inputArgsCount = argc == nullptr ? 0 : *argc;
+
+    if (inputArgsCount > 0) {
+        auto outputArgsCount = callFrame->argumentCount();
+        auto argsToCopy = inputArgsCount < outputArgsCount ? inputArgsCount : outputArgsCount;
+        *argc = argsToCopy;
+
+        memcpy(argv, callFrame->addressOfArgumentsStart(), argsToCopy * sizeof(JSC::JSValue));
+        auto argv_ptr = argv[outputArgsCount];
+        for (size_t i = outputArgsCount; i < inputArgsCount; i++) {
+            argv[i] = reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::jsUndefined()));
+        }
+    }
+
+    if (this_arg != nullptr) {
+        JSC::JSValue thisValue = callFrame->thisValue();
         *this_arg = reinterpret_cast<napi_value>(JSC::JSValue::encode(thisValue));
     }
 
-    Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(vm, JSC::JSValue(callFrame->jsCallee()));
-    if (data != nullptr)
+    if (data != nullptr) {
+        Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(vm, JSC::JSValue(callFrame->jsCallee()));
         *data = reinterpret_cast<void*>(ffiFunction->dataPtr);
+    }
+
     return napi_ok;
 }
 

@@ -9,7 +9,7 @@ describe("zlib", () => {
     expect(decompressed.join("")).toBe(data.join(""));
   });
 
-  it("should be able to compress and decompress", () => {
+  it("should be able to gzip and gunzip", () => {
     const data = new TextEncoder().encode("Hello World!".repeat(1));
     const compressed = gzipSync(data);
     const decompressed = gunzipSync(compressed);

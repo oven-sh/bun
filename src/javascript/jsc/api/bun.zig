@@ -75,6 +75,7 @@ const URL = @import("../../../url.zig").URL;
 const Transpiler = @import("./transpiler.zig");
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
+const zlib = @import("../../../zlib.zig");
 
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
@@ -1123,6 +1124,18 @@ pub const Class = NewClass(
         },
         .nanoseconds = .{
             .rfn = nanoseconds,
+        },
+        .gzipSync = .{
+            .rfn = JSC.wrapWithHasContainer(JSZlib, "gzipSync", false, false, true),
+        },
+        .deflateSync = .{
+            .rfn = JSC.wrapWithHasContainer(JSZlib, "deflateSync", false, false, true),
+        },
+        .gunzipSync = .{
+            .rfn = JSC.wrapWithHasContainer(JSZlib, "gunzipSync", false, false, true),
+        },
+        .inflateSync = .{
+            .rfn = JSC.wrapWithHasContainer(JSZlib, "inflateSync", false, false, true),
         },
     },
     .{
@@ -2731,3 +2744,148 @@ comptime {
         _ = Bun__reportError;
     }
 }
+
+pub const JSZlib = struct {
+    export fn reader_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
+        var reader: *zlib.ZlibReaderArrayList = bun.cast(*zlib.ZlibReaderArrayList, ctx.?);
+        reader.list.deinit(reader.allocator);
+        reader.deinit();
+    }
+
+    export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
+        var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);
+        compressor.list.deinit(compressor.allocator);
+        compressor.deinit();
+    }
+
+    pub fn gzipSync(
+        globalThis: *JSGlobalObject,
+        buffer: JSC.Node.StringOrBuffer,
+        options_val_: ?JSValue,
+    ) JSValue {
+        return gzipOrDeflateSync(globalThis, buffer, options_val_, true);
+    }
+
+    pub fn deflateSync(
+        globalThis: *JSGlobalObject,
+        buffer: JSC.Node.StringOrBuffer,
+        options_val_: ?JSValue,
+    ) JSValue {
+        return gzipOrDeflateSync(globalThis, buffer, options_val_, false);
+    }
+
+    pub fn gzipOrDeflateSync(
+        globalThis: *JSGlobalObject,
+        buffer: JSC.Node.StringOrBuffer,
+        options_val_: ?JSValue,
+        is_gzip: bool,
+    ) JSValue {
+        var opts = zlib.Options{ .gzip = is_gzip };
+        if (options_val_) |options_val| {
+            if (options_val.isObject()) {
+                if (options_val.get(globalThis, "windowBits")) |window| {
+                    opts.windowBits = window.toInt32();
+                }
+
+                if (options_val.get(globalThis, "level")) |level| {
+                    opts.level = level.toInt32();
+                }
+
+                if (options_val.get(globalThis, "memLevel")) |memLevel| {
+                    opts.memLevel = memLevel.toInt32();
+                }
+
+                if (options_val.get(globalThis, "strategy")) |strategy| {
+                    opts.strategy = strategy.toInt32();
+                }
+            }
+        }
+
+        var compressed = buffer.slice();
+        const allocator = JSC.VirtualMachine.vm.allocator;
+        var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
+        var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, opts) catch |err| {
+            if (err == error.InvalidArgument) {
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis.ref());
+            }
+
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis.ref());
+        };
+
+        reader.readAll() catch {
+            defer reader.deinit();
+            if (reader.errorMessage()) |msg| {
+                return ZigString.init(msg).toErrorInstance(globalThis);
+            }
+            return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
+        };
+        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) };
+        reader.list.capacity = reader.list.items.len;
+        reader.list_ptr = &reader.list;
+
+        var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
+        return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+    }
+
+    pub fn inflateSync(
+        globalThis: *JSGlobalObject,
+        buffer: JSC.Node.StringOrBuffer,
+    ) JSValue {
+        var compressed = buffer.slice();
+        const allocator = JSC.VirtualMachine.vm.allocator;
+        var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
+        var reader = zlib.ZlibReaderArrayList.initWithOptions(compressed, &list, allocator, .{
+            .windowBits = -15,
+        }) catch |err| {
+            if (err == error.InvalidArgument) {
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis.ref());
+            }
+
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis.ref());
+        };
+
+        reader.readAll() catch {
+            defer reader.deinit();
+            if (reader.errorMessage()) |msg| {
+                return ZigString.init(msg).toErrorInstance(globalThis);
+            }
+            return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
+        };
+        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) };
+        reader.list.capacity = reader.list.items.len;
+        reader.list_ptr = &reader.list;
+
+        var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
+        return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+    }
+
+    pub fn gunzipSync(
+        globalThis: *JSGlobalObject,
+        buffer: JSC.Node.StringOrBuffer,
+    ) JSValue {
+        var compressed = buffer.slice();
+        const allocator = JSC.VirtualMachine.vm.allocator;
+        var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
+        var reader = zlib.ZlibReaderArrayList.init(compressed, &list, allocator) catch |err| {
+            if (err == error.InvalidArgument) {
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis.ref());
+            }
+
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis.ref());
+        };
+
+        reader.readAll() catch {
+            defer reader.deinit();
+            if (reader.errorMessage()) |msg| {
+                return ZigString.init(msg).toErrorInstance(globalThis);
+            }
+            return ZigString.init("Zlib returned an error").toErrorInstance(globalThis);
+        };
+        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) };
+        reader.list.capacity = reader.list.items.len;
+        reader.list_ptr = &reader.list;
+
+        var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
+        return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+    }
+};

@@ -32,10 +32,10 @@ test "ZlibArrayList Read" {
 
 pub extern fn zlibVersion() [*c]const u8;
 
-pub extern fn compress(dest: [*c]Bytef, destLen: [*c]uLongf, source: [*c]const Bytef, sourceLen: uLong) c_int;
-pub extern fn compress2(dest: [*c]Bytef, destLen: [*c]uLongf, source: [*c]const Bytef, sourceLen: uLong, level: c_int) c_int;
+pub extern fn compress(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong) c_int;
+pub extern fn compress2(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong, level: c_int) c_int;
 pub extern fn compressBound(sourceLen: uLong) uLong;
-pub extern fn uncompress(dest: [*c]Bytef, destLen: [*c]uLongf, source: [*c]const Bytef, sourceLen: uLong) c_int;
+pub extern fn uncompress(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong) c_int;
 pub const struct_gzFile_s = extern struct {
     have: c_uint,
     next: [*c]u8,
@@ -125,7 +125,7 @@ pub const zStream_struct = extern struct {
 };
 
 pub const z_stream = zStream_struct;
-pub const z_streamp = [*c]z_stream;
+pub const z_streamp = *z_stream;
 
 // #define Z_BINARY   0
 // #define Z_TEXT     1
@@ -446,7 +446,19 @@ pub const ZlibReaderArrayList = struct {
         }
     }
 
-    pub fn init(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) ZlibError!*ZlibReader {
+    pub fn init(
+        input: []const u8,
+        list: *std.ArrayListUnmanaged(u8),
+        allocator: std.mem.Allocator,
+    ) !*ZlibReader {
+        const options: Options = .{
+            .windowBits = 15 + 32,
+        };
+
+        return initWithOptions(input, list, allocator, options);
+    }
+
+    pub fn initWithOptions(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: Options) ZlibError!*ZlibReader {
         var zlib_reader = try allocator.create(ZlibReader);
         zlib_reader.* = ZlibReader{
             .input = input,
@@ -478,7 +490,7 @@ pub const ZlibReaderArrayList = struct {
             .reserved = 0,
         };
 
-        switch (inflateInit2_(&zlib_reader.zlib, 15 + 32, zlibVersion(), @sizeOf(zStream_struct))) {
+        switch (inflateInit2_(&zlib_reader.zlib, options.windowBits, zlibVersion(), @sizeOf(zStream_struct))) {
             ReturnCode.Ok => return zlib_reader,
             ReturnCode.MemError => {
                 zlib_reader.deinit();
@@ -556,6 +568,412 @@ pub const ZlibReaderArrayList = struct {
             switch (rc) {
                 ReturnCode.StreamEnd => {
                     this.state = State.End;
+
+                    this.end();
+                    return;
+                },
+                ReturnCode.MemError => {
+                    this.state = State.Error;
+                    return error.OutOfMemory;
+                },
+                ReturnCode.StreamError,
+                ReturnCode.DataError,
+                ReturnCode.BufError,
+                ReturnCode.NeedDict,
+                ReturnCode.VersionError,
+                ReturnCode.ErrNo,
+                => {
+                    this.state = State.Error;
+                    return error.ZlibError;
+                },
+                ReturnCode.Ok => {},
+            }
+        }
+    }
+};
+
+pub const Options = struct {
+    gzip: bool = false,
+    level: c_int = 6,
+    method: c_int = 8,
+    windowBits: c_int = 15,
+    memLevel: c_int = 8,
+    strategy: c_int = 0,
+};
+
+///
+///     Initializes the internal stream state for compression.  The fields
+///   zalloc, zfree and opaque must be initialized before by the caller.  If
+///   zalloc and zfree are set to Z_NULL, deflateInit updates them to use default
+///   allocation functions.
+///
+///     The compression level must be Z_DEFAULT_COMPRESSION, or between 0 and 9:
+///   1 gives best speed, 9 gives best compression, 0 gives no compression at all
+///   (the input data is simply copied a block at a time).  Z_DEFAULT_COMPRESSION
+///   requests a default compromise between speed and compression (currently
+///   equivalent to level 6).
+///
+///     deflateInit returns Z_OK if success, Z_MEM_ERROR if there was not enough
+///   memory, Z_STREAM_ERROR if level is not a valid compression level, or
+///   Z_VERSION_ERROR if the zlib library version (zlib_version) is incompatible
+///   with the version assumed by the caller (ZLIB_VERSION).  msg is set to null
+///   if there is no error message.  deflateInit does not perform any compression:
+///   this will be done by deflate().
+extern fn deflateInit_(strm: z_stream, level: c_int, stream_size: c_int) c_int;
+
+///
+///    deflate compresses as much data as possible, and stops when the input
+///  buffer becomes empty or the output buffer becomes full.  It may introduce
+///  some output latency (reading input without producing any output) except when
+///  forced to flush.
+///
+///    The detailed semantics are as follows.  deflate performs one or both of the
+///  following actions:
+///
+///  - Compress more input starting at next_in and update next_in and avail_in
+///    accordingly.  If not all input can be processed (because there is not
+///    enough room in the output buffer), next_in and avail_in are updated and
+///    processing will resume at this point for the next call of deflate().
+///
+///  - Provide more output starting at next_out and update next_out and avail_out
+///    accordingly.  This action is forced if the parameter flush is non zero.
+///    Forcing flush frequently degrades the compression ratio, so this parameter
+///    should be set only when necessary (in interactive applications).  Some
+///    output may be provided even if flush is not set.
+///
+///    Before the call of deflate(), the application should ensure that at least
+///  one of the actions is possible, by providing more input and/or consuming more
+///  output, and updating avail_in or avail_out accordingly; avail_out should
+///  never be zero before the call.  The application can consume the compressed
+///  output when it wants, for example when the output buffer is full (avail_out
+///  == 0), or after each call of deflate().  If deflate returns Z_OK and with
+///  zero avail_out, it must be called again after making room in the output
+///  buffer because there might be more output pending.
+///
+///    Normally the parameter flush is set to Z_NO_FLUSH, which allows deflate to
+///  decide how much data to accumulate before producing output, in order to
+///  maximize compression.
+///
+///    If the parameter flush is set to Z_SYNC_FLUSH, all pending output is
+///  flushed to the output buffer and the output is aligned on a byte boundary, so
+///  that the decompressor can get all input data available so far.  (In
+///  particular avail_in is zero after the call if enough output space has been
+///  provided before the call.) Flushing may degrade compression for some
+///  compression algorithms and so it should be used only when necessary.  This
+///  completes the current deflate block and follows it with an empty stored block
+///  that is three bits plus filler bits to the next byte, followed by four bytes
+///  (00 00 ff ff).
+///
+///    If flush is set to Z_PARTIAL_FLUSH, all pending output is flushed to the
+///  output buffer, but the output is not aligned to a byte boundary.  All of the
+///  input data so far will be available to the decompressor, as for Z_SYNC_FLUSH.
+///  This completes the current deflate block and follows it with an empty fixed
+///  codes block that is 10 bits long.  This assures that enough bytes are output
+///  in order for the decompressor to finish the block before the empty fixed code
+///  block.
+///
+///    If flush is set to Z_BLOCK, a deflate block is completed and emitted, as
+///  for Z_SYNC_FLUSH, but the output is not aligned on a byte boundary, and up to
+///  seven bits of the current block are held to be written as the next byte after
+///  the next deflate block is completed.  In this case, the decompressor may not
+///  be provided enough bits at this point in order to complete decompression of
+///  the data provided so far to the compressor.  It may need to wait for the next
+///  block to be emitted.  This is for advanced applications that need to control
+///  the emission of deflate blocks.
+///
+///    If flush is set to Z_FULL_FLUSH, all output is flushed as with
+///  Z_SYNC_FLUSH, and the compression state is reset so that decompression can
+///  restart from this point if previous compressed data has been damaged or if
+///  random access is desired.  Using Z_FULL_FLUSH too often can seriously degrade
+///  compression.
+///
+///    If deflate returns with avail_out == 0, this function must be called again
+///  with the same value of the flush parameter and more output space (updated
+///  avail_out), until the flush is complete (deflate returns with non-zero
+///  avail_out).  In the case of a Z_FULL_FLUSH or Z_SYNC_FLUSH, make sure that
+///  avail_out is greater than six to avoid repeated flush markers due to
+///  avail_out == 0 on return.
+///
+///    If the parameter flush is set to Z_FINISH, pending input is processed,
+///  pending output is flushed and deflate returns with Z_STREAM_END if there was
+///  enough output space; if deflate returns with Z_OK, this function must be
+///  called again with Z_FINISH and more output space (updated avail_out) but no
+///  more input data, until it returns with Z_STREAM_END or an error.  After
+///  deflate has returned Z_STREAM_END, the only possible operations on the stream
+///  are deflateReset or deflateEnd.
+///
+///    Z_FINISH can be used immediately after deflateInit if all the compression
+///  is to be done in a single step.  In this case, avail_out must be at least the
+///  value returned by deflateBound (see below).  Then deflate is guaranteed to
+///  return Z_STREAM_END.  If not enough output space is provided, deflate will
+///  not return Z_STREAM_END, and it must be called again as described above.
+///
+///    deflate() sets strm->adler to the adler32 checksum of all input read
+///  so far (that is, total_in bytes).
+///
+///    deflate() may update strm->data_type if it can make a good guess about
+///  the input data type (Z_BINARY or Z_TEXT).  In doubt, the data is considered
+///  binary.  This field is only for information purposes and does not affect the
+///  compression algorithm in any manner.
+///
+///    deflate() returns Z_OK if some progress has been made (more input
+///  processed or more output produced), Z_STREAM_END if all input has been
+///  consumed and all output has been produced (only when flush is set to
+///  Z_FINISH), Z_STREAM_ERROR if the stream state was inconsistent (for example
+///  if next_in or next_out was Z_NULL), Z_BUF_ERROR if no progress is possible
+///  (for example avail_in or avail_out was zero).  Note that Z_BUF_ERROR is not
+///  fatal, and deflate() can be called again with more input and more output
+///  space to continue compressing.
+///
+extern fn deflate(strm: z_streamp, flush: FlushValue) ReturnCode;
+
+///
+///     All dynamically allocated data structures for this stream are freed.
+///   This function discards any unprocessed input and does not flush any pending
+///   output.
+///
+///     deflateEnd returns Z_OK if success, Z_STREAM_ERROR if the
+///   stream state was inconsistent, Z_DATA_ERROR if the stream was freed
+///   prematurely (some input or output was discarded).  In the error case, msg
+///   may be set but then points to a static string (which must not be
+///   deallocated).
+extern fn deflateEnd(stream: z_streamp) ReturnCode;
+
+//   deflateBound() returns an upper bound on the compressed size after
+//  deflation of sourceLen bytes.  It must be called after deflateInit() or
+//  deflateInit2(), and after deflateSetHeader(), if used.  This would be used
+//  to allocate an output buffer for deflation in a single pass, and so would be
+//  called before deflate().  If that first deflate() call is provided the
+//  sourceLen input bytes, an output buffer allocated to the size returned by
+//  deflateBound(), and the flush value Z_FINISH, then deflate() is guaranteed
+//  to return Z_STREAM_END.  Note that it is possible for the compressed size to
+//  be larger than the value returned by deflateBound() if flush options other
+//  than Z_FINISH or Z_NO_FLUSH are used.
+extern fn deflateBound(strm: z_streamp, sourceLen: u64) u64;
+
+///
+///     This is another version of deflateInit with more compression options.  The
+///   fields next_in, zalloc, zfree and opaque must be initialized before by the
+///   caller.
+///
+///     The method parameter is the compression method.  It must be Z_DEFLATED in
+///   this version of the library.
+///
+///     The windowBits parameter is the base two logarithm of the window size
+///   (the size of the history buffer).  It should be in the range 8..15 for this
+///   version of the library.  Larger values of this parameter result in better
+///   compression at the expense of memory usage.  The default value is 15 if
+///   deflateInit is used instead.
+///
+///     windowBits can also be -8..-15 for raw deflate.  In this case, -windowBits
+///   determines the window size.  deflate() will then generate raw deflate data
+///   with no zlib header or trailer, and will not compute an adler32 check value.
+///
+///     windowBits can also be greater than 15 for optional gzip encoding.  Add
+///   16 to windowBits to write a simple gzip header and trailer around the
+///   compressed data instead of a zlib wrapper.  The gzip header will have no
+///   file name, no extra data, no comment, no modification time (set to zero), no
+///   header crc, and the operating system will be set to 255 (unknown).  If a
+///   gzip stream is being written, strm->adler is a crc32 instead of an adler32.
+///
+///     The memLevel parameter specifies how much memory should be allocated
+///   for the internal compression state.  memLevel=1 uses minimum memory but is
+///   slow and reduces compression ratio; memLevel=9 uses maximum memory for
+///   optimal speed.  The default value is 8.  See zconf.h for total memory usage
+///   as a function of windowBits and memLevel.
+///
+///     The strategy parameter is used to tune the compression algorithm.  Use the
+///   value Z_DEFAULT_STRATEGY for normal data, Z_FILTERED for data produced by a
+///   filter (or predictor), Z_HUFFMAN_ONLY to force Huffman encoding only (no
+///   string match), or Z_RLE to limit match distances to one (run-length
+///   encoding).  Filtered data consists mostly of small values with a somewhat
+///   random distribution.  In this case, the compression algorithm is tuned to
+///   compress them better.  The effect of Z_FILTERED is to force more Huffman
+///   coding and less string matching; it is somewhat intermediate between
+///   Z_DEFAULT_STRATEGY and Z_HUFFMAN_ONLY.  Z_RLE is designed to be almost as
+///   fast as Z_HUFFMAN_ONLY, but give better compression for PNG image data.  The
+///   strategy parameter only affects the compression ratio but not the
+///   correctness of the compressed output even if it is not set appropriately.
+///   Z_FIXED prevents the use of dynamic Huffman codes, allowing for a simpler
+///   decoder for special applications.
+///
+///     deflateInit2 returns Z_OK if success, Z_MEM_ERROR if there was not enough
+///   memory, Z_STREAM_ERROR if any parameter is invalid (such as an invalid
+///   method), or Z_VERSION_ERROR if the zlib library version (zlib_version) is
+///   incompatible with the version assumed by the caller (ZLIB_VERSION).  msg is
+///   set to null if there is no error message.  deflateInit2 does not perform any
+///   compression: this will be done by deflate().
+extern fn deflateInit2_(strm: z_streamp, level: c_int, method: c_int, windowBits: c_int, memLevel: c_int, strategy: c_int, version: [*c]const u8, stream_size: c_int) ReturnCode;
+
+/// Not for streaming!
+pub const ZlibCompressorArrayList = struct {
+    const ZlibCompressor = ZlibCompressorArrayList;
+
+    pub const State = enum {
+        Uninitialized,
+        Inflating,
+        End,
+        Error,
+    };
+
+    input: []const u8,
+    list: std.ArrayListUnmanaged(u8),
+    list_ptr: *std.ArrayListUnmanaged(u8),
+    zlib: zStream_struct,
+    allocator: std.mem.Allocator,
+    arena: std.heap.ArenaAllocator,
+    state: State = State.Uninitialized,
+
+    pub fn alloc(ctx: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+        var this = @ptrCast(*ZlibCompressor, @alignCast(@alignOf(*ZlibCompressor), ctx));
+        const buf = this.allocator.alloc(u8, items * len) catch unreachable;
+        return buf.ptr;
+    }
+
+    // we free manually all at once
+    pub fn free(_: *anyopaque, _: *anyopaque) callconv(.C) void {}
+
+    pub fn deinit(this: *ZlibCompressor) void {
+        var allocator = this.allocator;
+        this.end();
+        this.arena.deinit();
+        allocator.destroy(this);
+    }
+
+    pub fn end(this: *ZlibCompressor) void {
+        if (this.state == State.Inflating) {
+            _ = deflateEnd(&this.zlib);
+            this.state = State.End;
+        }
+    }
+
+    pub fn init(input: []const u8, list: *std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator, options: Options) ZlibError!*ZlibCompressor {
+        var zlib_reader = try allocator.create(ZlibCompressor);
+        zlib_reader.* = ZlibCompressor{
+            .input = input,
+            .list = list.*,
+            .list_ptr = list,
+            .allocator = allocator,
+            .zlib = undefined,
+            .arena = std.heap.ArenaAllocator.init(allocator),
+        };
+
+        zlib_reader.zlib = zStream_struct{
+            .next_in = input.ptr,
+            .avail_in = @intCast(uInt, input.len),
+            .total_in = @intCast(uInt, input.len),
+
+            .next_out = zlib_reader.list.items.ptr,
+            .avail_out = @intCast(u32, zlib_reader.list.items.len),
+            .total_out = zlib_reader.list.items.len,
+
+            .err_msg = null,
+            .alloc_func = ZlibCompressor.alloc,
+            .free_func = ZlibCompressor.free,
+
+            .internal_state = null,
+            .user_data = zlib_reader,
+
+            .data_type = DataType.Unknown,
+            .adler = 0,
+            .reserved = 0,
+        };
+
+        switch (deflateInit2_(
+            &zlib_reader.zlib,
+            options.level,
+            options.method,
+            if (!options.gzip) -options.windowBits else options.windowBits + 16,
+            options.memLevel,
+            options.strategy,
+            zlibVersion(),
+            @sizeOf(zStream_struct),
+        )) {
+            ReturnCode.Ok => {
+                try zlib_reader.list.ensureTotalCapacityPrecise(allocator, deflateBound(&zlib_reader.zlib, input.len));
+                zlib_reader.list_ptr.* = zlib_reader.list;
+                zlib_reader.zlib.avail_out = @truncate(uInt, zlib_reader.list.capacity);
+                zlib_reader.zlib.next_out = zlib_reader.list.items.ptr;
+
+                return zlib_reader;
+            },
+            ReturnCode.MemError => {
+                zlib_reader.deinit();
+                return error.OutOfMemory;
+            },
+            ReturnCode.StreamError => {
+                zlib_reader.deinit();
+                return error.InvalidArgument;
+            },
+            ReturnCode.VersionError => {
+                zlib_reader.deinit();
+                return error.InvalidArgument;
+            },
+            else => unreachable,
+        }
+    }
+
+    pub fn errorMessage(this: *ZlibCompressor) ?[]const u8 {
+        if (this.zlib.err_msg) |msg_ptr| {
+            return std.mem.sliceTo(msg_ptr, 0);
+        }
+
+        return null;
+    }
+
+    pub fn readAll(this: *ZlibCompressor) ZlibError!void {
+        defer {
+            this.list.shrinkRetainingCapacity(this.zlib.total_out);
+            this.list_ptr.* = this.list;
+        }
+
+        while (this.state == State.Uninitialized or this.state == State.Inflating) {
+
+            // Before the call of inflate(), the application should ensure
+            // that at least one of the actions is possible, by providing
+            // more input and/or consuming more output, and updating the
+            // next_* and avail_* values accordingly. If the caller of
+            // inflate() does not provide both available input and available
+            // output space, it is possible that there will be no progress
+            // made. The application can consume the uncompressed output
+            // when it wants, for example when the output buffer is full
+            // (avail_out == 0), or after each call of inflate(). If inflate
+            // returns Z_OK and with zero avail_out, it must be called again
+            // after making room in the output buffer because there might be
+            // more output pending.
+
+            // - Decompress more input starting at next_in and update
+            //   next_in and avail_in accordingly. If not all input can be
+            //   processed (because there is not enough room in the output
+            //   buffer), then next_in and avail_in are updated accordingly,
+            //   and processing will resume at this point for the next call
+            //   of inflate().
+
+            // - Generate more output starting at next_out and update
+            //   next_out and avail_out accordingly. inflate() provides as
+            //   much output as possible, until there is no more input data
+            //   or no more space in the output buffer (see below about the
+            //   flush parameter).
+
+            if (this.zlib.avail_out == 0) {
+                const initial = this.list.items.len;
+                try this.list.ensureUnusedCapacity(this.allocator, 4096);
+                this.list.expandToCapacity();
+                this.zlib.next_out = &this.list.items[initial];
+                this.zlib.avail_out = @intCast(u32, this.list.items.len - initial);
+            }
+
+            if (this.zlib.avail_out == 0) {
+                return error.ShortRead;
+            }
+
+            const rc = deflate(&this.zlib, FlushValue.Finish);
+            this.state = State.Inflating;
+
+            switch (rc) {
+                ReturnCode.StreamEnd => {
+                    this.state = State.End;
+                    this.list.items.len = this.zlib.total_out;
 
                     this.end();
                     return;

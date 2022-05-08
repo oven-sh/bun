@@ -1041,6 +1041,7 @@ pub const Headers = struct {
             .allocator = allocator,
         };
         headers.entries.ensureTotalCapacity(allocator, header_count) catch unreachable;
+        headers.entries.len = header_count;
         headers.buf.ensureTotalCapacity(allocator, buf_len) catch unreachable;
         headers.buf.items.len = buf_len;
         var sliced = headers.entries.slice();

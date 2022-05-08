@@ -32,6 +32,28 @@ it("should work for a file", async () => {
   server.stop();
 });
 
+it("fetch should work with headers", async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      if (req.headers.get("X-Foo") !== "bar") {
+        return new Response("X-Foo header not set", { status: 500 });
+      }
+      return new Response(file(fixture));
+    },
+  });
+  const response = await fetch(`http://localhost:${server.port}`, {
+    headers: {
+      "X-Foo": "bar",
+    },
+  });
+
+  expect(response.status).toBe(200);
+  server.stop();
+});
+
 var count = 200;
 it(`should work for a file ${count} times`, async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");

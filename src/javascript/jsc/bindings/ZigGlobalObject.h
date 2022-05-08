@@ -129,6 +129,7 @@ public:
     void installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm);
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
+    JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
 private:
     void addBuiltinGlobals(JSC::VM&);
@@ -142,6 +143,7 @@ private:
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<WebCore::DOMWrapperWorld> m_world;
     LazyClassStructure m_JSFFIFunctionStructure;
+    LazyClassStructure m_NapiClassStructure;
 };
 
 class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {

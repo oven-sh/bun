@@ -94,6 +94,7 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/FunctionPrototype.h"
+#include "napi.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -166,10 +167,9 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
 
 extern "C" void* Zig__GlobalObject__getModuleRegistryMap(JSC__JSGlobalObject* arg0)
 {
-    if (JSC::JSObject* loader = JSC::jsDynamicCast<JSC::JSObject*>(arg0->vm(), arg0->moduleLoader())) {
+    if (JSC::JSObject* loader = JSC::jsDynamicCast<JSC::JSObject*>(arg0->moduleLoader())) {
         JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
-            arg0->vm(),
-            loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry")));
+            loader->getDirect(arg0->vm(), JSC::Identifier::fromString(arg0->vm(), "registry"_s)));
 
         JSC::JSMap* cloned = map->clone(arg0, arg0->vm(), arg0->mapStructure());
         JSC::gcProtect(cloned);
@@ -187,11 +187,11 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
         return false;
     JSC::JSMap* map = reinterpret_cast<JSC::JSMap*>(map_ptr);
     JSC::VM& vm = globalObject->vm();
-    if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->vm(), globalObject->moduleLoader())) {
-        auto identifier = JSC::Identifier::fromString(globalObject->vm(), "registry");
+    if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
+        auto identifier = JSC::Identifier::fromString(globalObject->vm(), "registry"_s);
 
         if (JSC::JSMap* oldMap = JSC::jsDynamicCast<JSC::JSMap*>(
-                globalObject->vm(), obj->getDirect(globalObject->vm(), identifier))) {
+                obj->getDirect(globalObject->vm(), identifier))) {
 
             vm.finalizeSynchronousJSExecution();
 
@@ -491,7 +491,7 @@ JSC_DEFINE_CUSTOM_GETTER(property_lazyProcessGetter,
         if (JSObject* prototype = jsClass->prototype(globalObject))
             object->setPrototypeDirect(vm, prototype);
 
-        process->putDirect(vm, JSC::Identifier::fromString(vm, "env"),
+        process->putDirect(vm, JSC::Identifier::fromString(vm, "env"_s),
             JSC::JSValue(object),
             JSC::PropertyAttribute::DontDelete | 0);
 
@@ -518,7 +518,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
 
     JSC::JSValue job = callFrame->argument(0);
 
-    if (!job.isObject() || !job.getObject()->isCallable(vm)) {
+    if (!job.isObject() || !job.getObject()->isCallable()) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "queueMicrotask expects a function"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -546,7 +546,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
 
     JSC::JSValue job = callFrame->argument(0);
 
-    if (!job.isObject() || !job.getObject()->isCallable(vm)) {
+    if (!job.isObject() || !job.getObject()->isCallable()) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "setTimeout expects a function"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -577,7 +577,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
 
     JSC::JSValue job = callFrame->argument(0);
 
-    if (!job.isObject() || !job.getObject()->isCallable(vm)) {
+    if (!job.isObject() || !job.getObject()->isCallable()) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "setInterval expects a function"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -719,7 +719,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         if (callFrame->argumentCount() > 1) {
             from = JSC::JSValue::encode(callFrame->argument(1));
         } else {
-            JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(vm, callFrame->thisValue());
+            JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(callFrame->thisValue());
             if (UNLIKELY(!thisObject)) {
                 auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
                 JSC::throwTypeError(globalObject, scope, "import.meta.resolve must be bound to an import.meta object"_s);
@@ -766,7 +766,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
     extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 10);
     int i = 0;
     for (; i < constructor_count; i++) {
-        auto* object = JSC::jsDynamicCast<JSC::JSCallbackConstructor*>(vm, JSC::JSValue::decode(constructors[i]).asCell()->getObject());
+        auto* object = JSC::jsDynamicCast<JSC::JSCallbackConstructor*>(JSC::JSValue::decode(constructors[i]).asCell()->getObject());
 
         extraStaticGlobals.uncheckedAppend(
             GlobalPropertyInfo { JSC::Identifier::fromString(vm, object->get(this, vm.propertyNames->name).toWTFString(this)),
@@ -809,58 +809,63 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { queueMicrotaskIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "queueMicrotask", functionQueueMicrotask),
+                "queueMicrotask"_s, functionQueueMicrotask),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier setTimeoutIdentifier = JSC::Identifier::fromString(vm, "setTimeout"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setTimeoutIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "setTimeout", functionSetTimeout),
+                "setTimeout"_s, functionSetTimeout),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier clearTimeoutIdentifier = JSC::Identifier::fromString(vm, "clearTimeout"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearTimeoutIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "clearTimeout", functionClearTimeout),
+                "clearTimeout"_s, functionClearTimeout),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier setIntervalIdentifier = JSC::Identifier::fromString(vm, "setInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setIntervalIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "setInterval", functionSetInterval),
+                "setInterval"_s, functionSetInterval),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier clearIntervalIdentifier = JSC::Identifier::fromString(vm, "clearInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearIntervalIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "clearInterval", functionClearInterval),
+                "clearInterval"_s, functionClearInterval),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier atobIdentifier = JSC::Identifier::fromString(vm, "atob"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { atobIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "atob", functionATOB),
+                "atob"_s, functionATOB),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier btoaIdentifier = JSC::Identifier::fromString(vm, "btoa"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { btoaIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "btoa", functionBTOA),
+                "btoa"_s, functionBTOA),
             JSC::PropertyAttribute::DontDelete | 0 });
     JSC::Identifier reportErrorIdentifier = JSC::Identifier::fromString(vm, "reportError"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { reportErrorIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "reportError", functionReportError),
+                "reportError"_s, functionReportError),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
+
+    m_NapiClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
+        });
 
     m_JSFFIFunctionStructure.initLater(
         [](LazyClassStructure::Initializer& init) {

@@ -2,11 +2,7 @@ const { serve, file, resolveSync } = Bun;
 const { path } = import.meta;
 serve({
   fetch(req: Request) {
-    const modulePath = resolveSync(
-      new URL(req.url).pathname.substring(1),
-      path
-    );
-    return new Response(file(modulePath));
+    return new Response(file(new URL(req.url).pathname.substring(1)));
   },
 
   // this is called when fetch() throws or rejects

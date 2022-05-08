@@ -41,7 +41,9 @@ it("fetch should work with headers", async () => {
       if (req.headers.get("X-Foo") !== "bar") {
         return new Response("X-Foo header not set", { status: 500 });
       }
-      return new Response(file(fixture));
+      return new Response(file(fixture), {
+        headers: { "X-Both-Ways": "1" },
+      });
     },
   });
   const response = await fetch(`http://localhost:${server.port}`, {
@@ -51,6 +53,7 @@ it("fetch should work with headers", async () => {
   });
 
   expect(response.status).toBe(200);
+  expect(response.headers.get("X-Both-Ways")).toBe("1");
   server.stop();
 });
 

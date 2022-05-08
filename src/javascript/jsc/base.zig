@@ -1215,7 +1215,7 @@ pub fn NewClassWithInstanceType(
                     try std.fmt.format(
                         writer,
                         \\  JSC::VM& vm = globalObject->vm();
-                        \\  Bun::{[name]s}* thisObject = JSC::jsDynamicCast<Bun::{[name]s}*>(vm, JSValue::decode(thisValue));
+                        \\  Bun::{[name]s}* thisObject = JSC::jsDynamicCast<Bun::{[name]s}*>( JSValue::decode(thisValue));
                         \\  if (UNLIKELY(!thisObject)) {{
                         \\    return JSValue::encode(JSC::jsUndefined());
                         \\  }}
@@ -1265,7 +1265,7 @@ pub fn NewClassWithInstanceType(
                     try writer.writeAll(", (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName)) {\n");
                     try std.fmt.format(writer,
                         \\  JSC::VM& vm = globalObject->vm();
-                        \\  Bun::{[name]s}* thisObject = JSC::jsDynamicCast<Bun::{[name]s}*>(vm, JSValue::decode(thisValue));
+                        \\  Bun::{[name]s}* thisObject = JSC::jsDynamicCast<Bun::{[name]s}*>( JSValue::decode(thisValue));
                         \\  if (UNLIKELY(!thisObject)) {{
                         \\    return false;
                         \\  }}

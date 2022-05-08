@@ -80,15 +80,15 @@ public:
                 return JSC::JSValue {};
             }
 
-            if (weakValue.isString()) {
-                return JSC::JSValue(weakValue.string());
+            if (weakValueRef.isString()) {
+                return JSC::JSValue(weakValueRef.string());
             }
 
-            if (weakValue.isObject()) {
-                return JSC::JSValue(weakValue.object());
+            if (weakValueRef.isObject()) {
+                return JSC::JSValue(weakValueRef.object());
             }
 
-            return weakValue.primitive();
+            return weakValueRef.primitive();
         }
 
         return strongRef.get();

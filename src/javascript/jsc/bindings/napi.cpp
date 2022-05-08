@@ -66,8 +66,8 @@ static NapiRefWeakHandleOwner& weakValueHandleOwner()
 
 void NapiFinalizer::call(JSC::JSGlobalObject* globalObject, void* data)
 {
-    if (finalize_cb) {
-        finalize_cb(reinterpret_cast<napi_env>(globalObject), finalize_hint, data);
+    if (this->finalize_cb) {
+        this->finalize_cb(reinterpret_cast<napi_env>(globalObject), this->finalize_hint, data);
     }
 }
 
@@ -267,8 +267,13 @@ extern "C" napi_status napi_wrap(napi_env env,
     void* finalize_hint,
     napi_ref* result)
 {
+    if (!toJS(js_object).isObject()) {
+        return napi_object_expected;
+    }
+
     auto* globalObject = toJS(env);
-    auto* object = toJS(js_object).getObject();
+    auto& vm = globalObject->vm();
+    auto* val = toJS(js_object).getObject();
     auto clientData = WebCore::clientData(vm);
 
     if (native_object) {
@@ -278,35 +283,40 @@ extern "C" napi_status napi_wrap(napi_env env,
     }
 
     if (result) {
-        auto* ref = new NapiRef(globalObject, object);
+        auto* ref = new NapiRef(globalObject, 0);
         auto clientData = WebCore::clientData(vm);
         if (finalize_cb) {
-            ref->finalizer = { finalize_cb, finalize_hint };
+            ref->finalizer.finalize_cb = finalize_cb;
+            ref->finalizer.finalize_hint = finalize_hint;
         }
         *result = reinterpret_cast<napi_ref>(ref);
     }
+
+    return napi_ok;
 }
 
 extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     void** result)
 {
+    if (!toJS(js_object).isObject()) {
+        return napi_object_expected;
+    }
     auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
     auto* object = toJS(js_object).getObject();
     auto clientData = WebCore::clientData(vm);
 
-    if (native_object) {
-        uintptr_t ref_ptr = reinterpret_cast<uintptr_t>(native_object);
-        double ref_double = bitwise_cast<double>(ref_ptr);
-        val->putDirect(vm, clientData->builtinNames().passwordPrivateName(), JSC::jsNumber(ref_double), JSC::PropertyAttribute::DontEnum | 0);
+    if (result) {
+        JSC::JSValue priv = object->getDirect(vm, clientData->builtinNames().passwordPrivateName());
+        if (priv.isNumber()) {
+            uintptr_t ref_ptr = bitwise_cast<uintptr_t>(priv.asNumber());
+            *result = reinterpret_cast<void*>(ref_ptr);
+        } else {
+            *result = nullptr;
+        }
     }
 
-    if (result) {
-        auto* ref = new NapiRef(globalObject, object);
-        if (finalize_cb) {
-            ref->finalizer = { finalize_cb, finalize_hint };
-        }
-        *result = reinterpret_cast<napi_ref>(ref);
-    }
+    return napi_ok;
 }
 
 extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
@@ -411,9 +421,17 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     napi_ref* result)
 {
 
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
-    auto* ref = new NapiRef(toJS(env), initial_refcount);
     JSC::JSValue val = toJS(value);
+
+    if (!val.isObject()) {
+        return napi_object_expected;
+    }
+
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(env);
+    JSC::VM& vm = globalObject->vm();
+
+    auto* ref = new NapiRef(toJS(env), initial_refcount);
+
     auto clientData = WebCore::clientData(vm);
 
     if (initial_refcount > 0) {
@@ -430,7 +448,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
 
     uintptr_t ref_ptr = reinterpret_cast<uintptr_t>(ref);
     double ref_double = bitwise_cast<double>(ref_ptr);
-    val->putDirect(vm, clientData->builtinNames().passwordPrivateName(), JSC::jsNumber(ref_double), JSC::PropertyAttribute::DontEnum | 0);
+    val.getObject()->putDirect(vm, clientData->builtinNames().passwordPrivateName(), JSC::jsNumber(ref_double), JSC::PropertyAttribute::DontEnum | 0);
 
     *result = toNapi(ref);
 
@@ -466,19 +484,10 @@ extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,
     return napi_ok;
 }
 
-extern "C" napi_status napi_reference_delete(napi_env env, napi_ref ref,
-    uint32_t* result)
-{
-    NapiRef* napiRef = toJS(ref);
-    napiRef->ref();
-    *result = napiRef->refCount();
-    return napi_ok;
-}
-
 extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
 {
     NapiRef* napiRef = toJS(ref);
-    ~napiRef();
+    napiRef->~NapiRef();
     return napi_ok;
 }
 

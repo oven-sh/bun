@@ -25,12 +25,11 @@
 #include "JSDOMExceptionHandling.h"
 #include "ScriptExecutionContext.h"
 
-
 namespace WebCore {
 using namespace JSC;
 
 JSAbortAlgorithm::JSAbortAlgorithm(VM& vm, JSObject* callback)
-    : AbortAlgorithm(jsCast<JSDOMGlobalObject*>(callback->globalObject(vm))->scriptExecutionContext())
+    : AbortAlgorithm(jsCast<JSDOMGlobalObject*>(callback->globalObject())->scriptExecutionContext())
     , m_data(new JSCallbackDataStrong(vm, callback, this))
 {
 }
@@ -70,9 +69,9 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::hand
     if (returnedException) {
         reportException(&lexicalGlobalObject, returnedException);
         return CallbackResultType::ExceptionThrown;
-     }
+    }
 
-    return { };
+    return {};
 }
 
 JSC::JSValue toJS(AbortAlgorithm& impl)

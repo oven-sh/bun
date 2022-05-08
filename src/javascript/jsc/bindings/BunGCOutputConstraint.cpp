@@ -170,7 +170,7 @@ void DOMGCOutputConstraint::executeImplImpl(Visitor& visitor)
             auto func = [](Visitor& visitor, HeapCell* heapCell, HeapCell::Kind) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::DOMGCOutput);
                 JSCell* cell = static_cast<JSCell*>(heapCell);
-                cell->methodTable(visitor.vm())->visitOutputConstraints(cell, visitor);
+                cell->methodTable()->visitOutputConstraints(cell, visitor);
             };
 
             RefPtr<SharedTask<void(Visitor&)>> task = subspace.template forEachMarkedCellInParallel<Visitor>(func);

@@ -23,8 +23,8 @@ JSClass* toJSDOMGlobalObject(JSC::VM& vm, JSC::JSValue value)
 
     if (auto* object = value.getObject()) {
         if (object->type() == JSC::PureForwardingProxyType)
-            return JSC::jsDynamicCast<JSClass*>(vm, JSC::jsCast<JSC::JSProxy*>(object)->target());
-        if (object->inherits<JSClass>(vm))
+            return JSC::jsDynamicCast<JSClass*>(JSC::jsCast<JSC::JSProxy*>(object)->target());
+        if (object->inherits<JSClass>())
             return JSC::jsCast<JSClass*>(object);
     }
 

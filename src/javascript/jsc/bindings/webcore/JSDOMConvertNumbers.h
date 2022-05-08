@@ -28,8 +28,8 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMExceptionHandling.h"
-#include "JavaScriptCore/JSCJSValueInlines.h"
-#include "JavaScriptCore/PureNaN.h"
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/PureNaN.h>
 
 namespace WebCore {
 
@@ -251,6 +251,7 @@ template<typename T> struct JSConverter<IDLClampAdaptor<T>> {
     }
 };
 
+
 template<typename T> struct Converter<IDLEnforceRangeAdaptor<T>> : DefaultConverter<IDLEnforceRangeAdaptor<T>> {
     using ReturnType = typename IDLEnforceRangeAdaptor<T>::ImplementationType;
 
@@ -272,6 +273,7 @@ template<typename T> struct JSConverter<IDLEnforceRangeAdaptor<T>> {
     }
 };
 
+
 // MARK: -
 // MARK: Floating point types
 
@@ -291,7 +293,7 @@ template<> struct Converter<IDLFloat> : DefaultConverter<IDLFloat> {
         double number = value.toNumber(&lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, 0.0);
         if (UNLIKELY(number < std::numeric_limits<float>::lowest() || number > std::numeric_limits<float>::max()))
-            throwTypeError(&lexicalGlobalObject, scope, "The provided value is outside the range of a float");
+            throwTypeError(&lexicalGlobalObject, scope, "The provided value is outside the range of a float"_s);
         if (UNLIKELY(!std::isfinite(number)))
             throwNonFiniteTypeError(lexicalGlobalObject, scope);
         return static_cast<float>(number);

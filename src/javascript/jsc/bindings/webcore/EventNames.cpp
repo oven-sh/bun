@@ -24,7 +24,7 @@
 namespace WebCore {
 
 #define INITIALIZE_EVENT_NAME(name) \
-    name##Event(#name, AtomString::ConstructFromLiteral),
+    name##Event(makeAtomString(#name)),
 
 EventNames::EventNames()
     : DOM_EVENT_NAMES_FOR_EACH(INITIALIZE_EVENT_NAME) dummy(0)

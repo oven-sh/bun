@@ -66,7 +66,7 @@ template<> CustomEvent::Init convertDictionary<CustomEvent::Init>(JSGlobalObject
     if (isNullOrUndefined)
         bubblesValue = jsUndefined();
     else {
-        bubblesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "bubbles"));
+        bubblesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "bubbles"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!bubblesValue.isUndefined()) {
@@ -78,7 +78,7 @@ template<> CustomEvent::Init convertDictionary<CustomEvent::Init>(JSGlobalObject
     if (isNullOrUndefined)
         cancelableValue = jsUndefined();
     else {
-        cancelableValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "cancelable"));
+        cancelableValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "cancelable"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!cancelableValue.isUndefined()) {
@@ -90,7 +90,7 @@ template<> CustomEvent::Init convertDictionary<CustomEvent::Init>(JSGlobalObject
     if (isNullOrUndefined)
         composedValue = jsUndefined();
     else {
-        composedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "composed"));
+        composedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "composed"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!composedValue.isUndefined()) {
@@ -102,7 +102,7 @@ template<> CustomEvent::Init convertDictionary<CustomEvent::Init>(JSGlobalObject
     if (isNullOrUndefined)
         detailValue = jsUndefined();
     else {
-        detailValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "detail"));
+        detailValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "detail"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!detailValue.isUndefined()) {
@@ -165,12 +165,12 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCustomEventDOMConstructor::
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<CustomEvent::Init>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto object = CustomEvent::create(WTFMove(type), WTFMove(eventInitDict));
+    auto object = CustomEvent::create(type, WTFMove(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
@@ -226,7 +226,7 @@ JSCustomEvent::JSCustomEvent(Structure* structure, JSDOMGlobalObject& globalObje
 void JSCustomEvent::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 
     // static_assert(!std::is_base_of<ActiveDOMObject, CustomEvent>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
@@ -250,7 +250,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCustomEventConstructor, (JSGlobalObject * lexicalGlob
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSCustomEventPrototype*>(vm, JSValue::decode(thisValue));
+    auto* prototype = jsDynamicCast<JSCustomEventPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSCustomEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -277,7 +277,7 @@ static inline JSC::EncodedJSValue jsCustomEventPrototypeFunction_initCustomEvent
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto bubbles = convert<IDLBoolean>(*lexicalGlobalObject, argument1.value());
@@ -288,7 +288,7 @@ static inline JSC::EncodedJSValue jsCustomEventPrototypeFunction_initCustomEvent
     EnsureStillAliveScope argument3 = callFrame->argument(3);
     auto detail = argument3.value().isUndefined() ? jsNull() : convert<IDLAny>(*lexicalGlobalObject, argument3.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initCustomEvent(WTFMove(type), WTFMove(bubbles), WTFMove(cancelable), WTFMove(detail)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initCustomEvent(type, WTFMove(bubbles), WTFMove(cancelable), WTFMove(detail)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCustomEventPrototypeFunction_initCustomEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

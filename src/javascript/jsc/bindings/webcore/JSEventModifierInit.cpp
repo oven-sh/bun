@@ -46,7 +46,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         bubblesValue = jsUndefined();
     else {
-        bubblesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "bubbles"));
+        bubblesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "bubbles"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!bubblesValue.isUndefined()) {
@@ -58,7 +58,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         cancelableValue = jsUndefined();
     else {
-        cancelableValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "cancelable"));
+        cancelableValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "cancelable"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!cancelableValue.isUndefined()) {
@@ -70,7 +70,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         composedValue = jsUndefined();
     else {
-        composedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "composed"));
+        composedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "composed"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!composedValue.isUndefined()) {
@@ -82,7 +82,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         detailValue = jsUndefined();
     else {
-        detailValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "detail"));
+        detailValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "detail"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!detailValue.isUndefined()) {
@@ -94,7 +94,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         viewValue = jsUndefined();
     else {
-        viewValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "view"));
+        viewValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "view"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     // if (!viewValue.isUndefined()) {
@@ -106,7 +106,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         altKeyValue = jsUndefined();
     else {
-        altKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "altKey"));
+        altKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "altKey"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!altKeyValue.isUndefined()) {
@@ -118,7 +118,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         ctrlKeyValue = jsUndefined();
     else {
-        ctrlKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "ctrlKey"));
+        ctrlKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "ctrlKey"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!ctrlKeyValue.isUndefined()) {
@@ -130,7 +130,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         metaKeyValue = jsUndefined();
     else {
-        metaKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "metaKey"));
+        metaKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "metaKey"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!metaKeyValue.isUndefined()) {
@@ -142,7 +142,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         modifierAltGraphValue = jsUndefined();
     else {
-        modifierAltGraphValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "modifierAltGraph"));
+        modifierAltGraphValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "modifierAltGraph"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!modifierAltGraphValue.isUndefined()) {
@@ -154,7 +154,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         modifierCapsLockValue = jsUndefined();
     else {
-        modifierCapsLockValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "modifierCapsLock"));
+        modifierCapsLockValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "modifierCapsLock"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!modifierCapsLockValue.isUndefined()) {
@@ -166,7 +166,7 @@ template<> EventModifierInit convertDictionary<EventModifierInit>(JSGlobalObject
     if (isNullOrUndefined)
         shiftKeyValue = jsUndefined();
     else {
-        shiftKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "shiftKey"));
+        shiftKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "shiftKey"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!shiftKeyValue.isUndefined()) {

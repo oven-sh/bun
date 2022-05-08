@@ -26,9 +26,9 @@
 #pragma once
 #include "root.h"
 #include "ZigGlobalObject.h"
-
+#include "JSDOMGlobalObject.h"
 #include "JSDOMExceptionHandling.h"
-#include "JavaScriptCore/Error.h"
+#include <JavaScriptCore/Error.h>
 
 namespace WebCore {
 

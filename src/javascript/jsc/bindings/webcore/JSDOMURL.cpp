@@ -194,7 +194,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
         JSValue distinguishingArg = callFrame->uncheckedArgument(1);
         if (distinguishingArg.isUndefined())
             RELEASE_AND_RETURN(throwScope, (constructJSDOMURL1(lexicalGlobalObject, callFrame)));
-        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSDOMURL>(vm))
+        if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSDOMURL>())
             RELEASE_AND_RETURN(throwScope, (constructJSDOMURL2(lexicalGlobalObject, callFrame)));
         RELEASE_AND_RETURN(throwScope, (constructJSDOMURL1(lexicalGlobalObject, callFrame)));
     }
@@ -259,7 +259,7 @@ JSDOMURL::JSDOMURL(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DO
 void JSDOMURL::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 
     // static_assert(!std::is_base_of<ActiveDOMObject, DOMURL>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
@@ -289,7 +289,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMURLConstructor, (JSGlobalObject * lexicalGlobalObj
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSDOMURLPrototype*>(vm, JSValue::decode(thisValue));
+    auto* prototype = jsDynamicCast<JSDOMURLPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSDOMURL::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -717,10 +717,10 @@ static inline JSC::EncodedJSValue jsDOMURLConstructorFunction_createObjectURLOve
     //     size_t argsCount = std::min<size_t>(1, callFrame->argumentCount());
     //     if (argsCount == 1) {
     //         JSValue distinguishingArg = callFrame->uncheckedArgument(0);
-    //         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>(vm))
+    //         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSBlob>())
     //             RELEASE_AND_RETURN(throwScope, (jsDOMURLConstructorFunction_createObjectURL1Body(lexicalGlobalObject, callFrame)));
     // #if ENABLE(MEDIA_SOURCE)
-    //         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSMediaSource>(vm))
+    //         if (distinguishingArg.isObject() && asObject(distinguishingArg)->inherits<JSMediaSource>())
     //             RELEASE_AND_RETURN(throwScope, (jsDOMURLConstructorFunction_createObjectURL2Body(lexicalGlobalObject, callFrame)));
     // #endif
     //     }
@@ -838,7 +838,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 DOMURL* JSDOMURL::toWrapped(JSC::VM& vm, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSDOMURL*>(vm, value))
+    if (auto* wrapper = jsDynamicCast<JSDOMURL*>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

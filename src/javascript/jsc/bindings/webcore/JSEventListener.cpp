@@ -179,14 +179,14 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
 
     JSValue handleEventFunction = jsFunction;
 
-    auto callData = getCallData(vm, handleEventFunction);
+    auto callData = getCallData(handleEventFunction);
 
     // If jsFunction is not actually a function and this is an EventListener, see if it implements callback interface.
     if (callData.type == CallData::Type::None) {
         if (m_isAttribute)
             return;
 
-        handleEventFunction = jsFunction->get(lexicalGlobalObject, Identifier::fromString(vm, "handleEvent"));
+        handleEventFunction = jsFunction->get(lexicalGlobalObject, Identifier::fromString(vm, "handleEvent"_s));
         if (UNLIKELY(scope.exception())) {
             auto* exception = scope.exception();
             scope.clearException();
@@ -194,7 +194,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
             reportException(lexicalGlobalObject, exception);
             return;
         }
-        callData = getCallData(vm, handleEventFunction);
+        callData = getCallData(handleEventFunction);
         if (callData.type == CallData::Type::None) {
             event.target()->uncaughtExceptionInEventHandler();
             reportException(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "'handleEvent' property of event listener should be callable"_s));
@@ -277,7 +277,7 @@ String JSEventListener::functionName() const
     auto& vm = isolatedWorld().vm();
     JSC::JSLockHolder lock(vm);
 
-    auto* handlerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(vm, m_jsFunction.get());
+    auto* handlerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(m_jsFunction.get());
     if (!handlerFunction)
         return {};
 

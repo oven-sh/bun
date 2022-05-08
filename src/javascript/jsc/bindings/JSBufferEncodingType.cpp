@@ -72,7 +72,7 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
             const size_t skip = encoding[3] == '-' ? 4 : 3;
             if (encoding[skip] == '8' && encoding[skip + 1] == '\0')
                 return BufferEncodingType::utf8;
-            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(skip, 5), "16le"))
+            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(skip, 5), "16le"_s))
                 return BufferEncodingType::ucs2;
             // ucs2
         } else if (encoding[1] == 'c' && encoding[2] == 's') {
@@ -80,17 +80,17 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
             if (encoding[skip] == '2' && encoding[skip + 1] == '\0')
                 return BufferEncodingType::ucs2;
         }
-        if (WTF::equalIgnoringASCIICase(encoding, "utf8"))
+        if (WTF::equalIgnoringASCIICase(encoding, "utf8"_s))
             return BufferEncodingType::utf8;
-        if (WTF::equalIgnoringASCIICase(encoding, "utf-8"))
+        if (WTF::equalIgnoringASCIICase(encoding, "utf-8"_s))
             return BufferEncodingType::utf8;
-        if (WTF::equalIgnoringASCIICase(encoding, "ucs2"))
+        if (WTF::equalIgnoringASCIICase(encoding, "ucs2"_s))
             return BufferEncodingType::ucs2;
-        if (WTF::equalIgnoringASCIICase(encoding, "ucs-2"))
+        if (WTF::equalIgnoringASCIICase(encoding, "ucs-2"_s))
             return BufferEncodingType::ucs2;
-        if (WTF::equalIgnoringASCIICase(encoding, "utf16le"))
+        if (WTF::equalIgnoringASCIICase(encoding, "utf16le"_s))
             return BufferEncodingType::ucs2;
-        if (WTF::equalIgnoringASCIICase(encoding, "utf-16le"))
+        if (WTF::equalIgnoringASCIICase(encoding, "utf-16le"_s))
             return BufferEncodingType::ucs2;
         break;
 
@@ -98,10 +98,10 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     case 'L':
         // latin1
         if (encoding[1] == 'a') {
-            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 4), "tin1"))
+            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 4), "tin1"_s))
                 return BufferEncodingType::latin1;
         }
-        if (WTF::equalIgnoringASCIICase(encoding, "latin1"))
+        if (WTF::equalIgnoringASCIICase(encoding, "latin1"_s))
             return BufferEncodingType::latin1;
         break;
 
@@ -109,26 +109,26 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     case 'B':
         // binary is a deprecated alias of latin1
         if (encoding[1] == 'i') {
-            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 5), "nary"))
+            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 5), "nary"_s))
                 return BufferEncodingType::latin1;
             // buffer
         } else if (encoding[1] == 'u') {
-            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 5), "ffer"))
+            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 5), "ffer"_s))
                 return BufferEncodingType::buffer;
             // base64
         } else if (encoding[1] == 'a') {
-            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 5), "se64"))
+            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 5), "se64"_s))
                 return BufferEncodingType::base64;
-            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 8), "se64url"))
+            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 8), "se64url"_s))
                 return BufferEncodingType::base64url;
         }
-        if (WTF::equalIgnoringASCIICase(encoding, "binary"))
+        if (WTF::equalIgnoringASCIICase(encoding, "binary"_s))
             return BufferEncodingType::latin1; // BINARY is a deprecated alias of LATIN1.
-        if (WTF::equalIgnoringASCIICase(encoding, "buffer"))
+        if (WTF::equalIgnoringASCIICase(encoding, "buffer"_s))
             return BufferEncodingType::buffer;
-        if (WTF::equalIgnoringASCIICase(encoding, "base64"))
+        if (WTF::equalIgnoringASCIICase(encoding, "base64"_s))
             return BufferEncodingType::base64;
-        if (WTF::equalIgnoringASCIICase(encoding, "base64url"))
+        if (WTF::equalIgnoringASCIICase(encoding, "base64url"_s))
             return BufferEncodingType::base64url;
         break;
 
@@ -136,10 +136,10 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     case 'A':
         // ascii
         if (encoding[1] == 's') {
-            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 3), "cii"))
+            if (WTF::equalIgnoringASCIICase(encoding.substringSharingImpl(2, 3), "cii"_s))
                 return BufferEncodingType::ascii;
         }
-        if (WTF::equalIgnoringASCIICase(encoding, "ascii"))
+        if (WTF::equalIgnoringASCIICase(encoding, "ascii"_s))
             return BufferEncodingType::ascii;
         break;
 
@@ -149,7 +149,7 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
         if (encoding[1] == 'e')
             if (encoding[2] == 'x' && encoding[3] == '\0')
                 return BufferEncodingType::hex;
-        if (WTF::equalIgnoringASCIICase(encoding, "hex"))
+        if (WTF::equalIgnoringASCIICase(encoding, "hex"_s))
             return BufferEncodingType::hex;
         break;
     }

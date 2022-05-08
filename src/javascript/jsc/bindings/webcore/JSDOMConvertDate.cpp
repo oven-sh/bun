@@ -40,7 +40,7 @@ WallTime valueToDate(JSC::JSGlobalObject& lexicalGlobalObject, JSValue value)
     double milliseconds = std::numeric_limits<double>::quiet_NaN();
 
     auto& vm = lexicalGlobalObject.vm();
-    if (value.inherits<DateInstance>(vm))
+    if (value.inherits<DateInstance>())
         milliseconds = jsCast<DateInstance*>(value)->internalNumber();
     else if (value.isNumber())
         milliseconds = value.asNumber();

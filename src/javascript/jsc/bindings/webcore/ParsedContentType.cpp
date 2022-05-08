@@ -1,4 +1,4 @@
- /*
+/*
  * Copyright (C) 2011 Google Inc. All rights reserved.
  * Copyright (C) 2012 Intel Corporation. All rights reserved.
  *
@@ -114,7 +114,6 @@ static String collectHTTPQuotedString(StringView input, unsigned& startIndex)
             ASSERT(quoteOrBackslash == '"');
             break;
         }
-
     }
     return builder.toString();
 }
@@ -232,7 +231,7 @@ bool ParsedContentType::parseContentType(Mode mode)
     unsigned index = 0;
     unsigned contentTypeLength = m_contentType.length();
     skipSpaces(m_contentType, index);
-    if (index >= contentTypeLength)  {
+    if (index >= contentTypeLength) {
         LOG_ERROR("Invalid Content-Type string '%s'", m_contentType.ascii().data());
         return false;
     }
@@ -347,7 +346,7 @@ ParsedContentType::ParsedContentType(const String& contentType)
 
 String ParsedContentType::charset() const
 {
-    return parameterValueForName("charset");
+    return parameterValueForName("charset"_s);
 }
 
 void ParsedContentType::setCharset(String&& charset)
@@ -365,11 +364,11 @@ size_t ParsedContentType::parameterCount() const
     return m_parameterValues.size();
 }
 
-void ParsedContentType::setContentType(StringView contentRange, Mode mode)
+void ParsedContentType::setContentType(String&& contentRange, Mode mode)
 {
-    m_mimeType = contentRange.toString();
+    m_mimeType = WTFMove(contentRange);
     if (mode == Mode::MimeSniff)
-        m_mimeType = stripLeadingAndTrailingHTTPSpaces(m_mimeType).convertToASCIILowercase();
+        m_mimeType = stripLeadingAndTrailingHTTPSpaces(StringView(m_mimeType)).convertToASCIILowercase();
     else
         m_mimeType = m_mimeType.stripWhiteSpace();
 }
@@ -408,7 +407,7 @@ String ParsedContentType::serialize() const
             builder.append('"');
             for (unsigned index = 0; index < value.length(); ++index) {
                 auto ch = value[index];
-                if (ch == '\\' || ch =='"')
+                if (ch == '\\' || ch == '"')
                     builder.append('\\');
                 builder.append(ch);
             }

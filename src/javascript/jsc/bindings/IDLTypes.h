@@ -25,14 +25,15 @@
 
 #pragma once
 
-#include "JavaScriptCore/HandleTypes.h"
-#include "JavaScriptCore/Strong.h"
 #include "StringAdaptors.h"
-#include "wtf/Brigand.h"
-#include "wtf/StdLibExtras.h"
-#include "wtf/URL.h"
-#include "wtf/WallTime.h"
+#include <JavaScriptCore/HandleTypes.h>
+#include <JavaScriptCore/Strong.h>
 #include <variant>
+#include <wtf/Brigand.h>
+#include <wtf/Markable.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/URL.h>
+#include <wtf/WallTime.h>
 
 #if ENABLE(WEBGL)
 #include "WebGLAny.h"
@@ -75,6 +76,14 @@ struct IDLType {
     static NullableType nullValue() { return std::nullopt; }
     static bool isNullValue(const NullableType& value) { return !value; }
     static ImplementationType extractValueFromNullable(const NullableType& value) { return value.value(); }
+
+    template<typename Traits> using NullableTypeWithLessPadding = Markable<ImplementationType, Traits>;
+    template<typename Traits>
+    static NullableTypeWithLessPadding<Traits> nullValue() { return std::nullopt; }
+    template<typename Traits>
+    static bool isNullType(const NullableTypeWithLessPadding<Traits>& value) { return !value; }
+    template<typename Traits>
+    static ImplementationType extractValueFromNullable(const NullableTypeWithLessPadding<Traits>& value) { return value.value(); }
 };
 
 // IDLUnsupportedType is a special type that serves as a base class for currently unsupported types.
@@ -149,7 +158,8 @@ template<typename StringType> struct IDLString : IDLType<StringType> {
 
     using NullableType = StringType;
     static StringType nullValue() { return StringType(); }
-    static bool isNullValue(const StringType& value) { return value.isNull(); }
+    static bool isNullValue(const String& value) { return value.isNull(); }
+    static bool isNullValue(const AtomString& value) { return value.isNull(); }
     static bool isNullValue(const UncachedString& value) { return value.string.isNull(); }
     static bool isNullValue(const OwnedString& value) { return value.string.isNull(); }
     static bool isNullValue(const URL& value) { return value.isNull(); }
@@ -163,6 +173,10 @@ struct IDLUSVString : IDLString<String> {
 };
 
 template<typename T> struct IDLLegacyNullToEmptyStringAdaptor : IDLString<String> {
+    using InnerType = T;
+};
+
+template<typename T> struct IDLLegacyNullToEmptyAtomStringAdaptor : IDLString<AtomString> {
     using InnerType = T;
 };
 

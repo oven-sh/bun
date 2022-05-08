@@ -23,10 +23,10 @@
 #include "JSDOMConvertStrings.h"
 
 #include "JSDOMExceptionHandling.h"
-#include "JavaScriptCore/HeapInlines.h"
-#include "JavaScriptCore/JSCJSValueInlines.h"
-#include "wtf/text/StringBuilder.h"
-#include "wtf/unicode/CharacterNames.h"
+#include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -42,14 +42,13 @@ String identifierToString(JSGlobalObject& lexicalGlobalObject, const Identifier&
     return identifier.string();
 }
 
-static inline String stringToByteString(JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, String&& string)
+static inline bool throwIfInvalidByteString(JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, const String& string)
 {
-    if (!string.isAllLatin1()) {
+    if (UNLIKELY(!string.isAllLatin1())) {
         throwTypeError(&lexicalGlobalObject, scope);
-        return {};
+        return true;
     }
-
-    return WTFMove(string);
+    return false;
 }
 
 String identifierToByteString(JSGlobalObject& lexicalGlobalObject, const Identifier& identifier)
@@ -59,7 +58,9 @@ String identifierToByteString(JSGlobalObject& lexicalGlobalObject, const Identif
 
     auto string = identifierToString(lexicalGlobalObject, identifier);
     RETURN_IF_EXCEPTION(scope, {});
-    return stringToByteString(lexicalGlobalObject, scope, WTFMove(string));
+    if (UNLIKELY(throwIfInvalidByteString(lexicalGlobalObject, scope, string)))
+        return {};
+    return string;
 }
 
 String valueToByteString(JSGlobalObject& lexicalGlobalObject, JSValue value)
@@ -70,7 +71,23 @@ String valueToByteString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     auto string = value.toWTFString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return stringToByteString(lexicalGlobalObject, scope, WTFMove(string));
+    if (UNLIKELY(throwIfInvalidByteString(lexicalGlobalObject, scope, string)))
+        return {};
+    return string;
+}
+
+AtomString valueToByteAtomString(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+{
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (UNLIKELY(throwIfInvalidByteString(lexicalGlobalObject, scope, string.string())))
+        return nullAtom();
+
+    return string;
 }
 
 String identifierToUSVString(JSGlobalObject& lexicalGlobalObject, const Identifier& identifier)
@@ -84,6 +101,17 @@ String valueToUSVString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto string = value.toWTFString(&lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return replaceUnpairedSurrogatesWithReplacementCharacter(WTFMove(string));
+}
+
+AtomString valueToUSVAtomString(JSGlobalObject& lexicalGlobalObject, JSValue value)
+{
+    VM& vm = lexicalGlobalObject.vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     return replaceUnpairedSurrogatesWithReplacementCharacter(WTFMove(string));

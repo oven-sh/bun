@@ -24,7 +24,6 @@
 #include "JSDOMConvertBoolean.h"
 #include <JavaScriptCore/JSCInlines.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -36,19 +35,19 @@ template<> EventListenerOptions convertDictionary<EventListenerOptions>(JSGlobal
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     EventListenerOptions result;
     JSValue captureValue;
     if (isNullOrUndefined)
         captureValue = jsUndefined();
     else {
-        captureValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "capture"));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        captureValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "capture"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!captureValue.isUndefined()) {
         result.capture = convert<IDLBoolean>(lexicalGlobalObject, captureValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.capture = false;
     return result;

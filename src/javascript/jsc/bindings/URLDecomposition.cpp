@@ -233,7 +233,7 @@ void URLDecomposition::setSearch(const String& value)
     } else {
         String newSearch = value;
         // Make sure that '#' in the query does not leak to the hash.
-        fullURL.setQuery(newSearch.replaceWithLiteral('#', "%23"));
+        fullURL.setQuery(makeStringByReplacingAll(value, '#', "%23"_s));
     }
     setFullURL(fullURL);
 }

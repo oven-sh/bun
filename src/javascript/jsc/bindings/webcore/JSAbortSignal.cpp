@@ -167,7 +167,7 @@ JSAbortSignal::JSAbortSignal(Structure* structure, JSDOMGlobalObject& globalObje
 void JSAbortSignal::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 }
 
 JSObject* JSAbortSignal::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -189,7 +189,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsAbortSignalConstructor, (JSGlobalObject * lexicalGlob
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSAbortSignalPrototype*>(vm, JSValue::decode(thisValue));
+    auto* prototype = jsDynamicCast<JSAbortSignalPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSAbortSignal::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -416,7 +416,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 AbortSignal* JSAbortSignal::toWrapped(JSC::VM& vm, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSAbortSignal*>(vm, value))
+    if (auto* wrapper = jsDynamicCast<JSAbortSignal*>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

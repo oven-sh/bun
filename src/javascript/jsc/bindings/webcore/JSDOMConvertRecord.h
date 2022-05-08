@@ -100,14 +100,14 @@ private:
 
         // 4. Let keys be ? O.[[OwnPropertyKeys]]().
         JSC::PropertyNameArray keys(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
-        object->methodTable(vm)->getOwnPropertyNames(object, &lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Include);
+        object->methodTable()->getOwnPropertyNames(object, &lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Include);
         RETURN_IF_EXCEPTION(scope, {});
 
         // 5. Repeat, for each element key of keys in List order:
         for (auto& key : keys) {
             // 1. Let desc be ? O.[[GetOwnProperty]](key).
             JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-            bool hasProperty = object->methodTable(vm)->getOwnPropertySlot(object, &lexicalGlobalObject, key, slot);
+            bool hasProperty = object->methodTable()->getOwnPropertySlot(object, &lexicalGlobalObject, key, slot);
             RETURN_IF_EXCEPTION(scope, {});
 
             // 2. If desc is not undefined and desc.[[Enumerable]] is true:

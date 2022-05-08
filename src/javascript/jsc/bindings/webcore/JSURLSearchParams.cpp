@@ -190,7 +190,7 @@ JSURLSearchParams::JSURLSearchParams(Structure* structure, JSDOMGlobalObject& gl
 void JSURLSearchParams::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 
     // static_assert(!std::is_base_of<ActiveDOMObject, URLSearchParams>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
@@ -220,7 +220,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsURLSearchParamsConstructor, (JSGlobalObject * lexical
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSURLSearchParamsPrototype*>(vm, JSValue::decode(thisValue));
+    auto* prototype = jsDynamicCast<JSURLSearchParamsPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSURLSearchParams::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -551,7 +551,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 
 URLSearchParams* JSURLSearchParams::toWrapped(JSC::VM& vm, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSURLSearchParams*>(vm, value))
+    if (auto* wrapper = jsDynamicCast<JSURLSearchParams*>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

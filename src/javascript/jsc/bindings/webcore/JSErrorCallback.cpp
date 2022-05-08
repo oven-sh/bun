@@ -28,12 +28,11 @@
 #include "JSDOMGlobalObject.h"
 #include "ScriptExecutionContext.h"
 
-
 namespace WebCore {
 using namespace JSC;
 
 JSErrorCallback::JSErrorCallback(VM& vm, JSObject* callback)
-    : ErrorCallback(jsCast<JSDOMGlobalObject*>(callback->globalObject(vm))->scriptExecutionContext())
+    : ErrorCallback(jsCast<JSDOMGlobalObject*>(callback->globalObject())->scriptExecutionContext())
     , m_data(new JSCallbackDataStrong(vm, callback, this))
 {
 }
@@ -74,9 +73,9 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSErrorCallback::handl
     if (returnedException) {
         reportException(&lexicalGlobalObject, returnedException);
         return CallbackResultType::ExceptionThrown;
-     }
+    }
 
-    return { };
+    return {};
 }
 
 JSC::JSValue toJS(ErrorCallback& impl)

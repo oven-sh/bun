@@ -200,14 +200,6 @@ static const unsigned char* taggedUTF16Ptr(const UChar* ptr)
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
 }
 
-static ZigString toZigString(WTF::String str)
-{
-    return str.isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str.is8Bit() ? str.characters8() : taggedUTF16Ptr(str.characters16()),
-              str.length() };
-}
-
 static ZigString toZigString(WTF::String* str)
 {
     return str->isEmpty()

@@ -38,7 +38,7 @@ template<> struct Converter<IDLScheduledAction> : DefaultConverter<IDLScheduledA
         JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        if (!value.isCallable(vm)) {
+        if (!value.isCallable()) {
             auto code = Converter<IDLDOMString>::convert(lexicalGlobalObject, value);
             RETURN_IF_EXCEPTION(scope, nullptr);
             return ScheduledAction::create(globalObject.world(), WTFMove(code));
@@ -51,4 +51,3 @@ template<> struct Converter<IDLScheduledAction> : DefaultConverter<IDLScheduledA
 };
 
 }
-

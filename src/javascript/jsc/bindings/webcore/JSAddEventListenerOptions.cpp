@@ -26,7 +26,6 @@
 #include "JSDOMConvertInterface.h"
 #include <JavaScriptCore/JSCInlines.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -38,54 +37,54 @@ template<> AddEventListenerOptions convertDictionary<AddEventListenerOptions>(JS
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     AddEventListenerOptions result;
     JSValue captureValue;
     if (isNullOrUndefined)
         captureValue = jsUndefined();
     else {
-        captureValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "capture"));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        captureValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "capture"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!captureValue.isUndefined()) {
         result.capture = convert<IDLBoolean>(lexicalGlobalObject, captureValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.capture = false;
     JSValue onceValue;
     if (isNullOrUndefined)
         onceValue = jsUndefined();
     else {
-        onceValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "once"));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        onceValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "once"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!onceValue.isUndefined()) {
         result.once = convert<IDLBoolean>(lexicalGlobalObject, onceValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.once = false;
     JSValue passiveValue;
     if (isNullOrUndefined)
         passiveValue = jsUndefined();
     else {
-        passiveValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "passive"));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        passiveValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "passive"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!passiveValue.isUndefined()) {
         result.passive = convert<IDLBoolean>(lexicalGlobalObject, passiveValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue signalValue;
     if (isNullOrUndefined)
         signalValue = jsUndefined();
     else {
-        signalValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "signal"));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        signalValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "signal"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!signalValue.isUndefined()) {
         result.signal = convert<IDLInterface<AbortSignal>>(lexicalGlobalObject, signalValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;
 }

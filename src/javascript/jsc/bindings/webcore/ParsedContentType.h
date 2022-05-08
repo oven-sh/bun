@@ -63,7 +63,7 @@ private:
     ParsedContentType(const ParsedContentType&) = delete;
     ParsedContentType& operator=(ParsedContentType const&) = delete;
     bool parseContentType(Mode);
-    void setContentType(StringView, Mode);
+    void setContentType(String&&, Mode);
     void setContentTypeParameter(const String&, const String&, Mode);
 
     typedef HashMap<String, String> KeyValuePairs;

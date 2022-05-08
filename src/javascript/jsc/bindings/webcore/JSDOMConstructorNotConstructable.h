@@ -62,7 +62,7 @@ template<typename JSClass> inline JSC::Structure* JSDOMConstructorNotConstructab
 template<typename JSClass> inline void JSDOMConstructorNotConstructable<JSClass>::finishCreation(JSC::VM& vm, JSDOMGlobalObject& globalObject)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
     initializeProperties(vm, globalObject);
 }
 

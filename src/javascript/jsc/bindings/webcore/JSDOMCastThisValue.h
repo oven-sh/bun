@@ -48,7 +48,7 @@ JSClass* castThisValue(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue th
     if constexpr (std::is_base_of_v<JSDOMGlobalObject, JSClass>)
         return toJSDOMGlobalObject<JSClass>(vm, thisValue.isUndefinedOrNull() ? JSC::JSValue(&lexicalGlobalObject) : thisValue);
     else
-        return JSC::jsDynamicCast<JSClass*>(vm, thisValue);
+        return JSC::jsDynamicCast<JSClass*>(thisValue);
 }
 
 }

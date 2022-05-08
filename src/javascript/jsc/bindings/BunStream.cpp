@@ -61,7 +61,7 @@ static WritableEvent getWritableEvent(const WTF::String& eventName)
 
 // clang-format off
 #define DEFINE_CALLBACK_FUNCTION_BODY(TypeName, ZigFunction) JSC::VM& vm = globalObject->vm(); \
-    auto* thisObject = JSC::jsDynamicCast<TypeName*>(vm, callFrame->thisValue()); \
+    auto* thisObject = JSC::jsDynamicCast<TypeName*>( callFrame->thisValue()); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     if (!thisObject) \
         return throwVMTypeError(globalObject, scope); \
@@ -127,7 +127,7 @@ static JSC_DEFINE_HOST_FUNCTION(Readable__on,
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto thisObject = JSC::jsDynamicCast<WebCore::Readable*>(vm, callFrame->thisValue());
+    auto thisObject = JSC::jsDynamicCast<WebCore::Readable*>(callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
         scope.release();
         JSC::throwVMTypeError(globalObject, scope);
@@ -149,7 +149,7 @@ static JSC_DEFINE_HOST_FUNCTION(Readable__on,
 
     auto listener = callFrame->argument(1);
     JSC::JSObject* object = listener.getObject();
-    if (UNLIKELY(!object) || !listener.isCallable(vm)) {
+    if (UNLIKELY(!object) || !listener.isCallable()) {
         scope.release();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -163,7 +163,7 @@ static JSC_DEFINE_HOST_FUNCTION(Readable__on,
 
 extern "C" Bun__Readable* JSC__JSValue__getReadableStreamState(JSC__JSValue value, JSC__VM* vm)
 {
-    auto* thisObject = JSC::jsDynamicCast<WebCore::Readable*>(*vm, JSC::JSValue::decode(value));
+    auto* thisObject = JSC::jsDynamicCast<WebCore::Readable*>(JSC::JSValue::decode(value));
     if (UNLIKELY(!thisObject)) {
         return nullptr;
     }
@@ -171,7 +171,7 @@ extern "C" Bun__Readable* JSC__JSValue__getReadableStreamState(JSC__JSValue valu
 }
 extern "C" Bun__Writable* JSC__JSValue__getWritableStreamState(JSC__JSValue value, JSC__VM* vm)
 {
-    auto* thisObject = JSC::jsDynamicCast<WebCore::Writable*>(*vm, JSC::JSValue::decode(value));
+    auto* thisObject = JSC::jsDynamicCast<WebCore::Writable*>(JSC::JSValue::decode(value));
     if (UNLIKELY(!thisObject)) {
         return nullptr;
     }
@@ -194,7 +194,7 @@ static JSC_DEFINE_HOST_FUNCTION(Readable__once,
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto thisObject = JSC::jsDynamicCast<WebCore::Readable*>(vm, callFrame->thisValue());
+    auto thisObject = JSC::jsDynamicCast<WebCore::Readable*>(callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
         scope.release();
         JSC::throwVMTypeError(globalObject, scope);
@@ -216,7 +216,7 @@ static JSC_DEFINE_HOST_FUNCTION(Readable__once,
 
     auto listener = callFrame->argument(1);
     JSC::JSObject* object = listener.getObject();
-    if (UNLIKELY(!object) || !listener.isCallable(vm)) {
+    if (UNLIKELY(!object) || !listener.isCallable()) {
         scope.release();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -238,7 +238,7 @@ static JSC_DEFINE_HOST_FUNCTION(Writable__on,
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto thisObject = JSC::jsDynamicCast<WebCore::Writable*>(vm, callFrame->thisValue());
+    auto thisObject = JSC::jsDynamicCast<WebCore::Writable*>(callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
         scope.release();
         JSC::throwVMTypeError(globalObject, scope);
@@ -260,7 +260,7 @@ static JSC_DEFINE_HOST_FUNCTION(Writable__on,
 
     auto listener = callFrame->argument(1);
     JSC::JSObject* object = listener.getObject();
-    if (UNLIKELY(!object) || !listener.isCallable(vm)) {
+    if (UNLIKELY(!object) || !listener.isCallable()) {
         scope.release();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
@@ -282,7 +282,7 @@ static JSC_DEFINE_HOST_FUNCTION(Writable__once,
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto thisObject = JSC::jsDynamicCast<WebCore::Writable*>(vm, callFrame->thisValue());
+    auto thisObject = JSC::jsDynamicCast<WebCore::Writable*>(callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
         scope.release();
         JSC::throwVMTypeError(globalObject, scope);
@@ -304,7 +304,7 @@ static JSC_DEFINE_HOST_FUNCTION(Writable__once,
 
     auto listener = callFrame->argument(1);
     JSC::JSObject* object = listener.getObject();
-    if (UNLIKELY(!object) || !listener.isCallable(vm)) {
+    if (UNLIKELY(!object) || !listener.isCallable()) {
         scope.release();
         return JSC::JSValue::encode(JSC::jsUndefined());
     }

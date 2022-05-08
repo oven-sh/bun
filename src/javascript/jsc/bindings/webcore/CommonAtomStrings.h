@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,31 +25,48 @@
 
 #pragma once
 
-#include "IDLTypes.h"
-#include "JSDOMConvertBase.h"
-
-#include "JSCustomXPathNSResolver.h"
-#include "JSXPathNSResolver.h"
+#include <wtf/NeverDestroyed.h>
+#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
-template<> struct Converter<IDLInterface<XPathNSResolver>> : DefaultConverter<IDLInterface<XPathNSResolver>> {
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static RefPtr<XPathNSResolver> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
-    {
-        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!value.isObject()) {
-            exceptionThrower(lexicalGlobalObject, scope);
-            return nullptr;
-        }
+#define WEBCORE_COMMON_ATOM_STRINGS_FOR_EACH_KEYWORD(macro) \
+    macro(alternative, "alternative") \
+    macro(auto, "auto") \
+    macro(captions, "captions") \
+    macro(commentary, "commentary") \
+    macro(cssContentType, "text/css") \
+    macro(eager, "eager") \
+    macro(email, "email") \
+    macro(false, "false") \
+    macro(lazy, "lazy") \
+    macro(main, "main") \
+    macro(none, "none") \
+    macro(off, "off") \
+    macro(on, "on") \
+    macro(plaintextOnly, "plaintext-only") \
+    macro(reset, "reset") \
+    macro(search, "search") \
+    macro(star, "*") \
+    macro(submit, "submit") \
+    macro(subtitles, "subtitles") \
+    macro(tel, "tel") \
+    macro(text, "text") \
+    macro(textPlainContentType, "text/plain") \
+    macro(true, "true") \
+    macro(url, "url") \
+    macro(xml, "xml") \
+    macro(xmlns, "xmlns")
 
-        auto object = asObject(value);
-        if (object->inherits<JSXPathNSResolver>())
-            return &JSC::jsCast<JSXPathNSResolver*>(object)->wrapped();
 
-        return JSCustomXPathNSResolver::create(vm, object);
-    }
-};
+#define DECLARE_COMMON_ATOM(atomName, atomValue) \
+    extern MainThreadLazyNeverDestroyed<const AtomString> atomName ## AtomData; \
+    inline const AtomString& atomName ## Atom() { return atomName ## AtomData.get(); }
+
+WEBCORE_COMMON_ATOM_STRINGS_FOR_EACH_KEYWORD(DECLARE_COMMON_ATOM)
+
+#undef DECLARE_COMMON_ATOM
+
+WEBCORE_EXPORT void initializeCommonAtomStrings();
 
 } // namespace WebCore

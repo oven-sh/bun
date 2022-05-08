@@ -47,7 +47,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
 
     // https://webidl.spec.whatwg.org/#ref-for-prepare-to-run-script makes callback's [[Realm]] a running JavaScript execution context,
     // which is used for creating TypeError objects: https://tc39.es/ecma262/#sec-ecmascript-function-objects-call-thisargument-argumentslist (step 4).
-    JSGlobalObject* lexicalGlobalObject = callback->globalObject(vm);
+    JSGlobalObject* lexicalGlobalObject = callback->globalObject();
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSValue function;
@@ -55,7 +55,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
 
     if (method != CallbackType::Object) {
         function = callback;
-        callData = getCallData(vm, callback);
+        callData = getCallData(callback);
     }
     if (callData.type == CallData::Type::None) {
         if (method == CallbackType::Function) {
@@ -71,7 +71,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
             return JSValue();
         }
 
-        callData = getCallData(vm, function);
+        callData = getCallData(function);
         if (callData.type == CallData::Type::None) {
             returnedException = JSC::Exception::create(vm, createTypeError(lexicalGlobalObject, makeString("'", String(functionName.uid()), "' property of callback interface should be callable")));
             return JSValue();

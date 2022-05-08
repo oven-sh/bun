@@ -110,7 +110,7 @@ inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSGlobal
 
 inline RefPtr<JSC::ArrayBufferView> toPossiblySharedArrayBufferView(JSC::VM& vm, JSC::JSValue value)
 {
-    auto* wrapper = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(vm, value);
+    auto* wrapper = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value);
     if (!wrapper)
         return nullptr;
     return wrapper->possiblySharedImpl();

@@ -77,7 +77,7 @@ template<typename WebCoreType, typename OutType>
 OutType* WebCoreCast(JSC__JSValue JSValue0, JSC::VM* vm)
 {
     // we must use jsDynamicCast here so that we check that the type is correct
-    WebCoreType* jsdomURL = JSC::jsDynamicCast<WebCoreType*>(*vm, JSC::JSValue::decode(JSValue0));
+    WebCoreType* jsdomURL = JSC::jsDynamicCast<WebCoreType*>(JSC::JSValue::decode(JSValue0));
     if (jsdomURL == nullptr) {
         return nullptr;
     }
@@ -410,7 +410,7 @@ void JSC__JSObject__putRecord(JSC__JSObject* object, JSC__JSGlobalObject* global
         descriptor.setValue(array);
     }
 
-    object->methodTable(global->vm())->defineOwnProperty(object, global, ident, descriptor, true);
+    object->methodTable()->defineOwnProperty(object, global, ident, descriptor, true);
     object->putDirect(global->vm(), ident, descriptor.value());
     scope.release();
 }
@@ -454,7 +454,7 @@ void JSC__JSValue__putRecord(JSC__JSValue objectValue, JSC__JSGlobalObject* glob
         descriptor.setValue(array);
     }
 
-    object->methodTable(global->vm())->defineOwnProperty(object, global, ident, descriptor, true);
+    object->methodTable()->defineOwnProperty(object, global, ident, descriptor, true);
     object->putDirect(global->vm(), ident, descriptor.value());
     scope.release();
 }
@@ -545,9 +545,9 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObjec
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
 
-    if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(globalObject->vm(), cell)) {
+    if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
         promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
-    } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(globalObject->vm(), cell)) {
+    } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
         promise->then(globalObject, resolverFunction, rejecterFunction);
     }
 }
@@ -559,7 +559,7 @@ JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject*
     JSC::JSValue result = JSC::JSONParse(arg1, jsValue.toWTFString(arg1));
 
     if (!result) {
-        result = JSC::JSValue(JSC::createSyntaxError(arg1->globalObject(), "Failed to parse JSON"));
+        result = JSC::JSValue(JSC::createSyntaxError(arg1->globalObject(), "Failed to parse JSON"_s));
     }
 
     return JSC::JSValue::encode(result);
@@ -587,7 +587,7 @@ JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* globalObj
 void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global, ZigString* arg1)
 {
     JSC::JSMap* map = JSC::jsDynamicCast<JSC::JSMap*>(
-        global->vm(), global->moduleLoader()->getDirect(global->vm(), JSC::Identifier::fromString(global->vm(), "registry")));
+        global->moduleLoader()->getDirect(global->vm(), JSC::Identifier::fromString(global->vm(), "registry"_s)));
     if (!map)
         return;
     const JSC::Identifier identifier = Zig::toIdentifier(*arg1, global);
@@ -602,7 +602,7 @@ JSC__JSInternalPromise* JSC__VM__reloadModule(JSC__VM* vm, JSC__JSGlobalObject* 
     return nullptr;
     // JSC::JSMap *map = JSC::jsDynamicCast<JSC::JSMap *>(
     //   arg1->vm(), arg1->moduleLoader()->getDirect(
-    //                 arg1->vm(), JSC::Identifier::fromString(arg1->vm(), "registry")));
+    //                 arg1->vm(), JSC::Identifier::fromString(arg1->vm(), "registry"_s)));
 
     // const JSC::Identifier identifier = Zig::toIdentifier(arg2, arg1);
     // JSC::JSValue val = JSC::identifierToJSValue(arg1->vm(), identifier);
@@ -610,7 +610,7 @@ JSC__JSInternalPromise* JSC__VM__reloadModule(JSC__VM* vm, JSC__JSGlobalObject* 
     // if (!map->has(arg1, val)) return nullptr;
 
     // if (JSC::JSObject *registryEntry =
-    //       JSC::jsDynamicCast<JSC::JSObject *>(arg1->vm(), map->get(arg1, val))) {
+    //       JSC::jsDynamicCast<JSC::JSObject *>(arg1-> map->get(arg1, val))) {
     //   auto moduleIdent = JSC::Identifier::fromString(arg1->vm(), "module");
     //   if (JSC::JSModuleRecord *record = JSC::jsDynamicCast<JSC::JSModuleRecord *>(
     //         arg1->vm(), registryEntry->getDirect(arg1->vm(), moduleIdent))) {
@@ -657,7 +657,7 @@ JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSObjectRef obj
     for (size_t i = 0; i < argumentCount; i++)
         argList.append(toJS(globalObject, arguments[i]));
 
-    auto callData = getCallData(vm, jsObject);
+    auto callData = getCallData(jsObject);
     if (callData.type == JSC::CallData::Type::None)
         return JSC::JSValue::encode(JSC::JSValue());
 
@@ -699,7 +699,7 @@ JSC__JSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, J
     for (size_t i = 0; i < argumentCount; i++)
         argList.append(toJS(globalObject, arguments[i]));
 
-    auto callData = getCallData(vm, jsObject);
+    auto callData = getCallData(jsObject);
     if (callData.type == JSC::CallData::Type::None)
         return JSC::JSValue::encode(JSC::JSValue());
 
@@ -964,7 +964,7 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
 
     JSC::JSObject* object = value.getObject();
 
-    if (JSC::JSArrayBufferView* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(vm, object)) {
+    if (JSC::JSArrayBufferView* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(object)) {
         if (JSC::ArrayBuffer* buffer = typedArray->possiblySharedBuffer()) {
             buffer->pinAndLock();
             arg2->ptr = reinterpret_cast<char*>(buffer->data());
@@ -1724,7 +1724,7 @@ JSC__JSValue JSC__JSValue__getPrototype(JSC__JSValue JSValue0, JSC__JSGlobalObje
 }
 bool JSC__JSValue__isException(JSC__JSValue JSValue0, JSC__VM* arg1)
 {
-    return JSC::jsDynamicCast<JSC::Exception*>(*arg1, JSC::JSValue::decode(JSValue0)) != nullptr;
+    return JSC::jsDynamicCast<JSC::Exception*>(JSC::JSValue::decode(JSValue0)) != nullptr;
 }
 bool JSC__JSValue__isAnyInt(JSC__JSValue JSValue0)
 {
@@ -1752,7 +1752,7 @@ void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const Z
 bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return value.isConstructor(arg1->vm());
+    return value.isConstructor();
 }
 bool JSC__JSValue__isCell(JSC__JSValue JSValue0) { return JSC::JSValue::decode(JSValue0).isCell(); }
 bool JSC__JSValue__isCustomGetterSetter(JSC__JSValue JSValue0)
@@ -1770,7 +1770,7 @@ bool JSC__JSValue__isAggregateError(JSC__JSValue JSValue0, JSC__JSGlobalObject* 
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
 
     if (obj != nullptr) {
-        if (JSC::ErrorInstance* err = JSC::jsDynamicCast<JSC::ErrorInstance*>(global->vm(), obj)) {
+        if (JSC::ErrorInstance* err = JSC::jsDynamicCast<JSC::ErrorInstance*>(obj)) {
             return err->errorType() == JSC::ErrorType::AggregateError;
         }
     }
@@ -1795,7 +1795,7 @@ void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, voi
 
 bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM* arg1)
 {
-    return JSC::JSValue::decode(JSValue0).isCallable(reinterpret_cast<JSC::VM&>(arg1));
+    return JSC::JSValue::decode(JSValue0).isCallable();
 }
 bool JSC__JSValue__isGetterSetter(JSC__JSValue JSValue0)
 {
@@ -1950,9 +1950,9 @@ JSC__JSValue JSC__JSValue__createObject2(JSC__JSGlobalObject* globalObject, cons
     descriptor2.setWritable(1);
     descriptor2.setValue(JSC::JSValue::decode(JSValue4));
 
-    object->methodTable(globalObject->vm())
+    object->methodTable()
         ->defineOwnProperty(object, globalObject, key2, descriptor2, true);
-    object->methodTable(globalObject->vm())
+    object->methodTable()
         ->defineOwnProperty(object, globalObject, key1, descriptor1, true);
 
     return JSC::JSValue::encode(object);
@@ -2006,7 +2006,7 @@ bool JSC__JSValue__symbolKeyFor(JSC__JSValue symbolValue_, JSC__JSGlobalObject* 
     if (!uid.symbolRegistry())
         return false;
 
-    *arg2 = Zig::toZigString(JSC::jsString(vm, &uid), arg1);
+    *arg2 = Zig::toZigString(JSC::jsString(vm, String { uid }), arg1);
     return true;
 }
 
@@ -2098,8 +2098,10 @@ static void populateStackFrameMetadata(const JSC::StackFrame* stackFrame, ZigSta
         return;
 
     JSC::JSObject* callee = JSC::jsCast<JSC::JSObject*>(calleeCell);
+    auto& vm = m_codeBlock->vm();
+
     // Does the code block have a user-defined name property?
-    JSC::JSValue name = callee->getDirect(m_codeBlock->vm(), m_codeBlock->vm().propertyNames->name);
+    JSC::JSValue name = callee->getDirect(vm, vm.propertyNames->name);
     if (name && name.isString()) {
         auto str = name.toWTFString(m_codeBlock->globalObject());
         frame->function_name = Zig::toZigString(str);
@@ -2109,9 +2111,9 @@ static void populateStackFrameMetadata(const JSC::StackFrame* stackFrame, ZigSta
     /* For functions (either JSFunction or InternalFunction), fallback to their "native" name
      * property. Based on JSC::getCalculatedDisplayName, "inlining" the
      * JSFunction::calculatedDisplayName\InternalFunction::calculatedDisplayName calls */
-    if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(m_codeBlock->vm(), callee)) {
+    if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(callee)) {
 
-        WTF::String actualName = function->name(m_codeBlock->vm());
+        WTF::String actualName = function->name(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
             frame->function_name = Zig::toZigString(actualName);
             return;
@@ -2121,7 +2123,7 @@ static void populateStackFrameMetadata(const JSC::StackFrame* stackFrame, ZigSta
         frame->function_name = Zig::toZigString(inferred_name.string());
     }
 
-    if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(m_codeBlock->vm(), callee)) {
+    if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(callee)) {
         // Based on JSC::InternalFunction::calculatedDisplayName, skipping the "displayName" property
         frame->function_name = Zig::toZigString(function->name());
     }
@@ -2285,7 +2287,7 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
     JSC::JSValue val)
 {
-    JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(global->vm(), val);
+    JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(val);
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
@@ -2356,7 +2358,7 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
 {
     // Fallback case for when it's a user-defined ErrorLike-object that doesn't inherit from
     // ErrorInstance
-    if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(global->vm(), value)) {
+    if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(value)) {
         if (obj->hasProperty(global, global->vm().propertyNames->name)) {
             auto name_str = obj->getIfPropertyExists(global, global->vm().propertyNames->name).toWTFString(global);
             except->name = Zig::toZigString(name_str);
@@ -2426,7 +2428,7 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
         return;
     }
 
-    const char* ptr = cell->className(arg1->vm());
+    const char* ptr = cell->className();
     auto view = WTF::StringView(ptr);
 
     // Fallback to .name if className is empty
@@ -2465,7 +2467,7 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
         }
     }
 
-    if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(vm, obj)) {
+    if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(obj)) {
 
         WTF::String actualName = function->name(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
@@ -2479,7 +2481,7 @@ void JSC__JSValue__getNameProperty(JSC__JSValue JSValue0, JSC__JSGlobalObject* a
         return;
     }
 
-    if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(vm, obj)) {
+    if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(obj)) {
         auto view = WTF::StringView(function->name());
         *arg2 = Zig::toZigString(view);
         return;
@@ -2493,14 +2495,14 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
 
-    if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(arg1->vm(), value)) {
-        if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(arg1->vm(), jscException->value())) {
+    if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
+        if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
             fromErrorInstance(exception, arg1, error, &jscException->stack(), value);
             return;
         }
     }
 
-    if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(arg1->vm(), value)) {
+    if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
         fromErrorInstance(exception, arg1, error, nullptr, value);
         return;
     }
@@ -2561,7 +2563,7 @@ void JSC__VM__setExecutionTimeLimit(JSC__VM* vm, double limit)
 
 bool JSC__JSValue__isTerminationException(JSC__JSValue JSValue0, JSC__VM* arg1)
 {
-    JSC::Exception* exception = JSC::jsDynamicCast<JSC::Exception*>(*arg1, JSC::JSValue::decode(JSValue0));
+    JSC::Exception* exception = JSC::jsDynamicCast<JSC::Exception*>(JSC::JSValue::decode(JSValue0));
     return exception != NULL && arg1->isTerminationException(exception);
 }
 
@@ -2591,8 +2593,8 @@ void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
     JSC::JSLockHolder locker(globalObject->vm());
 
     arg1->drainMicrotasks();
-    if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->vm(), globalObject->moduleLoader())) {
-        auto id = JSC::Identifier::fromString(globalObject->vm(), "registry");
+    if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
+        auto id = JSC::Identifier::fromString(globalObject->vm(), "registry"_s);
         JSC::JSMap* map = JSC::JSMap::create(globalObject, globalObject->vm(), globalObject->mapStructure());
         obj->putDirect(globalObject->vm(), id, map);
     }

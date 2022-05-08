@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,33 +23,30 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
-
-#include "IDLTypes.h"
-#include "JSDOMConvertBase.h"
-
-#include "JSCustomXPathNSResolver.h"
-#include "JSXPathNSResolver.h"
+#include "config.h"
+#include "CommonAtomStrings.h"
 
 namespace WebCore {
 
-template<> struct Converter<IDLInterface<XPathNSResolver>> : DefaultConverter<IDLInterface<XPathNSResolver>> {
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static RefPtr<XPathNSResolver> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
-    {
-        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!value.isObject()) {
-            exceptionThrower(lexicalGlobalObject, scope);
-            return nullptr;
-        }
+#define DEFINE_COMMON_ATOM(atomName, atomValue) \
+    MainThreadLazyNeverDestroyed<const AtomString> atomName ## AtomData;
+#define INITIALIZE_COMMON_ATOM(atomName, atomValue) \
+    atomName ## AtomData.constructWithoutAccessCheck(atomValue ## _s);
 
-        auto object = asObject(value);
-        if (object->inherits<JSXPathNSResolver>())
-            return &JSC::jsCast<JSXPathNSResolver*>(object)->wrapped();
+WEBCORE_COMMON_ATOM_STRINGS_FOR_EACH_KEYWORD(DEFINE_COMMON_ATOM)
 
-        return JSCustomXPathNSResolver::create(vm, object);
-    }
-};
+void initializeCommonAtomStrings()
+{
+    // Initialization is not thread safe, so this function must be called from the main thread first.
+    ASSERT(isUIThread());
+
+    static std::once_flag initializeKey;
+    std::call_once(initializeKey, [] {
+        WEBCORE_COMMON_ATOM_STRINGS_FOR_EACH_KEYWORD(INITIALIZE_COMMON_ATOM)
+    });
+}
+
+#undef DEFINE_COMMON_ATOM
+#undef INITIALIZE_COMMON_ATOM
 
 } // namespace WebCore

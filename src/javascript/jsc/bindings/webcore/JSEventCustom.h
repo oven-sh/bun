@@ -36,9 +36,9 @@ template<>
 struct InheritsTraits<WebCore::JSEvent> {
     static constexpr std::optional<JSTypeRange> typeRange { { static_cast<JSType>(WebCore::JSEventType), static_cast<JSType>(WebCore::JSEventType) } };
     template<typename From>
-    static inline bool inherits(VM& vm, From* from)
+    static inline bool inherits(From* from)
     {
-        return inheritsJSTypeImpl<WebCore::JSEvent>(vm, from, *typeRange);
+        return inheritsJSTypeImpl<WebCore::JSEvent>(from, *typeRange);
     }
 };
 

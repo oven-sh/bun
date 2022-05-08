@@ -66,7 +66,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         bubblesValue = jsUndefined();
     else {
-        bubblesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "bubbles"));
+        bubblesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "bubbles"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!bubblesValue.isUndefined()) {
@@ -78,7 +78,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         cancelableValue = jsUndefined();
     else {
-        cancelableValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "cancelable"));
+        cancelableValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "cancelable"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!cancelableValue.isUndefined()) {
@@ -90,7 +90,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         composedValue = jsUndefined();
     else {
-        composedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "composed"));
+        composedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "composed"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!composedValue.isUndefined()) {
@@ -102,7 +102,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         colnoValue = jsUndefined();
     else {
-        colnoValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "colno"));
+        colnoValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "colno"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!colnoValue.isUndefined()) {
@@ -114,7 +114,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         errorValue = jsUndefined();
     else {
-        errorValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "error"));
+        errorValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "error"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!errorValue.isUndefined()) {
@@ -126,7 +126,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         filenameValue = jsUndefined();
     else {
-        filenameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "filename"));
+        filenameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "filename"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!filenameValue.isUndefined()) {
@@ -138,7 +138,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         linenoValue = jsUndefined();
     else {
-        linenoValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "lineno"));
+        linenoValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "lineno"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!linenoValue.isUndefined()) {
@@ -150,7 +150,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         messageValue = jsUndefined();
     else {
-        messageValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "message"));
+        messageValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "message"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!messageValue.isUndefined()) {
@@ -213,12 +213,12 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSErrorEventDOMConstructor::c
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto eventInitDict = convert<IDLDictionary<ErrorEvent::Init>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto object = ErrorEvent::create(WTFMove(type), WTFMove(eventInitDict));
+    auto object = ErrorEvent::create(type, WTFMove(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
@@ -277,7 +277,7 @@ JSErrorEvent::JSErrorEvent(Structure* structure, JSDOMGlobalObject& globalObject
 void JSErrorEvent::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 
     // static_assert(!std::is_base_of<ActiveDOMObject, ErrorEvent>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
@@ -301,7 +301,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsErrorEventConstructor, (JSGlobalObject * lexicalGloba
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSErrorEventPrototype*>(vm, JSValue::decode(thisValue));
+    auto* prototype = jsDynamicCast<JSErrorEventPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSErrorEvent::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));

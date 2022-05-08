@@ -390,63 +390,63 @@ extern const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeCons
 #define WEBCORE_BUILTIN_JSBUFFERPROTOTYPE_INITIALIZEBUNBUFFER 1
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_CODE(macro) \
-    macro(jsBufferPrototypeSetBigUint64Code, setBigUint64, static_cast<const char*>(nullptr), s_jsBufferPrototypeSetBigUint64CodeLength) \
-    macro(jsBufferPrototypeReadInt8Code, readInt8, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadInt8CodeLength) \
-    macro(jsBufferPrototypeReadUInt8Code, readUInt8, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadUInt8CodeLength) \
-    macro(jsBufferPrototypeReadInt16LECode, readInt16LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadInt16LECodeLength) \
-    macro(jsBufferPrototypeReadInt16BECode, readInt16BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadInt16BECodeLength) \
-    macro(jsBufferPrototypeReadUInt16LECode, readUInt16LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadUInt16LECodeLength) \
-    macro(jsBufferPrototypeReadUInt16BECode, readUInt16BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadUInt16BECodeLength) \
-    macro(jsBufferPrototypeReadInt32LECode, readInt32LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadInt32LECodeLength) \
-    macro(jsBufferPrototypeReadInt32BECode, readInt32BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadInt32BECodeLength) \
-    macro(jsBufferPrototypeReadUInt32LECode, readUInt32LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadUInt32LECodeLength) \
-    macro(jsBufferPrototypeReadUInt32BECode, readUInt32BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadUInt32BECodeLength) \
-    macro(jsBufferPrototypeReadFloatLECode, readFloatLE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadFloatLECodeLength) \
-    macro(jsBufferPrototypeReadFloatBECode, readFloatBE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadFloatBECodeLength) \
-    macro(jsBufferPrototypeReadDoubleLECode, readDoubleLE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadDoubleLECodeLength) \
-    macro(jsBufferPrototypeReadDoubleBECode, readDoubleBE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadDoubleBECodeLength) \
-    macro(jsBufferPrototypeReadBigInt64LECode, readBigInt64LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadBigInt64LECodeLength) \
-    macro(jsBufferPrototypeReadBigInt64BECode, readBigInt64BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadBigInt64BECodeLength) \
-    macro(jsBufferPrototypeReadBigUInt64LECode, readBigUInt64LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadBigUInt64LECodeLength) \
-    macro(jsBufferPrototypeReadBigUInt64BECode, readBigUInt64BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeReadBigUInt64BECodeLength) \
-    macro(jsBufferPrototypeWriteInt8Code, writeInt8, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteInt8CodeLength) \
-    macro(jsBufferPrototypeWriteUInt8Code, writeUInt8, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteUInt8CodeLength) \
-    macro(jsBufferPrototypeWriteInt16LECode, writeInt16LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteInt16LECodeLength) \
-    macro(jsBufferPrototypeWriteInt16BECode, writeInt16BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteInt16BECodeLength) \
-    macro(jsBufferPrototypeWriteUInt16LECode, writeUInt16LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteUInt16LECodeLength) \
-    macro(jsBufferPrototypeWriteUInt16BECode, writeUInt16BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteUInt16BECodeLength) \
-    macro(jsBufferPrototypeWriteInt32LECode, writeInt32LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteInt32LECodeLength) \
-    macro(jsBufferPrototypeWriteInt32BECode, writeInt32BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteInt32BECodeLength) \
-    macro(jsBufferPrototypeWriteUInt32LECode, writeUInt32LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteUInt32LECodeLength) \
-    macro(jsBufferPrototypeWriteUInt32BECode, writeUInt32BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteUInt32BECodeLength) \
-    macro(jsBufferPrototypeWriteFloatLECode, writeFloatLE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteFloatLECodeLength) \
-    macro(jsBufferPrototypeWriteFloatBECode, writeFloatBE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteFloatBECodeLength) \
-    macro(jsBufferPrototypeWriteDoubleLECode, writeDoubleLE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteDoubleLECodeLength) \
-    macro(jsBufferPrototypeWriteDoubleBECode, writeDoubleBE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteDoubleBECodeLength) \
-    macro(jsBufferPrototypeWriteBigInt64LECode, writeBigInt64LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteBigInt64LECodeLength) \
-    macro(jsBufferPrototypeWriteBigInt64BECode, writeBigInt64BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteBigInt64BECodeLength) \
-    macro(jsBufferPrototypeWriteBigUInt64LECode, writeBigUInt64LE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteBigUInt64LECodeLength) \
-    macro(jsBufferPrototypeWriteBigUInt64BECode, writeBigUInt64BE, static_cast<const char*>(nullptr), s_jsBufferPrototypeWriteBigUInt64BECodeLength) \
-    macro(jsBufferPrototypeSliceCode, slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeSliceCodeLength) \
-    macro(jsBufferPrototypeUtf8WriteCode, utf8Write, static_cast<const char*>(nullptr), s_jsBufferPrototypeUtf8WriteCodeLength) \
-    macro(jsBufferPrototypeUcs2WriteCode, ucs2Write, static_cast<const char*>(nullptr), s_jsBufferPrototypeUcs2WriteCodeLength) \
-    macro(jsBufferPrototypeUtf16leWriteCode, utf16leWrite, static_cast<const char*>(nullptr), s_jsBufferPrototypeUtf16leWriteCodeLength) \
-    macro(jsBufferPrototypeLatin1WriteCode, latin1Write, static_cast<const char*>(nullptr), s_jsBufferPrototypeLatin1WriteCodeLength) \
-    macro(jsBufferPrototypeAsciiWriteCode, asciiWrite, static_cast<const char*>(nullptr), s_jsBufferPrototypeAsciiWriteCodeLength) \
-    macro(jsBufferPrototypeBase64WriteCode, base64Write, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64WriteCodeLength) \
-    macro(jsBufferPrototypeBase64urlWriteCode, base64urlWrite, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64urlWriteCodeLength) \
-    macro(jsBufferPrototypeHexWriteCode, hexWrite, static_cast<const char*>(nullptr), s_jsBufferPrototypeHexWriteCodeLength) \
-    macro(jsBufferPrototypeUtf8SliceCode, utf8Slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeUtf8SliceCodeLength) \
-    macro(jsBufferPrototypeUcs2SliceCode, ucs2Slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeUcs2SliceCodeLength) \
-    macro(jsBufferPrototypeUtf16leSliceCode, utf16leSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeUtf16leSliceCodeLength) \
-    macro(jsBufferPrototypeLatin1SliceCode, latin1Slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeLatin1SliceCodeLength) \
-    macro(jsBufferPrototypeAsciiSliceCode, asciiSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeAsciiSliceCodeLength) \
-    macro(jsBufferPrototypeBase64SliceCode, base64Slice, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64SliceCodeLength) \
-    macro(jsBufferPrototypeBase64urlSliceCode, base64urlSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeBase64urlSliceCodeLength) \
-    macro(jsBufferPrototypeHexSliceCode, hexSlice, static_cast<const char*>(nullptr), s_jsBufferPrototypeHexSliceCodeLength) \
-    macro(jsBufferPrototypeToJSONCode, toJSON, static_cast<const char*>(nullptr), s_jsBufferPrototypeToJSONCodeLength) \
-    macro(jsBufferPrototypeSubarrayCode, subarray, static_cast<const char*>(nullptr), s_jsBufferPrototypeSubarrayCodeLength) \
-    macro(jsBufferPrototypeInitializeBunBufferCode, initializeBunBuffer, static_cast<const char*>(nullptr), s_jsBufferPrototypeInitializeBunBufferCodeLength) \
+    macro(jsBufferPrototypeSetBigUint64Code, setBigUint64, ASCIILiteral(), s_jsBufferPrototypeSetBigUint64CodeLength) \
+    macro(jsBufferPrototypeReadInt8Code, readInt8, ASCIILiteral(), s_jsBufferPrototypeReadInt8CodeLength) \
+    macro(jsBufferPrototypeReadUInt8Code, readUInt8, ASCIILiteral(), s_jsBufferPrototypeReadUInt8CodeLength) \
+    macro(jsBufferPrototypeReadInt16LECode, readInt16LE, ASCIILiteral(), s_jsBufferPrototypeReadInt16LECodeLength) \
+    macro(jsBufferPrototypeReadInt16BECode, readInt16BE, ASCIILiteral(), s_jsBufferPrototypeReadInt16BECodeLength) \
+    macro(jsBufferPrototypeReadUInt16LECode, readUInt16LE, ASCIILiteral(), s_jsBufferPrototypeReadUInt16LECodeLength) \
+    macro(jsBufferPrototypeReadUInt16BECode, readUInt16BE, ASCIILiteral(), s_jsBufferPrototypeReadUInt16BECodeLength) \
+    macro(jsBufferPrototypeReadInt32LECode, readInt32LE, ASCIILiteral(), s_jsBufferPrototypeReadInt32LECodeLength) \
+    macro(jsBufferPrototypeReadInt32BECode, readInt32BE, ASCIILiteral(), s_jsBufferPrototypeReadInt32BECodeLength) \
+    macro(jsBufferPrototypeReadUInt32LECode, readUInt32LE, ASCIILiteral(), s_jsBufferPrototypeReadUInt32LECodeLength) \
+    macro(jsBufferPrototypeReadUInt32BECode, readUInt32BE, ASCIILiteral(), s_jsBufferPrototypeReadUInt32BECodeLength) \
+    macro(jsBufferPrototypeReadFloatLECode, readFloatLE, ASCIILiteral(), s_jsBufferPrototypeReadFloatLECodeLength) \
+    macro(jsBufferPrototypeReadFloatBECode, readFloatBE, ASCIILiteral(), s_jsBufferPrototypeReadFloatBECodeLength) \
+    macro(jsBufferPrototypeReadDoubleLECode, readDoubleLE, ASCIILiteral(), s_jsBufferPrototypeReadDoubleLECodeLength) \
+    macro(jsBufferPrototypeReadDoubleBECode, readDoubleBE, ASCIILiteral(), s_jsBufferPrototypeReadDoubleBECodeLength) \
+    macro(jsBufferPrototypeReadBigInt64LECode, readBigInt64LE, ASCIILiteral(), s_jsBufferPrototypeReadBigInt64LECodeLength) \
+    macro(jsBufferPrototypeReadBigInt64BECode, readBigInt64BE, ASCIILiteral(), s_jsBufferPrototypeReadBigInt64BECodeLength) \
+    macro(jsBufferPrototypeReadBigUInt64LECode, readBigUInt64LE, ASCIILiteral(), s_jsBufferPrototypeReadBigUInt64LECodeLength) \
+    macro(jsBufferPrototypeReadBigUInt64BECode, readBigUInt64BE, ASCIILiteral(), s_jsBufferPrototypeReadBigUInt64BECodeLength) \
+    macro(jsBufferPrototypeWriteInt8Code, writeInt8, ASCIILiteral(), s_jsBufferPrototypeWriteInt8CodeLength) \
+    macro(jsBufferPrototypeWriteUInt8Code, writeUInt8, ASCIILiteral(), s_jsBufferPrototypeWriteUInt8CodeLength) \
+    macro(jsBufferPrototypeWriteInt16LECode, writeInt16LE, ASCIILiteral(), s_jsBufferPrototypeWriteInt16LECodeLength) \
+    macro(jsBufferPrototypeWriteInt16BECode, writeInt16BE, ASCIILiteral(), s_jsBufferPrototypeWriteInt16BECodeLength) \
+    macro(jsBufferPrototypeWriteUInt16LECode, writeUInt16LE, ASCIILiteral(), s_jsBufferPrototypeWriteUInt16LECodeLength) \
+    macro(jsBufferPrototypeWriteUInt16BECode, writeUInt16BE, ASCIILiteral(), s_jsBufferPrototypeWriteUInt16BECodeLength) \
+    macro(jsBufferPrototypeWriteInt32LECode, writeInt32LE, ASCIILiteral(), s_jsBufferPrototypeWriteInt32LECodeLength) \
+    macro(jsBufferPrototypeWriteInt32BECode, writeInt32BE, ASCIILiteral(), s_jsBufferPrototypeWriteInt32BECodeLength) \
+    macro(jsBufferPrototypeWriteUInt32LECode, writeUInt32LE, ASCIILiteral(), s_jsBufferPrototypeWriteUInt32LECodeLength) \
+    macro(jsBufferPrototypeWriteUInt32BECode, writeUInt32BE, ASCIILiteral(), s_jsBufferPrototypeWriteUInt32BECodeLength) \
+    macro(jsBufferPrototypeWriteFloatLECode, writeFloatLE, ASCIILiteral(), s_jsBufferPrototypeWriteFloatLECodeLength) \
+    macro(jsBufferPrototypeWriteFloatBECode, writeFloatBE, ASCIILiteral(), s_jsBufferPrototypeWriteFloatBECodeLength) \
+    macro(jsBufferPrototypeWriteDoubleLECode, writeDoubleLE, ASCIILiteral(), s_jsBufferPrototypeWriteDoubleLECodeLength) \
+    macro(jsBufferPrototypeWriteDoubleBECode, writeDoubleBE, ASCIILiteral(), s_jsBufferPrototypeWriteDoubleBECodeLength) \
+    macro(jsBufferPrototypeWriteBigInt64LECode, writeBigInt64LE, ASCIILiteral(), s_jsBufferPrototypeWriteBigInt64LECodeLength) \
+    macro(jsBufferPrototypeWriteBigInt64BECode, writeBigInt64BE, ASCIILiteral(), s_jsBufferPrototypeWriteBigInt64BECodeLength) \
+    macro(jsBufferPrototypeWriteBigUInt64LECode, writeBigUInt64LE, ASCIILiteral(), s_jsBufferPrototypeWriteBigUInt64LECodeLength) \
+    macro(jsBufferPrototypeWriteBigUInt64BECode, writeBigUInt64BE, ASCIILiteral(), s_jsBufferPrototypeWriteBigUInt64BECodeLength) \
+    macro(jsBufferPrototypeSliceCode, slice, ASCIILiteral(), s_jsBufferPrototypeSliceCodeLength) \
+    macro(jsBufferPrototypeUtf8WriteCode, utf8Write, ASCIILiteral(), s_jsBufferPrototypeUtf8WriteCodeLength) \
+    macro(jsBufferPrototypeUcs2WriteCode, ucs2Write, ASCIILiteral(), s_jsBufferPrototypeUcs2WriteCodeLength) \
+    macro(jsBufferPrototypeUtf16leWriteCode, utf16leWrite, ASCIILiteral(), s_jsBufferPrototypeUtf16leWriteCodeLength) \
+    macro(jsBufferPrototypeLatin1WriteCode, latin1Write, ASCIILiteral(), s_jsBufferPrototypeLatin1WriteCodeLength) \
+    macro(jsBufferPrototypeAsciiWriteCode, asciiWrite, ASCIILiteral(), s_jsBufferPrototypeAsciiWriteCodeLength) \
+    macro(jsBufferPrototypeBase64WriteCode, base64Write, ASCIILiteral(), s_jsBufferPrototypeBase64WriteCodeLength) \
+    macro(jsBufferPrototypeBase64urlWriteCode, base64urlWrite, ASCIILiteral(), s_jsBufferPrototypeBase64urlWriteCodeLength) \
+    macro(jsBufferPrototypeHexWriteCode, hexWrite, ASCIILiteral(), s_jsBufferPrototypeHexWriteCodeLength) \
+    macro(jsBufferPrototypeUtf8SliceCode, utf8Slice, ASCIILiteral(), s_jsBufferPrototypeUtf8SliceCodeLength) \
+    macro(jsBufferPrototypeUcs2SliceCode, ucs2Slice, ASCIILiteral(), s_jsBufferPrototypeUcs2SliceCodeLength) \
+    macro(jsBufferPrototypeUtf16leSliceCode, utf16leSlice, ASCIILiteral(), s_jsBufferPrototypeUtf16leSliceCodeLength) \
+    macro(jsBufferPrototypeLatin1SliceCode, latin1Slice, ASCIILiteral(), s_jsBufferPrototypeLatin1SliceCodeLength) \
+    macro(jsBufferPrototypeAsciiSliceCode, asciiSlice, ASCIILiteral(), s_jsBufferPrototypeAsciiSliceCodeLength) \
+    macro(jsBufferPrototypeBase64SliceCode, base64Slice, ASCIILiteral(), s_jsBufferPrototypeBase64SliceCodeLength) \
+    macro(jsBufferPrototypeBase64urlSliceCode, base64urlSlice, ASCIILiteral(), s_jsBufferPrototypeBase64urlSliceCodeLength) \
+    macro(jsBufferPrototypeHexSliceCode, hexSlice, ASCIILiteral(), s_jsBufferPrototypeHexSliceCodeLength) \
+    macro(jsBufferPrototypeToJSONCode, toJSON, ASCIILiteral(), s_jsBufferPrototypeToJSONCodeLength) \
+    macro(jsBufferPrototypeSubarrayCode, subarray, ASCIILiteral(), s_jsBufferPrototypeSubarrayCodeLength) \
+    macro(jsBufferPrototypeInitializeBunBufferCode, initializeBunBuffer, ASCIILiteral(), s_jsBufferPrototypeInitializeBunBufferCodeLength) \
 
 #define WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_FUNCTION_NAME(macro) \
     macro(asciiSlice) \
@@ -518,7 +518,7 @@ public:
     explicit JSBufferPrototypeBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
         WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
-#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createFromLiteral(s_##name, length), { }))
+#define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
         WEBCORE_FOREACH_JSBUFFERPROTOTYPE_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {

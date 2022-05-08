@@ -46,7 +46,7 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
 
     JSC::JSValue job = callFrame->uncheckedArgument(0);
 
-    if (!job.isObject() || !job.getObject()->isCallable(vm)) {
+    if (!job.isObject() || !job.getObject()->isCallable()) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSC::throwTypeError(globalObject, scope, "nextTick expects a function"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -94,7 +94,7 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
         //   vm, globalObject, 0, String(),
         //   [job, &argsList](JSC::JSGlobalObject *globalObject, JSC::CallFrame *callFrame) {
         //     JSC::VM &vm = globalObject->vm();
-        //     auto callData = getCallData(vm, job);
+        //     auto callData = getCallData(job);
 
         //     return JSC::JSValue::encode(JSC::call(globalObject, job, callData, job, argsList));
         //   });
@@ -215,66 +215,66 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirect(vm, clientData->builtinNames().nextTickPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-            WTF::String("nextTick"), Process_functionNextTick),
+            MAKE_STATIC_STRING_IMPL("nextTick"), Process_functionNextTick),
         0);
 
     this->putDirect(vm, JSC::Identifier::fromString(vm, "dlopen"_s),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-            WTF::String("dlopen"_s), Process_functionDlopen),
+            MAKE_STATIC_STRING_IMPL("dlopen"), Process_functionDlopen),
         0);
 
     this->putDirect(vm, clientData->builtinNames().cwdPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-            WTF::String("cwd"), Process_functionCwd),
+            MAKE_STATIC_STRING_IMPL("cwd"), Process_functionCwd),
         0);
 
     this->putDirect(vm, clientData->builtinNames().chdirPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-            WTF::String("chdir"), Process_functionChdir),
+            MAKE_STATIC_STRING_IMPL("chdir"), Process_functionChdir),
         0);
 
     this->putDirect(vm, JSC::Identifier::fromString(vm, "exit"_s),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-            WTF::String("exit"), Process_functionExit),
+            MAKE_STATIC_STRING_IMPL("exit"), Process_functionExit),
         0);
 
     putDirectCustomAccessor(
         vm, clientData->builtinNames().versionsPublicName(),
         JSC::CustomGetterSetter::create(vm, Process_getVersionsLazy, Process_setVersionsLazy), 0);
     // this should be transpiled out, but just incase
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "browser"),
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "browser"_s),
         JSC::JSValue(false));
 
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "exitCode"),
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "exitCode"_s),
         JSC::JSValue(JSC::jsNumber(0)));
 
     this->putDirect(this->vm(), clientData->builtinNames().versionPublicName(),
-        JSC::jsString(this->vm(), WTF::String(Bun__version)));
+        JSC::jsString(this->vm(), Bun__version));
 
     // this gives some way of identifying at runtime whether the SSR is happening in node or not.
     // this should probably be renamed to what the name of the bundler is, instead of "notNodeJS"
     // but it must be something that won't evaluate to truthy in Node.js
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "isBun"), JSC::JSValue(true));
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "isBun"_s), JSC::JSValue(true));
 #if defined(__APPLE__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"),
-        JSC::jsString(this->vm(), WTF::String("darwin")));
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"_s),
+        JSC::jsString(this->vm(), makeAtomString("darwin")));
 #else
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"),
-        JSC::jsString(this->vm(), WTF::String("linux")));
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "platform"_s),
+        JSC::jsString(this->vm(), makeAtomString("linux")));
 #endif
 
 #if defined(__x86_64__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"),
-        JSC::jsString(this->vm(), WTF::String("x64")));
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
+        JSC::jsString(this->vm(), makeAtomString("x64")));
 #elif defined(__i386__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"),
-        JSC::jsString(this->vm(), WTF::String("x86")));
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
+        JSC::jsString(this->vm(), makeAtomString("x86")));
 #elif defined(__arm__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"),
-        JSC::jsString(this->vm(), WTF::String("arm")));
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
+        JSC::jsString(this->vm(), makeAtomString("arm")));
 #elif defined(__aarch64__)
-    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"),
-        JSC::jsString(this->vm(), WTF::String("arm64")));
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
+        JSC::jsString(this->vm(), makeAtomString("arm64")));
 #endif
 }
 
@@ -294,8 +294,8 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setTitle,
 {
     JSC::VM& vm = globalObject->vm();
 
-    JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(vm, JSValue::decode(thisValue));
-    JSC::JSString* jsString = JSC::jsDynamicCast<JSC::JSString*>(vm, JSValue::decode(value));
+    JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(JSValue::decode(thisValue));
+    JSC::JSString* jsString = JSC::jsDynamicCast<JSC::JSString*>(JSValue::decode(value));
     if (!thisObject || !jsString) {
         return false;
     }
@@ -310,7 +310,7 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getArgv, (JSC::JSGlobalObject * globalObject, J
 {
     JSC::VM& vm = globalObject->vm();
 
-    Zig::Process* thisObject = JSC::jsDynamicCast<Zig::Process*>(vm, JSValue::decode(thisValue));
+    Zig::Process* thisObject = JSC::jsDynamicCast<Zig::Process*>(JSValue::decode(thisValue));
     if (!thisObject) {
         return JSValue::encode(JSC::jsUndefined());
     }
@@ -334,7 +334,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setArgv,
 {
     JSC::VM& vm = globalObject->vm();
 
-    JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(vm, JSValue::decode(thisValue));
+    JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(JSValue::decode(thisValue));
     if (!thisObject) {
         return false;
     }
@@ -362,7 +362,7 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
     JSC::VM& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
 
-    Zig::Process* thisObject = JSC::jsDynamicCast<Zig::Process*>(vm, JSValue::decode(thisValue));
+    Zig::Process* thisObject = JSC::jsDynamicCast<Zig::Process*>(JSValue::decode(thisValue));
     if (!thisObject) {
         return JSValue::encode(JSC::jsUndefined());
     }
@@ -374,28 +374,28 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
 
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 9);
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String("16.14.0"))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString("16.14.0"))));
     object->putDirect(
-        vm, JSC::Identifier::fromString(vm, "bun"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String(Bun__version + 1 /* prefix with v */))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String(Bun__versions_webkit))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String(Bun__versions_mimalloc))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String(Bun__versions_libarchive))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String(Bun__versions_picohttpparser))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String(Bun__versions_boringssl))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String(Bun__versions_zlib))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String(Bun__versions_zig))));
+        vm, JSC::Identifier::fromString(vm, "bun"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__version + 1 /* prefix with v */))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_webkit))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_mimalloc))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_libarchive))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_picohttpparser))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_boringssl))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_zlib))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_zig))));
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"),
-        JSC::JSValue(JSC::jsString(vm, WTF::String("67"))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s),
+        JSC::JSValue(JSC::jsString(vm, makeAtomString("67"))));
 
     thisObject->putDirect(vm, clientData->builtinNames().versionsPrivateName(), object);
     return JSC::JSValue::encode(object);
@@ -408,7 +408,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_setVersionsLazy,
     JSC::VM& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
 
-    Zig::Process* thisObject = JSC::jsDynamicCast<Zig::Process*>(vm, JSValue::decode(thisValue));
+    Zig::Process* thisObject = JSC::jsDynamicCast<Zig::Process*>(JSValue::decode(thisValue));
     if (!thisObject) {
         return JSValue::encode(JSC::jsUndefined());
     }

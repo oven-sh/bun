@@ -411,12 +411,14 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf
         if (wrote < 0) {
             return .generic_failure;
         }
-        result.* = @intCast(usize, wrote);
+        // if zero terminated, report the length of the string without the null
+        result.* = @intCast(@TypeOf(result.*), wrote - @as(@TypeOf(wrote), @boolToInt(bufsize == 0)));
         return .ok;
     }
     const to_copy = @minimum(zig_str.len, buf_.len);
     @memcpy(buf, zig_str.slice().ptr, to_copy);
-    result.* = to_copy;
+    // if zero terminated, report the length of the string without the null
+    result.* = to_copy - @as(usize, @boolToInt(bufsize == 0));
     return .ok;
 }
 pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_ptr: [*c]u8, bufsize: usize, result: *usize) napi_status {
@@ -449,13 +451,15 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf_p
         if (wrote < 0) {
             return .generic_failure;
         }
-        result.* = @intCast(usize, wrote);
+        // if zero terminated, report the length of the string without the null
+        result.* = @intCast(@TypeOf(result.*), wrote - @as(@TypeOf(wrote), @boolToInt(bufsize == 0)));
         return .ok;
     }
 
     const to_copy = @minimum(zig_str.len, buf_.len);
     @memcpy(buf, zig_str.slice().ptr, to_copy);
-    result.* = to_copy;
+    // if zero terminated, report the length of the string without the null
+    result.* = to_copy - @as(usize, @boolToInt(bufsize == 0));
     return .ok;
 }
 pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_ptr: [*c]char16_t, bufsize: usize, result: *usize) napi_status {
@@ -491,7 +495,8 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf_
 
     const to_copy = @minimum(zig_str.len, buf_.len);
     @memcpy(std.mem.sliceAsBytes(buf[0..bufsize]).ptr, std.mem.sliceAsBytes(zig_str.utf16SliceAligned()).ptr, to_copy * 2);
-    result.* = to_copy;
+    // if zero terminated, report the length of the string without the null
+    result.* = to_copy - @as(usize, @boolToInt(bufsize == 0));
     return .ok;
 }
 pub export fn napi_coerce_to_bool(_: napi_env, value: napi_value, result: *napi_value) napi_status {
@@ -527,141 +532,6 @@ pub export fn napi_get_prototype(env: napi_env, object: napi_value, result: *nap
 
 //     result.* =
 // }
-pub export fn napi_set_property(env: napi_env, object: napi_value, key: napi_value, value: napi_value) napi_status {
-    if (!object.isObject()) {
-        return .object_expected;
-    }
-    var name = key.getZigString(env);
-    if (name.len == 0 or value.isEmpty()) {
-        return .invalid_arg;
-    }
-    var exception = [_]JSC.C.JSValueRef{null};
-    JSC.C.JSObjectSetPropertyForKey(
-        env.ref(),
-        object.asObjectRef(),
-        key.asObjectRef(),
-        value.asObjectRef(),
-        JSC.C.JSPropertyAttributes.kJSPropertyAttributeNone,
-        &exception,
-    );
-    return if (exception[0] == null)
-        .ok
-    else
-        .generic_failure;
-}
-pub export fn napi_has_property(env: napi_env, object: napi_value, key: napi_value, result: *bool) napi_status {
-    if (!object.isObject()) {
-        return .object_expected;
-    }
-    var name = key.getZigString(env);
-    var name_slice = name.toSlice(JSC.VirtualMachine.vm.allocator);
-    defer name_slice.deinit();
-    if (name.len == 0) {
-        return .invalid_arg;
-    }
-    // TODO: bind hasOwnProperty
-    result.* = object.get(env, name_slice.slice()) != null;
-    return .ok;
-}
-pub export fn napi_get_property(env: napi_env, object: napi_value, key: napi_value, result: *napi_value) napi_status {
-    if (!object.isObject()) {
-        return .object_expected;
-    }
-
-    if (!key.isString()) {
-        return .invalid_arg;
-    }
-
-    var name = key.getZigString(env);
-    var name_slice = name.toSlice(JSC.VirtualMachine.vm.allocator);
-    defer name_slice.deinit();
-    if (name.len == 0) {
-        return .invalid_arg;
-    }
-    // TODO: DECLARE_THROW_SCOPE
-    result.* = object.get(env, name_slice.slice()) orelse JSC.JSValue.@"undefined";
-    return .ok;
-}
-pub export fn napi_delete_property(env: napi_env, object: napi_value, key: napi_value, result: *bool) napi_status {
-    if (!object.isObject()) {
-        return .object_expected;
-    }
-
-    if (!key.isString()) {
-        return .invalid_arg;
-    }
-
-    result.* = JSC.C.JSObjectDeletePropertyForKey(env.ref(), object.asObjectRef(), key.asObjectRef(), null);
-    return .ok;
-}
-pub export fn napi_has_own_property(env: napi_env, object: napi_value, key: napi_value, result: *bool) napi_status {
-    if (!object.isObject()) {
-        return .object_expected;
-    }
-
-    if (!key.isString()) {
-        return .invalid_arg;
-    }
-
-    result.* = JSC.C.JSObjectHasPropertyForKey(env.ref(), object.asObjectRef(), key.asObjectRef(), null);
-    return .ok;
-}
-
-fn noop_finalizer(_: ?*anyopaque, _: JSC.C.JSStringRef, _: *anyopaque, _: usize) callconv(.C) void {}
-pub export fn napi_set_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, value: napi_value) napi_status {
-    if (!object.isObject()) {
-        return .object_expected;
-    }
-
-    if (utf8name == null) {
-        return .invalid_arg;
-    }
-
-    const str = std.mem.span(utf8name);
-    if (str.len == 0)
-        return .invalid_arg;
-
-    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, noop_finalizer);
-    defer JSC.C.JSStringRelease(ext);
-    JSC.C.JSObjectSetProperty(env.ref(), object.asObjectRef(), ext, value.asObjectRef(), 0, TODO_EXCEPTION);
-    return .ok;
-}
-pub export fn napi_has_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, result: *bool) napi_status {
-    if (!object.isObject()) {
-        return .object_expected;
-    }
-
-    if (utf8name == null) {
-        return .invalid_arg;
-    }
-
-    const str = std.mem.span(utf8name);
-    if (str.len == 0)
-        return .invalid_arg;
-
-    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, noop_finalizer);
-    defer JSC.C.JSStringRelease(ext);
-    result.* = JSC.C.JSObjectHasProperty(env.ref(), object.asObjectRef(), ext);
-    return .ok;
-}
-pub export fn napi_get_named_property(env: napi_env, object: napi_value, utf8name: [*c]const u8, result: *napi_value) napi_status {
-    if (!object.isObject()) {
-        return .object_expected;
-    }
-
-    if (utf8name == null) {
-        return .invalid_arg;
-    }
-
-    const str = std.mem.span(utf8name);
-    if (str.len == 0)
-        return .invalid_arg;
-
-    var ext = JSC.C.JSStringCreateExternal(utf8name, str.len, null, noop_finalizer);
-    defer JSC.C.JSStringRelease(ext);
-    result.* = JSValue.c(JSC.C.JSObjectGetProperty(env.ref(), object.asObjectRef(), ext, TODO_EXCEPTION));
-    return .ok;
-}
 pub export fn napi_set_element(env: napi_env, object: napi_value, index: c_uint, value: napi_value) napi_status {
     if (!object.jsType().isIndexable()) {
         return .array_expected;
@@ -1546,14 +1416,6 @@ pub fn fixDeadCodeElimination() void {
     // std.mem.doNotOptimizeAway(&napi_coerce_to_string);
     std.mem.doNotOptimizeAway(&napi_get_prototype);
     // std.mem.doNotOptimizeAway(&napi_get_property_names);
-    std.mem.doNotOptimizeAway(&napi_set_property);
-    std.mem.doNotOptimizeAway(&napi_has_property);
-    std.mem.doNotOptimizeAway(&napi_get_property);
-    std.mem.doNotOptimizeAway(&napi_delete_property);
-    std.mem.doNotOptimizeAway(&napi_has_own_property);
-    std.mem.doNotOptimizeAway(&napi_set_named_property);
-    std.mem.doNotOptimizeAway(&napi_has_named_property);
-    std.mem.doNotOptimizeAway(&napi_get_named_property);
     std.mem.doNotOptimizeAway(&napi_set_element);
     std.mem.doNotOptimizeAway(&napi_has_element);
     std.mem.doNotOptimizeAway(&napi_get_element);
@@ -1649,14 +1511,7 @@ comptime {
         // _ = napi_coerce_to_string;
         _ = napi_get_prototype;
         // _ = napi_get_property_names;
-        _ = napi_set_property;
-        _ = napi_has_property;
-        _ = napi_get_property;
-        _ = napi_delete_property;
-        _ = napi_has_own_property;
-        _ = napi_set_named_property;
-        _ = napi_has_named_property;
-        _ = napi_get_named_property;
+
         _ = napi_set_element;
         _ = napi_has_element;
         _ = napi_get_element;

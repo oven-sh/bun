@@ -227,7 +227,6 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         JSC::JSObject* setter = nullptr;
 
         if (property.getter) {
-            auto callGetter = property.getter;
             auto function = Zig::JSFFIFunction::create(vm, globalObject, 0, nameStr, reinterpret_cast<Zig::FFIFunction>(property.getter));
             function->dataPtr = dataPtr;
 
@@ -239,7 +238,6 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         }
 
         if (property.setter) {
-            auto callGetter = property.setter;
             auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, nameStr, reinterpret_cast<Zig::FFIFunction>(property.setter));
             function->dataPtr = dataPtr;
             // if (isInstance) {
@@ -262,6 +260,176 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
 
         to->putDirect(vm, propertyName, value, getPropertyAttributes(property));
     }
+}
+
+extern "C" napi_status napi_set_property(napi_env env, napi_value target,
+    napi_value key, napi_value value)
+{
+    auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto* object = toJS(target).getObject();
+    if (!object) {
+        return napi_object_expected;
+    }
+
+    auto keyProp = toJS(key);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    object->putDirect(globalObject->vm(), keyProp.toPropertyKey(globalObject), toJS(value));
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    scope.clearException();
+    return napi_ok;
+}
+extern "C" napi_status napi_has_property(napi_env env, napi_value object,
+    napi_value key, bool* result)
+{
+    auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto* target = toJS(object).getObject();
+    if (!target) {
+        return napi_object_expected;
+    }
+
+    auto keyProp = toJS(key);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    // TODO: use the slot directly?
+    *result = !!target->getIfPropertyExists(globalObject, keyProp.toPropertyKey(globalObject));
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    scope.clearException();
+    return napi_ok;
+}
+extern "C" napi_status napi_get_property(napi_env env, napi_value object,
+    napi_value key, napi_value* result)
+{
+    auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+
+    auto* target = toJS(object).getObject();
+    if (!target) {
+        return napi_object_expected;
+    }
+
+    auto keyProp = toJS(key);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    *result = toNapi(target->getIfPropertyExists(globalObject, keyProp.toPropertyKey(globalObject)));
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    scope.clearException();
+    return napi_ok;
+}
+
+extern "C" napi_status napi_delete_property(napi_env env, napi_value object,
+    napi_value key, bool* result)
+{
+    auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+
+    auto* target = toJS(object).getObject();
+    if (!target) {
+        return napi_object_expected;
+    }
+
+    auto keyProp = toJS(key);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    *result = toNapi(target->deleteProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject))));
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    scope.clearException();
+    return napi_ok;
+}
+extern "C" napi_status napi_has_own_property(napi_env env, napi_value object,
+    napi_value key, bool* result)
+{
+    auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+
+    auto* target = toJS(object).getObject();
+    if (!target) {
+        return napi_object_expected;
+    }
+
+    auto keyProp = toJS(key);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    *result = toNapi(target->hasOwnProperty(globalObject, JSC::PropertyName(keyProp.toPropertyKey(globalObject))));
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    scope.clearException();
+    return napi_ok;
+}
+
+extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
+    const char* utf8name,
+    napi_value value)
+{
+    auto globalObject = toJS(env);
+    auto target = toJS(object).getObject();
+    auto& vm = globalObject->vm();
+    if (!UNLIKELY(target)) {
+        return napi_object_expected;
+    }
+
+    // In this case, we should clone the property name
+    auto name = JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8name, strlen(utf8name))));
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    target->putDirect(globalObject->vm(), name, toJS(value), 0);
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+    scope.clearException();
+    return napi_ok;
+}
+
+// This is more efficient than using WTF::String::FromUTF8
+// it doesn't copy the string
+// but it's only safe to use if we are not setting a property
+// because we can't gurantee the lifetime of it
+#define PROPERTY_NAME_FROM_UTF8(identifierName) \
+    size_t utf8Len = strlen(utf8name);          \
+    JSC::PropertyName identifierName = LIKELY(charactersAreAllASCII(reinterpret_cast<const LChar*>(utf8name), utf8Len)) ? JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String(WTF::StringImpl::createWithoutCopying(utf8name, utf8Len)))) : JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8name)));
+
+extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
+    const char* utf8name,
+    bool* result)
+{
+
+    auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+
+    auto* target = toJS(object).getObject();
+    if (UNLIKELY(!target)) {
+        return napi_object_expected;
+    }
+
+    PROPERTY_NAME_FROM_UTF8(name);
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    *result = !!target->getIfPropertyExists(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    scope.clearException();
+    return napi_ok;
+}
+extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
+    const char* utf8name,
+    napi_value* result)
+{
+
+    auto globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+
+    auto* target = toJS(object).getObject();
+    if (UNLIKELY(!target)) {
+        return napi_object_expected;
+    }
+
+    PROPERTY_NAME_FROM_UTF8(name);
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    *result = toNapi(target->getIfPropertyExists(globalObject, name));
+    RETURN_IF_EXCEPTION(scope, napi_generic_failure);
+
+    scope.clearException();
+    return napi_ok;
 }
 
 extern "C" void napi_module_register(napi_module* mod)

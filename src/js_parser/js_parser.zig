@@ -2821,32 +2821,49 @@ pub const Parser = struct {
 
         var runtime_imports_iter = p.runtime_imports.iter();
 
-        if (FeatureFlags.auto_import_buffer) {
-            // If they use Buffer...just automatically import it.
-            // ✨ magic ✨ (i don't like this)
-            // if (p.symbols.items[p.buffer_ref.innerIndex()].use_count_estimate > 0) {
-            //     var named_import = p.named_imports.getOrPut(p.buffer_ref);
-
-            //     // if Buffer is actually an import, let them use that one instead.
-            //     if (!named_import.found_existing) {
-            //         const import_record_id = p.addImportRecord(
-            //             .require,
-            //             logger.Loc.empty,
-            //             NodeFallbackModules.buffer_fallback_import_name,
-            //         );
-            //         var import_stmt = p.s(S.Import{
-            //             .namespace_ref = p.buffer_ref,
-            //             .star_name_loc = loc,
-            //             .is_single_line = true,
-            //             .import_record_index = import_record_id,
-            //         }, loc);
-            //     }
-            // }
-        }
-
         const has_cjs_imports = p.cjs_import_stmts.items.len > 0 and p.options.transform_require_to_import;
 
         p.resolveCommonJSSymbols();
+
+        const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
+        const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
+        if (uses_dirname or uses_filename) {
+            const count = @as(usize, @boolToInt(uses_dirname)) + @as(usize, @boolToInt(uses_filename));
+            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, count);
+            var decls = p.allocator.alloc(G.Decl, count) catch unreachable;
+            if (uses_dirname) {
+                decls[0] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
+                    .value = p.e(
+                        // TODO: test UTF-8 file paths
+                        E.String.init(p.source.path.name.dir),
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols[0] = .{ .ref = p.dirname_ref, .is_top_level = true };
+            }
+            if (uses_filename) {
+                decls[@as(usize, @boolToInt(uses_dirname))] = .{
+                    .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
+                    .value = p.e(
+                        E.String.init(p.source.path.text),
+                        logger.Loc.Empty,
+                    ),
+                };
+                declared_symbols[@as(usize, @boolToInt(uses_dirname))] = .{ .ref = p.filename_ref, .is_top_level = true };
+            }
+
+            // TODO: DeclaredSymbol
+            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+            part_stmts[0] = p.s(S.Local{
+                .kind = .k_var,
+                .decls = decls,
+            }, logger.Loc.Empty);
+            before.append(js_ast.Part{
+                .stmts = part_stmts,
+                .declared_symbols = declared_symbols,
+            }) catch unreachable;
+        }
 
         // - don't import runtime if we're bundling, it's already included
         // - when HMR is enabled, we always need to import the runtime for HMRClient and HMRModule.
@@ -3274,7 +3291,8 @@ fn NewParser_(
         exports_ref: Ref = Ref.None,
         require_ref: Ref = Ref.None,
         module_ref: Ref = Ref.None,
-        buffer_ref: Ref = Ref.None,
+        filename_ref: Ref = Ref.None,
+        dirname_ref: Ref = Ref.None,
         import_meta_ref: Ref = Ref.None,
         promise_ref: ?Ref = null,
         scopes_in_order_visitor_index: usize = 0,
@@ -4256,10 +4274,8 @@ fn NewParser_(
             p.exports_ref = try p.declareCommonJSSymbol(.hoisted, "exports");
             p.module_ref = try p.declareCommonJSSymbol(.hoisted, "module");
             p.require_ref = try p.declareCommonJSSymbol(.unbound, "require");
-
-            if (FeatureFlags.auto_import_buffer) {
-                p.buffer_ref = try p.declareCommonJSSymbol(.unbound, "Buffer");
-            }
+            p.dirname_ref = try p.declareCommonJSSymbol(.unbound, "__dirname");
+            p.filename_ref = try p.declareCommonJSSymbol(.unbound, "__filename");
 
             if (p.options.enable_bundling) {
                 p.runtime_imports.__reExport = try p.declareGeneratedSymbol(.other, "__reExport");

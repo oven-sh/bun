@@ -106,6 +106,7 @@ public:
     JSC::JSWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
     NapiFinalizer finalizer;
+    void* data = nullptr;
     uint32_t refCount = 0;
 };
 
@@ -173,6 +174,60 @@ private:
         const napi_property_descriptor* properties);
 
     DECLARE_VISIT_CHILDREN;
+};
+
+class NapiPrototype : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = true;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.destructibleObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    {
+        NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
+        footprint->finishCreation(vm);
+        return footprint;
+    }
+
+    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject)
+    {
+        Structure* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
+        return create(vm, globalObject, structure);
+    }
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        ASSERT(globalObject);
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    NapiPrototype* subclass(JSC::JSObject* newTarget)
+    {
+        auto& vm = this->vm();
+        auto* structure = InternalFunction::createSubclassStructure(globalObject(),
+            newTarget,
+            this->structure());
+        NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
+        footprint->finishCreation(vm);
+        return footprint;
+    }
+
+    NapiRef* napiRef = nullptr;
+
+private:
+    NapiPrototype(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
 };
 
 static inline NapiRef* toJS(napi_ref val)

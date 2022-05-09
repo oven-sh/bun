@@ -383,26 +383,46 @@ pub export fn napi_get_value_bool(_: napi_env, value: napi_value, result: *bool)
 }
 pub export fn napi_get_value_string_latin1(env: napi_env, value: napi_value, buf: [*]u8, bufsize: usize, result: *usize) napi_status {
     const zig_str = value.getZigString(env);
+    if (@ptrToInt(buf) == 0) {
+        result.* = zig_str.len;
+        return .ok;
+    }
+
+    var buf_ = buf[0..bufsize];
+    if (bufsize == 0) {
+        buf_ = std.mem.span(std.meta.assumeSentinel(buf, 0));
+    }
+
     if (zig_str.is16Bit()) {
         const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, @minimum(utf16.len, bufsize), .latin1);
+        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, @minimum(utf16.len, buf_.len), .latin1);
         if (wrote < 0) {
             return .generic_failure;
         }
         result.* = @intCast(usize, wrote);
         return .ok;
     }
-
-    const to_copy = @minimum(zig_str.len, bufsize);
+    const to_copy = @minimum(zig_str.len, buf_.len);
     @memcpy(buf, zig_str.slice().ptr, to_copy);
     result.* = to_copy;
     return .ok;
 }
 pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf: [*]u8, bufsize: usize, result: *usize) napi_status {
     const zig_str = value.getZigString(env);
+    if (@ptrToInt(buf) == 0) {
+        result.* = zig_str.len;
+        return .ok;
+    }
+
+    var buf_ = buf[0..bufsize];
+
+    if (bufsize == 0) {
+        buf_ = std.mem.span(std.meta.assumeSentinel(buf, 0));
+    }
+
     if (zig_str.is16Bit()) {
         const utf16 = zig_str.utf16SliceAligned();
-        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, @minimum(utf16.len, bufsize), .utf8);
+        const wrote = JSC.WebCore.Encoder.writeU16(utf16.ptr, utf16.len, buf, @minimum(utf16.len, buf_.len), .utf8);
         if (wrote < 0) {
             return .generic_failure;
         }
@@ -410,21 +430,32 @@ pub export fn napi_get_value_string_utf8(env: napi_env, value: napi_value, buf: 
         return .ok;
     }
 
-    const to_copy = @minimum(zig_str.len, bufsize);
+    const to_copy = @minimum(zig_str.len, buf_.len);
     @memcpy(buf, zig_str.slice().ptr, to_copy);
     result.* = to_copy;
     return .ok;
 }
 pub export fn napi_get_value_string_utf16(env: napi_env, value: napi_value, buf: [*]char16_t, bufsize: usize, result: *usize) napi_status {
     const zig_str = value.getZigString(env);
+    if (@ptrToInt(buf) == 0) {
+        result.* = zig_str.len;
+        return .ok;
+    }
+
+    var buf_ = buf[0..bufsize];
+
+    if (bufsize == 0) {
+        buf_ = std.mem.span(std.meta.assumeSentinel(buf, 0));
+    }
+
     if (!zig_str.is16Bit()) {
         const slice = zig_str.slice();
-        const encode_into_result = strings.copyLatin1IntoUTF16([]char16_t, buf[0..bufsize], []const u8, slice);
+        const encode_into_result = strings.copyLatin1IntoUTF16([]char16_t, buf_, []const u8, slice);
         result.* = encode_into_result.written;
         return .ok;
     }
 
-    const to_copy = @minimum(zig_str.len, bufsize);
+    const to_copy = @minimum(zig_str.len, buf_.len);
     @memcpy(std.mem.sliceAsBytes(buf[0..bufsize]).ptr, std.mem.sliceAsBytes(zig_str.utf16SliceAligned()).ptr, to_copy * 2);
     result.* = to_copy;
     return .ok;

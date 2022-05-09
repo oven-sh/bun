@@ -44,10 +44,43 @@
 #include "JavaScriptCore/JSWeakValue.h"
 #include "napi.h"
 #include "JavaScriptCore/GetterSetter.h"
+#include "JavaScriptCore/JSSourceCode.h"
 
-#include <iostream>
+// #include <iostream>
 using namespace JSC;
 using namespace Zig;
+
+namespace Napi {
+
+JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject)
+{
+
+    JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, PropertyNameMode::StringsAndSymbols, DontEnumPropertiesMode::Include, std::nullopt);
+    auto symbol = vm.symbolRegistry().symbolForKey("__BunTemporaryGlobal"_s);
+    JSC::Identifier ident = JSC::Identifier::fromUid(symbol);
+    WTF::StringBuilder sourceCodeBuilder = WTF::StringBuilder();
+    // TODO: handle symbol collision
+    sourceCodeBuilder.append("var $$TempSymbol = Symbol.for('__BunTemporaryGlobal'), $$NativeModule = globalThis[$$TempSymbol]; globalThis[$$TempSymbol] = null;\n if (!$$NativeModule) { throw new Error('Assertion failure: Native module not found'); }\n\n"_s);
+
+    for (unsigned i = 0; i < exportKeys->length(); i++) {
+        auto key = exportKeys->getIndexQuickly(i);
+        if (key.isSymbol()) {
+            continue;
+        }
+        auto named = key.toWTFString(globalObject);
+        sourceCodeBuilder.append(""_s);
+        // TODO: handle invalid identifiers
+        sourceCodeBuilder.append("export var "_s);
+        sourceCodeBuilder.append(named);
+        sourceCodeBuilder.append(" = $$NativeModule."_s);
+        sourceCodeBuilder.append(named);
+        sourceCodeBuilder.append(";\n"_s);
+    }
+    globalObject->putDirect(vm, ident, object, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
+    return JSC::makeSource(sourceCodeBuilder.toString(), JSC::SourceOrigin(), keyString, WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
+}
+
+}
 
 // #include <csignal>
 #define NAPI_OBJECT_EXPECTED napi_object_expected
@@ -233,43 +266,20 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
 
 extern "C" void napi_module_register(napi_module* mod)
 {
-
     auto* globalObject = Bun__getDefaultGlobal();
     JSC::VM& vm = globalObject->vm();
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject);
     auto result = reinterpret_cast<JSC::EncodedJSValue>(
         mod->nm_register_func(reinterpret_cast<napi_env>(globalObject), reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::JSValue(object)))));
 
-    auto keyString = WTF::String::fromUTF8(mod->nm_modname);
-    JSC::JSString* key = JSC::jsString(vm, keyString);
+    // std::cout << "loaded " << mod->nm_modname << std::endl;
+    auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
+    auto key = JSC::jsString(vm, keyStr);
+    auto sourceCode = Napi::generateSourceCode(keyStr, vm, object, globalObject);
 
-    JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, PropertyNameMode::StringsAndSymbols, DontEnumPropertiesMode::Include, std::nullopt);
-    auto symbol = vm.symbolRegistry().symbolForKey("__BunTemporaryGlobal"_s);
-    JSC::Identifier ident = JSC::Identifier::fromUid(symbol);
-    WTF::StringBuilder sourceCodeBuilder = WTF::StringBuilder();
-    // TODO: handle symbol collision
-    sourceCodeBuilder.append("var $$TempSymbol = Symbol.for('__BunTemporaryGlobal'), $$NativeModule = globalThis[$$TempSymbol]; globalThis[$$TempSymbol] = null;\n if (!$$NativeModule) { throw new Error('Assertion failure: Native module not found'); }\n\n"_s);
-
-    for (unsigned i = 0; i < exportKeys->length(); i++) {
-        auto key = exportKeys->getIndexQuickly(i);
-        if (key.isSymbol()) {
-            continue;
-        }
-        auto keyString = key.toWTFString(globalObject);
-        sourceCodeBuilder.append(""_s);
-        // TODO: handle invalid identifiers
-        sourceCodeBuilder.append("export var "_s);
-        sourceCodeBuilder.append(keyString);
-        sourceCodeBuilder.append(" = $$NativeModule."_s);
-        sourceCodeBuilder.append(keyString);
-        sourceCodeBuilder.append(";\n"_s);
-    }
-    auto sourceCode = JSC::makeSource(sourceCodeBuilder.toString(), JSC::SourceOrigin(), keyString, WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
-    globalObject->putDirect(vm, ident, object, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
     globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(sourceCode));
     auto promise = globalObject->moduleLoader()->loadAndEvaluateModule(globalObject, key, jsUndefined(), jsUndefined());
     vm.drainMicrotasks();
-    promise->result(vm);
 }
 
 extern "C" napi_status napi_wrap(napi_env env,

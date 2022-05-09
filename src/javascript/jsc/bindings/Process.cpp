@@ -146,7 +146,7 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     if (!napi_register_module_v1) {
         dlclose(handle);
-        JSC::throwTypeError(globalObject, scope, "dlopen failed to napi_register_module_v1"_s);
+        JSC::throwTypeError(globalObject, scope, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 

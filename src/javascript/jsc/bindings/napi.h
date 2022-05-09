@@ -18,6 +18,11 @@ class GlobalObject;
 
 namespace JSC {
 class JSGlobalObject;
+class JSSourceCode;
+}
+
+namespace Napi {
+JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 }
 
 namespace Zig {

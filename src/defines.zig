@@ -196,11 +196,6 @@ pub const DotDefine = struct {
 var nan_val = js_ast.E.Number{ .value = std.math.nan_f64 };
 var inf_val = js_ast.E.Number{ .value = std.math.inf_f64 };
 
-const __dirname_str: string = std.fs.path.sep_str ++ "__dirname_is_not_implemented";
-const __filename_str: string = "__filename_is_not_implemented.js";
-var __dirname = js_ast.E.String.init(__dirname_str);
-var __filename = js_ast.E.String.init(__filename_str);
-
 pub const Define = struct {
     identifiers: std.StringHashMap(IdentifierDefine),
     dots: std.StringHashMap([]DotDefine),
@@ -300,24 +295,6 @@ pub const Define = struct {
                 }
             }
         }
-
-        // Node.js backwards compatibility hack
-        define.identifiers.putAssumeCapacity(
-            "__dirname",
-            DefineData{
-                .value = js_ast.Expr.Data{
-                    .e_string = &__dirname,
-                },
-            },
-        );
-        define.identifiers.putAssumeCapacity(
-            "__filename",
-            DefineData{
-                .value = js_ast.Expr.Data{
-                    .e_string = &__filename,
-                },
-            },
-        );
 
         // Step 2. Swap in certain literal values because those can be constant folded
         define.identifiers.putAssumeCapacity("undefined", .{

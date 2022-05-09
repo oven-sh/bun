@@ -4552,6 +4552,7 @@ pub const Part = struct {
         runtime,
         cjs_imports,
         react_fast_refresh,
+        dirname_filename,
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);

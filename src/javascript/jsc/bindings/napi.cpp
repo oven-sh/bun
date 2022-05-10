@@ -45,6 +45,7 @@
 #include "napi.h"
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/JSSourceCode.h"
+#include "JavaScriptCore/JSNativeStdFunction.h"
 
 // #include <iostream>
 using namespace JSC;
@@ -218,40 +219,49 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         function->dataPtr = dataPtr;
         JSC::JSValue value = JSC::JSValue(function);
 
-        to->putDirect(vm, propertyName, value, getPropertyAttributes(property));
+        to->putDirect(vm, propertyName, value, getPropertyAttributes(property) | JSC::PropertyAttribute::Function);
         return;
     }
 
     if (property.getter != nullptr || property.setter != nullptr) {
+
         JSC::JSObject* getter = nullptr;
         JSC::JSObject* setter = nullptr;
+        auto getterProperty = reinterpret_cast<FFIFunction>(property.getter);
+        auto setterProperty = reinterpret_cast<FFIFunction>(property.setter);
 
-        if (property.getter) {
-            auto function = Zig::JSFFIFunction::create(vm, globalObject, 0, nameStr, reinterpret_cast<Zig::FFIFunction>(property.getter));
-            function->dataPtr = dataPtr;
-
-            // if (isInstance) {
-            //     getter = JSBoundFunction::create(vm, globalObject, to, function, nullptr, 0, nullptr);
-            // } else {
-            getter = function;
-            // }
+        if (getterProperty) {
+            JSC::JSNativeStdFunction* getterFunction = JSC::JSNativeStdFunction::create(
+                globalObject->vm(), globalObject, 0, String(), [getterProperty](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                    return getterProperty(globalObject, callFrame);
+                });
+            getter = getterFunction;
+        } else {
+            JSC::JSNativeStdFunction* getterFunction = JSC::JSNativeStdFunction::create(
+                globalObject->vm(), globalObject, 0, String(), [](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                    return JSC::JSValue::encode(JSC::jsUndefined());
+                });
+            setter = getterFunction;
         }
 
-        if (property.setter) {
-            auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, nameStr, reinterpret_cast<Zig::FFIFunction>(property.setter));
-            function->dataPtr = dataPtr;
-            // if (isInstance) {
-            //     setter = JSBoundFunction::create(vm, globalObject, to, function, nullptr, 1, nullptr);
-            // } else {
-            setter = function;
-            // }
+        if (setterProperty) {
+            JSC::JSNativeStdFunction* setterFunction = JSC::JSNativeStdFunction::create(
+                globalObject->vm(), globalObject, 1, String(), [setterProperty](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                    setterProperty(globalObject, callFrame);
+                    return JSC::JSValue::encode(JSC::jsBoolean(true));
+                });
+            setter = setterFunction;
+        } else {
+            JSC::JSNativeStdFunction* setterFunction = JSC::JSNativeStdFunction::create(
+                globalObject->vm(), globalObject, 1, String(), [](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                    return JSC::JSValue::encode(JSC::jsBoolean(true));
+                });
+            setter = setterFunction;
         }
 
         auto getterSetter = JSC::GetterSetter::create(vm, globalObject, getter, setter);
-        to->putDirect(vm, propertyName, getterSetter, getPropertyAttributes(property));
-
+        to->putDirectAccessor(globalObject, propertyName, getterSetter, JSC::PropertyAttribute::Accessor | 0);
     } else {
-        // TODO: is dataPtr allowed when given a value?
         JSC::JSValue value = JSC::jsUndefined();
 
         if (property.value) {
@@ -530,7 +540,6 @@ extern "C" napi_status napi_get_cb_info(
     void** data)
 {
     Zig::GlobalObject* globalObject = toJS(env);
-    JSC::VM& vm = globalObject->vm();
     auto inputArgsCount = argc == nullptr ? 0 : *argc;
     JSC::CallFrame* callFrame = reinterpret_cast<JSC::CallFrame*>(cbinfo);
 
@@ -550,9 +559,8 @@ extern "C" napi_status napi_get_cb_info(
         }
     }
 
-    JSC::JSValue thisValue = callFrame->thisValue();
-
     if (this_arg != nullptr) {
+        JSC::JSValue thisValue = callFrame->thisValue();
         *this_arg = toNapi(thisValue);
     }
 
@@ -748,7 +756,12 @@ extern "C" napi_status napi_throw(napi_env env, napi_value error)
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue value = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(error));
-    JSC::throwException(globalObject, throwScope, value);
+    if (value) {
+        JSC::throwException(globalObject, throwScope, value);
+    } else {
+        JSC::throwException(globalObject, throwScope, JSC::createError(globalObject, "Error (via napi)"_s));
+    }
+
     return napi_ok;
 }
 

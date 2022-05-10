@@ -1332,9 +1332,9 @@ pub fn NewPrinter(
         }
 
         pub fn printRequireError(p: *Printer, text: string) void {
-            p.print("(() => { throw (new Error(`Cannot require module '");
+            p.print("(() => { throw (new Error(`Cannot require module ");
             p.printQuotedUTF8(text, false);
-            p.print("'`)); } )()");
+            p.print("`)); } )()");
         }
 
         pub fn printRequireOrImportExpr(

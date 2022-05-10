@@ -306,13 +306,15 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
 
     JSC::JSValue options = JSC::jsUndefined();
 
-    JSC::Structure* errorStructure = globalObject->errorStructure();
-    JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
+    Structure* errorStructure = JSC_GET_DERIVED_STRUCTURE(vm, errorStructure, globalObject->errorPrototype(), globalObject->errorPrototype());
+
+    JSC::JSObject* result
+        = JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
 
     auto clientData = WebCore::clientData(vm);
 
-    if (err.code.len > 0) {
-        JSC::JSValue code = Zig::toJSString(err.code, globalObject);
+    if (err.code.len > 0 && !(err.code.len == 1 and err.code.ptr[0] == 0)) {
+        JSC::JSValue code = Zig::toJSStringGC(err.code, globalObject);
         result->putDirect(vm, clientData->builtinNames().codePublicName(), code,
             JSC::PropertyAttribute::DontDelete | 0);
 

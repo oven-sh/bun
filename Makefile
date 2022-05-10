@@ -447,7 +447,7 @@ tgz-debug:
 vendor: require init-submodules vendor-without-check 
 
 zlib: 
-	cd $(BUN_DEPS_DIR)/zlib; CFLAGS="$(CFLAGS) $(EMIT_LLVM_FOR_RELEASE)" cmake $(CMAKE_FLAGS) .; CFLAGS="$(CFLAGS)" make;
+	cd $(BUN_DEPS_DIR)/zlib; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) .; CFLAGS="$(CFLAGS)" make;
 	cp $(BUN_DEPS_DIR)/zlib/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
 docker-login:
@@ -1138,7 +1138,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
-		$(EMIT_LLVM_FOR_DEBUG) \
+		$(EMIT_LLVM_FOR_RELEASE) \
 		-g3 -c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
@@ -1147,7 +1147,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
-		$(EMIT_LLVM_FOR_DEBUG) \
+		$(EMIT_LLVM_FOR_RELEASE) \
 		-g3 -c -o $@ $<
 		
 sizegen:

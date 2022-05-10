@@ -121,3 +121,6 @@ _napi_reference_unref
 _napi_reference_ref
 _napi_get_reference_value
 _napi_delete_reference
+_napi_adjust_external_memory
+_napi_is_exception_pending
+_napi_get_and_clear_last_exception

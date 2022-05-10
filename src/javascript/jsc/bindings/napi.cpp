@@ -749,9 +749,35 @@ extern "C" napi_status napi_detach_arraybuffer(napi_env env,
     return napi_ok;
 }
 
+extern "C" napi_status napi_adjust_external_memory(napi_env env,
+    int64_t change_in_bytes,
+    int64_t* adjusted_value)
+{
+    if (change_in_bytes > 0) {
+        toJS(env)->vm().heap.deprecatedReportExtraMemory(change_in_bytes);
+    }
+    *adjusted_value = toJS(env)->vm().heap.extraMemorySize();
+    return napi_ok;
+}
+
+extern "C" napi_status napi_is_exception_pending(napi_env env, bool* result)
+{
+    auto globalObject = toJS(env);
+    *result = globalObject->vm().exceptionForInspection() != nullptr;
+    return napi_ok;
+}
+extern "C" napi_status napi_get_and_clear_last_exception(napi_env env,
+    napi_value* result)
+{
+    auto globalObject = toJS(env);
+    *result = toNapi(JSC::JSValue(globalObject->vm().lastException()));
+    globalObject->vm().clearLastException();
+    return napi_ok;
+}
+
 extern "C" napi_status napi_throw(napi_env env, napi_value error)
 {
-    Zig::GlobalObject* globalObject = toJS(env);
+    auto globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 

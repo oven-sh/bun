@@ -1,5 +1,6 @@
 import { run, bench, group, baseline } from "mitata";
 import { dlopen, suffix } from "bun:ffi";
+import { readdirSync } from "fs";
 
 const {
   symbols: {
@@ -7,7 +8,7 @@ const {
     noop,
   },
   close,
-} = dlopen(`./plus100.${suffix}`, {
+} = dlopen(`./plus100.dylib`, {
   plus100: {
     args: ["int32_t"],
     returns: "int32_t",
@@ -16,9 +17,10 @@ const {
     args: [],
   },
 });
-const napi = { exports: {} };
-process.dlopen(napi, "plus100-napi/package-template.darwin-arm64.node");
-const { plus100: plus100napi, noop: noopNapi } = napi.exports;
+const {
+  plus100: plus100napi,
+  noop: noopNapi,
+} = require("./plus100-napi/index.js");
 
 group("plus100", () => {
   bench("plus100(1) ffi", () => {

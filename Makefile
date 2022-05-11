@@ -272,7 +272,8 @@ PLATFORM_LINKER_FLAGS =
 ifeq ($(OS_NAME), darwin)
 PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
-		-fno-keep-static-consts
+		-fno-keep-static-consts \
+		-exported_symbols_list $(realpath src/symbols.txt)
 endif
 
 
@@ -331,7 +332,8 @@ PLATFORM_LINKER_FLAGS = $(CFLAGS) \
 		-Wl,-Bsymbolic-functions \
 		-fno-semantic-interposition \
 		-flto \
-		-Wl,--allow-multiple-definition
+		-Wl,--allow-multiple-definition \
+		-Wl,--dynamic-list $(realpath src/symbols.dyn)
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 endif
@@ -345,7 +347,7 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 		
 
 
-BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS} -exported_symbols_list $(realpath src/symbols.txt)
+BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS}
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 

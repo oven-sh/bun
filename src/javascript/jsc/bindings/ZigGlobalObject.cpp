@@ -1173,7 +1173,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     auto index = view.reverseFind('/', view.length());
     if (index != WTF::notFound) {
         metaProperties->putDirect(vm, clientData->builtinNames().dirPublicName(),
-            JSC::jsSubstring(globalObject, keyString, 0, index + 1));
+            JSC::jsSubstring(globalObject, keyString, 0, index));
         metaProperties->putDirect(
             vm, clientData->builtinNames().filePublicName(),
             JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));

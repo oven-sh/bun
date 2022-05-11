@@ -3614,13 +3614,34 @@ fn NewParser_(
 
                     const pathname = str.string(p.allocator) catch unreachable;
 
+                    // When we know that we support dynamically requiring this file type
+                    // we can avoid eager loading it
+                    // instead, we can just use the require() function directly.
                     if (p.options.features.dynamic_require and
                         !p.options.enable_bundling and
                         (strings.endsWithComptime(pathname, ".json") or
-                        strings.endsWithComptime(pathname, ".toml") or
+                        // strings.endsWithComptime(pathname, ".toml") or
                         strings.endsWithComptime(pathname, ".node")))
                     {
-                        return arg;
+                        p.ignoreUsage(p.require_ref);
+                        var args = p.allocator.alloc(Expr, 1) catch unreachable;
+                        args[0] = arg;
+
+                        return p.e(
+                            E.Call{
+                                .target = p.e(
+                                    E.Dot{
+                                        .target = p.e(E.ImportMeta{}, arg.loc),
+                                        .name = "require",
+                                        .name_loc = arg.loc,
+                                    },
+                                    arg.loc,
+                                ),
+                                .args = js_ast.ExprNodeList.init(args),
+                                .close_paren_loc = arg.loc,
+                            },
+                            arg.loc,
+                        );
                     }
 
                     const import_record_index = p.addImportRecord(.require, arg.loc, pathname);

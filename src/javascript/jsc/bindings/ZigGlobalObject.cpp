@@ -1045,35 +1045,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     auto moduleKey = key.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
     if (moduleKey.endsWith(".node")) {
-        CString utf8 = moduleKey.utf8();
-        void* handle = dlopen(utf8.data(), RTLD_LAZY);
-
-        if (!handle) {
-            WTF::String msg = WTF::String::fromUTF8(dlerror());
-            return rejectWithError(JSC::createTypeError(globalObject, msg));
-        }
-
-        JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
-            JSC::EncodedJSValue exports);
-
-        napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
-            JSC::EncodedJSValue)>(
-            dlsym(handle, "napi_register_module_v1"));
-
-        if (!napi_register_module_v1) {
-            dlclose(handle);
-            return rejectWithError(JSC::createTypeError(globalObject, "symbol 'napi_register_module_v1' not found in native module. Is this a Node API (napi) module?"_s));
-        }
-        JSC::JSValue exports = JSC::constructEmptyObject(globalObject);
-
-        JSC::JSValue returnedExports = JSC::JSValue::decode(napi_register_module_v1(globalObject, JSC::JSValue::encode(exports)));
-
-        auto sourceCode = Napi::generateSourceCode(moduleKey, vm, returnedExports.getObject(), globalObject);
-
-        scope.releaseAssertNoExceptionExceptTermination();
-        auto jsSourceCode = JSC::JSSourceCode::create(vm, WTFMove(sourceCode));
-        promise->resolve(globalObject, jsSourceCode);
-        return promise;
+        return rejectWithError(createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
     auto moduleKeyZig = toZigString(moduleKey);

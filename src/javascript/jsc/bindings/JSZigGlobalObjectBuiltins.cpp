@@ -44,7 +44,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_jsZigGlobalObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsZigGlobalObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsZigGlobalObjectRequireCodeLength = 1224;
+const int s_jsZigGlobalObjectRequireCodeLength = 1225;
 static const JSC::Intrinsic s_jsZigGlobalObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsZigGlobalObjectRequireCode =
     "(function (name) {\n" \
@@ -69,7 +69,7 @@ const char* const s_jsZigGlobalObjectRequireCode =
     "    var fs = (globalThis[Symbol.for(\"_fs\")] ||= Bun.fs());\n" \
     "    var exports = JSON.parse(fs.readFileSync(resolved, \"utf8\"));\n" \
     "    requireCache.@set(resolved, exports);\n" \
-    "    return cached;\n" \
+    "    return exports;\n" \
     "  } else if (resolved.endsWith(\".node\")) {\n" \
     "    var module = { exports: {} };\n" \
     "    globalThis.process.dlopen(module, resolved);\n" \

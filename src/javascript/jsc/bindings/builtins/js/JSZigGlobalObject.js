@@ -45,7 +45,7 @@ function require(name) {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = JSON.parse(fs.readFileSync(resolved, "utf8"));
     requireCache.@set(resolved, exports);
-    return cached;
+    return exports;
   } else if (resolved.endsWith(".node")) {
     var module = { exports: {} };
     globalThis.process.dlopen(module, resolved);

@@ -536,6 +536,10 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     size_t length, napi_callback cb,
     void* data, napi_value* result)
 {
+    if (utf8name == nullptr) {
+        return napi_invalid_arg;
+    }
+
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
     auto name = WTF::String::fromUTF8(utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length).isolatedCopy();
@@ -691,14 +695,22 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
         }
     }
 
-    NapiPrototype* object = jsDynamicCast<NapiPrototype*>(val);
-    if (!object) {
+    if (NapiPrototype* object = jsDynamicCast<NapiPrototype*>(val)) {
+        object->napiRef = ref;
         return napi_invalid_arg;
     }
 
-    object->napiRef = ref;
     *result = toNapi(ref);
 
+    return napi_ok;
+}
+
+extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
+    void* native_object,
+    napi_finalize finalize_cb,
+    void* finalize_hint,
+    napi_ref* result)
+{
     return napi_ok;
 }
 
@@ -1177,6 +1189,36 @@ extern "C" napi_status napi_get_all_property_names(
     return napi_ok;
 }
 
+static napi_extended_error_info last_error_info;
+
+extern "C" napi_status
+napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
+{
+    auto globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+    auto lastException = vm.lastException();
+    if (!lastException) {
+        last_error_info = {
+            "",
+            nullptr,
+            404,
+            napi_generic_failure
+        };
+        *result = &last_error_info;
+        return napi_ok;
+    }
+
+    last_error_info = {
+        lastException->value().toWTFString(globalObject).utf8().data(),
+        lastException,
+        69420,
+        napi_generic_failure
+    };
+    *result = &last_error_info;
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_define_class(napi_env env,
     const char* utf8name,
     size_t length,
@@ -1186,6 +1228,10 @@ extern "C" napi_status napi_define_class(napi_env env,
     const napi_property_descriptor* properties,
     napi_value* result)
 {
+    if (utf8name == nullptr) {
+        return napi_invalid_arg;
+    }
+
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
     size_t len = length;

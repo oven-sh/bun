@@ -12063,10 +12063,11 @@ fn NewParser_(
             switch (expr.data) {
                 .e_null, .e_super, .e_boolean, .e_big_int, .e_reg_exp, .e_undefined => {},
 
-                .e_new_target => |target| {
-                    if (!p.fn_only_data_visit.is_new_target_allowed) {
-                        p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
-                    }
+                .e_new_target => |_| {
+                    // this error is not necessary and it is causing breakages
+                    // if (!p.fn_only_data_visit.is_new_target_allowed) {
+                    //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
+                    // }
                 },
 
                 .e_string => {

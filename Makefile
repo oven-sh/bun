@@ -419,7 +419,7 @@ boringssl: boringssl-build boringssl-copy
 boringssl-debug: boringssl-build-debug boringssl-copy
 
 compile-ffi-test:
-	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test$(SHARED_LIB_EXTENSION) ./integration/bunjs-only-snippets/ffi-test.c
+	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./integration/bunjs-only-snippets/ffi-test.c
 
 libbacktrace:
 	cd $(BUN_DEPS_DIR)/libbacktrace && \

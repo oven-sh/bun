@@ -44,7 +44,14 @@ it("Buffer", () => {
     gc();
     expect(Array.from(new Buffer(input)).join(",")).toBe(good[i].join(","));
     gc();
+    expect(Buffer.byteLength(input)).toBe(good[i].length);
   }
+});
+
+it("Buffer.byteLength", () => {
+  expect(Buffer.byteLength("😀😃😄😁😆😅😂🤣☺️😊😊😇")).toBe(
+    new TextEncoder().encode("😀😃😄😁😆😅😂🤣☺️😊😊😇").byteLength
+  );
 });
 
 it("Buffer.isBuffer", () => {

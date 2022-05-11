@@ -95,6 +95,7 @@
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "napi.h"
+#include "JSZigGlobalObjectBuiltins.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -691,6 +692,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionATOB,
 }
 
 extern "C" JSC__JSValue Bun__resolve(JSC::JSGlobalObject* global, JSC__JSValue specifier, JSC__JSValue from);
+extern "C" JSC__JSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC__JSValue specifier, JSC__JSValue from);
 
 static JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolve);
 
@@ -735,6 +737,62 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         }
 
         return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from);
+    }
+    }
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
+
+static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolveSync,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+
+    switch (callFrame->argumentCount()) {
+    case 0: {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        // not "requires" because "require" could be confusing
+        JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync needs 1 argument (a string)"_s);
+        scope.release();
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    default: {
+        JSC::JSValue moduleName = callFrame->argument(0);
+
+        if (moduleName.isUndefinedOrNull()) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync expects a string"_s);
+            scope.release();
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        JSC__JSValue from;
+
+        if (callFrame->argumentCount() > 1) {
+            from = JSC::JSValue::encode(callFrame->argument(1));
+        } else {
+            JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(callFrame->thisValue());
+            if (UNLIKELY(!thisObject)) {
+                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                JSC::throwTypeError(globalObject, scope, "import.meta.resolveSync must be bound to an import.meta object"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+
+            auto clientData = WebCore::clientData(vm);
+
+            from = JSC::JSValue::encode(thisObject->get(globalObject, clientData->builtinNames().pathPublicName()));
+        }
+
+        auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from);
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+        if (!JSC::JSValue::decode(result).isString()) {
+            JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        scope.release();
+        return result;
     }
     }
 }
@@ -1127,7 +1185,12 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
         metaProperties->putDirect(vm, clientData->builtinNames().resolvePublicName(),
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
                 WTF::String("resolve"_s), functionImportMeta__resolve),
-            0);
+            JSC::PropertyAttribute::Function | 0);
+        metaProperties->putDirect(vm, clientData->builtinNames().resolveSyncPublicName(),
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
+                WTF::String("resolveSync"_s), functionImportMeta__resolveSync),
+            JSC::PropertyAttribute::Function | 0);
+
     }
 
     metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), key);

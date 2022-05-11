@@ -1087,6 +1087,7 @@ pub const Bundler = struct {
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.features.should_fold_numeric_constants = platform.isBun();
+                opts.features.dynamic_require = platform.isBun();
 
                 opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
 

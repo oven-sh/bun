@@ -921,9 +921,22 @@ export fn Bun__resolve(
     return JSC.JSPromise.resolvedPromiseValue(global, value);
 }
 
+export fn Bun__resolveSync(
+    global: *JSGlobalObject,
+    specifier: JSValue,
+    source: JSValue,
+) JSC.JSValue {
+    var exception_ = [1]JSC.JSValueRef{null};
+    var exception = &exception_;
+    return doResolveWithArgs(global.ref(), specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
+        return JSC.JSValue.fromRef(exception[0]);
+    };
+}
+
 comptime {
     if (!is_bindgen) {
         _ = Bun__resolve;
+        _ = Bun__resolveSync;
     }
 }
 

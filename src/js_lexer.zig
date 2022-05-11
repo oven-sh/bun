@@ -1350,19 +1350,22 @@ fn NewLexer_(
                     },
 
                     '-' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
-                        }
 
                         // '+' or '+=' or '++'
                         lexer.step();
                         switch (lexer.code_point) {
                             '=' => {
+                                if (comptime is_json) {
+                                    return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                                }
                                 lexer.step();
                                 lexer.token = T.t_minus_equals;
                             },
 
                             '-' => {
+                                if (comptime is_json) {
+                                    return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
+                                }
                                 lexer.step();
 
                                 if (lexer.code_point == '>' and lexer.has_newline_before) {

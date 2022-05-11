@@ -1197,7 +1197,7 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
 
 pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
     // latin1 is always at most 1 UTF-16 code unit long
-    if (comptime std.meta.Child(u16) == Type) {
+    if (comptime std.meta.Child([]const u16) == Type) {
         return latin1_.len;
     }
 

@@ -2889,6 +2889,13 @@ pub const JSValue = enum(u64) {
         return @ptrCast(C_API.JSObjectRef, this.asVoid());
     }
 
+    /// When the GC sees a JSValue referenced in the stack
+    /// It knows not to free it
+    /// This mimicks the implementation in JavaScriptCore's C++
+    pub inline fn ensureStillAlive(this: JSValue) void {
+        std.mem.doNotOptimizeAway(@ptrCast(C_API.JSObjectRef, this.asVoid()));
+    }
+
     pub inline fn asVoid(this: JSValue) *anyopaque {
         if (comptime bun.Environment.allow_assert) {
             if (@enumToInt(this) == 0) {

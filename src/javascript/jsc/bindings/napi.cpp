@@ -216,22 +216,22 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
     if (property.method) {
         JSC::JSValue value;
         auto method = reinterpret_cast<Zig::FFIFunction>(property.method);
-        if (!dataPtr) {
-            JSC::JSNativeStdFunction* func = JSC::JSNativeStdFunction::create(
-                globalObject->vm(), globalObject, 1, String(), [method](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                    JSC::MarkedArgumentBuffer values;
-                    values.append(callFrame->thisValue());
-                    for (int i = 0; i < callFrame->argumentCount(); i++) {
-                        values.append(callFrame->argument(i));
-                    }
-                    return method(globalObject, callFrame);
-                });
-            value = JSC::JSValue(func);
-        } else {
-            auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, nameStr, method);
-            function->dataPtr = dataPtr;
-            value = JSC::JSValue(function);
-        }
+        // if (!dataPtr) {
+        //     JSC::JSNativeStdFunction* func = JSC::JSNativeStdFunction::create(
+        //         globalObject->vm(), globalObject, 1, String(), [method](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        //             JSC::MarkedArgumentBuffer values;
+        //             values.append(callFrame->thisValue());
+        //             for (int i = 0; i < callFrame->argumentCount(); i++) {
+        //                 values.append(callFrame->argument(i));
+        //             }
+        //             return method(globalObject, callFrame);
+        //         });
+        //     value = JSC::JSValue(func);
+        // } else {
+        auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, nameStr, method);
+        function->dataPtr = dataPtr;
+        value = JSC::JSValue(function);
+        // }
 
         to->putDirect(vm, propertyName, value, getPropertyAttributes(property) | JSC::PropertyAttribute::Function);
         return;
@@ -541,22 +541,22 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     JSC::VM& vm = globalObject->vm();
     auto name = WTF::String::fromUTF8(utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length).isolatedCopy();
     auto method = reinterpret_cast<Zig::FFIFunction>(cb);
-    if (data) {
-        auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, name, method);
-        function->dataPtr = data;
-        *result = toNapi(JSC::JSValue(function));
-    } else {
-        JSC::JSNativeStdFunction* func = JSC::JSNativeStdFunction::create(
-            globalObject->vm(), globalObject, 1, String(), [method](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                JSC::MarkedArgumentBuffer values;
-                values.append(callFrame->thisValue());
-                for (int i = 0; i < callFrame->argumentCount(); i++) {
-                    values.append(callFrame->argument(i));
-                }
-                return method(globalObject, callFrame);
-            });
-        *result = toNapi(JSC::JSValue(func));
-    }
+    // if (data) {
+    auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, name, method);
+    function->dataPtr = data;
+    *result = toNapi(JSC::JSValue(function));
+    // } else {
+    //     JSC::JSNativeStdFunction* func = JSC::JSNativeStdFunction::create(
+    //         globalObject->vm(), globalObject, 1, String(), [method](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+    //             JSC::MarkedArgumentBuffer values;
+    //             values.append(callFrame->thisValue());
+    //             for (int i = 0; i < callFrame->argumentCount(); i++) {
+    //                 values.append(callFrame->argument(i));
+    //             }
+    //             return method(globalObject, callFrame);
+    //         });
+    //     *result = toNapi(JSC::JSValue(func));
+    // }
 
     // std::cout << "napi_create_function: " << utf8name << std::endl;
 

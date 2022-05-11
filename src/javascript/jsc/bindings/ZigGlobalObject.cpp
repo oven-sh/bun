@@ -1173,7 +1173,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     auto index = view.reverseFind('/', view.length());
     if (index != WTF::notFound) {
         metaProperties->putDirect(vm, clientData->builtinNames().dirPublicName(),
-            JSC::jsSubstring(globalObject, keyString, 0, index));
+            JSC::jsSubstring(globalObject, keyString, 0, index + 1));
         metaProperties->putDirect(
             vm, clientData->builtinNames().filePublicName(),
             JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));
@@ -1191,6 +1191,9 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
                 WTF::String("resolveSync"_s), functionImportMeta__resolveSync),
             JSC::PropertyAttribute::Function | 0);
 
+        metaProperties->putDirectBuiltinFunction(vm, globalObject, clientData->builtinNames().requirePublicName(),
+            jsZigGlobalObjectRequireCodeGenerator(vm),
+            JSC::PropertyAttribute::Builtin | 0);
     }
 
     metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), key);

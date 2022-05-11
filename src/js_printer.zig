@@ -3588,15 +3588,11 @@ pub fn NewPrinter(
                                     const quotes = p.bestQuoteCharForString(import_record.path.text, true);
                                     p.print("var ");
                                     p.printSymbol(s.namespace_ref);
-                                    p.print(" = ");
-
-                                    p.print(
-                                        \\((path, cache, process) => {var mod = cache.get(path); if (mod) return mod.exports; mod = {exports: {}};process.dlopen(mod, path); cache.set(path, mod); return mod.exports;})(
-                                    );
+                                    p.print(" = import.meta.require(");
                                     p.print(quotes);
                                     p.printUTF8StringEscapedQuotes(import_record.path.text, quotes);
                                     p.print(quotes);
-                                    p.print(", (globalThis[globalThis.Symbol.for('_dlcache')] ||= new globalThis.Map()), globalThis.process);");
+                                    p.print(")");
                                     p.printSemicolonAfterStatement();
                                 }
                             }

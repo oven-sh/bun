@@ -32,6 +32,7 @@
 
 #include "JSBufferConstructorBuiltins.h"
 #include "JSBufferPrototypeBuiltins.h"
+#include "JSZigGlobalObjectBuiltins.h"
 #include <JavaScriptCore/VM.h>
 
 namespace WebCore {
@@ -42,16 +43,19 @@ public:
         : m_vm(vm)
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
+        , m_jsZigGlobalObjectBuiltins(m_vm)
     {
     }
 
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
+    JSZigGlobalObjectBuiltinsWrapper& jsZigGlobalObjectBuiltins() { return m_jsZigGlobalObjectBuiltins; }
 
 private:
     JSC::VM& m_vm;
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
+    JSZigGlobalObjectBuiltinsWrapper m_jsZigGlobalObjectBuiltins;
 };
 
 } // namespace WebCore

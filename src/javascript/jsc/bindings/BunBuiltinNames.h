@@ -77,6 +77,8 @@ using namespace JSC;
     macro(put) \
     macro(read) \
     macro(relative) \
+    macro(require) \
+    macro(resolveSync) \
     macro(removeEventListener) \
     macro(resolve) \
     macro(resume) \

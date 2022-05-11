@@ -1048,83 +1048,132 @@ pub const VirtualMachine = struct {
                 .source_url = ZigString.init(Runtime.Runtime.Imports.Name),
                 .hash = Runtime.Runtime.versionHash(),
             };
-            // This is all complicated because the imports have to be linked and we want to run the printer on it
-            // so it consistently handles bundled imports
-            // we can't take the shortcut of just directly importing the file, sadly.
-        } else if (strings.eqlComptime(_specifier, main_file_name)) {
-            if (comptime disable_transpilying) {
-                return ResolvedSource{
-                    .allocator = null,
-                    .source_code = ZigString.init(jsc_vm.entry_point.source.contents),
-                    .specifier = ZigString.init(std.mem.span(main_file_name)),
-                    .source_url = ZigString.init(std.mem.span(main_file_name)),
-                    .hash = 0,
-                };
-            }
-            defer jsc_vm.transpiled_count += 1;
+        } else if (HardcodedModule.Map.get(_specifier)) |hardcoded| {
+            switch (hardcoded) {
+                // This is all complicated because the imports have to be linked and we want to run the printer on it
+                // so it consistently handles bundled imports
+                // we can't take the shortcut of just directly importing the file, sadly.
+                .@"bun:main" => {
+                    if (comptime disable_transpilying) {
+                        return ResolvedSource{
+                            .allocator = null,
+                            .source_code = ZigString.init(jsc_vm.entry_point.source.contents),
+                            .specifier = ZigString.init(std.mem.span(main_file_name)),
+                            .source_url = ZigString.init(std.mem.span(main_file_name)),
+                            .hash = 0,
+                        };
+                    }
+                    defer jsc_vm.transpiled_count += 1;
 
-            var bundler = &jsc_vm.bundler;
-            var old = jsc_vm.bundler.log;
-            jsc_vm.bundler.log = log;
-            jsc_vm.bundler.linker.log = log;
-            jsc_vm.bundler.resolver.log = log;
-            defer {
-                jsc_vm.bundler.log = old;
-                jsc_vm.bundler.linker.log = old;
-                jsc_vm.bundler.resolver.log = old;
-            }
+                    var bundler = &jsc_vm.bundler;
+                    var old = jsc_vm.bundler.log;
+                    jsc_vm.bundler.log = log;
+                    jsc_vm.bundler.linker.log = log;
+                    jsc_vm.bundler.resolver.log = log;
+                    defer {
+                        jsc_vm.bundler.log = old;
+                        jsc_vm.bundler.linker.log = old;
+                        jsc_vm.bundler.resolver.log = old;
+                    }
 
-            var jsx = bundler.options.jsx;
-            jsx.parse = false;
-            var opts = js_parser.Parser.Options.init(jsx, .js);
-            opts.enable_bundling = false;
-            opts.transform_require_to_import = true;
-            opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
-            opts.features.hot_module_reloading = false;
-            opts.features.react_fast_refresh = false;
-            opts.filepath_hash_for_hmr = 0;
-            opts.warn_about_unbundled_modules = false;
-            opts.macro_context = &jsc_vm.bundler.macro_context.?;
-            const main_ast = (bundler.resolver.caches.js.parse(jsc_vm.allocator, opts, bundler.options.define, bundler.log, &jsc_vm.entry_point.source) catch null) orelse {
-                return error.ParseError;
-            };
-            var parse_result = ParseResult{ .source = jsc_vm.entry_point.source, .ast = main_ast, .loader = .js, .input_fd = null };
-            var file_path = Fs.Path.init(bundler.fs.top_level_dir);
-            file_path.name.dir = bundler.fs.top_level_dir;
-            file_path.name.base = "bun:main";
-            try bundler.linker.link(
-                file_path,
-                &parse_result,
-                jsc_vm.origin,
-                .absolute_path,
-                false,
-                true,
-            );
-            var printer = source_code_printer.?.*;
-            var written: usize = undefined;
-            printer.ctx.reset();
-            {
-                defer source_code_printer.?.* = printer;
-                written = try jsc_vm.bundler.printWithSourceMap(
-                    parse_result,
-                    @TypeOf(&printer),
-                    &printer,
-                    .esm_ascii,
-                    SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
-                );
-            }
+                    var jsx = bundler.options.jsx;
+                    jsx.parse = false;
+                    var opts = js_parser.Parser.Options.init(jsx, .js);
+                    opts.enable_bundling = false;
+                    opts.transform_require_to_import = true;
+                    opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
+                    opts.features.hot_module_reloading = false;
+                    opts.features.react_fast_refresh = false;
+                    opts.filepath_hash_for_hmr = 0;
+                    opts.warn_about_unbundled_modules = false;
+                    opts.macro_context = &jsc_vm.bundler.macro_context.?;
+                    const main_ast = (bundler.resolver.caches.js.parse(jsc_vm.allocator, opts, bundler.options.define, bundler.log, &jsc_vm.entry_point.source) catch null) orelse {
+                        return error.ParseError;
+                    };
+                    var parse_result = ParseResult{ .source = jsc_vm.entry_point.source, .ast = main_ast, .loader = .js, .input_fd = null };
+                    var file_path = Fs.Path.init(bundler.fs.top_level_dir);
+                    file_path.name.dir = bundler.fs.top_level_dir;
+                    file_path.name.base = "bun:main";
+                    try bundler.linker.link(
+                        file_path,
+                        &parse_result,
+                        jsc_vm.origin,
+                        .absolute_path,
+                        false,
+                        true,
+                    );
+                    var printer = source_code_printer.?.*;
+                    var written: usize = undefined;
+                    printer.ctx.reset();
+                    {
+                        defer source_code_printer.?.* = printer;
+                        written = try jsc_vm.bundler.printWithSourceMap(
+                            parse_result,
+                            @TypeOf(&printer),
+                            &printer,
+                            .esm_ascii,
+                            SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
+                        );
+                    }
 
-            if (written == 0) {
-                return error.PrintingErrorWriteFailed;
-            }
+                    if (written == 0) {
+                        return error.PrintingErrorWriteFailed;
+                    }
 
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, printer.ctx.written) catch unreachable),
-                .specifier = ZigString.init(std.mem.span(main_file_name)),
-                .source_url = ZigString.init(std.mem.span(main_file_name)),
-                .hash = 0,
-            };
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, printer.ctx.written) catch unreachable),
+                        .specifier = ZigString.init(std.mem.span(main_file_name)),
+                        .source_url = ZigString.init(std.mem.span(main_file_name)),
+                        .hash = 0,
+                    };
+                },
+                .@"node:fs" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(@embedFile("fs.exports.js") ++ JSC.Node.fs.constants_string),
+                        .specifier = ZigString.init("node:fs"),
+                        .source_url = ZigString.init("node:fs"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:path" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(Node.Path.code),
+                        .specifier = ZigString.init("node:path"),
+                        .source_url = ZigString.init("node:path"),
+                        .hash = 0,
+                    };
+                },
+                .@"bun:ffi" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            "export const FFIType = " ++
+                                JSC.FFI.ABIType.map_to_js_object ++
+                                ";\n\n" ++
+                                "export const suffix = '" ++ shared_library_suffix ++ "';\n\n" ++
+                                @embedFile("ffi.exports.js") ++
+                                "\n",
+                        ),
+                        .specifier = ZigString.init("bun:ffi"),
+                        .source_url = ZigString.init("bun:ffi"),
+                        .hash = 0,
+                    };
+                },
+                .@"detect-libc" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile(if (Environment.isLinux) "detect-libc.linux.js" else "detect-libc.js")),
+                        ),
+                        .specifier = ZigString.init("detect-libc"),
+                        .source_url = ZigString.init("detect-libc"),
+                        .hash = 0,
+                    };
+                },
+            }
         } else if (_specifier.len > js_ast.Macro.namespaceWithColon.len and
             strings.eqlComptimeIgnoreLen(_specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
         {
@@ -1139,37 +1188,6 @@ pub const VirtualMachine = struct {
                     };
                 }
             }
-        } else if (strings.eqlComptime(_specifier, "node:fs")) {
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = ZigString.init(@embedFile("fs.exports.js") ++ JSC.Node.fs.constants_string),
-                .specifier = ZigString.init("node:fs"),
-                .source_url = ZigString.init("node:fs"),
-                .hash = 0,
-            };
-        } else if (strings.eqlComptime(_specifier, "node:path")) {
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = ZigString.init(Node.Path.code),
-                .specifier = ZigString.init("node:path"),
-                .source_url = ZigString.init("node:path"),
-                .hash = 0,
-            };
-        } else if (strings.eqlComptime(_specifier, "bun:ffi")) {
-            return ResolvedSource{
-                .allocator = null,
-                .source_code = ZigString.init(
-                    "export const FFIType = " ++
-                        JSC.FFI.ABIType.map_to_js_object ++
-                        ";\n\n" ++
-                        "export const suffix = '" ++ shared_library_suffix ++ "';\n\n" ++
-                        @embedFile("ffi.exports.js") ++
-                        "\n",
-                ),
-                .specifier = ZigString.init("bun:ffi"),
-                .source_url = ZigString.init("bun:ffi"),
-                .hash = 0,
-            };
         }
 
         const specifier = normalizeSpecifier(_specifier);
@@ -1393,17 +1411,9 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (strings.eqlComptime(specifier, "node:fs")) {
+        } else if (HardcodedModule.Map.get(specifier)) |result| {
             ret.result = null;
-            ret.path = "node:fs";
-            return;
-        } else if (strings.eqlComptime(specifier, "node:path")) {
-            ret.result = null;
-            ret.path = "node:path";
-            return;
-        } else if (strings.eqlComptime(specifier, "bun:ffi")) {
-            ret.result = null;
-            ret.path = "bun:ffi";
+            ret.path = std.mem.span(@tagName(result));
             return;
         }
 
@@ -2874,3 +2884,41 @@ pub const BuildError = struct {
 };
 
 pub const JSPrivateDataTag = JSPrivateDataPtr.Tag;
+
+pub const HardcodedModule = enum {
+    @"bun:ffi",
+    @"bun:main",
+    @"node:fs",
+    @"node:path",
+    @"detect-libc",
+
+    pub const Map = bun.ComptimeStringMap(
+        HardcodedModule,
+        .{
+            .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
+            .{ "ffi", HardcodedModule.@"bun:ffi" },
+            .{ "bun:main", HardcodedModule.@"bun:main" },
+            .{ "node:fs", HardcodedModule.@"node:fs" },
+            .{ "fs", HardcodedModule.@"node:fs" },
+            .{ "node:path", HardcodedModule.@"node:path" },
+            .{ "path", HardcodedModule.@"node:path" },
+            .{ "node:path/win32", HardcodedModule.@"node:path" },
+            .{ "node:path/posix", HardcodedModule.@"node:path" },
+            .{ "detect-libc", HardcodedModule.@"detect-libc" },
+        },
+    );
+    pub const LinkerMap = bun.ComptimeStringMap(
+        string,
+        .{
+            .{ "bun:ffi", "bun:ffi" },
+            .{ "detect-libc", "detect-libc" },
+            .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
+            .{ "ffi", "bun:ffi" },
+            .{ "fs", "node:fs" },
+            .{ "node:fs", "node:fs" },
+            .{ "node:path", "node:path" },
+            .{ "path", "node:path" },
+            .{ "bun:wrap", "bun:wrap" },
+        },
+    );
+};

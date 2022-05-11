@@ -36,6 +36,7 @@ const ResolveQueue = _bundler.ResolveQueue;
 const ResolverType = Resolver.Resolver;
 const Runtime = @import("./runtime.zig").Runtime;
 const URL = @import("url.zig").URL;
+const JSC = @import("javascript_core");
 pub const CSSResolveError = error{ResolveError};
 
 pub const OnImportCallback = fn (resolve_result: *const Resolver.Result, import_record: *ImportRecord, origin: URL) void;
@@ -261,38 +262,14 @@ pub const Linker = struct {
                     }
 
                     if (comptime is_bun) {
-                        if (import_record.path.text.len > 5 and strings.eqlComptime(import_record.path.text[0.."node:".len], "node:")) {
-                            const is_fs = strings.eqlComptime(import_record.path.text[5..], "fs");
-
-                            if (is_fs) {
-                                import_record.path.text = "node:fs";
-                                externals.append(record_index) catch unreachable;
-                                continue;
-                            }
-
-                            const is_path = strings.eqlComptime(import_record.path.text[5..], "path");
-
-                            if (is_path) {
-                                import_record.path.text = "node:path";
-                                externals.append(record_index) catch unreachable;
-                                continue;
-                            }
-                        }
-
-                        if (strings.eqlComptime(import_record.path.text, "fs")) {
-                            import_record.path.text = "node:fs";
+                        if (JSC.HardcodedModule.LinkerMap.get(import_record.path.text)) |replacement| {
+                            import_record.path.text = replacement;
                             externals.append(record_index) catch unreachable;
                             continue;
                         }
 
                         if (strings.eqlComptime(import_record.path.text, "bun")) {
                             import_record.tag = .bun;
-                            continue;
-                        }
-
-                        if (strings.eqlComptime(import_record.path.text, "path")) {
-                            import_record.path.text = "node:path";
-                            externals.append(record_index) catch unreachable;
                             continue;
                         }
 

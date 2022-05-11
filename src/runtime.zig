@@ -277,6 +277,12 @@ pub const Runtime = struct {
         trim_unused_imports: bool = false,
         should_fold_numeric_constants: bool = false,
 
+        /// inject this at the top of the file?
+        /// ```js
+        /// var require = import.meta.require.bind(import.meta);
+        /// ```
+        dynamic_require: bool = false,
+
         replace_exports: ReplaceableExport.Map = .{},
 
         pub const ReplaceableExport = union(enum) {

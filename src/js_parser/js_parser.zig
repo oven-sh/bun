@@ -2404,7 +2404,54 @@ pub const Parser = struct {
         }
 
         const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
+        const uses_dynamic_require = p.options.features.dynamic_require and p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0;
         const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
+
+        if (uses_dynamic_require) {
+            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
+            var decls = p.allocator.alloc(G.Decl, 1) catch unreachable;
+            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+            var exprs = p.allocator.alloc(Expr, 1) catch unreachable;
+            exprs[0] = p.e(E.ImportMeta{}, logger.Loc.Empty);
+            // var require = import.meta.require.bind(import.meta)
+            decls[0] = .{
+                .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
+                .value = p.e(
+                    E.Call{
+                        .target = p.e(
+                            E.Dot{
+                                .target = p.e(
+                                    E.Dot{
+                                        .target = p.e(E.ImportMeta{}, logger.Loc.Empty),
+                                        .name = "require",
+                                        .name_loc = logger.Loc.Empty,
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                                .name = "bind",
+                                .name_loc = logger.Loc.Empty,
+                            },
+                            logger.Loc.Empty,
+                        ),
+                        .args = ExprNodeList.init(exprs),
+                    },
+                    logger.Loc.Empty,
+                ),
+            };
+
+            declared_symbols[0] = .{ .ref = p.require_ref, .is_top_level = true };
+
+            part_stmts[0] = p.s(S.Local{
+                .kind = .k_var,
+                .decls = decls,
+            }, logger.Loc.Empty);
+            before.append(js_ast.Part{
+                .stmts = part_stmts,
+                .declared_symbols = declared_symbols,
+                .tag = .dirname_filename,
+            }) catch unreachable;
+        }
+
         if (uses_dirname or uses_filename) {
             const count = @as(usize, @boolToInt(uses_dirname)) + @as(usize, @boolToInt(uses_filename));
             var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, count);
@@ -2419,7 +2466,6 @@ pub const Parser = struct {
                     ),
                 };
                 declared_symbols[0] = .{ .ref = p.dirname_ref, .is_top_level = true };
-                p.recordUsage(p.dirname_ref);
             }
             if (uses_filename) {
                 decls[@as(usize, @boolToInt(uses_dirname))] = .{
@@ -2430,7 +2476,6 @@ pub const Parser = struct {
                     ),
                 };
                 declared_symbols[@as(usize, @boolToInt(uses_dirname))] = .{ .ref = p.filename_ref, .is_top_level = true };
-                p.recordUsage(p.filename_ref);
             }
 
             // TODO: DeclaredSymbol
@@ -2444,7 +2489,6 @@ pub const Parser = struct {
                 .declared_symbols = declared_symbols,
                 .tag = .dirname_filename,
             }) catch unreachable;
-            
         }
 
         var did_import_fast_refresh = false;
@@ -3569,6 +3613,15 @@ fn NewParser_(
                     }
 
                     const pathname = str.string(p.allocator) catch unreachable;
+
+                    if (p.options.features.dynamic_require and
+                        !p.options.enable_bundling and
+                        (strings.endsWithComptime(pathname, ".json") or
+                        strings.endsWithComptime(pathname, ".toml") or
+                        strings.endsWithComptime(pathname, ".node")))
+                    {
+                        return arg;
+                    }
 
                     const import_record_index = p.addImportRecord(.require, arg.loc, pathname);
                     p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
@@ -13336,13 +13389,17 @@ fn NewParser_(
                         // error from the unbundled require() call failing.
                         if (e_.args.len == 1) {
                             const first = e_.args.first_();
-                            if (first.data == .e_string) {
-                                // require(FOO) => require(FOO)
-                                return p.transposeRequire(first, null);
-                            } else if (first.data == .e_if) {
-                                // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
-                                // This makes static analysis later easier
-                                return p.require_transposer.maybeTransposeIf(first, null);
+                            switch (first.data) {
+                                .e_string => {
+                                    // require(FOO) => require(FOO)
+                                    return p.transposeRequire(first, null);
+                                },
+                                .e_if => {
+                                    // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
+                                    // This makes static analysis later easier
+                                    return p.require_transposer.maybeTransposeIf(first, null);
+                                },
+                                else => {},
                             }
                         }
 

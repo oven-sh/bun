@@ -1029,27 +1029,34 @@ pub const struct_napi_module = extern struct {
     reserved: [4]?*anyopaque,
 };
 pub const napi_module = struct_napi_module;
+fn napiSpan(ptr: anytype, len: usize) []const u8 {
+    if (ptr == null)
+        return &[_]u8{};
+
+    if (len == NAPI_AUTO_LENGTH) {
+        return std.mem.sliceTo(ptr.?, 0);
+    }
+
+    return ptr.?[0..len];
+}
 // C++
 // pub export fn napi_module_register(mod: *napi_module) void {
 //     const register = mod.nm_register_func orelse return;
 //     var ref = JSC.C.JSObjectMake(JSC.VirtualMachine.vm.global, null, null);
 //     register(JSC.VirtualMachine.vm.global, JSC.JSValue.c(ref));
 // }
-pub export fn napi_fatal_error(location: ?[*]const u8, location_len: usize, message: ?[*]const u8, message_len: usize) noreturn {
-    var message_: []const u8 = "fatal error";
-    if (message_len > 0) {
-        if (message) |msg| {
-            message_ = msg[0..message_len];
-        }
+pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize, message_ptr: ?[*:0]const u8, message_len_: usize) noreturn {
+    var message = napiSpan(message_ptr, message_len_);
+    if (message.len == 0) {
+        message = "fatal error";
     }
 
-    if (location) |loc| {
-        if (location_len > 0) {
-            bun.Global.panic("napi: {s}\n  {s}", .{ message_, loc[0..location_len] });
-        }
+    const location = napiSpan(location_ptr, location_len);
+    if (location.len > 0) {
+        bun.Global.panic("napi: {s}\n  {s}", .{ message, location });
     }
 
-    bun.Global.panic("napi: {s}", .{message_});
+    bun.Global.panic("napi: {s}", .{message});
 }
 
 // pub extern fn napi_async_init(_: napi_env, _: napi_value, _: napi_value, result: ?*fake_async_hook) napi_status;

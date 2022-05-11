@@ -16,12 +16,28 @@ const {
     args: [],
   },
 });
-bench("plus100(1) ", () => {
-  plus100(1);
+const napi = { exports: {} };
+process.dlopen(napi, "plus100-napi/package-template.darwin-arm64.node");
+const { plus100: plus100napi, noop: noopNapi } = napi.exports;
+
+group("plus100", () => {
+  bench("plus100(1) ffi", () => {
+    plus100(1);
+  });
+
+  bench("plus100(1) napi", () => {
+    plus100napi(1);
+  });
 });
 
-bench("noop() ", () => {
-  noop();
+group("noop", () => {
+  bench("noop() ffi", () => {
+    noop();
+  });
+
+  bench("noop() napi", () => {
+    noopNapi();
+  });
 });
 
 // collect option collects benchmark returned values into array

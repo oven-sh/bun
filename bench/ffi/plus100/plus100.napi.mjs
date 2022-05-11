@@ -1,15 +1,14 @@
 import { bench, run } from "mitata";
 
-import module from "module";
+const { plus100, noop } =
+  "Bun" in globalThis
+    ? require("./plus100-napi")
+    : (await import("module")).createRequire(import.meta.url)("./plus100-napi");
 
-const { plus100, noop } = module.createRequire(import.meta.url)(
-  "./plus100-napi"
-);
-
-bench("plus100(1) ", () => {
+bench("plus100(1) napi", () => {
   plus100(1);
 });
-bench("noop() ", () => {
+bench("noop() napi", () => {
   noop();
 });
 await run({ collect: false, percentiles: true });

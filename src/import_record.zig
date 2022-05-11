@@ -157,5 +157,6 @@ pub const ImportRecord = struct {
         normal,
         import_path,
         css,
+        napi_module,
     };
 };

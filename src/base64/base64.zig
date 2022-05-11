@@ -38,11 +38,11 @@ pub fn encode(destination: []u8, source: []const u8) usize {
 /// ceiling[len / 3] * 4
 ///
 ///
-pub fn decodeLen(source: []const u8) usize {
+pub fn decodeLen(source: anytype) usize {
     return (source.len / 4 * 3 + 2);
 }
 
-pub fn encodeLen(source: []const u8) usize {
+pub fn encodeLen(source: anytype) usize {
     return (source.len + 2) / 3 * 4;
 }
 

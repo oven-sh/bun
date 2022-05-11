@@ -3579,6 +3579,29 @@ pub fn NewPrinter(
                             }
                             return;
                         },
+                        .napi_module => {
+                            if (comptime is_bun_platform) {
+                                const import_record = &p.import_records[s.import_record_index];
+
+                                if (import_record.print_mode == .napi_module) {
+                                    p.printIndent();
+                                    const quotes = p.bestQuoteCharForString(import_record.path.text, true);
+                                    p.print("var ");
+                                    p.printSymbol(s.namespace_ref);
+                                    p.print(" = ");
+
+                                    p.print(
+                                        \\((path, cache, process) => {var mod = cache.get(path); if (mod) return mod.exports; mod = {exports: {}};process.dlopen(mod, path); cache.set(path, mod); return mod.exports;})(
+                                    );
+                                    p.print(quotes);
+                                    p.printUTF8StringEscapedQuotes(import_record.path.text, quotes);
+                                    p.print(quotes);
+                                    p.print(", (globalThis[globalThis.Symbol.for('_dlcache')] ||= new globalThis.Map()), globalThis.process);");
+                                    p.printSemicolonAfterStatement();
+                                }
+                            }
+                            return;
+                        },
                         else => {},
                     }
 

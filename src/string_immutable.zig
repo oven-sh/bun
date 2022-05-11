@@ -699,7 +699,7 @@ pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
 
     // https://zig.godbolt.org/z/9rTn1orcY
 
-    const group = if (Environment.isAarch64)
+    const group = comptime if (Environment.isAarch64)
         // on ARM64, 128 seems to be the best choice judging by lines of ASM
         128
     else
@@ -945,12 +945,7 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
         const replacement = utf16Codepoint(Type, utf16_remaining);
         utf16_remaining = utf16_remaining[replacement.len..];
 
-        const count: usize = switch (replacement.code_point) {
-            0...0x7F => 1,
-            (0x7F + 1)...0x7FF => 2,
-            (0x7FF + 1)...0xFFFF => 3,
-            else => 4,
-        };
+        const count: usize = replacement.utf8Width();
         try list.ensureUnusedCapacity(i + count);
         list.items.len += i;
 
@@ -1009,6 +1004,15 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
 pub const UTF16Replacement = struct {
     code_point: u32 = unicode_replacement,
     len: u3 = 0,
+
+    pub inline fn utf8Width(replacement: UTF16Replacement) usize {
+        return switch (replacement.code_point) {
+            0...0x7F => 1,
+            (0x7F + 1)...0x7FF => 2,
+            (0x7FF + 1)...0xFFFF => 3,
+            else => 4,
+        };
+    }
 };
 
 // This variation matches WebKit behavior.
@@ -1138,6 +1142,36 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
     };
 }
 
+pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
+    var latin1 = latin1_;
+    var count: usize = 0;
+    while (latin1.len > 0) {
+        var read: usize = 0;
+
+        while (latin1.len > ascii_vector_size) {
+            const vec: AsciiVector = latin1[0..ascii_vector_size].*;
+
+            if (@reduce(.Max, vec) > 127) {
+                break;
+            }
+
+            latin1 = latin1[ascii_vector_size..];
+            count += ascii_vector_size;
+        }
+
+        while (read < latin1.len and latin1[read] < 0x80) : (read += 1) {}
+
+        count += read;
+        latin1 = latin1[read..];
+        if (latin1.len > 0) {
+            latin1 = latin1[1..];
+            count += 2;
+        }
+    }
+
+    return count;
+}
+
 const JSC = @import("javascript_core");
 
 pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
@@ -1159,6 +1193,28 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
         .read = @truncate(u32, buf_.len - buf.len),
         .written = @truncate(u32, latin1_.len - latin1.len),
     };
+}
+
+pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
+    // latin1 is always at most 1 UTF-16 code unit long
+    if (comptime std.meta.Child(u16) == Type) {
+        return latin1_.len;
+    }
+
+    var count: usize = 0;
+    var latin1 = latin1_;
+    while (latin1.len > 0) {
+        const function = comptime if (std.meta.Child(Type) == u8) strings.firstNonASCIIWithType else strings.firstNonASCII16;
+        const to_write = function(Type, latin1) orelse @truncate(u32, latin1.len);
+        count += to_write;
+        latin1 = latin1[to_write..];
+        if (latin1.len > 0) {
+            count += comptime if (std.meta.Child(Type) == u8) 2 else 1;
+            latin1 = latin1[1..];
+        }
+    }
+
+    return count;
 }
 
 test "copyLatin1IntoUTF8" {
@@ -1213,13 +1269,7 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
 
         const replacement = utf16Codepoint(Type, utf16_remaining);
 
-        const width: usize = switch (replacement.code_point) {
-            0...0x7F => 1,
-            (0x7F + 1)...0x7FF => 2,
-            (0x7FF + 1)...0xFFFF => 3,
-            else => 4,
-        };
-
+        const width: usize = replacement.utf8Width();
         if (width > remaining.len) {
             ended_on_non_ascii = width > 1;
             break;
@@ -1241,6 +1291,42 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
         .read = @truncate(u32, utf16.len - utf16_remaining.len),
         .written = @truncate(u32, buf.len - remaining.len),
     };
+}
+
+pub fn elementLengthUTF16IntoUTF8(comptime Type: type, utf16: Type) usize {
+    var utf16_remaining = utf16;
+    var count: usize = 0;
+
+    while (firstNonASCII16(Type, utf16_remaining)) |i| {
+        count += i;
+
+        utf16_remaining = utf16_remaining[i..];
+
+        const replacement = utf16Codepoint(Type, utf16_remaining);
+
+        count += replacement.utf8Width();
+        utf16_remaining = utf16_remaining[replacement.len..];
+    }
+
+    return count + utf16_remaining.len;
+}
+
+pub fn elementLengthUTF8IntoUTF16(comptime Type: type, utf8: Type) usize {
+    var utf8_remaining = utf8;
+    var count: usize = 0;
+
+    while (firstNonASCII(utf8_remaining)) |i| {
+        count += i;
+
+        utf8_remaining = utf8_remaining[i..];
+
+        const replacement = utf16Codepoint(Type, utf8_remaining);
+
+        count += replacement.len;
+        utf8_remaining = utf8_remaining[@minimum(replacement.utf8Width(), utf8_remaining.len)..];
+    }
+
+    return count + utf8_remaining.len;
 }
 
 // Check utf16 string equals utf8 string without allocating extra memory
@@ -1462,6 +1548,10 @@ pub inline fn u16Len(supplementary: anytype) u2 {
 }
 
 pub fn firstNonASCII(slice: []const u8) ?u32 {
+    return firstNonASCIIWithType([]const u8, slice);
+}
+
+pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
     var remaining = slice;
 
     if (comptime Environment.isAarch64 or Environment.isX64) {

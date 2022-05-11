@@ -55,13 +55,12 @@ namespace Napi {
 
 JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject)
 {
-
+    JSC::gcProtect(object);
     JSC::JSArray* exportKeys = ownPropertyKeys(globalObject, object, PropertyNameMode::StringsAndSymbols, DontEnumPropertiesMode::Include, std::nullopt);
-    auto symbol = vm.symbolRegistry().symbolForKey("__BunTemporaryGlobal"_s);
-    JSC::Identifier ident = JSC::Identifier::fromUid(symbol);
+    JSC::Identifier ident = JSC::Identifier::fromString(vm, "__BunTemporaryGlobal"_s);
     WTF::StringBuilder sourceCodeBuilder = WTF::StringBuilder();
     // TODO: handle symbol collision
-    sourceCodeBuilder.append("var $$TempSymbol = Symbol.for('__BunTemporaryGlobal'), $$NativeModule = globalThis[$$TempSymbol]; globalThis[$$TempSymbol] = null;\n if (!$$NativeModule) { throw new Error('Assertion failure: Native module not found'); }\n\n"_s);
+    sourceCodeBuilder.append("\nvar  $$NativeModule = globalThis['__BunTemporaryGlobal']; console.log($$NativeModule); globalThis['__BunTemporaryGlobal'] = null;\n if (!$$NativeModule) { throw new Error('Assertion failure: Native module not found'); }\n\n"_s);
 
     for (unsigned i = 0; i < exportKeys->length(); i++) {
         auto key = exportKeys->getIndexQuickly(i);
@@ -207,17 +206,32 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
     }
     WTF::String nameStr;
     if (property.utf8name != nullptr) {
-        nameStr = WTF::String::fromUTF8(property.utf8name);
+        nameStr = WTF::String::fromUTF8(property.utf8name).isolatedCopy();
     } else if (property.name) {
-        nameStr = toJS(property.name).toWTFString(globalObject);
+        nameStr = toJS(property.name).toWTFString(globalObject).isolatedCopy();
     }
 
     auto propertyName = JSC::PropertyName(JSC::Identifier::fromString(vm, nameStr));
 
     if (property.method) {
-        auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, nameStr, reinterpret_cast<Zig::FFIFunction>(property.method));
-        function->dataPtr = dataPtr;
-        JSC::JSValue value = JSC::JSValue(function);
+        JSC::JSValue value;
+        auto method = reinterpret_cast<Zig::FFIFunction>(property.method);
+        if (!dataPtr) {
+            JSC::JSNativeStdFunction* func = JSC::JSNativeStdFunction::create(
+                globalObject->vm(), globalObject, 1, String(), [method](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                    JSC::MarkedArgumentBuffer values;
+                    values.append(callFrame->thisValue());
+                    for (int i = 0; i < callFrame->argumentCount(); i++) {
+                        values.append(callFrame->argument(i));
+                    }
+                    return method(globalObject, callFrame);
+                });
+            value = JSC::JSValue(func);
+        } else {
+            auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, nameStr, method);
+            function->dataPtr = dataPtr;
+            value = JSC::JSValue(function);
+        }
 
         to->putDirect(vm, propertyName, value, getPropertyAttributes(property) | JSC::PropertyAttribute::Function);
         return;
@@ -233,6 +247,8 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         if (getterProperty) {
             JSC::JSNativeStdFunction* getterFunction = JSC::JSNativeStdFunction::create(
                 globalObject->vm(), globalObject, 0, String(), [getterProperty](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                    JSC::MarkedArgumentBufferWithSize values;
+                    values.append(callFrame->thisValue());
                     return getterProperty(globalObject, callFrame);
                 });
             getter = getterFunction;
@@ -247,8 +263,10 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
         if (setterProperty) {
             JSC::JSNativeStdFunction* setterFunction = JSC::JSNativeStdFunction::create(
                 globalObject->vm(), globalObject, 1, String(), [setterProperty](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                    setterProperty(globalObject, callFrame);
-                    return JSC::JSValue::encode(JSC::jsBoolean(true));
+                    JSC::MarkedArgumentBufferWithSize values;
+                    values.append(callFrame->thisValue());
+                    values.append(callFrame->uncheckedArgument(0));
+                    return setterProperty(globalObject, callFrame);
                 });
             setter = setterFunction;
         } else {
@@ -500,9 +518,9 @@ extern "C" napi_status napi_wrap(napi_env env,
 extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     void** result)
 {
-    // if (!toJS(js_object).isObject()) {
-    //     return NAPI_OBJECT_EXPECTED;
-    // }
+    if (!toJS(js_object).isObject()) {
+        return NAPI_OBJECT_EXPECTED;
+    }
     auto* globalObject = toJS(env);
     auto& vm = globalObject->vm();
     auto* object = JSC::jsDynamicCast<NapiPrototype*>(toJS(js_object));
@@ -521,12 +539,27 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
 {
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
-    auto name = WTF::String::fromUTF8(utf8name, length);
+    auto name = WTF::String::fromUTF8(utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length).isolatedCopy();
+    auto method = reinterpret_cast<Zig::FFIFunction>(cb);
+    if (data) {
+        auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, name, method);
+        function->dataPtr = data;
+        *result = toNapi(JSC::JSValue(function));
+    } else {
+        JSC::JSNativeStdFunction* func = JSC::JSNativeStdFunction::create(
+            globalObject->vm(), globalObject, 1, String(), [method](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                JSC::MarkedArgumentBuffer values;
+                values.append(callFrame->thisValue());
+                for (int i = 0; i < callFrame->argumentCount(); i++) {
+                    values.append(callFrame->argument(i));
+                }
+                return method(globalObject, callFrame);
+            });
+        *result = toNapi(JSC::JSValue(func));
+    }
+
     // std::cout << "napi_create_function: " << utf8name << std::endl;
-    auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, name, reinterpret_cast<Zig::FFIFunction>(cb));
-    function->dataPtr = data;
-    JSC::JSValue functionValue = JSC::JSValue(function);
-    *reinterpret_cast<JSC::EncodedJSValue*>(result) = JSC::JSValue::encode(functionValue);
+
     return napi_ok;
 }
 
@@ -559,8 +592,9 @@ extern "C" napi_status napi_get_cb_info(
         }
     }
 
+    JSC::JSValue thisValue = callFrame->thisValue();
+
     if (this_arg != nullptr) {
-        JSC::JSValue thisValue = callFrame->thisValue();
         *this_arg = toNapi(thisValue);
     }
 
@@ -568,8 +602,14 @@ extern "C" napi_status napi_get_cb_info(
         JSC::JSValue callee = JSC::JSValue(callFrame->jsCallee());
         if (Zig::JSFFIFunction* ffiFunction = JSC::jsDynamicCast<Zig::JSFFIFunction*>(callee)) {
             *data = reinterpret_cast<void*>(ffiFunction->dataPtr);
-        } else if (NapiPrototype* proto = JSC::jsDynamicCast<NapiPrototype*>(callee)) {
+        } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(callee)) {
             *data = proto->napiRef ? proto->napiRef->data : nullptr;
+        } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(callee)) {
+            *data = proto->dataPtr;
+        } else if (auto* proto = JSC::jsDynamicCast<NapiPrototype*>(thisValue)) {
+            *data = proto->napiRef ? proto->napiRef->data : nullptr;
+        } else if (auto* proto = JSC::jsDynamicCast<NapiClass*>(thisValue)) {
+            *data = proto->dataPtr;
         } else {
             *data = nullptr;
         }
@@ -595,6 +635,8 @@ napi_define_properties(napi_env env, napi_value object, size_t property_count,
     void* inheritedDataPtr = nullptr;
     if (NapiPrototype* proto = jsDynamicCast<NapiPrototype*>(objectValue)) {
         inheritedDataPtr = proto->napiRef ? proto->napiRef->data : nullptr;
+    } else if (NapiClass* proto = jsDynamicCast<NapiClass*>(objectValue)) {
+        inheritedDataPtr = proto->dataPtr;
     }
 
     for (size_t i = 0; i < property_count; i++) {
@@ -980,6 +1022,55 @@ static JSC_DEFINE_HOST_FUNCTION(NapiClass_ConstructorFunction,
 
     callFrame->setThisValue(prototype->subclass(newTarget));
     napi->constructor()(globalObject, callFrame);
+    size_t count = callFrame->argumentCount();
+
+    switch (count) {
+    case 0: {
+        break;
+    }
+    case 1: {
+        JSC::ensureStillAliveHere(callFrame->argument(0));
+        break;
+    }
+    case 2: {
+        JSC::ensureStillAliveHere(callFrame->argument(0));
+        JSC::ensureStillAliveHere(callFrame->argument(1));
+        break;
+    }
+    case 3: {
+        JSC::ensureStillAliveHere(callFrame->argument(0));
+        JSC::ensureStillAliveHere(callFrame->argument(1));
+        JSC::ensureStillAliveHere(callFrame->argument(2));
+        break;
+    }
+    case 4: {
+        JSC::ensureStillAliveHere(callFrame->argument(0));
+        JSC::ensureStillAliveHere(callFrame->argument(1));
+        JSC::ensureStillAliveHere(callFrame->argument(2));
+        JSC::ensureStillAliveHere(callFrame->argument(3));
+        break;
+    }
+    case 5: {
+        JSC::ensureStillAliveHere(callFrame->argument(0));
+        JSC::ensureStillAliveHere(callFrame->argument(1));
+        JSC::ensureStillAliveHere(callFrame->argument(2));
+        JSC::ensureStillAliveHere(callFrame->argument(3));
+        JSC::ensureStillAliveHere(callFrame->argument(4));
+        break;
+    }
+    default: {
+        JSC::ensureStillAliveHere(callFrame->argument(0));
+        JSC::ensureStillAliveHere(callFrame->argument(1));
+        JSC::ensureStillAliveHere(callFrame->argument(2));
+        JSC::ensureStillAliveHere(callFrame->argument(3));
+        JSC::ensureStillAliveHere(callFrame->argument(4));
+        JSC::ensureStillAliveHere(callFrame->argument(5));
+        for (int i = 6; i < count; i++) {
+            JSC::ensureStillAliveHere(callFrame->argument(i));
+        }
+        break;
+    }
+    }
     RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, JSValue::encode(callFrame->thisValue()));
@@ -992,7 +1083,7 @@ NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char
     size_t property_count,
     const napi_property_descriptor* properties)
 {
-    WTF::String name = WTF::String::fromUTF8(utf8name, length);
+    WTF::String name = WTF::String::fromUTF8(utf8name, length).isolatedCopy();
     NativeExecutable* executable = vm.getHostFunction(NapiClass_ConstructorFunction, NapiClass_ConstructorFunction, name);
 
     Structure* structure = globalObject->NapiClassStructure();
@@ -1098,8 +1189,11 @@ extern "C" napi_status napi_define_class(napi_env env,
 {
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
-
-    NapiClass* napiClass = NapiClass::create(vm, globalObject, utf8name, length, constructor, data, property_count, properties);
+    size_t len = length;
+    if (len == NAPI_AUTO_LENGTH) {
+        len = strlen(utf8name);
+    }
+    NapiClass* napiClass = NapiClass::create(vm, globalObject, utf8name, len, constructor, data, property_count, properties);
     JSC::JSValue value = JSC::JSValue(napiClass);
     if (data != nullptr) {
         napiClass->dataPtr = data;

@@ -692,6 +692,43 @@ pub const Encoder = struct {
         return writeU8(input, len, to, to_len, .ascii);
     }
 
+    export fn Bun__encoding__byteLengthLatin1AsHex(input: [*]const u8, len: usize) usize {
+        return byteLengthU8(input, len, .hex);
+    }
+    export fn Bun__encoding__byteLengthLatin1AsASCII(input: [*]const u8, len: usize) usize {
+        return byteLengthU8(input, len, .ascii);
+    }
+    export fn Bun__encoding__byteLengthLatin1AsURLSafeBase64(input: [*]const u8, len: usize) usize {
+        return byteLengthU8(input, len, .base64url);
+    }
+    export fn Bun__encoding__byteLengthLatin1AsUTF16(input: [*]const u8, len: usize) usize {
+        return byteLengthU8(input, len, .utf16le);
+    }
+    export fn Bun__encoding__byteLengthLatin1AsUTF8(input: [*]const u8, len: usize) usize {
+        return byteLengthU8(input, len, .utf8);
+    }
+    export fn Bun__encoding__byteLengthLatin1AsBase64(input: [*]const u8, len: usize) usize {
+        return byteLengthU8(input, len, .base64);
+    }
+    export fn Bun__encoding__byteLengthUTF16AsBase64(input: [*]const u16, len: usize) usize {
+        return byteLengthU16(input, len, .base64);
+    }
+    export fn Bun__encoding__byteLengthUTF16AsHex(input: [*]const u16, len: usize) usize {
+        return byteLengthU16(input, len, .hex);
+    }
+    export fn Bun__encoding__byteLengthUTF16AsURLSafeBase64(input: [*]const u16, len: usize) usize {
+        return byteLengthU16(input, len, .base64url);
+    }
+    export fn Bun__encoding__byteLengthUTF16AsUTF16(input: [*]const u16, len: usize) usize {
+        return byteLengthU16(input, len, .utf16le);
+    }
+    export fn Bun__encoding__byteLengthUTF16AsUTF8(input: [*]const u16, len: usize) usize {
+        return byteLengthU16(input, len, .utf8);
+    }
+    export fn Bun__encoding__byteLengthUTF16AsASCII(input: [*]const u8, len: usize) usize {
+        return byteLengthU8(input, len, .ascii);
+    }
+
     export fn Bun__encoding__constructFromLatin1AsHex(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .hex);
         return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
@@ -919,15 +956,37 @@ pub const Encoder = struct {
         }
     }
 
+    pub fn byteLengthU8(input: [*]const u8, len: usize, comptime encoding: JSC.Node.Encoding) usize {
+        if (len == 0)
+            return 0;
+
+        switch (comptime encoding) {
+            .utf8 => {
+                return strings.elementLengthLatin1IntoUTF8([]const u8, input[0..len]);
+            },
+
+            .latin1, JSC.Node.Encoding.ascii, JSC.Node.Encoding.buffer => {
+                return len;
+            },
+
+            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
+                return strings.elementLengthUTF8IntoUTF16([]const u8, input[0..len]) * 2;
+            },
+
+            JSC.Node.Encoding.hex => {
+                return len * 2;
+            },
+
+            JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
+                return bun.base64.encodeLen(input[0..len]);
+            },
+            // else => return &[_]u8{};
+        }
+    }
+
     pub fn writeU16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, comptime encoding: JSC.Node.Encoding) i64 {
         if (len == 0)
             return 0;
-        // TODO: increase temporary buffer size for larger amounts of data
-        // defer {
-        //     if (comptime encoding.isBinaryToText()) {}
-        // }
-
-        // if (comptime encoding.isBinaryToText()) {}
 
         switch (comptime encoding) {
             .utf8 => {
@@ -953,6 +1012,32 @@ pub const Encoder = struct {
                 var transcoded = strings.toUTF8Alloc(bun.default_allocator, input[0..len]) catch return 0;
                 defer bun.default_allocator.free(transcoded);
                 return writeU8(transcoded.ptr, transcoded.len, to, to_len, encoding);
+            },
+            // else => return &[_]u8{};
+        }
+    }
+
+    /// Node returns imprecise byte length here
+    /// Should be fast enough for us to return precise length
+    pub fn byteLengthU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) usize {
+        if (len == 0)
+            return 0;
+
+        switch (comptime encoding) {
+            // these should be the same size
+            .ascii, .latin1, .utf8 => {
+                return strings.elementLengthUTF16IntoUTF8([]const u16, input[0..len]);
+            },
+            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.buffer, JSC.Node.Encoding.utf16le => {
+                return len * 2;
+            },
+
+            JSC.Node.Encoding.hex => {
+                return len;
+            },
+
+            JSC.Node.Encoding.base64, JSC.Node.Encoding.base64url => {
+                return bun.base64.encodeLen(input[0..len]);
             },
             // else => return &[_]u8{};
         }
@@ -1104,6 +1189,19 @@ pub const Encoder = struct {
             _ = Bun__encoding__writeUTF16AsUTF8;
             _ = Bun__encoding__writeLatin1AsASCII;
             _ = Bun__encoding__writeUTF16AsASCII;
+
+            _ = Bun__encoding__byteLengthLatin1AsHex;
+            _ = Bun__encoding__byteLengthLatin1AsURLSafeBase64;
+            _ = Bun__encoding__byteLengthLatin1AsUTF16;
+            _ = Bun__encoding__byteLengthLatin1AsUTF8;
+            _ = Bun__encoding__byteLengthLatin1AsBase64;
+            _ = Bun__encoding__byteLengthUTF16AsBase64;
+            _ = Bun__encoding__byteLengthUTF16AsHex;
+            _ = Bun__encoding__byteLengthUTF16AsURLSafeBase64;
+            _ = Bun__encoding__byteLengthUTF16AsUTF16;
+            _ = Bun__encoding__byteLengthUTF16AsUTF8;
+            _ = Bun__encoding__byteLengthLatin1AsASCII;
+            _ = Bun__encoding__byteLengthUTF16AsASCII;
 
             _ = Bun__encoding__toStringUTF16;
             _ = Bun__encoding__toStringUTF8;

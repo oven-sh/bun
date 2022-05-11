@@ -360,7 +360,108 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBod
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    return JSValue::encode(jsUndefined());
+
+    uint32_t offset = 0;
+    uint32_t length = castedThis->length();
+    WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (UNLIKELY(callFrame->argumentCount() == 0)) {
+        throwTypeError(lexicalGlobalObject, scope, "Not enough arguments"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    EnsureStillAliveScope arg0 = callFrame->argument(0);
+    auto input = arg0.value();
+    if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(input)) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsNumber(view->byteLength())));
+    }
+    auto* str = arg0.value().toStringOrNull(lexicalGlobalObject);
+
+    if (!str) {
+        throwTypeError(lexicalGlobalObject, scope, "byteLength() expects a string"_s);
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    EnsureStillAliveScope arg1 = callFrame->argument(1);
+
+    if (str->length() == 0)
+        return JSC::JSValue::encode(JSC::jsNumber(0));
+
+    if (callFrame->argumentCount() > 1) {
+        if (arg1.value().isString()) {
+            std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
+            if (!encoded) {
+                throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
+                return JSC::JSValue::encode(jsUndefined());
+            }
+
+            encoding = encoded.value();
+        }
+    }
+
+    auto view = str->tryGetValue(lexicalGlobalObject);
+    int64_t written = 0;
+
+    switch (encoding) {
+    case WebCore::BufferEncodingType::utf8: {
+        if (view.is8Bit()) {
+            written = Bun__encoding__byteLengthLatin1AsUTF8(view.characters8(), view.length());
+        } else {
+            written = Bun__encoding__byteLengthUTF16AsUTF8(view.characters16(), view.length());
+        }
+        break;
+    }
+
+    case WebCore::BufferEncodingType::latin1:
+    case WebCore::BufferEncodingType::ascii: {
+        if (view.is8Bit()) {
+            written = Bun__encoding__byteLengthLatin1AsASCII(view.characters8(), view.length());
+        } else {
+            written = Bun__encoding__byteLengthUTF16AsASCII(view.characters16(), view.length());
+        }
+        break;
+    }
+    case WebCore::BufferEncodingType::ucs2:
+    case WebCore::BufferEncodingType::utf16le: {
+        if (view.is8Bit()) {
+            written = Bun__encoding__byteLengthLatin1AsUTF16(view.characters8(), view.length());
+        } else {
+            written = Bun__encoding__byteLengthUTF16AsUTF16(view.characters16(), view.length());
+        }
+        break;
+    }
+
+    case WebCore::BufferEncodingType::base64: {
+        if (view.is8Bit()) {
+            written = Bun__encoding__byteLengthLatin1AsBase64(view.characters8(), view.length());
+        } else {
+            written = Bun__encoding__byteLengthUTF16AsBase64(view.characters16(), view.length());
+        }
+        break;
+    }
+
+    case WebCore::BufferEncodingType::base64url: {
+        if (view.is8Bit()) {
+            written = Bun__encoding__byteLengthLatin1AsURLSafeBase64(view.characters8(), view.length());
+        } else {
+            written = Bun__encoding__byteLengthUTF16AsURLSafeBase64(view.characters16(), view.length());
+        }
+        break;
+    }
+
+    case WebCore::BufferEncodingType::hex: {
+        if (view.is8Bit()) {
+            written = Bun__encoding__byteLengthLatin1AsHex(view.characters8(), view.length());
+        } else {
+            written = Bun__encoding__byteLengthUTF16AsHex(view.characters16(), view.length());
+        }
+        break;
+    }
+    }
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(written)));
 }
 
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)

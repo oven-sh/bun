@@ -124,3 +124,5 @@ _napi_delete_reference
 _napi_adjust_external_memory
 _napi_is_exception_pending
 _napi_get_and_clear_last_exception
+_napi_get_last_error_info
+_napi_add_finalizer

@@ -333,6 +333,7 @@ PLATFORM_LINKER_FLAGS = $(CFLAGS) \
 		-fno-semantic-interposition \
 		-flto \
 		-Wl,--allow-multiple-definition \
+		-rdynamic \
 		-Wl,--dynamic-list $(realpath src/symbols.dyn)
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a

@@ -62,6 +62,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [`Bun.serve`](#bunserve---fast-http-server)
   - [`Bun.write`](#bunwrite--optimizing-io)
   - [`bun:ffi` (Foreign functions interface)](#bunffi-foreign-functions-interface)
+  - [Node API (napi)](#node-api-napi)
   - [`Bun.Transpiler`](#buntranspiler)
     - [`transformSync`](#buntranspilertransformsync)
     - [`transform`](#buntranspilertransform)
@@ -1914,11 +1915,11 @@ var mod = { exports: {} };
 process.dlopen("./my-node-module.node", mod);
 ```
 
-As part of that work, Bun.js also polyfills the [`detect-libc`](npmjs.com/package/detect-libc) package, which is used by many Node-API modules to detect which `.node` binding to `require`.
+As part of that work, Bun.js also polyfills the [`detect-libc`](https://npmjs.com/package/detect-libc) package, which is used by many Node-API modules to detect which `.node` binding to `require`.
 
 This implementation of Node-API is from scratch. It doesn't use any code from Node.js.
 
-Some implementation details:
+**Some implementation details**
 
 When requiring a `*.node` module, Bun's JavaScript transpiler transforms the `require` expression into call to `import.meta.require`:
 

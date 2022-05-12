@@ -553,11 +553,15 @@ An event handler for turning that into a `<link>` is automatically registered wh
 //@import url("http://localhost:3000/styles/globals.css");
 ```
 
-Additionally, bun exposes an API for SSR/SSG that returns a flat list of URLs to css files imported. That function is `bun.getImportedStyles()`.
+Additionally, bun exposes an API for SSR/SSG that returns a flat list of URLs to css files imported. That function is `Bun.getImportedStyles()`.
 
 ```ts
+// This specifically is for "framework" in package.json when loaded via `bun dev`
+// This API needs to be changed somewhat to work more generally with Bun.js
+// Initially, you could only use bun.js through `bun dev`
+// and this API was created at that time
 addEventListener("fetch", async (event: FetchEvent) => {
-  var route = bun.match(event);
+  var route = Bun.match(event);
   const App = await import("pages/_app");
 
   // This returns all .css files that were imported in the line above.

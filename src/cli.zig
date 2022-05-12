@@ -664,7 +664,7 @@ pub const HelpCommand = struct {
         "react",
         "next@^12",
         "tailwindcss",
-        "wrangler@beta",
+        "wrangler",
         "@compiled/react",
         "@remix-run/dev",
         "contentlayer",

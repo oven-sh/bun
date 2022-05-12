@@ -1912,7 +1912,7 @@ You can also use `process.dlopen`:
 
 ```js
 var mod = { exports: {} };
-process.dlopen("./my-node-module.node", mod);
+process.dlopen(mod, "./my-node-module.node");
 ```
 
 As part of that work, Bun.js also polyfills the [`detect-libc`](https://npmjs.com/package/detect-libc) package, which is used by many Node-API modules to detect which `.node` binding to `require`.

@@ -2275,7 +2275,8 @@ pub const JSValue = enum(u64) {
             i32 => @truncate(i32, toInt32(this)),
 
             // TODO: BigInt64
-            i64 => @as(i64, toInt32(this)),
+            i64 => this.toInt64(),
+
             bool => this.toBoolean(),
             else => @compileError("Not implemented yet"),
         };

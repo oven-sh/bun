@@ -782,20 +782,32 @@ pub export fn napi_create_typedarray(env: napi_env, @"type": napi_typedarray_typ
 pub export fn napi_get_typedarray_info(
     env: napi_env,
     typedarray: napi_value,
-    @"type": *napi_typedarray_type,
-    length: *usize,
-    data: *[*]u8,
-    arraybuffer: *napi_value,
-    byte_offset: *usize,
+    @"type": ?*napi_typedarray_type,
+    length: ?*usize,
+    data: ?*[*]u8,
+    arraybuffer: ?*napi_value,
+    byte_offset: ?*usize,
 ) napi_status {
-    const array_buffer = arraybuffer.asArrayBuffer(env) orelse return .invalid_arg;
-    @"type".* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return .invalid_arg;
+    if (typedarray.isEmptyOrUndefinedOrNull())
+        return .invalid_arg;
+    defer typedarray.ensureStillAlive();
+
+    const array_buffer = typedarray.asArrayBuffer(env) orelse return .invalid_arg;
+    if (@"type" != null)
+        @"type".?.* = napi_typedarray_type.fromJSType(array_buffer.typed_array_type) orelse return .invalid_arg;
     var slice = array_buffer.slice();
 
-    data.* = slice.ptr;
-    length.* = slice.len;
-    arraybuffer.* = JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), typedarray.asObjectRef(), null));
-    byte_offset.* = array_buffer.offset;
+    if (data != null)
+        data.?.* = slice.ptr;
+
+    if (length != null)
+        length.?.* = slice.len;
+
+    if (arraybuffer != null)
+        arraybuffer.?.* = JSValue.c(JSC.C.JSObjectGetTypedArrayBuffer(env.ref(), typedarray.asObjectRef(), null));
+
+    if (byte_offset != null)
+        byte_offset.?.* = array_buffer.offset;
     return .ok;
 }
 pub extern fn napi_create_dataview(env: napi_env, length: usize, arraybuffer: napi_value, byte_offset: usize, result: *napi_value) napi_status;

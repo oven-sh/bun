@@ -300,6 +300,7 @@ extern "C" napi_status napi_set_property(napi_env env, napi_value target,
     }
 
     auto keyProp = toJS(key);
+
     auto scope = DECLARE_CATCH_SCOPE(vm);
     object->putDirect(globalObject->vm(), keyProp.toPropertyKey(globalObject), toJS(value));
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
@@ -336,8 +337,10 @@ extern "C" napi_status napi_get_property(napi_env env, napi_value object,
     if (!target) {
         return napi_object_expected;
     }
+    JSC::EnsureStillAliveScope ensureAlive(target);
 
     auto keyProp = toJS(key);
+    JSC::EnsureStillAliveScope ensureAlive2(keyProp);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     *result = toNapi(target->getIfPropertyExists(globalObject, keyProp.toPropertyKey(globalObject)));
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
@@ -392,15 +395,23 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto target = toJS(object).getObject();
     auto& vm = globalObject->vm();
-    if (!UNLIKELY(target)) {
+    if (UNLIKELY(!target)) {
         return napi_object_expected;
     }
 
-    // In this case, we should clone the property name
-    auto name = JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8name, strlen(utf8name))));
+    if (UNLIKELY(utf8name == nullptr || !*utf8name)) {
+        return napi_invalid_arg;
+    }
+
+    JSC::JSValue jsValue = toJS(value);
+    JSC::EnsureStillAliveScope ensureAlive(jsValue);
+    JSC::EnsureStillAliveScope ensureAlive2(target);
+
+    auto nameStr = WTF::String::fromUTF8(utf8name, strlen(utf8name));
+    auto name = JSC::PropertyName(JSC::Identifier::fromString(vm, WTFMove(nameStr)));
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    target->putDirect(globalObject->vm(), name, toJS(value), 0);
+    target->putDirect(globalObject->vm(), name, jsValue, 0);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
     scope.clearException();
     return napi_ok;
@@ -536,18 +547,23 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
     size_t length, napi_callback cb,
     void* data, napi_value* result)
 {
-    if (utf8name == nullptr) {
-        return napi_invalid_arg;
-    }
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = globalObject->vm();
-    auto name = WTF::String::fromUTF8(utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length).isolatedCopy();
+    auto name = WTF::String();
+
+    if (utf8name != nullptr) {
+        name = WTF::String::fromUTF8(utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length);
+    }
+
     auto method = reinterpret_cast<Zig::FFIFunction>(cb);
     // if (data) {
     auto function = Zig::JSFFIFunction::create(vm, globalObject, 1, name, method);
     function->dataPtr = data;
-    *result = toNapi(JSC::JSValue(function));
+    if (result != nullptr) {
+        *result = toNapi(JSC::JSValue(function));
+    }
+
     // } else {
     //     JSC::JSNativeStdFunction* func = JSC::JSNativeStdFunction::create(
     //         globalObject->vm(), globalObject, 1, String(), [method](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
@@ -658,7 +674,7 @@ extern "C" napi_status napi_throw_error(napi_env env,
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto message = WTF::String::fromUTF8(msg);
+    auto message = msg != nullptr ? WTF::String::fromUTF8(msg) : "Error"_s;
     auto error = JSC::createError(globalObject, message);
     JSC::throwException(globalObject, throwScope, error);
     return napi_ok;
@@ -1240,6 +1256,7 @@ extern "C" napi_status napi_define_class(napi_env env,
     }
     NapiClass* napiClass = NapiClass::create(vm, globalObject, utf8name, len, constructor, data, property_count, properties);
     JSC::JSValue value = JSC::JSValue(napiClass);
+    JSC::EnsureStillAliveScope ensureStillAlive1(value);
     if (data != nullptr) {
         napiClass->dataPtr = data;
     }
@@ -1260,9 +1277,11 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
     JSC::JSValue jsValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(value));
+    JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
 
     // .toString() can throw
     JSC::JSValue resultValue = JSC::JSValue(jsValue.toString(globalObject));
+    JSC::EnsureStillAliveScope ensureStillAlive1(resultValue);
     *result = toNapi(resultValue);
 
     if (UNLIKELY(scope.exception())) {

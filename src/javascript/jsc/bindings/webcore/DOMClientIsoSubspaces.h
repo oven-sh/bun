@@ -20,6 +20,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiPrototype;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatement;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatementConstructor;
     /* --- bun --- */
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGlobalObject;

@@ -96,6 +96,7 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "napi.h"
 #include "JSZigGlobalObjectBuiltins.h"
+#include "JSSQLStatement.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -824,7 +825,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
     size_t constructor_count = 0;
     JSC__JSValue const* constructors = Zig__getAPIConstructors(&constructor_count, this);
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 10);
+    extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 11);
     int i = 0;
     for (; i < constructor_count; i++) {
         auto* object = JSC::jsDynamicCast<JSC::JSCallbackConstructor*>(JSC::JSValue::decode(constructors[i]).asCell()->getObject());
@@ -920,6 +921,10 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "reportError"_s, functionReportError),
             JSC::PropertyAttribute::DontDelete | 0 });
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { JSC::Identifier::fromString(vm, "SQL"_s),
+            JSSQLStatementConstructor::create(vm, this, JSSQLStatementConstructor::createStructure(vm, this, m_functionPrototype.get())),
+            JSC::PropertyAttribute::DontDelete | 0 });
 
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
 
@@ -968,6 +973,9 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Buffer"_s), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    // putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "SQL"_s), JSC::CustomGetterSetter::create(vm, JSSQLStatement_getter, nullptr),
+    //     JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();
 

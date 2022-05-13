@@ -184,22 +184,28 @@ endif
 
 HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
+SQLITE_INCLUDE_DIR=$(HOMEBREW_PREFIX)/sqlite/include
+
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
 SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp) 
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp) 
+SRC_SQLITE_FILES := $(wildcard $(SRC_DIR)/sqlite/*.cpp) 
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
-BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
+SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
+BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES)
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ \
 		-Isrc/javascript/jsc/bindings/ \
 		-Isrc/javascript/jsc/bindings/webcore \
+		-Isrc/javascript/jsc/bindings/sqlite \
 		-I$(WEBKIT_DIR)/Source/bmalloc  \
-		-I$(WEBKIT_DIR)/Source
+		-I$(WEBKIT_DIR)/Source \
+		-I$(SQLITE_INCLUDE_DIR)
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/javascript/jsc/bindings/ \
@@ -305,7 +311,8 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		-larchive \
 		-lssl \
 		-lbase64 \
-		-ltcc
+		-ltcc \
+		-lsqlite3
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 
@@ -1017,7 +1024,7 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
-jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
+jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES)
 
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
@@ -1132,6 +1139,7 @@ wasm-return1:
 
 EMIT_LLVM_FOR_RELEASE= -emit-llvm
 EMIT_LLVM_FOR_DEBUG= 
+EMIT_LLVM=$(EMIT_LLVM_FOR_RELEASE)
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
@@ -1141,7 +1149,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
-		$(EMIT_LLVM_FOR_RELEASE) \
+		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
@@ -1150,9 +1158,18 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
-		$(EMIT_LLVM_FOR_RELEASE) \
+		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
-		
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM) \
+		-g3 -c -o $@ $<
+
 sizegen:
 	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig

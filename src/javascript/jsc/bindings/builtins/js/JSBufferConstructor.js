@@ -59,13 +59,24 @@ function from(items) {
         result.set(arrayLike);
         return result;
     } else if (arrayLike instanceof ArrayBuffer || arrayLike instanceof SharedArrayBuffer) {
-        var byteOffset = @argument(1);
-        var byteLength = @argument(2);
-        // this will throw if detached
-        var out = new @Uint8Array(arrayLike, byteOffset, byteLength);
-        var result = this.allocUnsafe(out.length);
-        result.set(out);
-        return result;
+        var out;
+        switch (@argumentCount()) {
+            case 1: {
+                out = new @Uint8Array(arrayLike);
+                break;
+            }
+            case 2: {
+                out = @Uint8Array(items, @argument(1));
+                break;
+            }
+            default: {
+                out = @Uint8Array(items, @argument(1), @argument(2));
+                break;
+            }
+        }
+        
+        this.toBuffer(out);
+        return out;
     }
 
     return @tailCallForwardArguments(@Uint8Array.from, this);

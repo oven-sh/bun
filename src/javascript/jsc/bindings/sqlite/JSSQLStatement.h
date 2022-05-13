@@ -64,7 +64,7 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    Vector<sqlite3*> databases {};
+    Vector<sqlite3*> databases;
 
 private:
     JSSQLStatementConstructor(JSC::VM& vm, NativeExecutable* native, JSGlobalObject* globalObject, JSC::Structure* structure)

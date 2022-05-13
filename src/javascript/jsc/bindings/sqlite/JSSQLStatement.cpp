@@ -1,5 +1,5 @@
-
 #include "root.h"
+
 #include "JSSQLStatement.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "wtf/text/ExternalStringImpl.h"
@@ -18,6 +18,8 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "Buffer.h"
 #include "GCDefferalContext.h"
+
+#define SQL_USE_PROTOTYPE 1
 
 static int DEFAULT_SQLITE_FLAGS = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 static unsigned int DEFAULT_SQLITE_PREPARE_FLAGS = SQLITE_PREPARE_PERSISTENT;
@@ -350,7 +352,11 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     int count = columnNames.size();
     auto& vm = lexicalGlobalObject->vm();
 
+#if SQL_USE_PROTOTYPE == 1
     JSC::JSObject* result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
+#else
+    JSC::JSObject* result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), count));
+#endif
     auto* stmt = castedThis->stmt;
 
     for (int i = 0; i < count; i++) {
@@ -401,7 +407,7 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
     int count = castedThis->columnNames.size();
     auto& vm = lexicalGlobalObject->vm();
 
-    JSC::JSArray* result = JSArray::tryCreateUninitializedRestricted(scope, deferralContext, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
+    JSC::JSArray* result = JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), count);
     auto* stmt = castedThis->stmt;
 
     for (int i = 0; i < count; i++) {
@@ -584,15 +590,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
 
     if (callFrame->argumentCount() > 0) {
         auto arg0 = callFrame->argument(0);
-        if (!arg0.isObject()) {
-            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Binding must be an object or array"_s));
-            return JSValue::encode(jsUndefined());
-        }
-
-        JSC::JSValue reb = castedThis->rebind(lexicalGlobalObject, arg0);
-        if (UNLIKELY(!reb.isNumber())) {
-            return JSValue::encode(reb);
-        }
+        DO_REBIND(arg0);
     }
 
     if (!castedThis->hasExecuted) {
@@ -659,10 +657,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
             RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsNumber(sqlite3_changes(castedThis->db))));
         }
 
+        JSC::ObjectInitializationScope initializationScope(vm);
+        JSC::GCDeferralContext deferralContext(vm);
+
         JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
         {
-            JSC::ObjectInitializationScope initializationScope(vm);
-            JSC::GCDeferralContext deferralContext(vm);
 
             while (status == SQLITE_ROW) {
                 JSC::JSValue result = constructResultRow(lexicalGlobalObject, castedThis, initializationScope, &deferralContext);
@@ -868,6 +867,7 @@ static inline bool doRebind(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3_st
         return false;
     }
 
+    return true;
 #undef CHECK_BIND
 }
 

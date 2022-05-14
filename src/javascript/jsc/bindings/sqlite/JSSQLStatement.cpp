@@ -557,6 +557,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
             }
         }
 
+        if (UNLIKELY(status != SQLITE_DONE)) {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
+            return JSValue::encode(jsUndefined());
+        }
+
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(resultArray));
     } else if (status == SQLITE_DONE) {
         if (columnCount == 0) {
@@ -675,7 +680,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
             return JSValue::encode(jsUndefined());
         }
 
-        sqlite3_reset(stmt);
+        // sqlite3_reset(stmt);
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(resultArray));
     } else if (status == SQLITE_DONE) {
         if (columnCount == 0) {
@@ -717,12 +722,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     }
 
     int status = sqlite3_step(stmt);
-    if (status == SQLITE_ROW) {
-        status = sqlite3_step(stmt);
-    }
 
     if (status == SQLITE_ROW || status == SQLITE_DONE) {
-        sqlite3_reset(stmt);
+        // sqlite3_reset(stmt);
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsUndefined()));
     } else {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));

@@ -293,7 +293,7 @@ RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
     fallback_decoder && rm -rf $HOME/.cache zig-cache && \
     mkdir -p $BUN_RELEASE_DIR && \
     make jsc-bindings-mac -j10 && \
-    make release copy-to-bun-release-dir && \
+    make sqlite release copy-to-bun-release-dir && \
     rm -rf $HOME/.cache zig-cache misctools package.json build-id completions build.zig $(BUN_DIR)/packages
 
 FROM prepare_release as build_unit

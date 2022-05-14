@@ -901,7 +901,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
     if (status == SQLITE_ROW) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(constructResultObject(lexicalGlobalObject, castedThis)));
     } else if (status == SQLITE_DONE) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsNull()));
     } else {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
         return JSValue::encode(jsUndefined());

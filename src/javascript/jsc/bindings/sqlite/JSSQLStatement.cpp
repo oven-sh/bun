@@ -19,9 +19,35 @@
 #include "Buffer.h"
 #include "GCDefferalContext.h"
 
+#if defined(__APPLE__)
+#define LAZY_LOAD_SQLITE 1
+#endif
+
+/* ******************************************************************************** */
+// Lazy Load SQLite on macOS
+// This seemed to be about 3% faster on macOS
+// but it might be noise
+// it's kind of hard to tell
+// it should be strictly better though because
+// instead of two pointers, one for DYLD_STUB$$ and one for the actual library
+// we only call one pointer for the actual library
+// and it means there's less work for DYLD to do on startup
+// i.e. it shouldn't have any impact on startup time
+#ifdef LAZY_LOAD_SQLITE
+#include "lazy_sqlite3.h"
+#else
+static void lazyLoadSQLite()
+{
+}
+
+#endif
+/* ******************************************************************************** */
+
+/** This is like a 3x perf improvement for allocating objects **/
 #define SQL_USE_PROTOTYPE 1
 
-static int DEFAULT_SQLITE_FLAGS = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+static int DEFAULT_SQLITE_FLAGS
+    = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
 static unsigned int DEFAULT_SQLITE_PREPARE_FLAGS = SQLITE_PREPARE_PERSISTENT;
 static int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLITE_PREPARE_NORMALIZE | SQLITE_PREPARE_NO_VTAB;
 
@@ -372,7 +398,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
     JSValue thisValue = callFrame->thisValue();
     JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
     if (UNLIKELY(!thisObject)) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLite"_s));
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
 
@@ -481,6 +507,7 @@ JSSQLStatementConstructor* JSSQLStatementConstructor::create(JSC::VM& vm, JSC::J
     NativeExecutable* executable = vm.getHostFunction(jsSQLStatementPrepareStatementFunction, callHostFunctionAsConstructor, String("SQLStatement"_s));
     JSSQLStatementConstructor* ptr = new (NotNull, JSC::allocateCell<JSSQLStatementConstructor>(vm)) JSSQLStatementConstructor(vm, executable, globalObject, structure);
     ptr->finishCreation(vm);
+    lazyLoadSQLite();
     return ptr;
 }
 
@@ -573,7 +600,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    int statusCode = sqlite3_close(db);
+    int statusCode = sqlite3_close_v2(db);
     if (statusCode != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errmsg(db))));
         return JSValue::encode(jsUndefined());

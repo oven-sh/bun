@@ -816,6 +816,42 @@ static JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+// we're trying out a new way to do this lazy loading
+static JSC_DECLARE_HOST_FUNCTION(functionLazyLoad);
+static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+JSC:
+    VM& vm = globalObject->vm();
+    switch (callFrame->argumentCount()) {
+    case 0: {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSC::throwTypeError(globalObject, scope, "lazyLoad needs 1 argument (a string)"_s);
+        scope.release();
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+    default: {
+        static NeverDestroyed<const String> sqliteString(MAKE_STATIC_STRING_IMPL("sqlite"));
+        JSC::JSValue moduleName = callFrame->argument(0);
+        auto string = moduleName.toWTFString(globalObject);
+        if (string.isNull()) {
+            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+            JSC::throwTypeError(globalObject, scope, "lazyLoad expects a string"_s);
+            scope.release();
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        if (string == sqliteString) {
+            return JSC::JSValue::encode(JSSQLStatementConstructor::create(vm, globalObject, JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())));
+        }
+
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+        break;
+    }
+    }
+}
+
 // This is not a publicly exposed API currently.
 // This is used by the bundler to make Response, Request, FetchEvent,
 // and any other objects available globally.
@@ -872,59 +908,63 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         GlobalPropertyInfo { queueMicrotaskIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "queueMicrotask"_s, functionQueueMicrotask),
-            JSC::PropertyAttribute::DontDelete | 0 });
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier setTimeoutIdentifier = JSC::Identifier::fromString(vm, "setTimeout"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setTimeoutIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "setTimeout"_s, functionSetTimeout),
-            JSC::PropertyAttribute::DontDelete | 0 });
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier clearTimeoutIdentifier = JSC::Identifier::fromString(vm, "clearTimeout"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearTimeoutIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "clearTimeout"_s, functionClearTimeout),
-            JSC::PropertyAttribute::DontDelete | 0 });
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier setIntervalIdentifier = JSC::Identifier::fromString(vm, "setInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setIntervalIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "setInterval"_s, functionSetInterval),
-            JSC::PropertyAttribute::DontDelete | 0 });
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier clearIntervalIdentifier = JSC::Identifier::fromString(vm, "clearInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearIntervalIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "clearInterval"_s, functionClearInterval),
-            JSC::PropertyAttribute::DontDelete | 0 });
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier atobIdentifier = JSC::Identifier::fromString(vm, "atob"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { atobIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "atob"_s, functionATOB),
-            JSC::PropertyAttribute::DontDelete | 0 });
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier btoaIdentifier = JSC::Identifier::fromString(vm, "btoa"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { btoaIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "btoa"_s, functionBTOA),
-            JSC::PropertyAttribute::DontDelete | 0 });
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     JSC::Identifier reportErrorIdentifier = JSC::Identifier::fromString(vm, "reportError"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { reportErrorIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "reportError"_s, functionReportError),
             JSC::PropertyAttribute::DontDelete | 0 });
+
+    static NeverDestroyed<const String> BunLazyString(MAKE_STATIC_STRING_IMPL("Bun.lazy"));
+    JSC::Identifier BunLazyIdentifier = JSC::Identifier::fromUid(vm.symbolRegistry().symbolForKey(BunLazyString));
     extraStaticGlobals.uncheckedAppend(
-        GlobalPropertyInfo { JSC::Identifier::fromString(vm, "SQL"_s),
-            JSSQLStatementConstructor::create(vm, this, JSSQLStatementConstructor::createStructure(vm, this, m_functionPrototype.get())),
-            JSC::PropertyAttribute::DontDelete | 0 });
+        GlobalPropertyInfo { BunLazyIdentifier,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+                BunLazyString, functionLazyLoad),
+            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::Function | 0 });
 
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
 

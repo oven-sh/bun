@@ -1,0 +1,158 @@
+#include <dlfcn.h>
+
+typedef int (*lazy_sqlite3_bind_blob_type)(sqlite3_stmt*, int, const void*, int n, void (*)(void*));
+typedef int (*lazy_sqlite3_bind_double_type)(sqlite3_stmt*, int, double);
+typedef int (*lazy_sqlite3_bind_int_type)(sqlite3_stmt*, int, int);
+typedef int (*lazy_sqlite3_bind_int64_type)(sqlite3_stmt*, int, sqlite3_int64);
+typedef int (*lazy_sqlite3_bind_null_type)(sqlite3_stmt*, int);
+typedef int (*lazy_sqlite3_bind_text_type)(sqlite3_stmt*, int, const char*, int, void (*)(void*));
+typedef int (*lazy_sqlite3_bind_text16_type)(sqlite3_stmt*, int, const void*, int, void (*)(void*));
+typedef int (*lazy_sqlite3_bind_parameter_count_type)(sqlite3_stmt*);
+typedef int (*lazy_sqlite3_bind_parameter_index_type)(sqlite3_stmt*, const char* zName);
+typedef int (*lazy_sqlite3_changes_type)(sqlite3*);
+typedef int (*lazy_sqlite3_clear_bindings_type)(sqlite3_stmt*);
+typedef int (*lazy_sqlite3_close_v2_type)(sqlite3*);
+typedef const void* (*lazy_sqlite3_column_blob_type)(sqlite3_stmt*, int iCol);
+typedef double (*lazy_sqlite3_column_double_type)(sqlite3_stmt*, int iCol);
+typedef int (*lazy_sqlite3_column_int_type)(sqlite3_stmt*, int iCol);
+typedef sqlite3_int64 (*lazy_sqlite3_column_int64_type)(sqlite3_stmt*, int iCol);
+typedef const unsigned char* (*lazy_sqlite3_column_text_type)(sqlite3_stmt*, int iCol);
+typedef int (*lazy_sqlite3_column_bytes_type)(sqlite3_stmt*, int iCol);
+typedef int (*lazy_sqlite3_column_bytes16_type)(sqlite3_stmt*, int iCol);
+typedef int (*lazy_sqlite3_column_type_type)(sqlite3_stmt*, int iCol);
+typedef int (*lazy_sqlite3_column_count_type)(sqlite3_stmt* pStmt);
+typedef const char* (*lazy_sqlite3_column_decltype_type)(sqlite3_stmt*, int);
+typedef const char* (*lazy_sqlite3_column_name_type)(sqlite3_stmt*, int N);
+typedef const char* (*lazy_sqlite3_errmsg_type)(sqlite3*);
+typedef const char* (*lazy_sqlite3_errstr_type)(int);
+typedef char* (*lazy_sqlite3_expanded_sql_type)(sqlite3_stmt* pStmt);
+typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
+typedef void (*lazy_sqlite3_free_type)(void*);
+typedef int (*lazy_sqlite3_get_autocommit_type)(sqlite3*);
+typedef int (*lazy_sqlite3_open_v2_type)(const char* filename, /* Database filename (UTF-8) */ sqlite3** ppDb, /* OUT: SQLite db handle */ int flags, /* Flags */ const char* zVfs /* Name of VFS module to use */);
+typedef int (*lazy_sqlite3_prepare_v3_type)(sqlite3* db, /* Database handle */
+    const char* zSql, /* SQL statement, UTF-8 encoded */
+    int nByte, /* Maximum length of zSql in bytes. */
+    unsigned int prepFlags, /* Zero or more SQLITE_PREPARE_ flags */
+    sqlite3_stmt** ppStmt, /* OUT: Statement handle */
+    const char** pzTail /* OUT: Pointer to unused portion of zSql */);
+typedef int (*lazy_sqlite3_prepare16_v3_type)(sqlite3* db, /* Database handle */
+    const void* zSql, /* SQL statement, UTF-16 encoded */
+    int nByte, /* Maximum length of zSql in bytes. */
+    unsigned int prepFlags, /* Zero or more SQLITE_PREPARE_ flags */
+    sqlite3_stmt** ppStmt, /* OUT: Statement handle */
+    const void** pzTail /* OUT: Pointer to unused portion of zSql */);
+typedef int (*lazy_sqlite3_reset_type)(sqlite3_stmt* pStmt);
+typedef int (*lazy_sqlite3_step_type)(sqlite3_stmt*);
+typedef int (*lazy_sqlite3_clear_bindings_type)(sqlite3_stmt*);
+typedef int (*lazy_sqlite3_column_type_type)(sqlite3_stmt*, int iCol);
+
+static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob;
+static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double;
+static lazy_sqlite3_bind_int_type lazy_sqlite3_bind_int;
+static lazy_sqlite3_bind_int64_type lazy_sqlite3_bind_int64;
+static lazy_sqlite3_bind_null_type lazy_sqlite3_bind_null;
+static lazy_sqlite3_bind_parameter_count_type lazy_sqlite3_bind_parameter_count;
+static lazy_sqlite3_bind_parameter_index_type lazy_sqlite3_bind_parameter_index;
+static lazy_sqlite3_bind_text_type lazy_sqlite3_bind_text;
+static lazy_sqlite3_bind_text16_type lazy_sqlite3_bind_text16;
+static lazy_sqlite3_changes_type lazy_sqlite3_changes;
+static lazy_sqlite3_clear_bindings_type lazy_sqlite3_clear_bindings;
+static lazy_sqlite3_close_v2_type lazy_sqlite3_close_v2;
+static lazy_sqlite3_column_blob_type lazy_sqlite3_column_blob;
+static lazy_sqlite3_column_bytes_type lazy_sqlite3_column_bytes;
+static lazy_sqlite3_column_bytes16_type lazy_sqlite3_column_bytes16;
+static lazy_sqlite3_column_count_type lazy_sqlite3_column_count;
+static lazy_sqlite3_column_decltype_type lazy_sqlite3_column_decltype;
+static lazy_sqlite3_column_double_type lazy_sqlite3_column_double;
+static lazy_sqlite3_column_int_type lazy_sqlite3_column_int;
+static lazy_sqlite3_column_int64_type lazy_sqlite3_column_int64;
+static lazy_sqlite3_column_name_type lazy_sqlite3_column_name;
+static lazy_sqlite3_column_text_type lazy_sqlite3_column_text;
+static lazy_sqlite3_column_type_type lazy_sqlite3_column_type;
+static lazy_sqlite3_errmsg_type lazy_sqlite3_errmsg;
+static lazy_sqlite3_errstr_type lazy_sqlite3_errstr;
+static lazy_sqlite3_expanded_sql_type lazy_sqlite3_expanded_sql;
+static lazy_sqlite3_finalize_type lazy_sqlite3_finalize;
+static lazy_sqlite3_free_type lazy_sqlite3_free;
+static lazy_sqlite3_get_autocommit_type lazy_sqlite3_get_autocommit;
+static lazy_sqlite3_open_v2_type lazy_sqlite3_open_v2;
+static lazy_sqlite3_prepare_v3_type lazy_sqlite3_prepare_v3;
+static lazy_sqlite3_prepare16_v3_type lazy_sqlite3_prepare16_v3;
+static lazy_sqlite3_reset_type lazy_sqlite3_reset;
+static lazy_sqlite3_step_type lazy_sqlite3_step;
+
+#define sqlite3_bind_blob lazy_sqlite3_bind_blob
+#define sqlite3_bind_double lazy_sqlite3_bind_double
+#define sqlite3_bind_int lazy_sqlite3_bind_int
+#define sqlite3_bind_int64 lazy_sqlite3_bind_int64
+#define sqlite3_bind_null lazy_sqlite3_bind_null
+#define sqlite3_bind_parameter_count lazy_sqlite3_bind_parameter_count
+#define sqlite3_bind_parameter_index lazy_sqlite3_bind_parameter_index
+#define sqlite3_bind_text lazy_sqlite3_bind_text
+#define sqlite3_bind_text16 lazy_sqlite3_bind_text16
+#define sqlite3_changes lazy_sqlite3_changes
+#define sqlite3_clear_bindings lazy_sqlite3_clear_bindings
+#define sqlite3_close_v2 lazy_sqlite3_close_v2
+#define sqlite3_column_blob lazy_sqlite3_column_blob
+#define sqlite3_column_bytes lazy_sqlite3_column_bytes
+#define sqlite3_column_count lazy_sqlite3_column_count
+#define sqlite3_column_decltype lazy_sqlite3_column_decltype
+#define sqlite3_column_double lazy_sqlite3_column_double
+#define sqlite3_column_int lazy_sqlite3_column_int
+#define sqlite3_column_name lazy_sqlite3_column_name
+#define sqlite3_column_text lazy_sqlite3_column_text
+#define sqlite3_column_type lazy_sqlite3_column_type
+#define sqlite3_errmsg lazy_sqlite3_errmsg
+#define sqlite3_errstr lazy_sqlite3_errstr
+#define sqlite3_expanded_sql lazy_sqlite3_expanded_sql
+#define sqlite3_finalize lazy_sqlite3_finalize
+#define sqlite3_free lazy_sqlite3_free
+#define sqlite3_get_autocommit lazy_sqlite3_get_autocommit
+#define sqlite3_open_v2 lazy_sqlite3_open_v2
+#define sqlite3_prepare_v3 lazy_sqlite3_prepare_v3
+#define sqlite3_prepare16_v3 lazy_sqlite3_prepare16_v3
+#define sqlite3_reset lazy_sqlite3_reset
+#define sqlite3_step lazy_sqlite3_step
+
+static void* sqlite3_handle = nullptr;
+
+static void lazyLoadSQLite()
+{
+    if (sqlite3_handle)
+        return;
+
+    sqlite3_handle = dlopen("libsqlite3.dylib", RTLD_LAZY);
+    lazy_sqlite3_bind_blob = (lazy_sqlite3_bind_blob_type)dlsym(sqlite3_handle, "sqlite3_bind_blob");
+    lazy_sqlite3_bind_double = (lazy_sqlite3_bind_double_type)dlsym(sqlite3_handle, "sqlite3_bind_double");
+    lazy_sqlite3_bind_int = (lazy_sqlite3_bind_int_type)dlsym(sqlite3_handle, "sqlite3_bind_int");
+    lazy_sqlite3_bind_int64 = (lazy_sqlite3_bind_int64_type)dlsym(sqlite3_handle, "sqlite3_bind_int64");
+    lazy_sqlite3_bind_null = (lazy_sqlite3_bind_null_type)dlsym(sqlite3_handle, "sqlite3_bind_null");
+    lazy_sqlite3_bind_parameter_count = (lazy_sqlite3_bind_parameter_count_type)dlsym(sqlite3_handle, "sqlite3_bind_parameter_count");
+    lazy_sqlite3_bind_parameter_index = (lazy_sqlite3_bind_parameter_index_type)dlsym(sqlite3_handle, "sqlite3_bind_parameter_index");
+    lazy_sqlite3_bind_text = (lazy_sqlite3_bind_text_type)dlsym(sqlite3_handle, "sqlite3_bind_text");
+    lazy_sqlite3_bind_text16 = (lazy_sqlite3_bind_text16_type)dlsym(sqlite3_handle, "sqlite3_bind_text16");
+    lazy_sqlite3_changes = (lazy_sqlite3_changes_type)dlsym(sqlite3_handle, "sqlite3_changes");
+    lazy_sqlite3_clear_bindings = (lazy_sqlite3_clear_bindings_type)dlsym(sqlite3_handle, "sqlite3_clear_bindings");
+    lazy_sqlite3_close_v2 = (lazy_sqlite3_close_v2_type)dlsym(sqlite3_handle, "sqlite3_close_v2");
+    lazy_sqlite3_column_blob = (lazy_sqlite3_column_blob_type)dlsym(sqlite3_handle, "sqlite3_column_blob");
+    lazy_sqlite3_column_bytes = (lazy_sqlite3_column_bytes_type)dlsym(sqlite3_handle, "sqlite3_column_bytes");
+    lazy_sqlite3_column_count = (lazy_sqlite3_column_count_type)dlsym(sqlite3_handle, "sqlite3_column_count");
+    lazy_sqlite3_column_decltype = (lazy_sqlite3_column_decltype_type)dlsym(sqlite3_handle, "sqlite3_column_decltype");
+    lazy_sqlite3_column_double = (lazy_sqlite3_column_double_type)dlsym(sqlite3_handle, "sqlite3_column_double");
+    lazy_sqlite3_column_int = (lazy_sqlite3_column_int_type)dlsym(sqlite3_handle, "sqlite3_column_int");
+    lazy_sqlite3_column_name = (lazy_sqlite3_column_name_type)dlsym(sqlite3_handle, "sqlite3_column_name");
+    lazy_sqlite3_column_text = (lazy_sqlite3_column_text_type)dlsym(sqlite3_handle, "sqlite3_column_text");
+    lazy_sqlite3_column_type = (lazy_sqlite3_column_type_type)dlsym(sqlite3_handle, "sqlite3_column_type");
+    lazy_sqlite3_errmsg = (lazy_sqlite3_errmsg_type)dlsym(sqlite3_handle, "sqlite3_errmsg");
+    lazy_sqlite3_errstr = (lazy_sqlite3_errstr_type)dlsym(sqlite3_handle, "sqlite3_errstr");
+    lazy_sqlite3_expanded_sql = (lazy_sqlite3_expanded_sql_type)dlsym(sqlite3_handle, "sqlite3_expanded_sql");
+    lazy_sqlite3_finalize = (lazy_sqlite3_finalize_type)dlsym(sqlite3_handle, "sqlite3_finalize");
+    lazy_sqlite3_free = (lazy_sqlite3_free_type)dlsym(sqlite3_handle, "sqlite3_free");
+    lazy_sqlite3_get_autocommit = (lazy_sqlite3_get_autocommit_type)dlsym(sqlite3_handle, "sqlite3_get_autocommit");
+    lazy_sqlite3_open_v2 = (lazy_sqlite3_open_v2_type)dlsym(sqlite3_handle, "sqlite3_open_v2");
+    lazy_sqlite3_prepare_v3 = (lazy_sqlite3_prepare_v3_type)dlsym(sqlite3_handle, "sqlite3_prepare_v3");
+    lazy_sqlite3_prepare16_v3 = (lazy_sqlite3_prepare16_v3_type)dlsym(sqlite3_handle, "sqlite3_prepare16_v3");
+    lazy_sqlite3_reset = (lazy_sqlite3_reset_type)dlsym(sqlite3_handle, "sqlite3_reset");
+    lazy_sqlite3_step = (lazy_sqlite3_step_type)dlsym(sqlite3_handle, "sqlite3_step");
+}

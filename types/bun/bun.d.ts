@@ -355,7 +355,7 @@ declare module "bun" {
      *    const query = UserQuery;
      *    ```
      */
-    macros: MacroMap;
+    macros?: MacroMap;
   }
 
   /**
@@ -393,7 +393,27 @@ declare module "bun" {
      * @param code The code to transpile
      *
      */
-    transformSync(code: StringOrBuffer, loader?: JavaScriptLoader): string;
+    transformSync(
+      code: StringOrBuffer,
+      loader: JavaScriptLoader,
+      ctx: object
+    ): string;
+    /**
+     * Transpile code from TypeScript or JSX into valid JavaScript.
+     * This function does not resolve imports.
+     * @param code The code to transpile
+     * @param ctx An object to pass to macros
+     *
+     */
+    transformSync(code: StringOrBuffer, ctx: object): string;
+
+    /**
+     * Transpile code from TypeScript or JSX into valid JavaScript.
+     * This function does not resolve imports.
+     * @param code The code to transpile
+     *
+     */
+    transformSync(code: StringOrBuffer, loader: JavaScriptLoader): string;
 
     /**
      * Get a list of import paths and paths from a TypeScript, JSX, TSX, or JavaScript file.

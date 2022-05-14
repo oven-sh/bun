@@ -203,6 +203,21 @@ export class Database {
         index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
         continue;
       }
+
+      // update the cached query
+      if (params.length > 0) {
+        this.#cachedQueriesValues[index].run(
+          // if you pass ["foo"], support that
+          // if you pass {$foo: "foo"}, support that
+          // if you pass "foo", support that
+          params.length === 1 &&
+            params[0] &&
+            (Array.isArray(params[0]) || typeof params[0] === "object")
+            ? params[0]
+            : params
+        );
+      }
+
       return this.#cachedQueriesValues[index];
     }
 

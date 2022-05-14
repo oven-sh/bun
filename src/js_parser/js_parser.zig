@@ -12413,9 +12413,13 @@ fn NewParser_(
                         if (comptime allow_macros) {
                             if (e_.tag.?.data == .e_import_identifier) {
                                 const ref = e_.tag.?.data.e_import_identifier.ref;
+
                                 if (p.macro.refs.get(ref)) |import_record_id| {
                                     const name = p.symbols.items[ref.innerIndex()].original_name;
                                     p.ignoreUsage(ref);
+                                    if (p.is_control_flow_dead) {
+                                        return p.e(E.Undefined{}, e_.tag.?.loc);
+                                    }
                                     p.macro_call_count += 1;
                                     const record = &p.import_records.items[import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
@@ -13436,6 +13440,9 @@ fn NewParser_(
                             const ref = e_.target.data.e_import_identifier.ref;
                             const import_record_id = p.macro.refs.get(ref).?;
                             p.ignoreUsage(ref);
+                            if (p.is_control_flow_dead) {
+                                return p.e(E.Undefined{}, e_.target.loc);
+                            }
                             const name = p.symbols.items[ref.innerIndex()].original_name;
                             const record = &p.import_records.items[import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };

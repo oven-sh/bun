@@ -28,9 +28,8 @@ static int MAX_SQLITE_PREPARE_FLAG = SQLITE_PREPARE_PERSISTENT | SQLITE_PREPARE_
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteFunction);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction);
-static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementCloseFunction);
+static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction);
 
-static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementBindFunction);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunction);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet);
@@ -38,6 +37,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows);
 
 static JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnNames);
+static JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
 
 #define CHECK_THIS                                                                                               \
     if (UNLIKELY(!castedThis)) {                                                                                 \
@@ -321,9 +321,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     int rc = SQLITE_OK;
     if (sqlString.is8Bit()) {
-        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), DEFAULT_SQLITE_PREPARE_FLAGS, &statement, nullptr);
+        rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(sqlString.characters8()), sqlString.length(), 0, &statement, nullptr);
     } else {
-        rc = sqlite3_prepare16_v3(db, sqlString.characters16(), sqlString.length() * 2, DEFAULT_SQLITE_PREPARE_FLAGS, &statement, nullptr);
+        rc = sqlite3_prepare16_v3(db, sqlString.characters16(), sqlString.length() * 2, 0, &statement, nullptr);
     }
 
     if (rc != SQLITE_OK || statement == nullptr) {
@@ -362,6 +362,42 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     sqlite3_finalize(statement);
     return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    if (UNLIKELY(!thisObject)) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLite"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSValue dbNumber = callFrame->argument(0);
+
+    if (!dbNumber.isNumber()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    int handle = dbNumber.toInt32(lexicalGlobalObject);
+
+    if (handle < 0 || handle > thisObject->databases.size()) {
+        throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    sqlite3* db = thisObject->databases[handle];
+
+    if (UNLIKELY(!db)) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(sqlite3_get_autocommit(db))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -552,7 +588,8 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "open", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementOpenStatementFunction), (intptr_t)(2) } },
     { "close", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementCloseStatementFunction), (intptr_t)(1) } },
     { "prepare", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementPrepareStatementFunction), (intptr_t)(2) } },
-    { "run", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteFunction), (intptr_t)(3) } }
+    { "run", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteFunction), (intptr_t)(3) } },
+    { "isInTransaction", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementIsInTransactionFunction), (intptr_t)(1) } },
 };
 
 const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
@@ -567,20 +604,6 @@ void JSSQLStatementConstructor::finishCreation(VM& vm)
     this->putDirect(vm, vm.propertyNames->prototype, proto, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsSQLStatementBindFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-
-    JSC::VM& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
-
-    if (!castedThis) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
-        return JSValue::encode(jsUndefined());
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(castedThis->rebind(lexicalGlobalObject, callFrame->argument(0))));
-}
 static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis);
 static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis)
 {
@@ -1012,34 +1035,56 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
     return JSC::JSValue::encode(array);
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnCount, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(JSValue::decode(thisValue));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CHECK_THIS
+    CHECK_PREPARED
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsNumber(sqlite3_column_count(castedThis->stmt))));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetParamCount, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(JSValue::decode(thisValue));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CHECK_THIS
+    CHECK_PREPARED
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(sqlite3_bind_parameter_count(castedThis->stmt))));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
-    JSSQLStatement* thisObject = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
-    if (UNLIKELY(!thisObject)) {
-        return JSValue::encode(jsUndefined());
+    JSSQLStatement* castedThis = jsDynamicCast<JSSQLStatement*>(callFrame->thisValue());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CHECK_THIS
+
+    if (castedThis->stmt) {
+        sqlite3_finalize(castedThis->stmt);
+        castedThis->stmt = nullptr;
     }
 
-    if (thisObject->stmt) {
-        sqlite3_finalize(thisObject->stmt);
-        thisObject->stmt = nullptr;
-    }
-
-    return JSValue::encode(jsUndefined());
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
 
 const ClassInfo JSSQLStatement::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatement) };
 
 /* Hash table for prototype */
 static const HashTableValue JSSQLStatementTableValues[] = {
-    { "rebind", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementBindFunction), (intptr_t)(1) } },
     { "run", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionRun), (intptr_t)(1) } },
     { "get", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionGet), (intptr_t)(1) } },
     { "all", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionAll), (intptr_t)(1) } },
-    { "raw", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionRows), (intptr_t)(1) } },
+    { "values", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionRows), (intptr_t)(1) } },
     { "finalize", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementFunctionFinalize), (intptr_t)(0) } },
     { "toString", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementToStringFunction), (intptr_t)(0) } },
     { "columns", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsSqlStatementGetColumnNames), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "columnsCount", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsSqlStatementGetColumnCount), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "paramsCount", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsSqlStatementGetParamCount), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
 };
 
 void JSSQLStatement::finishCreation(VM& vm)

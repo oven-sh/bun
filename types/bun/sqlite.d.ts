@@ -193,7 +193,7 @@ declare module "bun:sqlite" {
      * ```ts
      * const db = new Database("mydb.sqlite");
      * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
+     * db.run("INSERT INTO foo VALUES (?)", "baz");
      * console.log(db.query("SELECT * FROM foo").all());
      * ```
      *
@@ -204,7 +204,7 @@ declare module "bun:sqlite" {
      * ```ts
      * const db = new Database(":memory:");
      * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
+     * db.run("INSERT INTO foo VALUES (?)", "hiiiiii");
      * console.log(db.query("SELECT * FROM foo").all());
      * ```
      *
@@ -281,7 +281,7 @@ declare module "bun:sqlite" {
      * @example
      * ```ts
      * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
+     * db.run("INSERT INTO foo VALUES (?)", "baz");
      * ```
      *
      * Useful for queries like:
@@ -397,13 +397,13 @@ declare module "bun:sqlite" {
      * @example
      * ```ts
      * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
+     * db.run("INSERT INTO foo VALUES (?)", "baz");
      * db.run("BEGIN");
-     * db.run("INSERT INTO foo VALUES (?)", ["qux"]);
+     * db.run("INSERT INTO foo VALUES (?)", "qux");
      * console.log(db.inTransaction());
      * ```
      */
-    get isInTransation(): bool;
+    get inTransaction(): bool;
 
     /**
      * Close the database connection.
@@ -651,7 +651,7 @@ declare module "bun:sqlite" {
      *
      * @example
      * ```ts
-     * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?", ["baz"]);
+     * const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?", "baz");
      * console.log(stmt.toString());
      * // => "SELECT * FROM foo WHERE bar = 'baz'"
      * console.log(stmt);

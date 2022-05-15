@@ -36,7 +36,15 @@
 #include "WebCoreJSBuiltinInternals.h"
 #include "JavaScriptCore/CallFrame.h"
 
+#if defined(__APPLE__)
+#define LAZY_LOAD_SQLITE 1
+#endif
+
+#ifdef LAZY_LOAD_SQLITE
 #include "sqlite3.h"
+#else
+#include "sqlite3_local.h"
+#endif
 
 namespace WebCore {
 

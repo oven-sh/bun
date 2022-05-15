@@ -439,6 +439,34 @@ declare module "bun:sqlite" {
      * In native code, this is not a file descriptor, but an index into an array of database handles
      */
     readonly handle: number;
+
+    /**
+     * Load a SQLite3 extension
+     *
+     * macOS requires a custom SQLite3 library to be linked because the Apple build of SQLite for macOS disables loading extensions. See {@link Database.setCustomSQLite}
+     *
+     * Bun chooses the Apple build of SQLite on macOS because it brings a ~40% performance improvement.
+     *
+     * @param extension name/path of the extension to load
+     * @param entryPoint optional entry point of the extension
+     */
+    loadExtension(extension, entryPoint?: string): void;
+
+    /**
+     * Change the dynamic library path to SQLite
+     *
+     * @note macOS-only
+     *
+     * This only works before SQLite is loaded, so
+     * that's before you call `new Database()`.
+     *
+     * It can only be run once because this will load
+     * the SQLite library into the process.
+     *
+     * @param path The path to the SQLite library
+     *
+     */
+    static setCustomSQLite(path: string): bool;
   }
 
   /**

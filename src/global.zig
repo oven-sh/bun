@@ -95,3 +95,64 @@ pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_P
 pub inline fn cast(comptime To: type, value: anytype) To {
     return @ptrCast(To, @alignCast(@alignOf(To), value));
 }
+
+extern fn strlen(ptr: [*c]const u8) usize;
+pub fn indexOfSentinel(comptime Elem: type, comptime sentinel: Elem, ptr: [*:sentinel]const Elem) usize {
+    if (comptime std.meta.trait.isNumber(Elem) and sentinel == 0) {
+        return strlen(ptr);
+    } else {
+        var i: usize = 0;
+        while (ptr[i] != sentinel) {
+            i = i + 1;
+        }
+        return i;
+    }
+}
+
+pub fn len(value: anytype) usize {
+    return switch (@typeInfo(@TypeOf(value))) {
+        .Array => |info| info.len,
+        .Vector => |info| info.len,
+        .Pointer => |info| switch (info.size) {
+            .One => switch (@typeInfo(info.child)) {
+                .Array => value.len,
+                else => @compileError("invalid type given to std.mem.len"),
+            },
+            .Many => {
+                const sentinel_ptr = info.sentinel orelse
+                    @compileError("length of pointer with no sentinel");
+                const sentinel = @ptrCast(*const info.child, sentinel_ptr).*;
+
+                return indexOfSentinel(info.child, sentinel, value);
+            },
+            .C => {
+                std.debug.assert(value != null);
+                return indexOfSentinel(info.child, 0, value);
+            },
+            .Slice => value.len,
+        },
+        .Struct => |info| if (info.is_tuple) {
+            return info.fields.len;
+        } else @compileError("invalid type given to std.mem.len"),
+        else => @compileError("invalid type given to std.mem.len"),
+    };
+}
+
+pub fn span(ptr: anytype) std.mem.Span(@TypeOf(ptr)) {
+    if (@typeInfo(@TypeOf(ptr)) == .Optional) {
+        if (ptr) |non_null| {
+            return span(non_null);
+        } else {
+            return null;
+        }
+    }
+    const Result = std.mem.Span(@TypeOf(ptr));
+    const l = len(ptr);
+    const ptr_info = @typeInfo(Result).Pointer;
+    if (ptr_info.sentinel) |s_ptr| {
+        const s = @ptrCast(*const ptr_info.child, s_ptr).*;
+        return ptr[0..l :s];
+    } else {
+        return ptr[0..l];
+    }
+}

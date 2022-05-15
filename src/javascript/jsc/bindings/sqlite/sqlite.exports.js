@@ -227,6 +227,18 @@ export class Database {
     return new Database(filename, options);
   }
 
+  loadExtension(name, entryPoint) {
+    return SQL.loadExtension(this.#handle, name, entryPoint);
+  }
+
+  static setCustomSQLite(path) {
+    if (!SQL) {
+      _SQL = SQL = lazy("sqlite");
+    }
+
+    return SQL.setCustomSQLite(path);
+  }
+
   close() {
     this.clearQueryCache();
     return SQL.close(this.#handle);

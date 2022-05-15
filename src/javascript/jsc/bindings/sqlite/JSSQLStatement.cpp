@@ -19,10 +19,6 @@
 #include "Buffer.h"
 #include "GCDefferalContext.h"
 
-#if defined(__APPLE__)
-#define LAZY_LOAD_SQLITE 1
-#endif
-
 /* ******************************************************************************** */
 // Lazy Load SQLite on macOS
 // This seemed to be about 3% faster on macOS
@@ -43,6 +39,13 @@ static void lazyLoadSQLite()
 #endif
 /* ******************************************************************************** */
 
+static WTF::String sqliteString(const char* str)
+{
+    auto res = WTF::String::fromUTF8(str);
+    sqlite3_free((void*)str);
+    return res;
+}
+
 /** This is like a 3x perf improvement for allocating objects **/
 #define SQL_USE_PROTOTYPE 1
 
@@ -55,6 +58,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteFunction);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction);
+
+static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction);
 
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunction);
 static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun);
@@ -291,6 +296,97 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
     return jsNumber(i);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    if (UNLIKELY(!thisObject)) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+#ifndef LAZY_LOAD_SQLITE
+    throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite is statically linked into this platform's binary, so the path cannot be changed"_s));
+    return JSValue::encode(JSC::jsUndefined());
+#endif
+
+    if (callFrame->argumentCount() < 1) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected 1 argument"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSValue sqliteStrValue = callFrame->argument(0);
+    if (UNLIKELY(!sqliteStrValue.isString())) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLite path"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    if (sqlite3_handle) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nThis function can only be called before SQLite has been loaded and exactly once. SQLite auto-loads when the first time you open a Database."_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    sqlite3_lib_path = sqliteStrValue.toWTFString(lexicalGlobalObject).utf8().data();
+    if (lazyLoadSQLite() == -1) {
+        sqlite3_handle = nullptr;
+        WTF::String msg = WTF::String::fromUTF8(dlerror());
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    return JSValue::encode(JSC::jsBoolean(true));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    if (UNLIKELY(!thisObject)) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
+    if (UNLIKELY(dbIndex < 0 || dbIndex >= thisObject->databases.size())) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSValue extension = callFrame->argument(1);
+    if (UNLIKELY(!extension.isString())) {
+        throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Expected string"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto extensionString = extension.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    sqlite3* db = thisObject->databases[dbIndex];
+    if (UNLIKELY(!db)) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
+    const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointStr.utf8().data();
+    char* error;
+    int rc = sqlite3_load_extension(db, extensionString.utf8().data(), entryPoint, &error);
+
+    // TODO: can we disable loading extensions after this?
+    if (rc != SQLITE_OK) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, sqliteString(error != nullptr ? error : sqlite3_errmsg(db))));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+}
+
 // This runs a query one-off
 // without the overhead of a long-lived statement object
 // does not return anything
@@ -507,7 +603,7 @@ JSSQLStatementConstructor* JSSQLStatementConstructor::create(JSC::VM& vm, JSC::J
     NativeExecutable* executable = vm.getHostFunction(jsSQLStatementPrepareStatementFunction, callHostFunctionAsConstructor, String("SQLStatement"_s));
     JSSQLStatementConstructor* ptr = new (NotNull, JSC::allocateCell<JSSQLStatementConstructor>(vm)) JSSQLStatementConstructor(vm, executable, globalObject, structure);
     ptr->finishCreation(vm);
-    lazyLoadSQLite();
+
     return ptr;
 }
 
@@ -549,6 +645,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         openFlags = flags.toInt32(lexicalGlobalObject);
     }
 
+    lazyLoadSQLite();
+
     sqlite3* db = nullptr;
     int statusCode = sqlite3_open_v2(path.utf8().data(), &db, openFlags, nullptr);
     if (statusCode != SQLITE_OK) {
@@ -556,6 +654,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
 
         return JSValue::encode(jsUndefined());
     }
+
+    int status = sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);
+    assert(status == SQLITE_OK);
+    status = sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL);
+    assert(status == SQLITE_OK);
 
     auto count = constructor->databases.size();
     constructor->databases.append(db);
@@ -617,6 +720,8 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "prepare", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementPrepareStatementFunction), (intptr_t)(2) } },
     { "run", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteFunction), (intptr_t)(3) } },
     { "isInTransaction", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementIsInTransactionFunction), (intptr_t)(1) } },
+    { "loadExtension", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementLoadExtensionFunction), (intptr_t)(2) } },
+    { "setCustomSQLite", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementSetCustomSQLite), (intptr_t)(1) } },
 };
 
 const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };

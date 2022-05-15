@@ -46,6 +46,13 @@ typedef int (*lazy_sqlite3_reset_type)(sqlite3_stmt* pStmt);
 typedef int (*lazy_sqlite3_step_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_clear_bindings_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_column_type_type)(sqlite3_stmt*, int iCol);
+typedef int (*lazy_sqlite3_db_config_type)(sqlite3*, int op, ...);
+typedef int (*lazy_sqlite3_load_extension_type)(
+    sqlite3* db, /* Load the extension into this database connection */
+    const char* zFile, /* Name of the shared library containing extension */
+    const char* zProc, /* Entry point.  Derived from zFile if 0 */
+    char** pzErrMsg /* Put error message here if not 0 */
+);
 
 static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob;
 static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double;
@@ -81,6 +88,8 @@ static lazy_sqlite3_prepare_v3_type lazy_sqlite3_prepare_v3;
 static lazy_sqlite3_prepare16_v3_type lazy_sqlite3_prepare16_v3;
 static lazy_sqlite3_reset_type lazy_sqlite3_reset;
 static lazy_sqlite3_step_type lazy_sqlite3_step;
+static lazy_sqlite3_db_config_type lazy_sqlite3_db_config;
+static lazy_sqlite3_load_extension_type lazy_sqlite3_load_extension;
 
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
@@ -114,15 +123,21 @@ static lazy_sqlite3_step_type lazy_sqlite3_step;
 #define sqlite3_prepare16_v3 lazy_sqlite3_prepare16_v3
 #define sqlite3_reset lazy_sqlite3_reset
 #define sqlite3_step lazy_sqlite3_step
+#define sqlite3_db_config lazy_sqlite3_db_config
+#define sqlite3_load_extension lazy_sqlite3_load_extension
 
 static void* sqlite3_handle = nullptr;
+static const char* sqlite3_lib_path = "libsqlite3.dylib";
 
-static void lazyLoadSQLite()
+static int lazyLoadSQLite()
 {
     if (sqlite3_handle)
-        return;
+        return 0;
 
-    sqlite3_handle = dlopen("libsqlite3.dylib", RTLD_LAZY);
+    sqlite3_handle = dlopen(sqlite3_lib_path, RTLD_LAZY);
+    if (!sqlite3_handle) {
+        return -1;
+    }
     lazy_sqlite3_bind_blob = (lazy_sqlite3_bind_blob_type)dlsym(sqlite3_handle, "sqlite3_bind_blob");
     lazy_sqlite3_bind_double = (lazy_sqlite3_bind_double_type)dlsym(sqlite3_handle, "sqlite3_bind_double");
     lazy_sqlite3_bind_int = (lazy_sqlite3_bind_int_type)dlsym(sqlite3_handle, "sqlite3_bind_int");
@@ -155,4 +170,8 @@ static void lazyLoadSQLite()
     lazy_sqlite3_prepare16_v3 = (lazy_sqlite3_prepare16_v3_type)dlsym(sqlite3_handle, "sqlite3_prepare16_v3");
     lazy_sqlite3_reset = (lazy_sqlite3_reset_type)dlsym(sqlite3_handle, "sqlite3_reset");
     lazy_sqlite3_step = (lazy_sqlite3_step_type)dlsym(sqlite3_handle, "sqlite3_step");
+    lazy_sqlite3_db_config = (lazy_sqlite3_db_config_type)dlsym(sqlite3_handle, "sqlite3_db_config");
+    lazy_sqlite3_load_extension = (lazy_sqlite3_load_extension_type)dlsym(sqlite3_handle, "sqlite3_load_extension");
+
+    return 0;
 }

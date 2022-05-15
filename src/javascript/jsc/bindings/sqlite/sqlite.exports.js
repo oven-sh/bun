@@ -408,3 +408,4 @@ const wrapTransaction = (
   };
 
 export { _SQL as native };
+export { Database as default };

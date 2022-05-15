@@ -62,6 +62,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [`Bun.serve`](#bunserve---fast-http-server)
   - [`Bun.write`](#bunwrite--optimizing-io)
   - [`bun:ffi` (Foreign functions interface)](#bunffi-foreign-functions-interface)
+  - [`bun:sqlite` (SQLite3 driver)](#bunffi-foreign-functions-interface)
   - [Node API (napi)](#node-api-napi)
   - [`Bun.Transpiler`](#buntranspiler)
     - [`transformSync`](#buntranspilertransformsync)
@@ -1554,6 +1555,173 @@ await Bun.write(Bun.file("index.html"), await fetch("http://example.com"));
 // copy input.txt to output.txt
 await Bun.write("output.txt", Bun.file("input.txt"));
 ```
+
+### `bun:sqlite` (SQLite3 module)
+
+`bun:sqlite` is a high-performance builtin [SQLite3](https://www.sqlite.org/) module for bun.js.
+
+- Simple, synchronous API (synchronous _is_ faster)
+- Transactions
+- Binding named & positional parameters
+- Prepared statements
+- Automatic type conversions (`BLOB` becomes `Uint8Array`)
+- toString() prints as SQL
+
+Installation:
+
+```sh
+# there's nothing to install
+# bun:sqlite is builtin to bun.js
+```
+
+Example:
+
+```ts
+import { Database } from "bun:sqlite";
+
+const db = new Database("mydb.sqlite");
+db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY, greeting TEXT)");
+db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
+db.run("INSERT INTO foo VALUES (?)", "Hello World!");
+
+// get the first row
+db.query("SELECT * FROM foo").get();
+// { id: 1, greeting: "Welcome to bun!" }
+
+// get all rows
+db.query("SELECT * FROM foo").all();
+// [
+//   { id: 1, greeting: "Welcome to bun!" },
+//   { id: 2, greeting: "Hello World!" },
+// ]
+
+// get all rows matching a condition
+db.query("SELECT * FROM foo WHERE greeting = ?").all("Welcome to bun!");
+// [
+//   { id: 1, greeting: "Welcome to bun!" },
+// ]
+
+// get first row matching a named condition
+db.query("SELECT * FROM foo WHERE greeting = $greeting").get({
+  $greeting: "Welcome to bun!",
+});
+// [
+//   { id: 1, greeting: "Welcome to bun!" },
+// ]
+```
+
+#### `bun:sqlite` Benchmark
+
+Database: [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/master/Northwind_large.sqlite.zip).
+
+This benchmark can be run from [./bench/sqlite](./bench/sqlite).
+
+Here are results from an M1X on macOS 12.3.1.
+
+**SELECT \* FROM "Order"**
+
+| Library            | Runtime     | ms/iter              |
+| ------------------ | ----------- | -------------------- |
+| bun:sqlite3        | Bun 0.0.83  | 14.31 (1x)           |
+| better-sqlite3     | Node 18.0.0 | 40.81 (2.8x slower)  |
+| deno.land/x/sqlite | Deno 1.21.2 | 125.96 (8.9x slower) |
+
+**SELECT \* FROM "Product"**
+
+| Library            | Runtime     | us/iter              |
+| ------------------ | ----------- | -------------------- |
+| bun:sqlite3        | Bun 0.0.83  | 33.85 (1x)           |
+| better-sqlite3     | Node 18.0.0 | 121.09 (3.5x slower) |
+| deno.land/x/sqlite | Deno 1.21.2 | 187.64 (8.9x slower) |
+
+**SELECT \* FROM "OrderDetail"**
+
+| Library            | Runtime     | ms/iter              |
+| ------------------ | ----------- | -------------------- |
+| bun:sqlite3        | Bun 0.0.83  | 146.92 (1x)          |
+| better-sqlite3     | Node 18.0.0 | 875.73 (5.9x slower) |
+| deno.land/x/sqlite | Deno 1.21.2 | 541.15 (3.6x slower) |
+
+In screenshot form (which has a different sorting order)
+
+<img width="738" alt="image" src="https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png">
+
+#### bun:sqlite usage
+
+bun:sqlite's API is loosely based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3), though the implementation is very different.
+
+bun:sqlite has two classes:
+
+- `class Database`
+- `class Statement`
+
+##### `Database`
+
+Calling `new Database(filename)` opens or creates the SQLite database.
+
+```ts
+constructor(
+      filename: string,
+      options?:
+        | number
+        | {
+            /**
+             * Open the database as read-only (no write operations, no create).
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_READONLY}
+             */
+            readonly?: boolean;
+            /**
+             * Allow creating a new database
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
+             */
+            create?: boolean;
+            /**
+             * Open the database as read-write
+             *
+             * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
+             */
+            readwrite?: boolean;
+          }
+    );
+```
+
+To open or create a SQLite3 database:
+
+```ts
+const db = new Database("mydb.sqlite");
+```
+
+Open an in-memory database:
+
+```ts
+const db = new Database(":memory:");
+```
+
+Open read-only:
+
+```ts
+const db = new Database("mydb.sqlite", { readonly: true });
+```
+
+Open read-only:
+
+```ts
+const db = new Database("mydb.sqlite", { readonly: true });
+```
+
+#### Supported datatypes
+
+| JavaScript type | SQLite type            |
+| --------------- | ---------------------- |
+| `string`        | `TEXT`                 |
+| `number`        | `INTEGER` or `DECIMAL` |
+| `boolean`       | `INTEGER` (1 or 0)     |
+| `Uint8Array`    | `BLOB`                 |
+| `Buffer`        | `BLOB`                 |
+| `bigint`        | `INTEGER`              |
+| `null`          | `NULL`                 |
 
 ### `bun:ffi` (Foreign Functions Interface)
 

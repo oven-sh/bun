@@ -663,7 +663,7 @@ declare module "bun:sqlite" {
     toString(): string;
 
     /**
-     * A native object representing the underlying `sqlite3_stmt`
+     * Native object representing the underlying `sqlite3_stmt`
      *
      * This is left untyped because the ABI of the native bindings may change at any time.
      */

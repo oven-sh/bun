@@ -1,7 +1,4 @@
-var defineProperties = Object.defineProperties;
-var symbolFor = Symbol.for.bind(Symbol);
-var toStringTag = Symbol.toStringTag;
-var apply = Function.prototype.apply;
+var symbolFor = Symbol.for;
 
 const lazy = globalThis[symbolFor("Bun.lazy")];
 if (!lazy || typeof lazy !== "function") {
@@ -10,6 +7,12 @@ if (!lazy || typeof lazy !== "function") {
   );
 }
 
+var defineProperties = Object.defineProperties;
+
+var toStringTag = Symbol.toStringTag;
+var apply = Function.prototype.apply;
+var isArray = Array.isArray;
+var isTypedArray = ArrayBuffer.isView;
 export const constants = {
   SQLITE_OPEN_READONLY: 0x00000001 /* Ok for sqlite3_open_v2() */,
   SQLITE_OPEN_READWRITE: 0x00000002 /* Ok for sqlite3_open_v2() */,
@@ -125,6 +128,8 @@ export class Database {
       if (options.readwrite) {
         flags |= constants.SQLITE_OPEN_READWRITE;
       }
+    } else if (typeof options === "number") {
+      flags = options;
     }
 
     const anonymous = filename === "" || filename === ":memory:";
@@ -196,33 +201,26 @@ export class Database {
       throw new Error("SQL query cannot be empty.");
     }
 
-    // this list should be pretty small
-    var index = this.#cachedQueriesLengths.indexOf(query.length);
-    while (index !== -1) {
-      if (this.#cachedQueriesKeys[index] !== query) {
-        index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
-        continue;
-      }
+    if (params.length === 0) {
+      // this list should be pretty small
+      var index = this.#cachedQueriesLengths.indexOf(query.length);
+      while (index !== -1) {
+        if (this.#cachedQueriesKeys[index] !== query) {
+          index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
+          continue;
+        }
 
-      // update the cached query
-      if (params.length > 0) {
-        this.#cachedQueriesValues[index].run(
-          // if you pass ["foo"], support that
-          // if you pass {$foo: "foo"}, support that
-          // if you pass "foo", support that
-          params.length === 1 &&
-            params[0] &&
-            (Array.isArray(params[0]) || typeof params[0] === "object")
-            ? params[0]
-            : params
-        );
+        return this.#cachedQueriesValues[index];
       }
-
-      return this.#cachedQueriesValues[index];
     }
 
+    // Only cache if there are no parameters
+    // we don't support rebinding parameters without running the query right now
+    // so that means it's pretty
     const willCache =
+      params.length === 0 &&
       this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
+
     var stmt = this.prepare(
       query,
       // if you pass ["foo"], support that
@@ -230,7 +228,8 @@ export class Database {
       // if you pass "foo", support that
       params.length === 1 &&
         params[0] &&
-        (Array.isArray(params[0]) || typeof params[0] === "object")
+        (isArray(params[0]) ||
+          (typeof params[0] === "object" && !isTypedArray(params[0])))
         ? params[0]
         : params,
       willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0

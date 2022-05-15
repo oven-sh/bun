@@ -530,7 +530,7 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    get(params?: ParamsType): ReturnType | null;
+    get(...params: ParamsType): ReturnType | null;
 
     /**
      * Execute the prepared statement. This returns `undefined`.
@@ -599,7 +599,9 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    values(...params: ParamsType): ReturnType[];
+    values(
+      ...params: ParamsType
+    ): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
     /**
      * The names of the columns returned by the prepared statement.

@@ -50,40 +50,103 @@ export class Statement {
   constructor(raw) {
     this.#raw = raw;
     this.#columns = undefined;
+
+    switch (raw.paramsCount) {
+      case 0: {
+        this.get = this.#getNoArgs;
+        this.all = this.#allNoArgs;
+        this.values = this.#valuesNoArgs;
+        this.run = this.#runNoArgs;
+        break;
+      }
+      default: {
+        this.get = this.#get;
+        this.all = this.#all;
+        this.values = this.#values;
+        this.run = this.#run;
+        break;
+      }
+    }
   }
 
   #raw;
   #columns;
 
+  get;
+  all;
+  values;
+  run;
+
   [toStringTag]() {
-    return this.raw.toString();
+    return this.native.toString();
   }
 
-  get raw() {
+  get native() {
     return this.#raw;
   }
 
-  get(...args) {
-    if (args.length === 0) {
-      return this.#raw.get();
-    }
-
-    // {}
-    if (typeof args[0] === "object" && args[0]) {
-      return this.#raw.get(args[0]);
-    }
+  #getNoArgs() {
+    return this.#raw.get();
   }
 
-  all(...args) {
-    return this.#raw.all(...args);
+  #allNoArgs() {
+    return this.#raw.all();
   }
 
-  run(...args) {
-    return this.#raw.run(...args);
+  #valuesNoArgs() {
+    return this.#raw.values();
   }
 
-  values(...args) {
-    return this.#raw.values(...args);
+  #runNoArgs() {
+    this.#raw.run();
+  }
+
+  #get(...args) {
+    if (args.length === 0) return this.#getNoArgs();
+    var arg0 = args[0];
+    // ["foo"] => ["foo"]
+    // ("foo") => ["foo"]
+    // (Uint8Array(1024)) => [Uint8Array]
+    // (123) => [123]
+    return !isArray(arg0) &&
+      (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+      ? this.#raw.get(args)
+      : this.#raw.get(...args);
+  }
+
+  #all(...args) {
+    if (args.length === 0) return this.#allNoArgs();
+    var arg0 = args[0];
+    // ["foo"] => ["foo"]
+    // ("foo") => ["foo"]
+    // (Uint8Array(1024)) => [Uint8Array]
+    // (123) => [123]
+    return !isArray(arg0) &&
+      (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+      ? this.#raw.all(args)
+      : this.#raw.all(...args);
+  }
+
+  #values(...args) {
+    if (args.length === 0) return this.#valuesNoArgs();
+    var arg0 = args[0];
+    // ["foo"] => ["foo"]
+    // ("foo") => ["foo"]
+    // (Uint8Array(1024)) => [Uint8Array]
+    // (123) => [123]
+    return !isArray(arg0) &&
+      (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+      ? this.#raw.values(args)
+      : this.#raw.values(...args);
+  }
+
+  #run(...args) {
+    if (args.length === 0) return this.#runNoArgs();
+    var arg0 = args[0];
+
+    !isArray(arg0) && (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+      ? this.#raw.run(args)
+      : this.#raw.run(...args);
   }
 
   get columnNames() {
@@ -98,6 +161,7 @@ export class Statement {
     return this.#raw.finalize(...args);
   }
 }
+
 var cachedCount = symbolFor("Bun.Database.cache.count");
 export class Database {
   constructor(filenameGiven, options) {
@@ -176,8 +240,17 @@ export class Database {
     this.#cachedQueriesLengths.length = 0;
   }
 
-  run(query, params) {
-    return SQL.run(this.#handle, query, params);
+  run(query, ...params) {
+    if (params.length === 0) {
+      SQL.run(this.#handle, query);
+      return;
+    }
+
+    var arg0 = params[0];
+    return !isArray(arg0) &&
+      (!arg0 || typeof arg0 !== "object" || isTypedArray(arg0))
+      ? SQL.run(this.#handle, query, params)
+      : SQL.run(this.#handle, query, ...params);
   }
 
   prepare(query, params, flags) {
@@ -190,7 +263,7 @@ export class Database {
     return this.#cachedQueriesKeys.length;
   }
 
-  query(query, ...params) {
+  query(query) {
     if (typeof query !== "string") {
       throw new TypeError(
         `Expected 'query' to be a string, got '${typeof query}'`
@@ -201,37 +274,23 @@ export class Database {
       throw new Error("SQL query cannot be empty.");
     }
 
-    if (params.length === 0) {
-      // this list should be pretty small
-      var index = this.#cachedQueriesLengths.indexOf(query.length);
-      while (index !== -1) {
-        if (this.#cachedQueriesKeys[index] !== query) {
-          index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
-          continue;
-        }
-
-        return this.#cachedQueriesValues[index];
+    // this list should be pretty small
+    var index = this.#cachedQueriesLengths.indexOf(query.length);
+    while (index !== -1) {
+      if (this.#cachedQueriesKeys[index] !== query) {
+        index = this.#cachedQueriesLengths.indexOf(query.length, index + 1);
+        continue;
       }
+
+      return this.#cachedQueriesValues[index];
     }
 
-    // Only cache if there are no parameters
-    // we don't support rebinding parameters without running the query right now
-    // so that means it's pretty
     const willCache =
-      params.length === 0 &&
       this.#cachedQueriesKeys.length < Database.MAX_QUERY_CACHE_SIZE;
 
     var stmt = this.prepare(
       query,
-      // if you pass ["foo"], support that
-      // if you pass {$foo: "foo"}, support that
-      // if you pass "foo", support that
-      params.length === 1 &&
-        params[0] &&
-        (isArray(params[0]) ||
-          (typeof params[0] === "object" && !isTypedArray(params[0])))
-        ? params[0]
-        : params,
+      undefined,
       willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0
     );
 

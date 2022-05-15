@@ -204,8 +204,8 @@ it("db.query supports TypedArray", () => {
   expect(
     JSON.stringify(
       db
-        .query("SELECT * FROM test WHERE (blobby = ?)", [encode("Hello World")])
-        .get()
+        .query("SELECT * FROM test WHERE (blobby = ?)")
+        .get([encode("Hello World")])
     )
   ).toBe(
     JSON.stringify({
@@ -221,18 +221,17 @@ it("supports WHERE clauses", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
 
-  var q = db.query("SELECT * FROM test WHERE name = ?", ["Hello"]);
-  expect(q.get() === null).toBe(true);
+  expect(db[Symbol.for("Bun.Database.cache.count")]).toBe(0);
+
+  var q = db.query("SELECT * FROM test WHERE name = ?");
+  expect(q.get("Hello") === null).toBe(true);
 
   db.exec('INSERT INTO test (name) VALUES ("Hello")');
   db.exec('INSERT INTO test (name) VALUES ("World")');
 
-  var rows = db.query("SELECT * FROM test WHERE name = ?", ["Hello"]).all();
+  var rows = db.query("SELECT * FROM test WHERE name = ?").all(["Hello"]);
 
   expect(JSON.stringify(rows)).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
-
-  // Cache should be empty because all queries had params
-  expect(db[Symbol.for("Bun.Database.cache.count")]).toBe(0);
 
   rows = db.query("SELECT * FROM test WHERE name = ?").all(["World"]);
 
@@ -274,34 +273,34 @@ it("supports WHERE clauses", () => {
   expect(
     JSON.stringify(
       db
-        .query("SELECT * FROM test where (name = ? OR name = ?)", [
-          "Hello",
-          "Fooooo",
-        ])
-        .all()
+        .query("SELECT * FROM test where (name = ? OR name = ?)")
+        .all(["Hello", "Fooooo"])
     )
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
   expect(
     JSON.stringify(
       db
-        .query(
-          "SELECT * FROM test where (name = ? OR name = ?)",
-          "Hello",
-          "Fooooo"
-        )
-        .all()
+        .query("SELECT * FROM test where (name = ? OR name = ?)")
+        .all("Hello", "Fooooo")
     )
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
+
+  // throws if insufficeint arguments
+  try {
+    db.query("SELECT * FROM test where (name = ? OR name = ?)").all("Hello");
+  } catch (e) {
+    expect(e.message).toBe("Expected 2 values, got 1");
+  }
 
   // named parameters
   expect(
     JSON.stringify(
       db
-        .query("SELECT * FROM test where (name = $hello OR name = $goodbye)", {
+        .query("SELECT * FROM test where (name = $hello OR name = $goodbye)")
+        .all({
           $hello: "Hello",
           $goodbye: "Fooooo",
         })
-        .all()
     )
   ).toBe(JSON.stringify([{ id: 1, name: "Hello" }]));
 
@@ -310,7 +309,7 @@ it("supports WHERE clauses", () => {
   // Check that a closed database doesn't crash
   // and does throw an error when trying to run a query
   try {
-    db.query("SELECT * FROM test WHERE name = ?", ["Hello"]).all();
+    db.query("SELECT * FROM test WHERE name = ?").all(["Hello"]);
     throw new Error("Should have thrown");
   } catch (e) {
     expect(e.message !== "Should have thrown").toBe(true);

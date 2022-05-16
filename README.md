@@ -1556,7 +1556,7 @@ await Bun.write(Bun.file("index.html"), await fetch("http://example.com"));
 await Bun.write("output.txt", Bun.file("input.txt"));
 ```
 
-### `bun:sqlite` (SQLite3 module)
+### bun:sqlite (SQLite3 module)
 
 `bun:sqlite` is a high-performance builtin [SQLite3](https://www.sqlite.org/) module for bun.js.
 
@@ -1612,7 +1612,7 @@ db.query("SELECT * FROM foo WHERE greeting = $greeting").get({
 // ]
 ```
 
-#### `bun:sqlite` Benchmark
+#### bun:sqlite Benchmark
 
 Database: [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/master/Northwind_large.sqlite.zip).
 
@@ -1648,7 +1648,7 @@ In screenshot form (which has a different sorting order)
 
 <img width="738" alt="image" src="https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png">
 
-#### bun:sqlite usage
+#### Getting started with bun:sqlite
 
 bun:sqlite's API is loosely based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3), though the implementation is different.
 
@@ -1931,18 +1931,16 @@ brew install sqlite
 
 TLDR:
 
-- `Statement.prototype.all(...optionalParamsToBind)` returns all rows as an array of objects
-- `Statement.prototype.values(...optionalParamsToBind)` returns all rows as an array of arrays
-- `Statement.prototype.get(...optionalParamsToBind)` returns the first row as an object
-- `Statement.prototype.run(...optionalParamsToBind)` runs the statement and returns nothing
-- `Statement.prototype.finalize()` closes the statement
-- `Statement.prototype.toString()` prints the expanded SQL, including bound parameters
-- `get Statement.prototype.columnNames` get the returned column names
-- `get Statement.prototype.paramsCount` how many parameters are expected?
+- `Statement.all(...optionalParamsToBind)` returns all rows as an array of objects
+- `Statement.values(...optionalParamsToBind)` returns all rows as an array of arrays
+- `Statement.get(...optionalParamsToBind)` returns the first row as an object
+- `Statement.run(...optionalParamsToBind)` runs the statement and returns nothing
+- `Statement.finalize()` closes the statement
+- `Statement.toString()` prints the expanded SQL, including bound parameters
+- `get Statement.columnNames` get the returned column names
+- `get Statement.paramsCount` how many parameters are expected?
 
 You can bind parameters on any call to a statement. Named parameters and positional parameters are supported.
-
-Note: `prototype` refers to an instance of `Statement`.
 
 ```ts
 import { Database } from "bun:sqlite";
@@ -1968,7 +1966,7 @@ statement.get();
 statement.run();
 ```
 
-##### Statement.prototype.all
+##### Statement.all
 
 Calling `all()` on a `Statement` instance runs the query and returns the rows as an array of objects.
 
@@ -2001,7 +1999,7 @@ statement.all(2);
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and repeatedly calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it returns `SQLITE_DONE`.
 
-##### Statement.prototype.values
+##### Statement.values
 
 Calling `values()` on a `Statement` instance runs the query and returns the rows as an array of arrays.
 
@@ -2044,7 +2042,7 @@ statement.values({ $count: 2 });
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and repeatedly calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it returns `SQLITE_DONE`.
 
-##### Statement.prototype.get
+##### Statement.get
 
 Calling `get()` on a `Statement` instance runs the query and returns the first result as an object.
 
@@ -2081,7 +2079,7 @@ statement.get({ $count: 2 });
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you only want the first row.
 
-##### Statement.prototype.run
+##### Statement.run
 
 Calling `run()` on a `Statement` instance runs the query and returns nothing.
 
@@ -2112,7 +2110,7 @@ statement.run();
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you don't care about the results.
 
-##### Statement.prototype.finalize
+##### Statement.finalize
 
 This method finalizes the statement, freeing any resources associated with it.
 
@@ -2145,7 +2143,7 @@ statement.finalize();
 statement.run();
 ```
 
-##### Statement.prototype.toString()
+##### Statement.toString()
 
 Calling `toString()` on a `Statement` instance prints the expanded SQL query. This is useful for debugging.
 

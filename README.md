@@ -2445,7 +2445,7 @@ console.log(myString);
 
 When used in `returns`, `FFIType.cstring` coerces the pointer to a JavaScript `string`. When used in `args`, `cstring` is identical to `ptr`.
 
-#### Function pointers
+#### Function pointers (`CFunction`)
 
 To call a function pointer from JavaScript, use `CFunction`
 

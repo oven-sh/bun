@@ -1793,7 +1793,7 @@ stmt.run("Welcome to bun!");
 
 ##### Database.prototype.prepare
 
-`prepare(sql)` creates a `Statement` for the given SQL and caches it, but does not execute it.
+`prepare(sql)` creates a `Statement` for the given SQL, but does not execute it.
 
 Unlike `query()`, this does not cache the compiled query.
 

@@ -95,10 +95,10 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [Usage](#usage-1)
   - [Error handling](#error-handling)
 - [`Bun.write` – optimizing I/O](#-bunwrite----optimizing-i-o)
-- [bun:sqlite (SQLite3 module)](#bun-sqlite--sqlite3-module-)
+- [bun:sqlite (SQLite3 module)](#bunsqlite-sqlite3-module)
   - [bun:sqlite Benchmark](#bun-sqlite-benchmark)
   - [Getting started with bun:sqlite](#getting-started-with-bun-sqlite)
-  - [`Database`](#-database-)
+  - [`Database`](#database)
     - [Database.prototype.query](#databaseprototypequery)
     - [Database.prototype.prepare](#databaseprototypeprepare)
     - [Database.prototype.exec & Database.prototype.run](#databaseprototypeexec---databaseprototyperun)
@@ -1619,7 +1619,7 @@ await Bun.write(Bun.file("index.html"), await fetch("http://example.com"));
 await Bun.write("output.txt", Bun.file("input.txt"));
 ```
 
-### bun:sqlite (SQLite3 module)
+## bun:sqlite (SQLite3 module)
 
 `bun:sqlite` is a high-performance builtin [SQLite3](https://www.sqlite.org/) module for bun.js.
 
@@ -1675,7 +1675,7 @@ db.query("SELECT * FROM foo WHERE greeting = $greeting").get({
 // ]
 ```
 
-#### bun:sqlite Benchmark
+### bun:sqlite Benchmark
 
 Database: [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/master/Northwind_large.sqlite.zip).
 
@@ -1711,7 +1711,7 @@ In screenshot form (which has a different sorting order)
 
 <img width="738" alt="image" src="https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png">
 
-#### Getting started with bun:sqlite
+### Getting started with bun:sqlite
 
 bun:sqlite's API is loosely based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3), though the implementation is different.
 
@@ -1720,7 +1720,7 @@ bun:sqlite has two classes:
 - `class Database`
 - `class Statement`
 
-##### `Database`
+#### `Database`
 
 Calling `new Database(filename)` opens or creates the SQLite database.
 
@@ -1812,7 +1812,7 @@ db.close();
 
 Note: `close()` is called automatically when the database is garbage collected. It is safe to call multiple times, but has no effect after the first.
 
-##### Database.prototype.query
+#### Database.prototype.query
 
 `query(sql)` creates a `Statement` for the given SQL and caches it, but does not execute it.
 
@@ -1854,7 +1854,7 @@ stmt.get("Welcome to bun!");
 stmt.run("Welcome to bun!");
 ```
 
-##### Database.prototype.prepare
+#### Database.prototype.prepare
 
 `prepare(sql)` creates a `Statement` for the given SQL, but does not execute it.
 
@@ -1878,7 +1878,7 @@ stmt.all("baz");
 
 Internally, this calls [`sqlite3_prepare_v3`](https://www.sqlite.org/c3ref/prepare.html).
 
-##### Database.prototype.exec & Database.prototype.run
+#### Database.prototype.exec & Database.prototype.run
 
 `exec` is for one-off executing a query which does not need to return anything.
 
@@ -1923,7 +1923,7 @@ For queries which aren't intended to be run multiple times, it should be faster 
 
 Internally, this function calls [`sqlite3_prepare`](https://www.sqlite.org/c3ref/prepare.html), [`sqlite3_step`](https://www.sqlite.org/c3ref/step.html), and [`sqlite3_finalize`](https://www.sqlite.org/c3ref/finalize.html).
 
-##### Database.prototype.serialize
+#### Database.prototype.serialize
 
 SQLite has a builtin way to [serialize](https://www.sqlite.org/c3ref/serialize.html) and [deserialize](https://www.sqlite.org/c3ref/deserialize.html) databases to and from memory.
 
@@ -1954,7 +1954,7 @@ db2.query("SELECT * FROM foo").all();
 
 Internally, it calls [`sqlite3_serialize`](https://www.sqlite.org/c3ref/serialize.html).
 
-##### Database.prototype.loadExtension
+#### Database.prototype.loadExtension
 
 `bun:sqlite` supports [SQLite extensions](https://www.sqlite.org/loadext.html).
 
@@ -2029,7 +2029,7 @@ statement.get();
 statement.run();
 ```
 
-##### Statement.all
+#### Statement.all
 
 Calling `all()` on a `Statement` instance runs the query and returns the rows as an array of objects.
 
@@ -2062,7 +2062,7 @@ statement.all(2);
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and repeatedly calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it returns `SQLITE_DONE`.
 
-##### Statement.values
+#### Statement.values
 
 Calling `values()` on a `Statement` instance runs the query and returns the rows as an array of arrays.
 
@@ -2105,7 +2105,7 @@ statement.values({ $count: 2 });
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and repeatedly calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it returns `SQLITE_DONE`.
 
-##### Statement.get
+#### Statement.get
 
 Calling `get()` on a `Statement` instance runs the query and returns the first result as an object.
 
@@ -2142,7 +2142,7 @@ statement.get({ $count: 2 });
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you only want the first row.
 
-##### Statement.run
+#### Statement.run
 
 Calling `run()` on a `Statement` instance runs the query and returns nothing.
 
@@ -2173,7 +2173,7 @@ statement.run();
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you don't care about the results.
 
-##### Statement.finalize
+#### Statement.finalize
 
 This method finalizes the statement, freeing any resources associated with it.
 
@@ -2206,7 +2206,7 @@ statement.finalize();
 statement.run();
 ```
 
-##### Statement.toString()
+#### Statement.toString()
 
 Calling `toString()` on a `Statement` instance prints the expanded SQL query. This is useful for debugging.
 

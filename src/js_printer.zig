@@ -1572,28 +1572,24 @@ pub fn NewPrinter(
                     }
                 },
                 .e_require_or_require_resolve => |e| {
-                    const wrap = level.gte(.new) or flags.contains(.forbid_call);
-                    if (wrap) {
-                        p.print("(");
-                    }
-
                     if (p.options.rewrite_require_resolve) {
-                        // require.resolve("../src.js") => new URL("/src.js", location.origin).href
-                        // require.resolve is not available to the browser
-                        // if we return the relative filepath, that could be inaccessible if they're viewing the development server
-                        // on a different origin than where it's compiling
-                        // instead of doing that, we make the following assumption: the assets are same-origin
+                        // require.resolve("../src.js") => "../src.js"
                         p.printSpaceBeforeIdentifier();
-                        p.print("new URL(");
                         p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
-                        p.print(", location.origin).href");
                     } else {
-                        p.printSpaceBeforeIdentifier();
-                        p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
-                    }
+                        const wrap = level.gte(.new) or flags.contains(.forbid_call);
+                        if (wrap) {
+                            p.print("(");
+                        }
 
-                    if (wrap) {
+                        p.printSpaceBeforeIdentifier();
+                        p.print("require.resolve(");
+                        p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
                         p.print(")");
+
+                        if (wrap) {
+                            p.print(")");
+                        }
                     }
                 },
                 .e_import => |e| {

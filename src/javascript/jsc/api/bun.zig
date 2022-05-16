@@ -2305,6 +2305,9 @@ pub const FFI = struct {
             .callback = .{
                 .rfn = JSC.wrapWithHasContainer(JSC.FFI, "callback", false, false, false),
             },
+            .linkSymbols = .{
+                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "linkSymbols", false, false, false),
+            },
             .ptr = .{
                 .rfn = JSC.wrapWithHasContainer(@This(), "ptr", false, false, true),
             },
@@ -2447,7 +2450,7 @@ pub const FFI = struct {
             }
         }
 
-        return .{ .slice = std.mem.sliceTo(@intToPtr([*:0]u8, addr), 0) };
+        return .{ .slice = bun.span(@intToPtr([*:0]u8, addr)) };
     }
 
     pub fn toArrayBuffer(

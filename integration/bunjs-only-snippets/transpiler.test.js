@@ -629,6 +629,40 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    describe("Bun.js", () => {
+      it("require -> import.meta.require", () => {
+        expectBunPrinted_(
+          `export const foo = require('bar.node')`,
+          `export const foo = import.meta.require("bar.node")`
+        );
+      });
+
+      it("require.resolve -> import.meta.resolveSync", () => {
+        expectBunPrinted_(
+          `export const foo = require.resolve('bar.node')`,
+          `export const foo = import.meta.resolveSync("bar.node")`
+        );
+      });
+
+      it('require.resolve(path, {paths: ["blah"]}) -> import.meta.resolveSync', () => {
+        expectBunPrinted_(
+          `export const foo = require.resolve('bar.node', {paths: ["blah"]})`,
+          `export const foo = import.meta.resolveSync("bar.node", { paths: ["blah"] })`
+        );
+      });
+    });
+
+    describe("Browsers", () => {
+      it('require.resolve("my-module") -> "/resolved/my-module"', () => {
+        // the module resolver & linker doesn't run with Bun.Transpiler
+        // so in this test, it becomes the same path string
+        expectPrinted_(
+          `export const foo = require.resolve('my-module')`,
+          `export const foo = "my-module"`
+        );
+      });
+    });
+
     it("define", () => {
       expectPrinted_(
         `export default typeof user_undefined === 'undefined';`,

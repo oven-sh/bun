@@ -53,6 +53,16 @@ const Report = @import("./report.zig");
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
 const TOML = @import("./toml/toml_parser.zig").TOML;
+const JSC = @import("javascript_core");
+
+pub fn MacroJSValueType_() type {
+    if (comptime JSC.is_bindgen) {
+        return void;
+    }
+    return JSC.JSValue;
+}
+const MacroJSValueType = MacroJSValueType_();
+const default_macro_js_value = if (JSC.is_bindgen) void{} else JSC.JSValue.zero;
 
 const EntryPoints = @import("./bundler/entry_points.zig");
 const SystemTimer = @import("./system_timer.zig").Timer;
@@ -885,6 +895,7 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
+                    .rewrite_require_resolve = bundler.options.platform != .node,
                 },
                 Linker,
                 &bundler.linker,
@@ -905,6 +916,7 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .source_map_handler = source_map_context,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
+                    .rewrite_require_resolve = bundler.options.platform != .node,
                 },
                 Linker,
                 &bundler.linker,
@@ -924,6 +936,7 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
+                    .rewrite_require_resolve = bundler.options.platform != .node,
                 },
                 Linker,
                 &bundler.linker,
@@ -943,6 +956,7 @@ pub const Bundler = struct {
                     .require_ref = ast.require_ref,
                     .css_import_behavior = bundler.options.cssImportBehavior(),
                     .source_map_handler = source_map_context,
+                    .rewrite_require_resolve = bundler.options.platform != .node,
                 },
                 Linker,
                 &bundler.linker,
@@ -995,6 +1009,7 @@ pub const Bundler = struct {
         loader: options.Loader,
         jsx: options.JSX.Pragma,
         macro_remappings: MacroRemap,
+        macro_js_ctx: MacroJSValueType = default_macro_js_value,
         virtual_source: ?*const logger.Source = null,
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
     };
@@ -1117,6 +1132,11 @@ pub const Bundler = struct {
                 opts.features.top_level_await = true;
 
                 opts.macro_context = &bundler.macro_context.?;
+                if (comptime !JSC.is_bindgen) {
+                    if (platform != .bun_macro) {
+                        opts.macro_context.javascript_object = this_parse.macro_js_ctx;
+                    }
+                }
 
                 opts.features.is_macro_runtime = platform == .bun_macro;
                 opts.features.replace_exports = this_parse.replace_exports;

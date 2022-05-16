@@ -6,6 +6,7 @@ export const toArrayBuffer = globalThis.Bun.FFI.toArrayBuffer;
 export const viewSource = globalThis.Bun.FFI.viewSource;
 
 const BunCString = globalThis.Bun.FFI.CString;
+const nativeLinkSymbols = globalThis.Bun.FFI.linkSymbols;
 
 export class CString extends String {
   constructor(ptr, byteOffset, byteLength) {
@@ -260,6 +261,58 @@ export function dlopen(path, options) {
   }
 
   return result;
+}
+
+export function linkSymbols(options) {
+  const result = nativeLinkSymbols(options);
+
+  for (let key in result.symbols) {
+    var symbol = result.symbols[key];
+    if (
+      options[key]?.args?.length ||
+      FFIType[options[key]?.returns] === FFIType.cstring
+    ) {
+      result.symbols[key] = FFIBuilder(
+        options[key].args ?? [],
+        options[key].returns ?? FFIType.void,
+        symbol,
+        key
+      );
+    } else {
+      // consistentcy
+      result.symbols[key].native = result.symbols[key];
+    }
+  }
+
+  return result;
+}
+
+var cFunctionI = 0;
+var cFunctionRegistry;
+function onCloseCFunction(close) {
+  close();
+}
+export function CFunction(options) {
+  const identifier = `CFunction${cFunctionI++}`;
+  var result = linkSymbols({
+    [identifier]: options,
+  });
+  var hasClosed = false;
+  var close = result.close;
+  result.symbols[identifier].close = () => {
+    if (hasClosed || !close) return;
+    hasClosed = true;
+    close();
+    close = undefined;
+  };
+
+  cFunctionRegistry ||= new FinalizationRegistry(onCloseCFunction);
+  cFunctionRegistry.register(
+    result.symbols[identifier],
+    result.symbols[identifier].close
+  );
+
+  return result.symbols[identifier];
 }
 
 export function callback(options, cb) {

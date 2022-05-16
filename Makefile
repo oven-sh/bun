@@ -89,24 +89,28 @@ OPENSSL_LINUX_DIR = $(BUN_DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) 
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 
+# Sqlite3 is lazily loaded on macOS
+SQLITE_OBJECT =
 
 BITCODE_OR_SECTIONS=-fdata-sections -ffunction-sections
 LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
 LIBTOOL=glibtoolize
 AR=llvm-ar
-BITCODE_OR_SECTIONS=-fdata-sections -ffunction-sections
+BITCODE_OR_SECTIONS=
 endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH = 
 AR=llvm-ar-13
+SQLITE_OBJECT = $(realpath $(OBJ_DIR))/sqlite3.o
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
-CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(BITCODE_OR_SECTIONS) -g $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
+
 
 DEFAULT_USE_BMALLOC := 1
 
@@ -184,20 +188,24 @@ endif
 
 HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
+
 SRC_DIR := src/javascript/jsc/bindings
 OBJ_DIR := src/javascript/jsc/bindings-obj
 SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp) 
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp) 
+SRC_SQLITE_FILES := $(wildcard $(SRC_DIR)/sqlite/*.cpp) 
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
-BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
+SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
+BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES)
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ \
 		-Isrc/javascript/jsc/bindings/ \
 		-Isrc/javascript/jsc/bindings/webcore \
+		-Isrc/javascript/jsc/bindings/sqlite \
 		-I$(WEBKIT_DIR)/Source/bmalloc  \
 		-I$(WEBKIT_DIR)/Source
 
@@ -290,13 +298,6 @@ ifeq ($(OS_NAME), darwin)
 	SHARED_LIB_EXTENSION = .dylib
 endif
 
-
-
-
-
-
-
-
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
 		-L$(BUN_DEPS_OUT_DIR) \
@@ -305,7 +306,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		-larchive \
 		-lssl \
 		-lbase64 \
-		-ltcc
+		-ltcc 
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 
@@ -348,7 +349,7 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 		
 
 
-BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) ${ICU_FLAGS}
+BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_BINDINGS) $(SQLITE_OBJECT) ${ICU_FLAGS}
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -427,6 +428,10 @@ libbacktrace:
 	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic && \
 	make -j$(CPUS) && \
 	cp ./.libs/libbacktrace.a $(BUN_DEPS_OUT_DIR)/libbacktrace.a
+
+
+sqlite:
+
 
 libarchive:
 	cd $(BUN_DEPS_DIR)/libarchive; \
@@ -1018,7 +1023,7 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
-jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES)
+jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES)
 
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
@@ -1133,6 +1138,7 @@ wasm-return1:
 
 EMIT_LLVM_FOR_RELEASE= -emit-llvm
 EMIT_LLVM_FOR_DEBUG= 
+EMIT_LLVM=$(EMIT_LLVM_FOR_DEBUG)
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
@@ -1142,7 +1148,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
-		$(EMIT_LLVM_FOR_RELEASE) \
+		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
@@ -1151,12 +1157,28 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		$(OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-ferror-limit=1000 \
-		$(EMIT_LLVM_FOR_RELEASE) \
+		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
-		
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM) \
+		-g3 -c -o $@ $<
+
 sizegen:
 	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
 	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
+
+
+# Linux uses bundled SQLite3
+ifeq ($(OS_NAME),linux)
+sqlite:
+	$(CC) $(CFLAGS) $(INCLUDE_DIRS) $(EMIT_LLVM_FOR_RELEASE) -DSQLITE_ENABLE_COLUMN_METADATA= -DSQLITE_MAX_VARIABLE_NUMBER=250000 -DSQLITE_ENABLE_RTREE=1 -DSQLITE_ENABLE_FTS3=1 -DSQLITE_ENABLE_FTS3_PARENTHESIS=1 -DSQLITE_ENABLE_JSON1=1 -c $(SRC_DIR)/sqlite/sqlite3.c -o $(SQLITE_OBJECT)
+endif
 
 picohttp:
 	 $(CC) $(CFLAGS) $(OPTIMIZATION_LEVEL) -g -fPIC -c $(BUN_DEPS_DIR)/picohttpparser/picohttpparser.c -I$(BUN_DEPS_DIR) -o $(BUN_DEPS_OUT_DIR)/picohttpparser.o; cd ../../	

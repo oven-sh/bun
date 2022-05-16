@@ -45,6 +45,8 @@ it("Buffer", () => {
     expect(Array.from(new Buffer(input)).join(",")).toBe(good[i].join(","));
     gc();
     expect(Buffer.byteLength(input)).toBe(good[i].length);
+    gc();
+    expect(Buffer.from(input).byteLength).toBe(Buffer.byteLength(input));
   }
 });
 

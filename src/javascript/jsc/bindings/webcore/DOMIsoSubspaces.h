@@ -20,6 +20,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiClass;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiPrototype;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatement;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatementConstructor;
     /*-- BUN --*/
 
     // std::unique_ptr<IsoSubspace> m_subspaceForTouch;
@@ -96,7 +98,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForFileSystemDirectoryReader;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileSystemEntry;
     // std::unique_ptr<IsoSubspace> m_subspaceForFileSystemFileEntry;
-    std::unique_ptr<IsoSubspace> m_subspaceForFetchHeaders;
+    std::unique_ptr<IsoSubspace>
+        m_subspaceForFetchHeaders;
     std::unique_ptr<IsoSubspace> m_subspaceForFetchHeadersIterator;
     // std::unique_ptr<IsoSubspace> m_subspaceForFetchRequest;
     // std::unique_ptr<IsoSubspace> m_subspaceForFetchResponse;

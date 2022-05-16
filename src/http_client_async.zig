@@ -176,7 +176,7 @@ pub fn hashHeaderName(name: string) u64 {
     var buf_slice: []u8 = std.mem.span(&buf);
 
     while (remain.len > 0) {
-        var end = std.math.min(hasher.buf.len, remain.len);
+        const end = @minimum(hasher.buf.len, remain.len);
 
         hasher.update(strings.copyLowercase(std.mem.span(remain[0..end]), buf_slice));
         remain = remain[end..];

@@ -4811,6 +4811,7 @@ pub const Macro = struct {
         env: *DotEnv.Loader,
         macros: MacroMap,
         remap: MacroRemap,
+        javascript_object: JSC.JSValue = JSC.JSValue.zero,
 
         pub fn getRemap(this: MacroContext, path: string) ?MacroRemapEntry {
             if (this.remap.entries.len == 0) return null;
@@ -4922,6 +4923,7 @@ pub const Macro = struct {
                 hash,
                 comptime Visitor,
                 visitor,
+                this.javascript_object,
             );
             // this.macros.getOrPut(key: K)
         }
@@ -7607,7 +7609,7 @@ pub const Macro = struct {
                 const key = property.key orelse continue;
                 if (key.data != .e_string) continue;
                 const str = key.data.e_string.data;
-                js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreateStatic(str.ptr, str.len));
+                js.JSPropertyNameAccumulatorAddName(props, js.JSStringCreate(str.ptr, str.len));
             }
         }
     };
@@ -7751,7 +7753,7 @@ pub const Macro = struct {
     pub const Runner = struct {
         const VisitMap = std.AutoHashMapUnmanaged(JSC.JSValue, Expr);
 
-        threadlocal var args_buf: [2]js.JSObjectRef = undefined;
+        threadlocal var args_buf: [3]js.JSObjectRef = undefined;
         threadlocal var expr_nodes_buf: [1]JSNode = undefined;
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
         pub const MacroError = error{MacroFailed};
@@ -7777,7 +7779,7 @@ pub const Macro = struct {
                     allocator: std.mem.Allocator,
                     function_name: string,
                     caller: Expr,
-                    args: []Expr,
+                    args_count: usize,
                     source: *const logger.Source,
                     id: i32,
                     visitor: Visitor,
@@ -7785,7 +7787,7 @@ pub const Macro = struct {
                     if (comptime is_bindgen) return undefined;
                     var macro_callback = macro.vm.macros.get(id) orelse return caller;
 
-                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global.ref(), macro_callback, null, args.len + 1, &args_buf);
+                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global.ref(), macro_callback, null, args_count, &args_buf);
 
                     var runner = Run{
                         .caller = caller,
@@ -8096,11 +8098,12 @@ pub const Macro = struct {
             allocator: std.mem.Allocator,
             function_name: string,
             caller: Expr,
-            args: []Expr,
+            _: []Expr,
             source: *const logger.Source,
             id: i32,
             comptime Visitor: type,
             visitor: Visitor,
+            javascript_object: JSC.JSValue,
         ) MacroError!Expr {
             if (comptime Environment.isDebug) Output.prettyln("<r><d>[macro]<r> call <d><b>{s}<r>", .{function_name});
 
@@ -8110,7 +8113,8 @@ pub const Macro = struct {
                 macro.vm.global.ref(),
                 &expr_nodes_buf[0],
             );
-            args_buf[1] = null;
+            args_buf[1] = if (javascript_object.isEmpty()) null else javascript_object.asObjectRef();
+            args_buf[2] = null;
             const Run = NewRun(Visitor);
 
             // Give it >= 256 KB stack space
@@ -8127,7 +8131,7 @@ pub const Macro = struct {
                 allocator,
                 function_name,
                 caller,
-                args,
+                2 + @as(usize, @boolToInt(!javascript_object.isEmpty())),
                 source,
                 id,
                 visitor,

@@ -828,7 +828,7 @@ pub fn finalize(
     this.arena.deinit();
 }
 
-fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader) ?Bundler.ParseResult {
+fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: JSValue) ?Bundler.ParseResult {
     const name = this.transpiler_options.default_loader.stdinName();
     const source = logger.Source.initPathString(name, code);
 
@@ -847,6 +847,7 @@ fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const
         .path = source.path,
         .virtual_source = &source,
         .replace_exports = this.transpiler_options.runtime.replace_exports,
+        .macro_js_ctx = macro_js_ctx,
         // .allocator = this.
     };
 
@@ -915,7 +916,7 @@ pub fn scan(
         JSAst.Expr.Data.Store.reset();
     }
 
-    const parse_result = getParseResult(this, arena.allocator(), code, loader) orelse {
+    const parse_result = getParseResult(this, arena.allocator(), code, loader, JSC.JSValue.zero) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
             exception.* = out_exception.asObjectRef();
@@ -1020,18 +1021,44 @@ pub fn transformSync(
     };
 
     const code = code_holder.slice();
-    JSC.C.JSValueProtect(ctx, arguments[0]);
-    defer JSC.C.JSValueUnprotect(ctx, arguments[0]);
+    JSC.JSValue.c(arguments[0]).ensureStillAlive();
+    defer JSC.JSValue.c(arguments[0]).ensureStillAlive();
 
     args.eat();
+    var js_ctx_value: JSC.JSValue = JSC.JSValue.zero;
     const loader: ?Loader = brk: {
         if (args.next()) |arg| {
             args.eat();
-            break :brk Loader.fromJS(ctx.ptr(), arg, exception);
+            if (arg.isNumber() or arg.isString()) {
+                break :brk Loader.fromJS(ctx.ptr(), arg, exception);
+            }
+
+            if (arg.isObject()) {
+                js_ctx_value = arg;
+                break :brk null;
+            }
         }
 
         break :brk null;
     };
+
+    if (args.nextEat()) |arg| {
+        if (arg.isObject()) {
+            js_ctx_value = arg;
+        } else {
+            JSC.throwInvalidArguments("Expected a Loader or object", .{}, ctx, exception);
+            return null;
+        }
+    }
+    if (!js_ctx_value.isEmpty()) {
+        js_ctx_value.ensureStillAlive();
+    }
+
+    defer {
+        if (!js_ctx_value.isEmpty()) {
+            js_ctx_value.ensureStillAlive();
+        }
+    }
 
     if (exception.* != null) return null;
 
@@ -1052,7 +1079,13 @@ pub fn transformSync(
         this.bundler = prev_bundler;
     }
 
-    var parse_result = getParseResult(this, arena.allocator(), code, loader) orelse {
+    var parse_result = getParseResult(
+        this,
+        arena.allocator(),
+        code,
+        loader,
+        js_ctx_value,
+    ) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
             exception.* = out_exception.asObjectRef();

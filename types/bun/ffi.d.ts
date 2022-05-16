@@ -427,6 +427,17 @@ declare module "bun:ffi" {
      * ```
      */
     returns?: FFITypeOrString;
+
+    /**
+     * Function pointer to the native function
+     *
+     * If provided, instead of using dlsym() to lookup the function, Bun will use this instead.
+     * This pointer should not be null (0).
+     *
+     * This is useful if the library has already been loaded
+     * or if the module is also using Node-API.
+     */
+    ptr?: number | bigint;
   }
 
   type Symbols = Record<string, FFIFunction>;
@@ -460,7 +471,124 @@ declare module "bun:ffi" {
     close(): void;
   }
 
-  export function dlopen(libraryName: string, symbols: Symbols): Library;
+  /**
+   * Open a library using `"bun:ffi"`
+   *
+   * @param name The name of the library or file path. This will be passed to `dlopen()`
+   * @param symbols Map of symbols to load where the key is the symbol name and the value is the {@link FFIFunction}
+   *
+   * @example
+   *
+   * ```js
+   * import {dlopen} from 'bun:ffi';
+   *
+   * const lib = dlopen("duckdb.dylib", {
+   *   get_version: {
+   *     returns: "cstring",
+   *     args: [],
+   *   },
+   * });
+   * lib.symbols.get_version();
+   * // "1.0.0"
+   * ```
+   *
+   * This is powered by just-in-time compiling C wrappers
+   * that convert JavaScript types to C types and back. Internally,
+   * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
+   * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
+   *
+   */
+  export function dlopen(name: string, symbols: Symbols): Library;
+
+  /**
+   * Turn a native library's function pointer into a JavaScript function
+   *
+   * Libraries using Node-API & bun:ffi in the same module could use this to skip an extra dlopen() step.
+   *
+   * @param fn {@link FFIFunction} declaration. `ptr` is required
+   *
+   * @example
+   *
+   * ```js
+   * import {CFunction} from 'bun:ffi';
+   *
+   * const getVersion = new CFunction({
+   *   returns: "cstring",
+   *   args: [],
+   *   ptr: myNativeLibraryGetVersion,
+   * });
+   * getVersion();
+   * getVersion.close();
+   * ```
+   *
+   * This is powered by just-in-time compiling C wrappers
+   * that convert JavaScript types to C types and back. Internally,
+   * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
+   * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
+   *
+   */
+  export function CFunction(
+    fn: FFIFunction & { ptr: number | bigint }
+  ): CallableFunction & {
+    /**
+     * Free the memory allocated by the wrapping function
+     */
+    close(): void;
+  };
+
+  /**
+   * Link a map of symbols to JavaScript functions
+   *
+   * This lets you use native libraries that were already loaded somehow. You usually will want {@link dlopen} instead.
+   *
+   * You could use this with Node-API to skip loading a second time.
+   *
+   * @param symbols Map of symbols to load where the key is the symbol name and the value is the {@link FFIFunction}
+   *
+   * @example
+   *
+   * ```js
+   * import { linkSymbols } from "bun:ffi";
+   *
+   * const [majorPtr, minorPtr, patchPtr] = getVersionPtrs();
+   *
+   * const lib = linkSymbols({
+   *   // Unlike with dlopen(), the names here can be whatever you want
+   *   getMajor: {
+   *     returns: "cstring",
+   *     args: [],
+   *
+   *     // Since this doesn't use dlsym(), you have to provide a valid ptr
+   *     // That ptr could be a number or a bigint
+   *     // An invalid pointer will crash your program.
+   *     ptr: majorPtr,
+   *   },
+   *   getMinor: {
+   *     returns: "cstring",
+   *     args: [],
+   *     ptr: minorPtr,
+   *   },
+   *   getPatch: {
+   *     returns: "cstring",
+   *     args: [],
+   *     ptr: patchPtr,
+   *   },
+   * });
+   *
+   * const [major, minor, patch] = [
+   *   lib.symbols.getMajor(),
+   *   lib.symbols.getMinor(),
+   *   lib.symbols.getPatch(),
+   * ];
+   * ```
+   *
+   * This is powered by just-in-time compiling C wrappers
+   * that convert JavaScript types to C types and back. Internally,
+   * bun uses [tinycc](https://github.com/TinyCC/tinycc), so a big thanks
+   * goes to Fabrice Bellard and TinyCC maintainers for making this possible.
+   *
+   */
+  export function linkSymbols(symbols: Symbols): Library;
 
   /**
    * Read a pointer as a {@link Buffer}

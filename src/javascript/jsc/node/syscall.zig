@@ -548,7 +548,7 @@ pub const Error = struct {
         return Error{
             .errno = this.errno,
             .syscall = this.syscall,
-            .path = std.mem.span(path),
+            .path = bun.span(path),
         };
     }
 

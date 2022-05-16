@@ -3597,8 +3597,32 @@ fn NewParser_(
             }, state.loc);
         }
 
-        pub fn transposeRequireResolve(_: *P, arg: Expr, _: anytype) Expr {
-            return arg;
+        pub fn transposeRequireResolve(p: *P, arg: Expr, state: anytype) Expr {
+            // The argument must be a string
+            if (@as(Expr.Tag, arg.data) == .e_string) {
+                // Ignore calls to import() if the control flow is provably dead here.
+                // We don't want to spend time scanning the required files if they will
+                // never be used.
+                if (p.is_control_flow_dead) {
+                    return p.e(E.Null{}, arg.loc);
+                }
+
+                const import_record_index = p.addImportRecord(.require, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
+                p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
+                p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
+                return p.e(E.RequireOrRequireResolve{
+                    .import_record_index = Ref.toInt(import_record_index),
+                    // .leading_interior_comments = arg.getString().
+                }, arg.loc);
+            }
+
+            if (p.options.warn_about_unbundled_modules) {
+                // Use a debug log so people can see this if they want to
+                const r = js_lexer.rangeOfIdentifier(p.source, arg.loc);
+                p.log.addRangeDebug(p.source, r, "This \"require.resolve\" expression cannot be bundled because the argument is not a string literal") catch unreachable;
+            }
+
+            return state;
         }
 
         pub fn transposeRequire(p: *P, arg: Expr, _: anytype) Expr {
@@ -12413,9 +12437,13 @@ fn NewParser_(
                         if (comptime allow_macros) {
                             if (e_.tag.?.data == .e_import_identifier) {
                                 const ref = e_.tag.?.data.e_import_identifier.ref;
+
                                 if (p.macro.refs.get(ref)) |import_record_id| {
                                     const name = p.symbols.items[ref.innerIndex()].original_name;
                                     p.ignoreUsage(ref);
+                                    if (p.is_control_flow_dead) {
+                                        return p.e(E.Undefined{}, e_.tag.?.loc);
+                                    }
                                     p.macro_call_count += 1;
                                     const record = &p.import_records.items[import_record_id];
                                     // We must visit it to convert inline_identifiers and record usage
@@ -13361,18 +13389,10 @@ fn NewParser_(
                         .has_catch = @as(Expr.Tag, p.then_catch_chain.next_target) == .e_call and p.then_catch_chain.next_target.e_call == expr.data.e_call and p.then_catch_chain.has_catch,
                     };
 
-                    // Prepare to recognize "require.resolve()" calls
-                    // const could_be_require_resolve = (e_.args.len == 1 and @as(
-                    //     Expr.Tag,
-                    //     e_.target.data,
-                    // ) == .e_dot and e_.target.data.e_dot.optional_chain == null and strings.eql(
-                    //     e_.target.dat.e_dot.name,
-                    //     "resolve",
-                    // ));
-
                     e_.target = p.visitExprInOut(e_.target, ExprIn{
                         .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
                     });
+                    var could_be_require_resolve: bool = false;
 
                     // Copy the call side effect flag over if this is a known target
                     switch (e_.target.data) {
@@ -13381,6 +13401,12 @@ fn NewParser_(
                         },
                         .e_dot => |dot| {
                             e_.can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused or dot.call_can_be_unwrapped_if_unused;
+                            // Prepare to recognize "require.resolve()" calls
+                            could_be_require_resolve = (e_.args.len >= 1 and
+                                dot.optional_chain == null and
+                                @as(Expr.Tag, dot.target.data) == .e_identifier and
+                                dot.target.data.e_identifier.ref.eql(p.require_ref) and
+                                strings.eqlComptime(dot.name, "resolve"));
                         },
                         else => {},
                     }
@@ -13431,11 +13457,60 @@ fn NewParser_(
                         }
                     }
 
+                    if (could_be_require_resolve) {
+                        // Ignore calls to require.resolve() if the control flow is provably
+                        // dead here. We don't want to spend time scanning the required files
+                        // if they will never be used.
+                        if (p.is_control_flow_dead) {
+                            return p.e(E.Null{}, expr.loc);
+                        }
+
+                        if (p.options.features.dynamic_require) {
+                            p.ignoreUsage(p.require_ref);
+                            // require.resolve(FOO) => import.meta.resolveSync(FOO)
+                            // require.resolve(FOO) => import.meta.resolveSync(FOO, pathsObject)
+                            return p.e(
+                                E.Call{
+                                    .target = p.e(
+                                        E.Dot{
+                                            .target = p.e(E.ImportMeta{}, e_.target.loc),
+                                            .name = "resolveSync",
+                                            .name_loc = e_.target.data.e_dot.name_loc,
+                                        },
+                                        e_.target.loc,
+                                    ),
+                                    .args = e_.args,
+                                    .close_paren_loc = e_.close_paren_loc,
+                                },
+                                expr.loc,
+                            );
+                        }
+
+                        if (e_.args.len == 1) {
+                            const first = e_.args.first_();
+                            switch (first.data) {
+                                .e_string => {
+                                    // require(FOO) => require(FOO)
+                                    return p.transposeRequireResolve(first, expr);
+                                },
+                                .e_if => {
+                                    // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
+                                    // This makes static analysis later easier
+                                    return p.require_resolve_transposer.maybeTransposeIf(first, expr);
+                                },
+                                else => {},
+                            }
+                        }
+                    }
+
                     if (comptime allow_macros) {
                         if (is_macro_ref) {
                             const ref = e_.target.data.e_import_identifier.ref;
                             const import_record_id = p.macro.refs.get(ref).?;
                             p.ignoreUsage(ref);
+                            if (p.is_control_flow_dead) {
+                                return p.e(E.Undefined{}, e_.target.loc);
+                            }
                             const name = p.symbols.items[ref.innerIndex()].original_name;
                             const record = &p.import_records.items[import_record_id];
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };

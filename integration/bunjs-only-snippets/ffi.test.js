@@ -11,6 +11,7 @@ import {
   toArrayBuffer,
   FFIType,
   callback,
+  CFunction,
 } from "bun:ffi";
 
 it("ffi print", async () => {
@@ -424,6 +425,13 @@ function ffiRunner(types) {
   expect(identity_ptr(cptr)).toBe(cptr);
   const second_ptr = ptr(new Buffer(8));
   expect(identity_ptr(second_ptr)).toBe(second_ptr);
+
+  var myCFunction = new CFunction({
+    ptr: return_a_function_ptr_to_function_that_returns_true(),
+    returns: "bool",
+  });
+  expect(myCFunction()).toBe(true);
+
   // function identityBool() {
   //   return true;
   // }
@@ -436,7 +444,7 @@ function ffiRunner(types) {
   //   identityBool
   // );
   // expect(
-  //   cb_identity_true(return_a_function_ptr_to_function_that_returns_true())
+  // cb_identity_true()
   // ).toBe(true);
 
   // expect(cb_identity_true(first)).toBe(true);

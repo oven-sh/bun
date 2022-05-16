@@ -33,7 +33,7 @@ function from(items) {
         @throwTypeError("Buffer.from requires |this| to be a constructor");
 
 
-    if (typeof items === 'string') {
+    if (typeof items === 'string' || @ArrayBuffer.@isView(items)) {
         switch (@argumentCount()) {
             case 1: {
                 return new this(items);
@@ -58,15 +58,7 @@ function from(items) {
         var result = this.allocUnsafe(length);
         result.set(arrayLike);
         return result;
-    } else if (arrayLike instanceof ArrayBuffer || arrayLike instanceof SharedArrayBuffer) {
-        var byteOffset = @argument(1);
-        var byteLength = @argument(2);
-        // this will throw if detached
-        var out = new @Uint8Array(arrayLike, byteOffset, byteLength);
-        var result = this.allocUnsafe(out.length);
-        result.set(out);
-        return result;
-    }
+    } 
 
     return @tailCallForwardArguments(@Uint8Array.from, this);
 }

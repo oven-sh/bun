@@ -1,7 +1,7 @@
 import { expect, it } from "bun:test";
 import { Database, constants } from "bun:sqlite";
 
-var encode = (text) => new TextEncoder().encode(text);
+var encode = (text) => Buffer.from(text);
 
 it("Database.open", () => {
   // in a folder which doesn't exist
@@ -49,6 +49,10 @@ it("Database.open", () => {
     });
     db.close();
   }
+
+  // this should not throw
+  // it creates an in-memory db
+  new Database().close();
 });
 
 it("creates", () => {
@@ -273,7 +277,7 @@ it("supports serialize/deserialize", () => {
   }
 });
 
-it("supports WHERE clauses", () => {
+it("db.query()", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
 
@@ -370,4 +374,10 @@ it("supports WHERE clauses", () => {
   } catch (e) {
     expect(e.message !== "Should have thrown").toBe(true);
   }
+
+  // check that we can call close multiple times
+  // it should not throw so that your code doesn't break
+  db.close();
+  db.close();
+  db.close();
 });

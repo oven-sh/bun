@@ -386,7 +386,7 @@ declare module "bun:sqlite" {
      */
     prepare<ParamsType = SQLQueryBindings, ReturnType = any>(
       sql: string,
-      params?: ParamsType
+      ...params: ParamsType
     ): Statement<ParamsType, ReturnType>;
 
     /**

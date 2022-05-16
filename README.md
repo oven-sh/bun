@@ -1580,7 +1580,9 @@ Example:
 import { Database } from "bun:sqlite";
 
 const db = new Database("mydb.sqlite");
-db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY, greeting TEXT)");
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+);
 db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
 db.run("INSERT INTO foo VALUES (?)", "Hello World!");
 
@@ -1648,7 +1650,7 @@ In screenshot form (which has a different sorting order)
 
 #### bun:sqlite usage
 
-bun:sqlite's API is loosely based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3), though the implementation is very different.
+bun:sqlite's API is loosely based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3), though the implementation is different.
 
 bun:sqlite has two classes:
 
@@ -1690,26 +1692,486 @@ constructor(
 To open or create a SQLite3 database:
 
 ```ts
+import { Database } from "bun:sqlite";
+
 const db = new Database("mydb.sqlite");
 ```
 
 Open an in-memory database:
 
 ```ts
-const db = new Database(":memory:");
+import { Database } from "bun:sqlite";
+
+// all of these do the same thing
+var db = new Database(":memory:");
+var db = new Database();
+var db = new Database("");
 ```
 
-Open read-write:
+Open read-write and throw if the database doesn't exist:
 
 ```ts
+import { Database } from "bun:sqlite";
+const db = new Database("mydb.sqlite", { readwrite: true });
+```
+
+Open read-only and throw if the database doesn't exist:
+
+```ts
+import { Database } from "bun:sqlite";
 const db = new Database("mydb.sqlite", { readonly: true });
 ```
 
-Open read-only:
+Open read-write, don't throw if new file:
 
 ```ts
-const db = new Database("mydb.sqlite", { readonly: true });
+import { Database } from "bun:sqlite";
+const db = new Database("mydb.sqlite", { readonly: true, create: true });
 ```
+
+Open a database from a `Uint8Array`:
+
+```ts
+import { Database } from "bun:sqlite";
+import { readFileSync } from "fs";
+
+// unlike passing a filepath, this will not persist any changes to disk
+// it will be read-write but not persistent
+const db = new Database(readFileSync("mydb.sqlite"));
+```
+
+Close a database:
+
+```ts
+var db = new Database();
+db.close();
+```
+
+Note: `close()` is called automatically when the database is garbage collected. It is safe to call multiple times, but has no effect after the first.
+
+##### Database.prototype.query
+
+`query(sql)` creates a `Statement` for the given SQL and caches it, but does not execute it.
+
+```ts
+class Database {
+  query(sql: string): Statement;
+}
+```
+
+`query` returns a `Statement` object.
+
+It performs the same operation as `Database.prototype.prepare`, except:
+
+- `query` caches the prepared statement in the `Database` object
+- `query` doesn't bind parameters
+
+This intended to make it easier for `bun:sqlite` to be fast by default. Calling `.prepare` compiles a SQLite query, which can take some time, so it's better to cache those a little.
+
+You can bind parameters on any call to a statement.
+
+```js
+import { Database } from "bun:sqlite";
+
+// generate some data
+var db = new Database();
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+);
+db.run("INSERT INTO foo (greeting) VALUES ($greeting)", {
+  $greeting: "Welcome to bun",
+});
+
+// get the query
+const stmt = db.query("SELECT * FROM foo WHERE greeting = ?");
+
+// run the query
+stmt.all("Welcome to bun!");
+stmt.get("Welcome to bun!");
+stmt.run("Welcome to bun!");
+```
+
+##### Database.prototype.prepare
+
+`prepare(sql)` creates a `Statement` for the given SQL and caches it, but does not execute it.
+
+Unlike `query()`, this does not cache the compiled query.
+
+```ts
+import { Database } from "bun:sqlite";
+
+// generate some data
+var db = new Database();
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+);
+
+// compile the query
+const stmt = db.query("SELECT * FROM foo WHERE bar = ?");
+
+// run the query
+stmt.all("baz");
+```
+
+Internally, this calls [`sqlite3_prepare_v3`](https://www.sqlite.org/c3ref/prepare.html).
+
+##### Database.prototype.exec & Database.prototype.run
+
+`exec` is for one-off executing a query which does not need to return anything.
+
+```ts
+class Database {
+  // exec is an alias for run
+  exec(sql: string, ...params: ParamsType): void;
+  run(sql: string, ...params: ParamsType): void;
+}
+```
+
+This is useful for things like
+
+Creating a table:
+
+```ts
+import { Database } from "bun:sqlite";
+
+var db = new Database();
+db.exec(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+);
+```
+
+Inserting one row:
+
+```ts
+import { Database } from "bun:sqlite";
+
+var db = new Database();
+db.exec(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+);
+
+// insert one row
+db.exec("INSERT INTO foo (greeting) VALUES ($greeting)", {
+  $greeting: "Welcome to bun",
+});
+```
+
+For queries which aren't intended to be run multiple times, it should be faster to use `exec()` than `prepare()` or `query()` because it doesn't create a `Statement` object.
+
+Internally, this function calls [`sqlite3_prepare`](https://www.sqlite.org/c3ref/prepare.html), [`sqlite3_step`](https://www.sqlite.org/c3ref/step.html), and [`sqlite3_finalize`](https://www.sqlite.org/c3ref/finalize.html).
+
+##### Database.prototype.serialize
+
+SQLite has a builtin way to [serialize](https://www.sqlite.org/c3ref/serialize.html) and [deserialize](https://www.sqlite.org/c3ref/deserialize.html) databases to and from memory.
+
+`bun:sqlite` fully supports it:
+
+```ts
+var db = new Database();
+
+// write some data
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+);
+db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
+db.run("INSERT INTO foo VALUES (?)", "Hello World!");
+
+const copy = db.serialize();
+// => Uint8Array
+
+const db2 = new Database(copy);
+db2.query("SELECT * FROM foo").all();
+// => [
+//   { id: 1, greeting: "Welcome to bun!" },
+//   { id: 2, greeting: "Hello World!" },
+// ]
+```
+
+`db.serialize()` returns a `Uint8Array` of the database.
+
+Internally, it calls [`sqlite3_serialize`](https://www.sqlite.org/c3ref/serialize.html).
+
+##### Database.prototype.loadExtension
+
+`bun:sqlite` supports [SQLite extensions](https://www.sqlite.org/loadext.html).
+
+To load a SQLite extension, call `Database.prototype.loadExtension(name)`:
+
+```ts
+import { Database } from "bun:sqlite";
+
+var db = new Database();
+
+db.loadExtension("myext");
+```
+
+If you're on macOS, you will need to first use a custom SQLite install (you can install with homebrew). By default, bun uses Apple's propietary build of SQLite because it benchmarks about 50% faster. However, they disabled extension support, so you will need to have a custom build of SQLite to use extensions on macOS.
+
+```ts
+import { Database } from "bun:sqlite";
+
+// on macOS, this must be run before any other calls to `Database`
+// if called on linux, it will return false and do nothing
+Database.setCustomSQLite("/path/to/sqlite.dylib");
+
+var db = new Database();
+
+db.loadExtension("myext");
+```
+
+#### Statement
+
+`Statement` is a prepared statement. Use it to run queries that get results.
+
+TLDR:
+
+- `Statement.prototype.all(...optionalParamsToBind)` returns all rows as an array of objects
+- `Statement.prototype.values(...optionalParamsToBind)` returns all rows as an array of arrays
+- `Statement.prototype.get(...optionalParamsToBind)` returns the first row as an object
+- `Statement.prototype.run(...optionalParamsToBind)` runs the statement and returns nothing
+- `Statement.prototype.finalize()` closes the statement
+- `Statement.prototype.toString()` prints the expanded SQL, including bound parameters
+- `get Statement.prototype.columnNames` get the returned column names
+- `get Statement.prototype.paramsCount` how many parameters are expected?
+
+You can bind parameters on any call to a statement. Named parameters and positional parameters are supported.
+
+Note: `prototype` refers to an instance of `Statement`.
+
+```ts
+import { Database } from "bun:sqlite";
+
+// setup
+var db = new Database();
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+);
+db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
+db.run("INSERT INTO foo VALUES (?)", "Hello World!");
+
+// Statement object
+var statement = db.query("SELECT * FROM foo");
+
+// returns all the rows
+statement.all();
+
+// returns the first row
+statement.get();
+
+// runs the query, without returning anything
+statement.run();
+```
+
+##### Statement.prototype.all
+
+Calling `all()` on a `Statement` instance runs the query and returns the rows as an array of objects.
+
+```ts
+import { Database } from "bun:sqlite";
+
+// setup
+var db = new Database();
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2
+);
+
+// Statement object
+var statement = db.query("SELECT * FROM foo WHERE count = ?");
+
+// return all the query results, binding 2 to the count parameter
+statement.all(2);
+// => [
+//   { id: 1, greeting: "Welcome to bun!", count: 2 },
+//   { id: 3, greeting: "Welcome to bun!!!!", count: 2 },
+// ]
+```
+
+Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and repeatedly calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it returns `SQLITE_DONE`.
+
+##### Statement.prototype.values
+
+Calling `values()` on a `Statement` instance runs the query and returns the rows as an array of arrays.
+
+```ts
+import { Database } from "bun:sqlite";
+
+// setup
+var db = new Database();
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2
+);
+
+// Statement object
+var statement = db.query("SELECT * FROM foo WHERE count = ?");
+
+// return all the query results as an array of arrays, binding 2 to "count"
+statement.values(2);
+// => [
+//   [ 1, "Welcome to bun!", 2 ],
+//   [ 3, "Welcome to bun!!!!", 2 ],
+// ]
+
+// Statement object, but with named parameters
+var statement = db.query("SELECT * FROM foo WHERE count = $count");
+
+// return all the query results as an array of arrays, binding 2 to "count"
+statement.values({ $count: 2 });
+// => [
+//   [ 1, "Welcome to bun!", 2 ],
+//   [ 3, "Welcome to bun!!!!", 2 ],
+// ]
+```
+
+Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and repeatedly calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it returns `SQLITE_DONE`.
+
+##### Statement.prototype.get
+
+Calling `get()` on a `Statement` instance runs the query and returns the first result as an object.
+
+```ts
+import { Database } from "bun:sqlite";
+
+// setup
+var db = new Database();
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2
+);
+
+// Statement object
+var statement = db.query("SELECT * FROM foo WHERE count = ?");
+
+// return all the query results as an array of arrays, binding 2 to "count"
+statement.get(2);
+// => { id: 1, greeting: "Welcome to bun!", count: 2 }
+
+// Statement object, but with named parameters
+var statement = db.query("SELECT * FROM foo WHERE count = $count");
+
+// return all the query results as an array of arrays, binding 2 to "count"
+statement.get({ $count: 2 });
+// => { id: 1, greeting: "Welcome to bun!", count: 2 }
+```
+
+Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you only want the first row.
+
+##### Statement.prototype.run
+
+Calling `run()` on a `Statement` instance runs the query and returns nothing.
+
+This is useful if you want to repeatedly run a query, but don't care about the results.
+
+```ts
+import { Database } from "bun:sqlite";
+
+// setup
+var db = new Database();
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2
+);
+
+// Statement object (TODO: use a better example query)
+var statement = db.query("SELECT * FROM foo");
+
+// run the query, returning nothing
+statement.run();
+```
+
+Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you don't care about the results.
+
+##### Statement.prototype.finalize
+
+This method finalizes the statement, freeing any resources associated with it.
+
+After a statement has been finalized, it cannot be used for any further queries. Any attempt to run the statement will throw an error. Calling it multiple times will have no effect.
+
+It is a good idea to finalize a statement when you are done with it, but the garbage collector will do it for you if you don't.
+
+```ts
+import { Database } from "bun:sqlite";
+
+// setup
+var db = new Database();
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2
+);
+
+// Statement object
+var statement = db.query("SELECT * FROM foo WHERE count = ?");
+
+statement.finalize();
+
+// this will throw
+statement.run();
+```
+
+##### Statement.prototype.toString()
+
+Calling `toString()` on a `Statement` instance prints the expanded SQL query. This is useful for debugging.
+
+```ts
+import { Database } from "bun:sqlite";
+
+// setup
+var db = new Database();
+db.run(
+  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT, count INTEGER)"
+);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Welcome to bun!", 2);
+db.run("INSERT INTO foo (greeting, count) VALUES (?, ?)", "Hello World!", 0);
+db.run(
+  "INSERT INTO foo (greeting, count) VALUES (?, ?)",
+  "Welcome to bun!!!!",
+  2
+);
+
+// Statement object
+const statement = db.query("SELECT * FROM foo WHERE count = ?");
+
+console.log(statement.toString());
+// => "SELECT * FROM foo WHERE count = NULL"
+
+statement.run(2); // bind the param
+
+console.log(statement.toString());
+// => "SELECT * FROM foo WHERE count = 2"
+```
+
+Internally, this calls [`sqlite3_expanded_sql`](https://www.sqlite.org/capi3ref.html#sqlite3_expanded_sql).
 
 #### Datatypes
 

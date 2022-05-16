@@ -76,8 +76,22 @@ export class Statement {
   all;
   values;
   run;
+  isFinalized = false;
 
-  [toStringTag]() {
+  toJSON() {
+    return {
+      sql: this.native.toString(),
+      isFinalized: this.isFinalized,
+      paramsCount: this.paramsCount,
+      columnNames: this.columnNames,
+    };
+  }
+
+  get [toStringTag]() {
+    return `"${this.native.toString()}"`;
+  }
+
+  toString() {
     return this.native.toString();
   }
 
@@ -158,6 +172,7 @@ export class Statement {
   }
 
   finalize(...args) {
+    this.isFinalized = true;
     return this.#raw.finalize(...args);
   }
 }
@@ -319,7 +334,15 @@ export class Database {
         continue;
       }
 
-      return this.#cachedQueriesValues[index];
+      var stmt = this.#cachedQueriesValues[index];
+      if (stmt.isFinalized) {
+        return (this.#cachedQueriesValues[index] = this.prepare(
+          query,
+          undefined,
+          willCache ? constants.SQLITE_PREPARE_PERSISTENT : 0
+        ));
+      }
+      return stmt;
     }
 
     const willCache =

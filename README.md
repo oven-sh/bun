@@ -1699,7 +1699,7 @@ Open an in-memory database:
 const db = new Database(":memory:");
 ```
 
-Open read-only:
+Open read-write:
 
 ```ts
 const db = new Database("mydb.sqlite", { readonly: true });
@@ -1711,7 +1711,7 @@ Open read-only:
 const db = new Database("mydb.sqlite", { readonly: true });
 ```
 
-#### Supported datatypes
+#### Datatypes
 
 | JavaScript type | SQLite type            |
 | --------------- | ---------------------- |
@@ -1869,7 +1869,7 @@ C strings:
 
 </details>
 
-To help with that, `bun:ffi` exports `CString` which extends JavaScript's builtin `String` with a few extras:
+To help with that, `bun:ffi` exports `CString` which extends JavaScript's builtin `String` to support null-terminated strings and add a few extras:
 
 ```ts
 class CString extends String {
@@ -1891,7 +1891,7 @@ class CString extends String {
 }
 ```
 
-To convert from a 0-terminated pointer to a JavaScript string:
+To convert from a null-terminated string pointer to a JavaScript string:
 
 ```ts
 const myString = new CString(ptr);
@@ -1910,6 +1910,25 @@ my_library_free(myString.ptr);
 
 // this is safe because myString is a clone
 console.log(myString);
+```
+
+##### Function pointers
+
+To call a function pointer from JavaScript, use `CFunction`
+
+This is useful if using Node-API (napi) with Bun and you've already loaded some of the symbols.
+
+```ts
+import { CFunction } from "bun:ffi";
+
+var myNativeLibraryGetVersion = /* somehow, you got this pointer */
+
+const getVersion = new CFunction({
+  returns: "cstring",
+  args: [],
+  ptr: myNativeLibraryGetVersion,
+});
+getVersion();
 ```
 
 ##### Returning a string

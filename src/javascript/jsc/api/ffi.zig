@@ -80,7 +80,7 @@ const ComptimeStringMap = @import("../../../comptime_string_map.zig").ComptimeSt
 const TCC = @import("../../../tcc.zig");
 
 pub const FFI = struct {
-    dylib: std.DynLib,
+    dylib: ?std.DynLib = null,
     functions: std.StringArrayHashMapUnmanaged(Function) = .{},
     closed: bool = false,
 
@@ -140,7 +140,10 @@ pub const FFI = struct {
             return JSC.JSValue.jsUndefined();
         }
         this.closed = true;
-        this.dylib.close();
+        if (this.dylib) |*dylib| {
+            dylib.close();
+            this.dylib = null;
+        }
 
         const allocator = VirtualMachine.vm.allocator;
 
@@ -294,18 +297,22 @@ pub const FFI = struct {
         defer JSC.C.JSValueUnprotect(global.ref(), obj.asObjectRef());
         for (symbols.values()) |*function| {
             const function_name = function.base_name.?;
-            var resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
-                const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ std.mem.span(function_name), name_slice.slice() }, global.ref());
-                for (symbols.values()) |*value| {
-                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
-                    value.arg_types.clearAndFree(allocator);
-                }
-                symbols.clearAndFree(allocator);
-                dylib.close();
-                return ret;
-            };
 
-            function.symbol_from_dynamic_library = resolved_symbol;
+            // optional if the user passed "ptr"
+            if (function.symbol_from_dynamic_library == null) {
+                var resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
+                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ std.mem.span(function_name), name_slice.slice() }, global.ref());
+                    for (symbols.values()) |*value| {
+                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                        value.arg_types.clearAndFree(allocator);
+                    }
+                    symbols.clearAndFree(allocator);
+                    dylib.close();
+                    return ret;
+                };
+
+                function.symbol_from_dynamic_library = resolved_symbol;
+            }
 
             function.compile(allocator) catch |err| {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
@@ -359,6 +366,98 @@ pub const FFI = struct {
         var lib = allocator.create(FFI) catch unreachable;
         lib.* = .{
             .dylib = dylib,
+            .functions = symbols,
+        };
+
+        var close_object = JSC.JSValue.c(Class.make(global.ref(), lib));
+
+        return JSC.JSValue.createObject2(global, &ZigString.init("close"), &ZigString.init("symbols"), close_object, obj);
+    }
+
+    pub fn linkSymbols(global: *JSGlobalObject, object: JSC.JSValue) JSC.JSValue {
+        const allocator = VirtualMachine.vm.allocator;
+
+        if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
+            return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global.ref());
+        }
+
+        var symbols = std.StringArrayHashMapUnmanaged(Function){};
+        if (generateSymbols(global, &symbols, object) catch JSC.JSValue.zero) |val| {
+            // an error while validating symbols
+            for (symbols.keys()) |key| {
+                allocator.free(bun.constStrToU8(key));
+            }
+            symbols.clearAndFree(allocator);
+            return val;
+        }
+        if (symbols.count() == 0) {
+            return JSC.toInvalidArguments("Expected at least one symbol", .{}, global.ref());
+        }
+
+        var obj = JSC.JSValue.c(JSC.C.JSObjectMake(global.ref(), null, null));
+        JSC.C.JSValueProtect(global.ref(), obj.asObjectRef());
+        defer JSC.C.JSValueUnprotect(global.ref(), obj.asObjectRef());
+        for (symbols.values()) |*function| {
+            const function_name = function.base_name.?;
+
+            if (function.symbol_from_dynamic_library == null) {
+                const ret = JSC.toInvalidArguments("Symbol for \"{s}\" not found", .{std.mem.span(function_name)}, global.ref());
+                for (symbols.values()) |*value| {
+                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                    value.arg_types.clearAndFree(allocator);
+                }
+                symbols.clearAndFree(allocator);
+                return ret;
+            }
+
+            function.compile(allocator) catch |err| {
+                const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
+                    std.mem.span(@errorName(err)),
+                    std.mem.span(function_name),
+                }, global.ref());
+                for (symbols.values()) |*value| {
+                    allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                    value.arg_types.clearAndFree(allocator);
+                }
+                symbols.clearAndFree(allocator);
+                return ret;
+            };
+            switch (function.step) {
+                .failed => |err| {
+                    for (symbols.values()) |*value| {
+                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                        value.arg_types.clearAndFree(allocator);
+                    }
+
+                    const res = ZigString.init(err.msg).toErrorInstance(global);
+                    function.deinit(allocator);
+                    symbols.clearAndFree(allocator);
+                    return res;
+                },
+                .pending => {
+                    for (symbols.values()) |*value| {
+                        allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
+                        value.arg_types.clearAndFree(allocator);
+                    }
+                    symbols.clearAndFree(allocator);
+                    return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
+                },
+                .compiled => |compiled| {
+                    var cb = Bun__CreateFFIFunction(
+                        global,
+                        &ZigString.init(std.mem.span(function_name)),
+                        @intCast(u32, function.arg_types.items.len),
+                        compiled.ptr,
+                    );
+
+                    obj.put(global, &ZigString.init(std.mem.span(function_name)), JSC.JSValue.cast(cb));
+                },
+            }
+        }
+
+        var lib = allocator.create(FFI) catch unreachable;
+        lib.* = .{
+            .dylib = null,
             .functions = symbols,
         };
 
@@ -441,6 +540,20 @@ pub const FFI = struct {
             .arg_types = abi_types,
             .return_type = return_type,
         };
+
+        if (value.get(global, "ptr")) |ptr| {
+            if (ptr.isNumber()) {
+                const num = @bitCast(usize, ptr.asNumber());
+                if (num > 0)
+                    function.symbol_from_dynamic_library = @intToPtr(*anyopaque, num);
+            } else {
+                const num = ptr.toUInt64NoTruncate();
+                if (num > 0) {
+                    function.symbol_from_dynamic_library = @intToPtr(*anyopaque, num);
+                }
+            }
+        }
+
         return null;
     }
     pub fn generateSymbols(global: *JSGlobalObject, symbols: *std.StringArrayHashMapUnmanaged(Function), object: JSC.JSValue) !?JSValue {

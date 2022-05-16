@@ -2305,6 +2305,9 @@ pub const FFI = struct {
             .callback = .{
                 .rfn = JSC.wrapWithHasContainer(JSC.FFI, "callback", false, false, false),
             },
+            .linkSymbols = .{
+                .rfn = JSC.wrapWithHasContainer(JSC.FFI, "linkSymbols", false, false, false),
+            },
             .ptr = .{
                 .rfn = JSC.wrapWithHasContainer(@This(), "ptr", false, false, true),
             },

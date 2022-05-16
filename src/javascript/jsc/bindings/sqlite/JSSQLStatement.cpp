@@ -317,11 +317,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         return JSValue::encode(JSC::jsUndefined());
     }
 
-#ifndef LAZY_LOAD_SQLITE
-    throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite is statically linked into this platform's binary, so the path cannot be changed"_s));
-    return JSValue::encode(JSC::jsUndefined());
-#endif
-
     if (callFrame->argumentCount() < 1) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected 1 argument"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -332,6 +327,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLite path"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
+
+#ifndef LAZY_LOAD_SQLITE
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(false)));
+#endif
 
     if (sqlite3_handle) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nThis function can only be called before SQLite has been loaded and exactly once. SQLite auto-loads when the first time you open a Database."_s));
@@ -346,7 +345,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    return JSValue::encode(JSC::jsBoolean(true));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(true)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -404,12 +403,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    status = sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);
+    int status = sqlite3_db_config(db, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, 1, NULL);
     assert(status == SQLITE_OK);
     status = sqlite3_db_config(db, SQLITE_DBCONFIG_DEFENSIVE, 1, NULL);
     assert(status == SQLITE_OK);
 
-    int status = sqlite3_deserialize(db, "main", reinterpret_cast<unsigned char*>(data), byteLength, byteLength, flags);
+    status = sqlite3_deserialize(db, "main", reinterpret_cast<unsigned char*>(data), byteLength, byteLength, flags);
     if (status == SQLITE_BUSY) {
         sqlite3_free(data);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLITE_BUSY"_s));
@@ -758,6 +757,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         return JSValue::encode(jsUndefined());
     }
 
+#if LAZY_LOAD_SQLITE
+    if (UNLIKELY(lazyLoadSQLite() < 0)) {
+        WTF::String msg = WTF::String::fromUTF8(dlerror());
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+#endif
+
     auto catchScope = DECLARE_CATCH_SCOPE(vm);
     String path = pathValue.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(catchScope, JSValue::encode(jsUndefined()));
@@ -772,8 +779,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
 
         openFlags = flags.toInt32(lexicalGlobalObject);
     }
-
-    lazyLoadSQLite();
 
     sqlite3* db = nullptr;
     int statusCode = sqlite3_open_v2(path.utf8().data(), &db, openFlags, nullptr);

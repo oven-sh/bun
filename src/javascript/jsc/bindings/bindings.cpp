@@ -1928,6 +1928,11 @@ uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue val)
             return heapBigInt->toBigUInt64(heapBigInt);
         }
     }
+
+    if (!_val.isNumber()) {
+        return 0;
+    }
+
     return static_cast<uint64_t>(_val.asAnyInt());
 }
 

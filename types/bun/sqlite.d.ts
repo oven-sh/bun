@@ -499,7 +499,7 @@ declare module "bun:sqlite" {
     /**
      * Creates a new prepared statement from native code.
      *
-     * This is used internally by the {@link Database} class.
+     * This is used internally by the {@link Database} class. Probably you don't need to call this yourself.
      */
     constructor(nativeHandle: any);
 

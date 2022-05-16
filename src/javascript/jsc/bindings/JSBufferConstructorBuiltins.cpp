@@ -44,7 +44,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsBufferConstructorFromCodeLength = 1250;
+const int s_jsBufferConstructorFromCodeLength = 931;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferConstructorFromCode =
     "(function (items) {\n" \
@@ -54,7 +54,7 @@ const char* const s_jsBufferConstructorFromCode =
     "        @throwTypeError(\"Buffer.from requires |this| to be a constructor\");\n" \
     "\n" \
     "\n" \
-    "    if (typeof items === 'string') {\n" \
+    "    if (typeof items === 'string' || @ArrayBuffer.@isView(items)) {\n" \
     "        switch (@argumentCount()) {\n" \
     "            case 1: {\n" \
     "                return new this(items);\n" \
@@ -79,15 +79,7 @@ const char* const s_jsBufferConstructorFromCode =
     "        var result = this.allocUnsafe(length);\n" \
     "        result.set(arrayLike);\n" \
     "        return result;\n" \
-    "    } else if (arrayLike instanceof ArrayBuffer || arrayLike instanceof SharedArrayBuffer) {\n" \
-    "        var byteOffset = @argument(1);\n" \
-    "        var byteLength = @argument(2);\n" \
-    "        //\n" \
-    "        var out = new @Uint8Array(arrayLike, byteOffset, byteLength);\n" \
-    "        var result = this.allocUnsafe(out.length);\n" \
-    "        result.set(out);\n" \
-    "        return result;\n" \
-    "    }\n" \
+    "    } \n" \
     "\n" \
     "    return @tailCallForwardArguments(@Uint8Array.from, this);\n" \
     "})\n" \

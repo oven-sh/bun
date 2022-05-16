@@ -1371,7 +1371,7 @@ template<> void JSBufferConstructor::initializeProperties(VM& vm, JSDOMGlobalObj
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSBuffer::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
-    reifyStaticProperties(vm, JSBuffer::info(), JSBufferConstructorTableValues, *this);
+    reifyStaticProperties(vm, JSBufferConstructor::info(), JSBufferConstructorTableValues, *this);
 }
 
 const ClassInfo JSBuffer::s_info = { "Buffer"_s, JSC::getUint8ArrayClassInfo(), nullptr, nullptr, CREATE_METHOD_TABLE(JSBuffer) };
@@ -1526,12 +1526,12 @@ static const HashTableValue JSBufferPrototypeTableValues[]
 void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
     this->setPrototypeDirect(vm, globalThis->m_typedArrayUint8.prototype(globalThis));
     auto clientData = WebCore::clientData(vm);
     this->putDirect(vm, clientData->builtinNames().dataViewPublicName(), JSC::jsUndefined(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     this->putDirect(vm, clientData->builtinNames().dataViewPrivateName(), JSC::JSValue(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    reifyStaticProperties(vm, JSBuffer::info(), JSBufferPrototypeTableValues, *this);
 }
 
 const ClassInfo JSBufferPrototype::s_info = { "Buffer"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferPrototype) };

@@ -1184,6 +1184,17 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:module" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./module.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:module"),
+                        .source_url = ZigString.init("node:module"),
+                        .hash = 0,
+                    };
+                },
             }
         } else if (_specifier.len > js_ast.Macro.namespaceWithColon.len and
             strings.eqlComptimeIgnoreLen(_specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
@@ -2903,6 +2914,7 @@ pub const HardcodedModule = enum {
     @"node:path",
     @"detect-libc",
     @"bun:sqlite",
+    @"node:module",
 
     pub const Map = bun.ComptimeStringMap(
         HardcodedModule,
@@ -2918,6 +2930,8 @@ pub const HardcodedModule = enum {
             .{ "node:path/posix", HardcodedModule.@"node:path" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
+            .{ "node:module", HardcodedModule.@"node:module" },
+            .{ "module", HardcodedModule.@"node:module" },
         },
     );
     pub const LinkerMap = bun.ComptimeStringMap(
@@ -2934,6 +2948,8 @@ pub const HardcodedModule = enum {
             .{ "bun:wrap", "bun:wrap" },
             .{ "bun:sqlite", "bun:sqlite" },
             .{ "sqlite", "bun:sqlite" },
+            .{ "node:module", "node:module" },
+            .{ "module", "node:module" },
         },
     );
 };

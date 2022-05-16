@@ -1572,9 +1572,25 @@ pub fn NewPrinter(
                     }
                 },
                 .e_require_or_require_resolve => |e| {
-                    // require.resolve("../src.js") => "../src.js"
-                    p.printSpaceBeforeIdentifier();
-                    p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
+                    if (p.options.rewrite_require_resolve) {
+                        // require.resolve("../src.js") => "../src.js"
+                        p.printSpaceBeforeIdentifier();
+                        p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
+                    } else {
+                        const wrap = level.gte(.new) or flags.contains(.forbid_call);
+                        if (wrap) {
+                            p.print("(");
+                        }
+
+                        p.printSpaceBeforeIdentifier();
+                        p.print("require.resolve(");
+                        p.printQuotedUTF8(p.import_records[e.import_record_index].path.text, true);
+                        p.print(")");
+
+                        if (wrap) {
+                            p.print(")");
+                        }
+                    }
                 },
                 .e_import => |e| {
 

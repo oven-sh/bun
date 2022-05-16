@@ -770,18 +770,18 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolveSync,
         JSC__JSValue from;
 
         if (callFrame->argumentCount() > 1) {
-            from = JSC::JSValue::encode(callFrame->argument(1));
+            JSC::JSValue fromValue = callFrame->argument(1);
 
             // require.resolve also supports a paths array
             // we only support a single path
-            if (!from.isUndefinedOrNull() && from.isObject()) {
-                if (JSC::JSArray* array = JSC::jsDynamicCast<JSC::JSArray*>(from.getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s)))) {
+            if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
+                if (JSC::JSArray* array = JSC::jsDynamicCast<JSC::JSArray*>(fromValue.getObject()->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s)))) {
                     if (array->length() > 0) {
-                        from = array->getIndex(globalObject, 0);
+                        fromValue = array->getIndex(globalObject, 0);
                     }
                 }
             }
-
+            from = JSC::JSValue::encode(fromValue);
         } else {
             JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(callFrame->thisValue());
             if (UNLIKELY(!thisObject)) {
@@ -1236,24 +1236,23 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
         metaProperties->putDirect(
             vm, clientData->builtinNames().filePublicName(),
             JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));
-
-        metaProperties->putDirect(
-            vm, clientData->builtinNames().filePublicName(),
-            JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));
-
-        metaProperties->putDirect(vm, clientData->builtinNames().resolvePublicName(),
-            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
-                WTF::String("resolve"_s), functionImportMeta__resolve),
-            JSC::PropertyAttribute::Function | 0);
-        metaProperties->putDirect(vm, clientData->builtinNames().resolveSyncPublicName(),
-            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
-                WTF::String("resolveSync"_s), functionImportMeta__resolveSync),
-            JSC::PropertyAttribute::Function | 0);
-
-        metaProperties->putDirectBuiltinFunction(vm, globalObject, clientData->builtinNames().requirePublicName(),
-            jsZigGlobalObjectRequireCodeGenerator(vm),
-            JSC::PropertyAttribute::Builtin | 0);
+    } else {
+        metaProperties->putDirect(vm, clientData->builtinNames().filePublicName(), keyString);
+        metaProperties->putDirect(vm, clientData->builtinNames().dirPublicName(), jsEmptyString(vm));
     }
+
+    metaProperties->putDirect(vm, clientData->builtinNames().resolvePublicName(),
+        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
+            clientData->builtinNames().resolvePublicName().string(), functionImportMeta__resolve),
+        JSC::PropertyAttribute::Function | 0);
+    metaProperties->putDirect(vm, clientData->builtinNames().resolveSyncPublicName(),
+        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
+            clientData->builtinNames().resolveSyncPublicName().string(), functionImportMeta__resolveSync),
+        JSC::PropertyAttribute::Function | 0);
+
+    metaProperties->putDirectBuiltinFunction(vm, globalObject, clientData->builtinNames().requirePublicName(),
+        jsZigGlobalObjectRequireCodeGenerator(vm),
+        JSC::PropertyAttribute::Builtin | 0);
 
     metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), key);
     metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), JSC::JSValue(JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string())));

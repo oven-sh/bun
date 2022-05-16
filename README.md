@@ -118,7 +118,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [Supported FFI types (`FFIType`)](#supported-ffi-types-ffitype)
   - [Strings (`CString`)](#strings-cstring)
     - [Returning a string](#returning-a-string)
-  - [Function pointers](#function-pointers)
+  - [Function pointers (`CFunction`)](#function-pointers-CFunction)
   - [Pointers](#pointers)
     - [Passing a pointer](#passing-a-pointer)
     - [Reading pointers](#reading-pointers)

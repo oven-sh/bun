@@ -165,13 +165,26 @@ export class Statement {
 var cachedCount = symbolFor("Bun.Database.cache.count");
 export class Database {
   constructor(filenameGiven, options) {
-    if (typeof filenameGiven !== "string") {
+    if (typeof filenameGiven === "undefined") {
+    } else if (typeof filenameGiven !== "string") {
+      if (isTypedArray(filenameGiven)) {
+        this.#handle = Database.deserialize(
+          filenameGiven,
+          typeof options === "object" && options
+            ? !!options.readonly
+            : ((options | 0) & constants.SQLITE_OPEN_READONLY) != 0
+        );
+        this.filename = ":memory:";
+        return;
+      }
+
       throw new TypeError(
         `Expected 'filename' to be a string, got '${typeof filenameGiven}'`
       );
     }
 
-    var filename = filenameGiven.trim();
+    var filename =
+      typeof filenameGiven === "string" ? filenameGiven.trim() : ":memory:";
     var flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
     if (typeof options === "object" && options) {
       flags = 0;
@@ -229,6 +242,18 @@ export class Database {
 
   loadExtension(name, entryPoint) {
     return SQL.loadExtension(this.#handle, name, entryPoint);
+  }
+
+  serialize(optionalName) {
+    return SQL.serialize(this.#handle, optionalName || "main");
+  }
+
+  static deserialize(serialized, isReadOnly = false) {
+    if (!SQL) {
+      _SQL = SQL = lazy("sqlite");
+    }
+
+    return SQL.deserialize(serialized, isReadOnly);
   }
 
   static setCustomSQLite(path) {

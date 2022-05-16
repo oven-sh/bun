@@ -53,6 +53,22 @@ typedef int (*lazy_sqlite3_load_extension_type)(
     const char* zProc, /* Entry point.  Derived from zFile if 0 */
     char** pzErrMsg /* Put error message here if not 0 */
 );
+typedef void* (*lazy_sqlite3_libversion_type)();
+typedef void* (*lazy_sqlite3_malloc64_type)(sqlite3_uint64);
+typedef unsigned char* (*lazy_sqlite3_serialize_type)(
+    sqlite3* db, /* The database connection */
+    const char* zSchema, /* Which DB to serialize. ex: "main", "temp", ... */
+    sqlite3_int64* piSize, /* Write size of the DB here, if not NULL */
+    unsigned int mFlags /* Zero or more SQLITE_SERIALIZE_* flags */
+);
+typedef int (*lazy_sqlite3_deserialize_type)(
+    sqlite3* db, /* The database connection */
+    const char* zSchema, /* Which DB to reopen with the deserialization */
+    unsigned char* pData, /* The serialized database content */
+    sqlite3_int64 szDb, /* Number bytes in the deserialization */
+    sqlite3_int64 szBuf, /* Total size of buffer pData[] */
+    unsigned mFlags /* Zero or more SQLITE_DESERIALIZE_* flags */
+);
 
 static lazy_sqlite3_bind_blob_type lazy_sqlite3_bind_blob;
 static lazy_sqlite3_bind_double_type lazy_sqlite3_bind_double;
@@ -90,6 +106,9 @@ static lazy_sqlite3_reset_type lazy_sqlite3_reset;
 static lazy_sqlite3_step_type lazy_sqlite3_step;
 static lazy_sqlite3_db_config_type lazy_sqlite3_db_config;
 static lazy_sqlite3_load_extension_type lazy_sqlite3_load_extension;
+static lazy_sqlite3_malloc64_type lazy_sqlite3_malloc64;
+static lazy_sqlite3_serialize_type lazy_sqlite3_serialize;
+static lazy_sqlite3_deserialize_type lazy_sqlite3_deserialize;
 
 #define sqlite3_bind_blob lazy_sqlite3_bind_blob
 #define sqlite3_bind_double lazy_sqlite3_bind_double
@@ -125,6 +144,9 @@ static lazy_sqlite3_load_extension_type lazy_sqlite3_load_extension;
 #define sqlite3_step lazy_sqlite3_step
 #define sqlite3_db_config lazy_sqlite3_db_config
 #define sqlite3_load_extension lazy_sqlite3_load_extension
+#define sqlite3_malloc64 lazy_sqlite3_malloc64
+#define sqlite3_serialize lazy_sqlite3_serialize
+#define sqlite3_deserialize lazy_sqlite3_deserialize
 
 static void* sqlite3_handle = nullptr;
 static const char* sqlite3_lib_path = "libsqlite3.dylib";
@@ -172,6 +194,9 @@ static int lazyLoadSQLite()
     lazy_sqlite3_step = (lazy_sqlite3_step_type)dlsym(sqlite3_handle, "sqlite3_step");
     lazy_sqlite3_db_config = (lazy_sqlite3_db_config_type)dlsym(sqlite3_handle, "sqlite3_db_config");
     lazy_sqlite3_load_extension = (lazy_sqlite3_load_extension_type)dlsym(sqlite3_handle, "sqlite3_load_extension");
+    lazy_sqlite3_serialize = (lazy_sqlite3_serialize_type)dlsym(sqlite3_handle, "sqlite3_serialize");
+    lazy_sqlite3_deserialize = (lazy_sqlite3_deserialize_type)dlsym(sqlite3_handle, "sqlite3_deserialize");
+    lazy_sqlite3_malloc64 = (lazy_sqlite3_malloc64_type)dlsym(sqlite3_handle, "sqlite3_malloc64");
 
     return 0;
 }

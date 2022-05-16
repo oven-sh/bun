@@ -217,6 +217,62 @@ it("db.query supports TypedArray", () => {
   expect(stmt3.get([encode("Hello World NOT")])).toBe(null);
 });
 
+it("supports serialize/deserialize", () => {
+  const db = Database.open(":memory:");
+  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+  db.exec('INSERT INTO test (name) VALUES ("Hello")');
+  db.exec('INSERT INTO test (name) VALUES ("World")');
+
+  const input = db.serialize();
+  const db2 = new Database(input);
+
+  const stmt = db2.prepare("SELECT * FROM test");
+  expect(JSON.stringify(stmt.get())).toBe(
+    JSON.stringify({
+      id: 1,
+      name: "Hello",
+    })
+  );
+
+  expect(JSON.stringify(stmt.all())).toBe(
+    JSON.stringify([
+      {
+        id: 1,
+        name: "Hello",
+      },
+      {
+        id: 2,
+        name: "World",
+      },
+    ])
+  );
+  db2.exec("insert into test (name) values ('foo')");
+  expect(JSON.stringify(stmt.all())).toBe(
+    JSON.stringify([
+      {
+        id: 1,
+        name: "Hello",
+      },
+      {
+        id: 2,
+        name: "World",
+      },
+      {
+        id: 3,
+        name: "foo",
+      },
+    ])
+  );
+
+  const db3 = new Database(input, { readonly: true });
+  try {
+    db3.exec("insert into test (name) values ('foo')");
+    throw new Error("Expected error");
+  } catch (e) {
+    expect(e.message).toBe("attempt to write a readonly database");
+  }
+});
+
 it("supports WHERE clauses", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");

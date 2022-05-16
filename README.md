@@ -1806,10 +1806,10 @@ db.run(
   "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
 );
 
-// compile the query
-const stmt = db.query("SELECT * FROM foo WHERE bar = ?");
+// compile the prepared statement
+const stmt = db.prepare("SELECT * FROM foo WHERE bar = ?");
 
-// run the query
+// run the prepared statement
 stmt.all("baz");
 ```
 

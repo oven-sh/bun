@@ -1919,6 +1919,12 @@ var db = new Database();
 db.loadExtension("myext");
 ```
 
+To install sqlite with homebrew:
+
+```bash
+brew install sqlite
+```
+
 #### Statement
 
 `Statement` is a prepared statement. Use it to run queries that get results.

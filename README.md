@@ -98,7 +98,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 - [bun:sqlite (SQLite3 module)](#bun-sqlite--sqlite3-module-)
   - [bun:sqlite Benchmark](#bun-sqlite-benchmark)
   - [Getting started with bun:sqlite](#getting-started-with-bun-sqlite)
-    - [`Database`](#-database-)
+  - [`Database`](#-database-)
     - [Database.prototype.query](#databaseprototypequery)
     - [Database.prototype.prepare](#databaseprototypeprepare)
     - [Database.prototype.exec & Database.prototype.run](#databaseprototypeexec---databaseprototyperun)

@@ -2947,7 +2947,6 @@ pub const HardcodedModule = enum {
             .{ "path", "node:path" },
             .{ "bun:wrap", "bun:wrap" },
             .{ "bun:sqlite", "bun:sqlite" },
-            .{ "sqlite", "bun:sqlite" },
             .{ "node:module", "node:module" },
             .{ "module", "node:module" },
         },

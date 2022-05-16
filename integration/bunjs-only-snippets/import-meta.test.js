@@ -10,6 +10,7 @@ it("import.meta.resolveSync", () => {
   ).toBe(path);
   const require = Module.createRequire(import.meta.path);
   expect(require.resolve(import.meta.path)).toBe(path);
+  expect(require.resolve("./" + import.meta.file)).toBe(path);
 
   // check it works with URL objects
   expect(

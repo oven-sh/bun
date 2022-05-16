@@ -215,7 +215,7 @@ pub export fn napi_create_int64(_: napi_env, value: i64, result: *napi_value) na
 pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
     var len = length;
     if (NAPI_AUTO_LENGTH == length) {
-        len = std.mem.sliceTo(std.meta.assumeSentinel(str, 0), 0).len;
+        len = bun.span(std.meta.assumeSentinel(str, 0)).len;
     }
     result.* = JSC.ZigString.init(str[0..len]).toValueGC(env);
     return .ok;
@@ -223,7 +223,7 @@ pub export fn napi_create_string_latin1(env: napi_env, str: [*]const u8, length:
 pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: usize, result: *napi_value) napi_status {
     var len = length;
     if (NAPI_AUTO_LENGTH == length) {
-        len = std.mem.sliceTo(std.meta.assumeSentinel(str, 0), 0).len;
+        len = bun.span(std.meta.assumeSentinel(str, 0)).len;
     }
     result.* = JSC.ZigString.init(str[0..len]).withEncoding().toValueGC(env);
     return .ok;
@@ -231,7 +231,7 @@ pub export fn napi_create_string_utf8(env: napi_env, str: [*]const u8, length: u
 pub export fn napi_create_string_utf16(env: napi_env, str: [*]const char16_t, length: usize, result: *napi_value) napi_status {
     var len = length;
     if (NAPI_AUTO_LENGTH == length) {
-        len = std.mem.sliceTo(std.meta.assumeSentinel(str, 0), 0).len;
+        len = bun.span(std.meta.assumeSentinel(str, 0)).len;
     }
     result.* = JSC.ZigString.from16(str, len).toValueGC(env);
     return .ok;

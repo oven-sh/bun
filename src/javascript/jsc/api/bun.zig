@@ -2447,7 +2447,7 @@ pub const FFI = struct {
             }
         }
 
-        return .{ .slice = std.mem.sliceTo(@intToPtr([*:0]u8, addr), 0) };
+        return .{ .slice = bun.span(@intToPtr([*:0]u8, addr)) };
     }
 
     pub fn toArrayBuffer(

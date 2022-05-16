@@ -98,12 +98,12 @@ pub inline fn cast(comptime To: type, value: anytype) To {
 
 extern fn strlen(ptr: [*c]const u8) usize;
 pub fn indexOfSentinel(comptime Elem: type, comptime sentinel: Elem, ptr: [*:sentinel]const Elem) usize {
-    if (comptime std.meta.trait.isNumber(Elem) and sentinel == 0) {
+    if (comptime Elem == u8 and sentinel == 0) {
         return strlen(ptr);
     } else {
         var i: usize = 0;
         while (ptr[i] != sentinel) {
-            i = i + 1;
+            i += 1;
         }
         return i;
     }

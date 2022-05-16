@@ -1912,7 +1912,11 @@ my_library_free(myString.ptr);
 console.log(myString);
 ```
 
-##### Function pointers
+##### Returning a string
+
+When used in `returns`, `FFIType.cstring` coerces the pointer to a JavaScript `string`. When used in `args`, `cstring` is identical to `ptr`.
+
+#### Function pointers
 
 To call a function pointer from JavaScript, use `CFunction`
 
@@ -1931,9 +1935,43 @@ const getVersion = new CFunction({
 getVersion();
 ```
 
-##### Returning a string
+If you have multiple function pointers, you can define them all at once with `linkSymbols`:
 
-When used in `returns`, `FFIType.cstring` coerces the pointer to a JavaScript `string`. When used in `args`, `cstring` is identical to `ptr`.
+```ts
+import { linkSymbols } from "bun:ffi";
+
+// getVersionPtrs defined elsewhere
+const [majorPtr, minorPtr, patchPtr] = getVersionPtrs();
+
+const lib = linkSymbols({
+  // Unlike with dlopen(), the names here can be whatever you want
+  getMajor: {
+    returns: "cstring",
+    args: [],
+
+    // Since this doesn't use dlsym(), you have to provide a valid ptr
+    // That ptr could be a number or a bigint
+    // An invalid pointer will crash your program.
+    ptr: majorPtr,
+  },
+  getMinor: {
+    returns: "cstring",
+    args: [],
+    ptr: minorPtr,
+  },
+  getPatch: {
+    returns: "cstring",
+    args: [],
+    ptr: patchPtr,
+  },
+});
+
+const [major, minor, patch] = [
+  lib.symbols.getMajor(),
+  lib.symbols.getMinor(),
+  lib.symbols.getPatch(),
+];
+```
 
 #### Pointers
 

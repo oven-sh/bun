@@ -548,21 +548,38 @@ declare module "bun:ffi" {
    * @example
    *
    * ```js
-   * import {linkSymbols} from 'bun:ffi';
+   * import { linkSymbols } from "bun:ffi";
+   *
+   * const [majorPtr, minorPtr, patchPtr] = getVersionPtrs();
    *
    * const lib = linkSymbols({
    *   // Unlike with dlopen(), the names here can be whatever you want
-   *   getVersion: {
+   *   getMajor: {
    *     returns: "cstring",
    *     args: [],
+   *
    *     // Since this doesn't use dlsym(), you have to provide a valid ptr
    *     // That ptr could be a number or a bigint
    *     // An invalid pointer will crash your program.
-   *     ptr: myNativeLibraryGetVersion,
+   *     ptr: majorPtr,
+   *   },
+   *   getMinor: {
+   *     returns: "cstring",
+   *     args: [],
+   *     ptr: minorPtr,
+   *   },
+   *   getPatch: {
+   *     returns: "cstring",
+   *     args: [],
+   *     ptr: patchPtr,
    *   },
    * });
-   * lib.symbols.getVersion();
-   * // "1.0.0"
+   *
+   * const [major, minor, patch] = [
+   *   lib.symbols.getMajor(),
+   *   lib.symbols.getMinor(),
+   *   lib.symbols.getPatch(),
+   * ];
    * ```
    *
    * This is powered by just-in-time compiling C wrappers

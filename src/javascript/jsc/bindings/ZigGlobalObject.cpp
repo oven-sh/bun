@@ -771,6 +771,17 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolveSync,
 
         if (callFrame->argumentCount() > 1) {
             from = JSC::JSValue::encode(callFrame->argument(1));
+
+            // require.resolve also supports a paths array
+            // we only support a single path
+            if (!from.isUndefinedOrNull() && from.isObject()) {
+                if (JSC::JSArray* array = JSC::jsDynamicCast<JSC::JSArray*>(from.getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "paths"_s)))) {
+                    if (array->length() > 0) {
+                        from = array->getIndex(globalObject, 0);
+                    }
+                }
+            }
+
         } else {
             JSC::JSObject* thisObject = JSC::jsDynamicCast<JSC::JSObject*>(callFrame->thisValue());
             if (UNLIKELY(!thisObject)) {

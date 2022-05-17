@@ -2003,7 +2003,7 @@ TLDR:
 - `get Statement.columnNames` get the returned column names
 - `get Statement.paramsCount` how many parameters are expected?
 
-You can bind parameters on any call to a statement. Named parameters and positional parameters are supported.
+You can bind parameters on any call to a statement. Named parameters and positional parameters are supported. Bound parameters are remembered between calls and reset the next time you pass parameters to bind.
 
 ```ts
 import { Database } from "bun:sqlite";

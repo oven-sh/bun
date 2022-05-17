@@ -1654,10 +1654,10 @@ import { Database } from "bun:sqlite";
 
 const db = new Database("mydb.sqlite");
 db.run(
-  "CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
+  "CREATE TABLE IF NOT EXISTS foo (id INTEGER PRIMARY KEY AUTOINCREMENT, greeting TEXT)"
 );
-db.run("INSERT INTO foo VALUES (?)", "Welcome to bun!");
-db.run("INSERT INTO foo VALUES (?)", "Hello World!");
+db.run("INSERT INTO foo (greeting) VALUES (?)", "Welcome to bun!");
+db.run("INSERT INTO foo (greeting) VALUES (?)", "Hello World!");
 
 // get the first row
 db.query("SELECT * FROM foo").get();

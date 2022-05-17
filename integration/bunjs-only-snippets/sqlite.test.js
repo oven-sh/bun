@@ -381,3 +381,50 @@ it("db.query()", () => {
   db.close();
   db.close();
 });
+
+it("db.transaction()", () => {
+  const db = Database.open(":memory:");
+
+  db.exec(
+    "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
+  );
+
+  const insert = db.prepare(
+    "INSERT INTO cats (name, age) VALUES (@name, @age)"
+  );
+
+  expect(db.inTransaction).toBe(false);
+  const insertMany = db.transaction((cats) => {
+    expect(db.inTransaction).toBe(true);
+    try {
+      for (const cat of cats) insert.run(cat);
+    } catch (exception) {
+      throw exception;
+    }
+  });
+
+  try {
+    insertMany([
+      { "@name": "Joey", "@age": 2 },
+      { "@name": "Sally", "@age": 4 },
+      { "@name": "Junior", "@age": 1 },
+      { "@name": "Sally", "@age": 4 },
+    ]);
+    throw new Error("Should have thrown");
+  } catch (exception) {
+    expect(exception.message).toBe("constraint failed");
+  }
+
+  expect(db.inTransaction).toBe(false);
+  expect(db.query("SELECT * FROM cats").all().length).toBe(0);
+
+  expect(db.inTransaction).toBe(false);
+  insertMany([
+    { "@name": "Joey", "@age": 2 },
+    { "@name": "Sally", "@age": 4 },
+    { "@name": "Junior", "@age": 1 },
+  ]);
+  expect(db.inTransaction).toBe(false);
+  expect(db.query("SELECT * FROM cats").all().length).toBe(3);
+  expect(db.inTransaction).toBe(false);
+});

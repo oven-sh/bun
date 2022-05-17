@@ -375,13 +375,13 @@ export class Database {
 
     // Each version of the transaction function has these same properties
     const properties = {
-      default: { value: wrapTransaction(apply, fn, db, controller.default) },
-      deferred: { value: wrapTransaction(apply, fn, db, controller.deferred) },
+      default: { value: wrapTransaction(fn, db, controller.default) },
+      deferred: { value: wrapTransaction(fn, db, controller.deferred) },
       immediate: {
-        value: wrapTransaction(apply, fn, db, controller.immediate),
+        value: wrapTransaction(fn, db, controller.immediate),
       },
       exclusive: {
-        value: wrapTransaction(apply, fn, db, controller.exclusive),
+        value: wrapTransaction(fn, db, controller.exclusive),
       },
       database: { value: this, enumerable: true },
     };
@@ -437,12 +437,11 @@ const getController = (db, self) => {
 
 // Return a new transaction function by wrapping the given function
 const wrapTransaction = (
-  apply,
   fn,
   db,
   { begin, commit, rollback, savepoint, release, rollbackTo }
 ) =>
-  function sqliteTransaction() {
+  function transaction(...args) {
     let before, after, undo;
     if (db.inTransaction) {
       before = savepoint;
@@ -453,9 +452,9 @@ const wrapTransaction = (
       after = commit;
       undo = rollback;
     }
-    before.run();
     try {
-      const result = apply.call(fn, this, arguments);
+      before.run();
+      const result = fn.apply(this, args);
       after.run();
       return result;
     } catch (ex) {

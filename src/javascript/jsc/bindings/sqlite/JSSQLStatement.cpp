@@ -254,7 +254,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, JSC::JSValue
 
         int index = sqlite3_bind_parameter_index(stmt, WTF::String(propertyName.string()).utf8().data());
         if (index == 0) {
-            throwException(globalObject, scope, createError(globalObject, "Unknown parameter name " + propertyName.string()));
+            throwException(globalObject, scope, createError(globalObject, "Unknown parameter \"" + propertyName.string() + "\""_s));
             return JSValue();
         }
 
@@ -646,7 +646,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(sqlite3_get_autocommit(db))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(!sqlite3_get_autocommit(db))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1086,6 +1086,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
         if (UNLIKELY(status != SQLITE_DONE)) {
             throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
+            sqlite3_reset(stmt);
             return JSValue::encode(jsUndefined());
         }
 
@@ -1098,6 +1099,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0)));
     } else {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
+        sqlite3_reset(stmt);
         return JSValue::encode(jsUndefined());
     }
 }
@@ -1145,6 +1147,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsNull()));
     } else {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
+        sqlite3_reset(stmt);
         return JSValue::encode(jsUndefined());
     }
 }
@@ -1164,6 +1167,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     int statusCode = sqlite3_reset(stmt);
     if (UNLIKELY(statusCode != SQLITE_OK)) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(statusCode))));
+        sqlite3_reset(stmt);
         return JSValue::encode(jsUndefined());
     }
 
@@ -1204,6 +1208,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
 
         if (UNLIKELY(status != SQLITE_DONE)) {
             throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
+            sqlite3_reset(stmt);
             return JSValue::encode(jsUndefined());
         }
 
@@ -1217,6 +1222,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0)));
     } else {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
+        sqlite3_reset(stmt);
         return JSValue::encode(jsUndefined());
     }
 }
@@ -1254,6 +1260,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         // sqlite3_reset(stmt);
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(jsUndefined()));
     } else {
+        sqlite3_reset(stmt);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(status))));
         return JSValue::encode(jsUndefined());
     }

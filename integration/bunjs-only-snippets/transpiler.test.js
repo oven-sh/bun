@@ -132,6 +132,9 @@ describe("Bun.Transpiler", () => {
     },
     platform: "bun",
     macro: {
+      inline: {
+        whatDidIPass: `${import.meta.dir}/inline.macro.js`,
+      },
       react: {
         bacon: `${import.meta.dir}/macro-check.js`,
       },
@@ -616,6 +619,35 @@ describe("Bun.Transpiler", () => {
       expectBunPrinted_("export const foo = 1 + 2", "export const foo = 3");
       expectBunPrinted_("export const foo = 1 - 2", "export const foo = -1");
       expectBunPrinted_("export const foo = 1 * 2", "export const foo = 2");
+    });
+
+    it("pass objects to macros", () => {
+      var object = {
+        helloooooooo: {
+          message: [12345],
+        },
+      };
+
+      const output = bunTranspiler.transformSync(
+        `
+        import {whatDidIPass} from 'inline';
+
+        export function foo() {
+         return whatDidIPass();
+        }
+      `,
+        object
+      );
+      expect(output).toBe(`export function foo() {
+  return {
+    helloooooooo: {
+      message: [
+        12345
+      ]
+    }
+  };
+}
+`);
     });
 
     it("rewrite string to length", () => {

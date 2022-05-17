@@ -1565,7 +1565,17 @@ Bun.serve({
 
 **If the `error` function itself throws and `development` is `false`, a generic 500 page will be shown**
 
-Currently, there is no way to stop the HTTP server once started 😅, but that will be added in a future version.
+To stop the server, call `server.stop()`:
+
+```ts
+const server = Bun.serve({
+  fetch() {
+    return new Response("HI!");
+  },
+});
+
+server.stop();
+```
 
 The interface for `Bun.serve` is based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
 

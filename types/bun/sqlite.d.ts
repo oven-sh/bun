@@ -481,7 +481,7 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    run(...params: ParamsType): void;
+    run(...params: ParamsType[]): void;
 
     /**
      * Execute the prepared statement and return the results as an array of arrays.
@@ -518,7 +518,7 @@ declare module "bun:sqlite" {
      *
      */
     values(
-      ...params: ParamsType
+      ...params: ParamsType[]
     ): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
     /**

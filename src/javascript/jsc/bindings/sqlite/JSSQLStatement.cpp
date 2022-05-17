@@ -87,7 +87,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
 
 #define DO_REBIND(param)                                                                                                \
     if (param.isObject()) {                                                                                             \
-        JSC::JSValue reb = castedThis->rebind(lexicalGlobalObject, param);                                              \
+        JSC::JSValue reb = castedThis->rebind(lexicalGlobalObject, param, true);                                        \
         if (UNLIKELY(!reb.isNumber())) {                                                                                \
             return JSValue::encode(reb); /* this means an error */                                                      \
         }                                                                                                               \
@@ -129,7 +129,7 @@ public:
 
     // static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
-    JSC::JSValue rebind(JSGlobalObject* globalObject, JSC::JSValue values);
+    JSC::JSValue rebind(JSGlobalObject* globalObject, JSC::JSValue values, bool clone);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
@@ -170,7 +170,7 @@ void JSSQLStatementConstructor::destroy(JSC::JSCell* cell)
 {
 }
 
-static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3_stmt* stmt, int i, JSC::JSValue value, JSC::ThrowScope& scope)
+static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3_stmt* stmt, int i, JSC::JSValue value, JSC::ThrowScope& scope, bool clone)
 {
 #define CHECK_BIND(param)                                                                                                            \
     int result = param;                                                                                                              \
@@ -178,6 +178,11 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, WTF::String::fromUTF8(sqlite3_errstr(result)))); \
         return false;                                                                                                                \
     }
+    // only clone if necessary
+    // SQLite has a way to call a destructor
+    // but there doesn't seem to be a way to pass a pointer?
+    // we can't use it if there's no pointer to ref/unref
+    auto transientOrStatic = (void (*)(void*))(clone ? SQLITE_TRANSIENT : SQLITE_STATIC);
 
     if (value.isUndefinedOrNull()) {
         CHECK_BIND(sqlite3_bind_null(stmt, i));
@@ -206,15 +211,15 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
         }
 
         if (roped.is8Bit()) {
-            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped.characters8()), roped.length(), SQLITE_TRANSIENT));
+            CHECK_BIND(sqlite3_bind_text(stmt, i, reinterpret_cast<const char*>(roped.characters8()), roped.length(), transientOrStatic));
         } else {
-            CHECK_BIND(sqlite3_bind_text16(stmt, i, roped.characters16(), roped.length() * 2, SQLITE_TRANSIENT));
+            CHECK_BIND(sqlite3_bind_text16(stmt, i, roped.characters16(), roped.length() * 2, transientOrStatic));
         }
 
     } else if (UNLIKELY(value.isHeapBigInt())) {
         CHECK_BIND(sqlite3_bind_int64(stmt, i, JSBigInt::toBigInt64(value)));
     } else if (JSC::JSArrayBufferView* buffer = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
-        CHECK_BIND(sqlite3_bind_blob(stmt, i, buffer->vector(), buffer->byteLength(), SQLITE_TRANSIENT));
+        CHECK_BIND(sqlite3_bind_blob(stmt, i, buffer->vector(), buffer->byteLength(), transientOrStatic));
     } else {
         throwException(lexicalGlobalObject, scope, createTypeError(lexicalGlobalObject, "Binding expected string, TypedArray, boolean, number, bigint or null"_s));
         return false;
@@ -227,7 +232,7 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
 // this function does the equivalent of
 // Object.entries(obj)
 // except without the intermediate array of arrays
-static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, JSC::JSValue targetValue, JSC::ThrowScope& scope, sqlite3_stmt* stmt)
+static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, JSC::JSValue targetValue, JSC::ThrowScope& scope, sqlite3_stmt* stmt, bool clone)
 {
     JSObject* target = targetValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -258,7 +263,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, JSC::JSValue
             return JSValue();
         }
 
-        if (!rebindValue(globalObject, stmt, index, value, scope))
+        if (!rebindValue(globalObject, stmt, index, value, scope, clone))
             return JSValue();
         RETURN_IF_EXCEPTION(scope, {});
         count++;
@@ -267,7 +272,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, JSC::JSValue
     return jsNumber(count);
 }
 
-static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, JSC::ThrowScope& scope, sqlite3_stmt* stmt)
+static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, JSC::ThrowScope& scope, sqlite3_stmt* stmt, bool clone)
 {
     sqlite3_clear_bindings(stmt);
     JSC::JSArray* array = jsDynamicCast<JSC::JSArray*>(values);
@@ -275,7 +280,7 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
 
     if (!array) {
         if (JSC::JSObject* object = values.getObject()) {
-            auto res = rebindObject(lexicalGlobalObject, object, scope, stmt);
+            auto res = rebindObject(lexicalGlobalObject, object, scope, stmt, clone);
             RETURN_IF_EXCEPTION(scope, {});
             return res;
         }
@@ -298,7 +303,7 @@ static JSC::JSValue rebindStatement(JSC::JSGlobalObject* lexicalGlobalObject, JS
     int i = 0;
     for (; i < count; i++) {
         JSC::JSValue value = array->getIndexQuickly(i);
-        rebindValue(lexicalGlobalObject, stmt, i + 1, value, scope);
+        rebindValue(lexicalGlobalObject, stmt, i + 1, value, scope, clone);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -584,7 +589,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     if (!bindingsAliveScope.value().isUndefinedOrNull()) {
         if (bindingsAliveScope.value().isObject()) {
-            JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, statement);
+            JSC::JSValue reb = rebindStatement(lexicalGlobalObject, bindingsAliveScope.value(), scope, statement, false);
             if (UNLIKELY(!reb.isNumber())) {
                 sqlite3_finalize(statement);
                 return JSValue::encode(reb); /* this means an error */
@@ -1375,12 +1380,12 @@ JSSQLStatement::~JSSQLStatement()
     }
 }
 
-JSC::JSValue JSSQLStatement::rebind(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values)
+JSC::JSValue JSSQLStatement::rebind(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue values, bool clone)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stmt = this->stmt;
-    auto val = rebindStatement(lexicalGlobalObject, values, scope, stmt);
+    auto val = rebindStatement(lexicalGlobalObject, values, scope, stmt, clone);
     if (val.isNumber()) {
         RELEASE_AND_RETURN(scope, val);
     } else {

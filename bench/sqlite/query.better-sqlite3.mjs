@@ -7,7 +7,7 @@ const db = createRequire(import.meta.url)("better-sqlite3")(
 {
   const sql = db.prepare(`SELECT * FROM "Order"`);
 
-  bench('SELECT * FROM "Order" (objects)', () => {
+  bench('SELECT * FROM "Order"', () => {
     sql.all();
   });
 }
@@ -15,7 +15,7 @@ const db = createRequire(import.meta.url)("better-sqlite3")(
 {
   const sql = db.prepare(`SELECT * FROM "Product"`);
 
-  bench('SELECT * FROM "Product" (objects)', () => {
+  bench('SELECT * FROM "Product"', () => {
     sql.all();
   });
 }
@@ -23,7 +23,7 @@ const db = createRequire(import.meta.url)("better-sqlite3")(
 {
   const sql = db.prepare(`SELECT * FROM "OrderDetail"`);
 
-  bench('SELECT * FROM "OrderDetail" (objects)', () => {
+  bench('SELECT * FROM "OrderDetail"', () => {
     sql.all();
   });
 }

@@ -1,5 +1,5 @@
 import { bench, run } from "mitata";
-import { Database } from "sqlite";
+import { Database } from "bun:sqlite";
 const db = Database.open("/tmp/northwind.sqlite");
 
 {

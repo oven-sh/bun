@@ -1060,7 +1060,6 @@ interface BufferEncodingOption {
 
 declare var Bun: typeof import("bun");
 
-
 // ./ffi.d.ts
 
 /**
@@ -1827,7 +1826,6 @@ declare module "bun:ffi" {
   export const suffix: string;
 }
 
-
 // ./sqlite.d.ts
 
 /**
@@ -2313,7 +2311,7 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    run(...params: ParamsType): void;
+    run(...params: ParamsType[]): void;
 
     /**
      * Execute the prepared statement and return the results as an array of arrays.
@@ -2350,7 +2348,7 @@ declare module "bun:sqlite" {
      *
      */
     values(
-      ...params: ParamsType
+      ...params: ParamsType[]
     ): Array<Array<string | bigint | number | boolean | Uint8Array>>;
 
     /**
@@ -2577,7 +2575,6 @@ declare module "bun:sqlite" {
     | null
     | Record<string, string | bigint | TypedArray | number | boolean | null>;
 }
-
 
 // ./fs.d.ts
 
@@ -6180,7 +6177,6 @@ declare module "node:fs" {
   export = fs;
 }
 
-
 // ./html-rewriter.d.ts
 
 declare namespace HTMLRewriterTypes {
@@ -6296,7 +6292,6 @@ declare class HTMLRewriter {
    */
   transform(input: Response): Response;
 }
-
 
 // ./globals.d.ts
 
@@ -7726,7 +7721,6 @@ declare var Loader: {
   resolveSync: (specifier: string, from: string) => string;
 };
 
-
 // ./path.d.ts
 
 /**
@@ -7934,7 +7928,6 @@ declare module "node:path/win32" {
   export * from "path/win32";
 }
 
-
 // ./bun-test.d.ts
 
 /**
@@ -7973,4 +7966,3 @@ declare module "test" {
   import BunTestModule = require("bun:test");
   export = BunTestModule;
 }
-

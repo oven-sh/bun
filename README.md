@@ -2128,14 +2128,14 @@ db.run(
 // Statement object
 var statement = db.query("SELECT * FROM foo WHERE count = ?");
 
-// return all the query results as an array of arrays, binding 2 to "count"
+// return the first row as an object, binding 2 to the count parameter
 statement.get(2);
 // => { id: 1, greeting: "Welcome to bun!", count: 2 }
 
 // Statement object, but with named parameters
 var statement = db.query("SELECT * FROM foo WHERE count = $count");
 
-// return all the query results as an array of arrays, binding 2 to "count"
+// return the first row as an object, binding 2 to the count parameter
 statement.get({ $count: 2 });
 // => { id: 1, greeting: "Welcome to bun!", count: 2 }
 ```

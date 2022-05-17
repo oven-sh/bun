@@ -229,7 +229,7 @@ declare module "bun:sqlite" {
      */
     prepare<ParamsType = SQLQueryBindings, ReturnType = any>(
       sql: string,
-      ...params: ParamsType
+      ...params: ParamsType[]
     ): Statement<ParamsType, ReturnType>;
 
     /**
@@ -246,7 +246,7 @@ declare module "bun:sqlite" {
      * console.log(db.inTransaction());
      * ```
      */
-    get inTransaction(): bool;
+    get inTransaction(): boolean;
 
     /**
      * Close the database connection.
@@ -309,7 +309,7 @@ declare module "bun:sqlite" {
      * @param path The path to the SQLite library
      *
      */
-    static setCustomSQLite(path: string): bool;
+    static setCustomSQLite(path: string): boolean;
 
     /**
      * Creates a function that always runs inside a transaction. When the
@@ -412,7 +412,7 @@ declare module "bun:sqlite" {
      * // => [{bar: "foo"}]
      * ```
      */
-    all(...params: ParamsType): ReturnType[];
+    all(...params: ParamsType[]): ReturnType[];
 
     /**
      * Execute the prepared statement and return **the first** result.
@@ -448,7 +448,7 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      *
      */
-    get(...params: ParamsType): ReturnType | null;
+    get(...params: ParamsType[]): ReturnType | null;
 
     /**
      * Execute the prepared statement. This returns `undefined`.
@@ -734,7 +734,7 @@ declare module "bun:sqlite" {
    * that probably points to a deficiency in this API.
    *
    */
-  export const native: ?any;
+  export var native: any;
 
   export type SQLQueryBindings =
     | string

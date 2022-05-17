@@ -33,8 +33,9 @@
 #ifdef LAZY_LOAD_SQLITE
 #include "lazy_sqlite3.h"
 #else
-static void lazyLoadSQLite()
+static inline int lazyLoadSQLite()
 {
+    return 0;
 }
 
 #endif
@@ -336,10 +337,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         return JSValue::encode(JSC::jsUndefined());
     }
 
-#ifndef LAZY_LOAD_SQLITE
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(false)));
-#endif
-
+#ifdef LAZY_LOAD_SQLITE
     if (sqlite3_handle) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLite already loaded\nThis function can only be called before SQLite has been loaded and exactly once. SQLite auto-loads when the first time you open a Database."_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -352,6 +350,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return JSValue::encode(JSC::jsUndefined());
     }
+#endif
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(true)));
 }

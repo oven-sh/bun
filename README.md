@@ -2044,7 +2044,8 @@ If you're on macOS, you will need to first use a custom SQLite install (you can 
 import { Database } from "bun:sqlite";
 
 // on macOS, this must be run before any other calls to `Database`
-// if called on linux, it will return false and do nothing
+// if called on linux, it will return true and do nothing
+// on linux it will still check that a string was passed
 Database.setCustomSQLite("/path/to/sqlite.dylib");
 
 var db = new Database();

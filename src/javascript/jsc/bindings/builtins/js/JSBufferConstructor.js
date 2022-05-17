@@ -34,7 +34,7 @@ function from(items) {
 
 
     // TODO: figure out why private symbol not found
-    if (typeof items === 'string' || ArrayBuffer.isView(items)) {
+    if (typeof items === 'string' || (typeof items === 'object' && items && (items instanceof ArrayBuffer || items instanceof SharedArrayBuffer))) {
         switch (@argumentCount()) {
             case 1: {
                 return new this(items);

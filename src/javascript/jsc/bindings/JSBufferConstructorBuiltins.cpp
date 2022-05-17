@@ -44,7 +44,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsBufferConstructorFromCodeLength = 936;
+const int s_jsBufferConstructorFromCodeLength = 1019;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferConstructorFromCode =
     "(function (items) {\n" \
@@ -55,7 +55,7 @@ const char* const s_jsBufferConstructorFromCode =
     "\n" \
     "\n" \
     "    //\n" \
-    "    if (typeof items === 'string' || ArrayBuffer.isView(items)) {\n" \
+    "    if (typeof items === 'string' || (typeof items === 'object' && items && (items instanceof ArrayBuffer || items instanceof SharedArrayBuffer))) {\n" \
     "        switch (@argumentCount()) {\n" \
     "            case 1: {\n" \
     "                return new this(items);\n" \

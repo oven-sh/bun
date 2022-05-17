@@ -33,7 +33,8 @@ function from(items) {
         @throwTypeError("Buffer.from requires |this| to be a constructor");
 
 
-    if (typeof items === 'string' || @ArrayBuffer.@isView(items)) {
+    // TODO: figure out why private symbol not found
+    if (typeof items === 'string' || ArrayBuffer.isView(items)) {
         switch (@argumentCount()) {
             case 1: {
                 return new this(items);

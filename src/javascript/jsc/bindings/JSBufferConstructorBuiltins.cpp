@@ -44,7 +44,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsBufferConstructorFromCodeLength = 931;
+const int s_jsBufferConstructorFromCodeLength = 936;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferConstructorFromCode =
     "(function (items) {\n" \
@@ -54,7 +54,8 @@ const char* const s_jsBufferConstructorFromCode =
     "        @throwTypeError(\"Buffer.from requires |this| to be a constructor\");\n" \
     "\n" \
     "\n" \
-    "    if (typeof items === 'string' || @ArrayBuffer.@isView(items)) {\n" \
+    "    //\n" \
+    "    if (typeof items === 'string' || ArrayBuffer.isView(items)) {\n" \
     "        switch (@argumentCount()) {\n" \
     "            case 1: {\n" \
     "                return new this(items);\n" \

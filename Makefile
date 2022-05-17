@@ -212,6 +212,7 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/javascript/jsc/bindings/ \
 					  -Isrc/javascript/jsc/bindings/webcore \
+					  -Isrc/javascript/jsc/bindings/sqlite \
 					  -I$(ZLIB_INCLUDE_DIR)
 					  
 

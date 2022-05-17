@@ -257,7 +257,10 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, JSC::JSValue
         else
             value = target->get(globalObject, propertyName);
 
-        int index = sqlite3_bind_parameter_index(stmt, WTF::String(propertyName.string()).utf8().data());
+        // Ensure this gets freed on scope clear
+        auto utf8 = WTF::String(propertyName.string()).utf8();
+
+        int index = sqlite3_bind_parameter_index(stmt, utf8.data());
         if (index == 0) {
             throwException(globalObject, scope, createError(globalObject, "Unknown parameter \"" + propertyName.string() + "\""_s));
             return JSValue();

@@ -24,163 +24,6 @@
  * | `null` | `NULL` |
  */
 declare module "bun:sqlite" {
-  /**
-   * Constants from `sqlite3.h`
-   *
-   * This list isn't exhaustive, but some of the ones which are relevant
-   */
-  export const constants: {
-    /**
-     * Open the database as read-only (no write operations, no create).
-     * @value 0x00000001
-     */
-    SQLITE_OPEN_READONLY: number;
-    /**
-     * Open the database for reading and writing
-     * @value 0x00000002
-     */
-    SQLITE_OPEN_READWRITE: number;
-    /**
-     * Allow creating a new database
-     * @value 0x00000004
-     */
-    SQLITE_OPEN_CREATE: number;
-    /**
-     *
-     * @value 0x00000008
-     */
-    SQLITE_OPEN_DELETEONCLOSE: number;
-    /**
-     *
-     * @value 0x00000010
-     */
-    SQLITE_OPEN_EXCLUSIVE: number;
-    /**
-     *
-     * @value 0x00000020
-     */
-    SQLITE_OPEN_AUTOPROXY: number;
-    /**
-     *
-     * @value 0x00000040
-     */
-    SQLITE_OPEN_URI: number;
-    /**
-     *
-     * @value 0x00000080
-     */
-    SQLITE_OPEN_MEMORY: number;
-    /**
-     *
-     * @value 0x00000100
-     */
-    SQLITE_OPEN_MAIN_DB: number;
-    /**
-     *
-     * @value 0x00000200
-     */
-    SQLITE_OPEN_TEMP_DB: number;
-    /**
-     *
-     * @value 0x00000400
-     */
-    SQLITE_OPEN_TRANSIENT_DB: number;
-    /**
-     *
-     * @value 0x00000800
-     */
-    SQLITE_OPEN_MAIN_JOURNAL: number;
-    /**
-     *
-     * @value 0x00001000
-     */
-    SQLITE_OPEN_TEMP_JOURNAL: number;
-    /**
-     *
-     * @value 0x00002000
-     */
-    SQLITE_OPEN_SUBJOURNAL: number;
-    /**
-     *
-     * @value 0x00004000
-     */
-    SQLITE_OPEN_SUPER_JOURNAL: number;
-    /**
-     *
-     * @value 0x00008000
-     */
-    SQLITE_OPEN_NOMUTEX: number;
-    /**
-     *
-     * @value 0x00010000
-     */
-    SQLITE_OPEN_FULLMUTEX: number;
-    /**
-     *
-     * @value 0x00020000
-     */
-    SQLITE_OPEN_SHAREDCACHE: number;
-    /**
-     *
-     * @value 0x00040000
-     */
-    SQLITE_OPEN_PRIVATECACHE: number;
-    /**
-     *
-     * @value 0x00080000
-     */
-    SQLITE_OPEN_WAL: number;
-    /**
-     *
-     * @value 0x01000000
-     */
-    SQLITE_OPEN_NOFOLLOW: number;
-    /**
-     *
-     * @value 0x02000000
-     */
-    SQLITE_OPEN_EXRESCODE: number;
-    /**
-     *
-     * @value 0x01
-     */
-    SQLITE_PREPARE_PERSISTENT: number;
-    /**
-     *
-     * @value 0x02
-     */
-    SQLITE_PREPARE_NORMALIZE: number;
-    /**
-     *
-     * @value 0x04
-     */
-    SQLITE_PREPARE_NO_VTAB: number;
-  };
-
-  /**
-   * The native module implementing the sqlite3 C bindings
-   *
-   * It is lazily-initialized, so this will return `undefined` until the first
-   * call to new Database().
-   *
-   * The native module makes no gurantees about ABI stability, so it is left
-   * untyped
-   *
-   * If you need to use it directly for some reason, please let us know because
-   * that probably points to a deficiency in this API.
-   *
-   */
-  export const native: ?any;
-
-  export type SQLQueryBindings =
-    | string
-    | bigint
-    | TypedArray
-    | number
-    | boolean
-    | null
-    | Record<string, string | bigint | TypedArray | number | boolean | null>;
-
   export class Database {
     /**
      * Open or create a SQLite3 database
@@ -445,7 +288,7 @@ declare module "bun:sqlite" {
      *
      * macOS requires a custom SQLite3 library to be linked because the Apple build of SQLite for macOS disables loading extensions. See {@link Database.setCustomSQLite}
      *
-     * Bun chooses the Apple build of SQLite on macOS because it brings a ~40% performance improvement.
+     * Bun chooses the Apple build of SQLite on macOS because it brings a ~50% performance improvement.
      *
      * @param extension name/path of the extension to load
      * @param entryPoint optional entry point of the extension
@@ -467,7 +310,54 @@ declare module "bun:sqlite" {
      *
      */
     static setCustomSQLite(path: string): bool;
+
+    /**
+     * Creates a function that always runs inside a transaction. When the
+     * function is invoked, it will begin a new transaction. When the function
+     * returns, the transaction will be committed. If an exception is thrown,
+     * the transaction will be rolled back (and the exception will propagate as
+     * usual).
+     *
+     * @param insideTransaction The callback which runs inside a transaction
+     *
+     * @example
+     * ```ts
+     * // setup
+     * import { Database } from "bun:sqlite";
+     * const db = Database.open(":memory:");
+     * db.exec(
+     *   "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
+     * );
+     *
+     * const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
+     * const insertMany = db.transaction((cats) => {
+     *   for (const cat of cats) insert.run(cat);
+     * });
+     *
+     * insertMany([
+     *   { $name: "Joey", $age: 2 },
+     *   { $name: "Sally", $age: 4 },
+     *   { $name: "Junior", $age: 1 },
+     * ]);
+     * ```
+     */
+    transaction(insideTransaction: (...args: any) => void): CallableFunction & {
+      /**
+       * uses "BEGIN DEFERRED"
+       */
+      deferred: (...args: any) => void;
+      /**
+       * uses "BEGIN IMMEDIATE"
+       */
+      immediate: (...args: any) => void;
+      /**
+       * uses "BEGIN EXCLUSIVE"
+       */
+      exclusive: (...args: any) => void;
+    };
   }
+
+  export { default as Database };
 
   /**
    * A prepared statement.
@@ -697,4 +587,161 @@ declare module "bun:sqlite" {
      */
     readonly native: any;
   }
+
+  /**
+   * Constants from `sqlite3.h`
+   *
+   * This list isn't exhaustive, but some of the ones which are relevant
+   */
+  export const constants: {
+    /**
+     * Open the database as read-only (no write operations, no create).
+     * @value 0x00000001
+     */
+    SQLITE_OPEN_READONLY: number;
+    /**
+     * Open the database for reading and writing
+     * @value 0x00000002
+     */
+    SQLITE_OPEN_READWRITE: number;
+    /**
+     * Allow creating a new database
+     * @value 0x00000004
+     */
+    SQLITE_OPEN_CREATE: number;
+    /**
+     *
+     * @value 0x00000008
+     */
+    SQLITE_OPEN_DELETEONCLOSE: number;
+    /**
+     *
+     * @value 0x00000010
+     */
+    SQLITE_OPEN_EXCLUSIVE: number;
+    /**
+     *
+     * @value 0x00000020
+     */
+    SQLITE_OPEN_AUTOPROXY: number;
+    /**
+     *
+     * @value 0x00000040
+     */
+    SQLITE_OPEN_URI: number;
+    /**
+     *
+     * @value 0x00000080
+     */
+    SQLITE_OPEN_MEMORY: number;
+    /**
+     *
+     * @value 0x00000100
+     */
+    SQLITE_OPEN_MAIN_DB: number;
+    /**
+     *
+     * @value 0x00000200
+     */
+    SQLITE_OPEN_TEMP_DB: number;
+    /**
+     *
+     * @value 0x00000400
+     */
+    SQLITE_OPEN_TRANSIENT_DB: number;
+    /**
+     *
+     * @value 0x00000800
+     */
+    SQLITE_OPEN_MAIN_JOURNAL: number;
+    /**
+     *
+     * @value 0x00001000
+     */
+    SQLITE_OPEN_TEMP_JOURNAL: number;
+    /**
+     *
+     * @value 0x00002000
+     */
+    SQLITE_OPEN_SUBJOURNAL: number;
+    /**
+     *
+     * @value 0x00004000
+     */
+    SQLITE_OPEN_SUPER_JOURNAL: number;
+    /**
+     *
+     * @value 0x00008000
+     */
+    SQLITE_OPEN_NOMUTEX: number;
+    /**
+     *
+     * @value 0x00010000
+     */
+    SQLITE_OPEN_FULLMUTEX: number;
+    /**
+     *
+     * @value 0x00020000
+     */
+    SQLITE_OPEN_SHAREDCACHE: number;
+    /**
+     *
+     * @value 0x00040000
+     */
+    SQLITE_OPEN_PRIVATECACHE: number;
+    /**
+     *
+     * @value 0x00080000
+     */
+    SQLITE_OPEN_WAL: number;
+    /**
+     *
+     * @value 0x01000000
+     */
+    SQLITE_OPEN_NOFOLLOW: number;
+    /**
+     *
+     * @value 0x02000000
+     */
+    SQLITE_OPEN_EXRESCODE: number;
+    /**
+     *
+     * @value 0x01
+     */
+    SQLITE_PREPARE_PERSISTENT: number;
+    /**
+     *
+     * @value 0x02
+     */
+    SQLITE_PREPARE_NORMALIZE: number;
+    /**
+     *
+     * @value 0x04
+     */
+    SQLITE_PREPARE_NO_VTAB: number;
+  };
+
+  /**
+   * The native module implementing the sqlite3 C bindings
+   *
+   * It is lazily-initialized, so this will return `undefined` until the first
+   * call to new Database().
+   *
+   * The native module makes no gurantees about ABI stability, so it is left
+   * untyped
+   *
+   * If you need to use it directly for some reason, please let us know because
+   * that probably points to a deficiency in this API.
+   *
+   */
+  export const native: ?any;
+
+  export type SQLQueryBindings =
+    | string
+    | bigint
+    | TypedArray
+    | number
+    | boolean
+    | null
+    | Record<string, string | bigint | TypedArray | number | boolean | null>;
 }

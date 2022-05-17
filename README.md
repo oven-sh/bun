@@ -1881,6 +1881,7 @@ Internally, this calls [`sqlite3_prepare_v3`](https://www.sqlite.org/c3ref/prepa
 #### Database.prototype.exec & Database.prototype.run
 
 `exec` is for one-off executing a query which does not need to return anything.
+`run` is an alias.
 
 ```ts
 class Database {
@@ -1922,6 +1923,75 @@ db.exec("INSERT INTO foo (greeting) VALUES ($greeting)", {
 For queries which aren't intended to be run multiple times, it should be faster to use `exec()` than `prepare()` or `query()` because it doesn't create a `Statement` object.
 
 Internally, this function calls [`sqlite3_prepare`](https://www.sqlite.org/c3ref/prepare.html), [`sqlite3_step`](https://www.sqlite.org/c3ref/step.html), and [`sqlite3_finalize`](https://www.sqlite.org/c3ref/finalize.html).
+
+#### Database.prototype.transaction
+
+Creates a function that always runs inside a transaction. When the function is invoked, it will begin a new transaction. When the function returns, the transaction will be committed. If an exception is thrown, the transaction will be rolled back (and the exception will propagate as usual).
+
+```ts
+// setup
+import { Database } from "bun:sqlite";
+const db = Database.open(":memory:");
+db.exec(
+  "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
+);
+
+const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
+const insertMany = db.transaction((cats) => {
+  for (const cat of cats) insert.run(cat);
+});
+
+insertMany([
+  { $name: "Joey", $age: 2 },
+  { $name: "Sally", $age: 4 },
+  { $name: "Junior", $age: 1 },
+]);
+```
+
+Transaction functions can be called from inside other transaction functions. When doing so, the inner transaction becomes a savepoint.
+
+```ts
+// setup
+import { Database } from "bun:sqlite";
+const db = Database.open(":memory:");
+db.exec(
+  "CREATE TABLE expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT, dollars INTEGER);"
+);
+db.exec(
+  "CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, age INTEGER)"
+);
+const newExpense = db.prepare(
+  "INSERT INTO expenses (note, dollars) VALUES (?, ?)"
+);
+const insert = db.prepare("INSERT INTO cats (name, age) VALUES ($name, $age)");
+const insertMany = db.transaction((cats) => {
+  for (const cat of cats) insert.run(cat);
+});
+
+const adopt = db.transaction((cats) => {
+  newExpense.run("adoption fees", 20);
+  insertMany(cats); // nested transaction
+});
+
+adopt([
+  { $name: "Joey", $age: 2 },
+  { $name: "Sally", $age: 4 },
+  { $name: "Junior", $age: 1 },
+]);
+```
+
+Transactions also come with `deferred`, `immediate`, and `exclusive` versions.
+
+```ts
+insertMany(cats); // uses "BEGIN"
+insertMany.deferred(cats); // uses "BEGIN DEFERRED"
+insertMany.immediate(cats); // uses "BEGIN IMMEDIATE"
+insertMany.exclusive(cats); // uses "BEGIN EXCLUSIVE"
+```
+
+Any arguments passed to the transaction function will be forwarded to the wrapped function, and any values returned from the wrapped function will be returned from the transaction function. The wrapped function will also have access to the same this binding as the transaction function.
+
+bun:sqlite's transaction implementation is based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3/blob/master/docs/api.md#transactionfunction---function) (along with this section of the docs), so thanks to Joshua Wise and better-sqlite3 constributors.
 
 #### Database.prototype.serialize
 

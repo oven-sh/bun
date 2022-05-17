@@ -3,7 +3,7 @@ import { expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-var port = 60000;
+var port = 40000;
 
 it("should work for a hello world", async () => {
   const server = serve({

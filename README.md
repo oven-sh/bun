@@ -2069,7 +2069,7 @@ TLDR:
 - [`Statement.get(...optionalParamsToBind)`](#statementget) returns the first row as an object
 - [`Statement.run(...optionalParamsToBind)`](#statementrun) runs the statement and returns nothing
 - [`Statement.finalize()`](#statementfinalize) closes the statement
-- [`Statement.toString()`](#statementtostring--) prints the expanded SQL, including bound parameters
+- [`Statement.toString()`](#statementtostring) prints the expanded SQL, including bound parameters
 - `get Statement.columnNames` get the returned column names
 - `get Statement.paramsCount` how many parameters are expected?
 

@@ -32,7 +32,7 @@ endif
 AR=
 
 
-
+CXX_VERSION=c++2a
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
 PACKAGE_NAME = bun-$(TRIPLET)
 PACKAGES_REALPATH = $(realpath packages)
@@ -260,7 +260,7 @@ endif
 BORINGSSL_PACKAGE = --pkg-begin boringssl $(BUN_DEPS_DIR)/boringssl.zig --pkg-end
 
 CLANG_FLAGS = $(INCLUDE_DIRS) \
-		-std=gnu++17 \
+		-std=$(CXX_VERSION) \
 		-DSTATICALLY_LINKED_WITH_JavaScriptCore=1 \
 		-DSTATICALLY_LINKED_WITH_WTF=1 \
 		-DSTATICALLY_LINKED_WITH_BMALLOC=1 \
@@ -379,7 +379,7 @@ tinycc:
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 		
 generate-builtins:
-	rm -f src/javascript/jsc/bindings/WebCoreBuiltins.cpp src/javascript/jsc/bindings/WebCoreBuiltins.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCore*Builtins* || echo ""
+	rm -f src/javascript/jsc/bindings/WebCoreBuiltins.cpp src/javascript/jsc/bindings/WebCoreBuiltins.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/*Strategy*Builtins* src/javascript/jsc/bindings/*Stream*Builtins* src/javascript/jsc/bindings/WebCore*Builtins* || echo ""
 	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --force 
 	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --wrappers-only
 	echo '//clang-format off' > /tmp/1.h
@@ -393,9 +393,6 @@ generate-builtins:
 	cat /tmp/1.h  src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h > src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1
 	mv src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1 src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h
 	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h
-# Since we don't currently support web streams, we don't need this line
-# so we comment it out
-	$(SED) -i -e 's/globalObject.addStaticGlobals/\/\/globalObject.addStaticGlobals/' src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp
 # We delete this file because our script already builds all .cpp files
 # We will get duplicate symbols if we don't delete it
 	rm src/javascript/jsc/bindings/WebCoreJSBuiltins.cpp
@@ -551,7 +548,7 @@ build-obj-safe:
 	$(ZIG) build obj -Drelease-safe
 
 UWS_CC_FLAGS = -pthread  -DLIBUS_USE_OPENSSL=1 -DUWS_HTTPRESPONSE_NO_WRITEMARK=1  -DLIBUS_USE_BORINGSSL=1 -DWITH_BORINGSSL=1 -Wpedantic -Wall -Wextra -Wsign-conversion -Wconversion $(UWS_INCLUDE) -DUWS_WITH_PROXY
-UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=gnu++17 -fno-exceptions
+UWS_CXX_FLAGS = $(UWS_CC_FLAGS) -std=$(CXX_VERSION) -fno-exceptions
 UWS_LDFLAGS = -I$(BUN_DEPS_DIR)/boringssl/include -I$(ZLIB_INCLUDE_DIR)
 USOCKETS_DIR = $(BUN_DEPS_DIR)/uws/uSockets/
 USOCKETS_SRC_DIR = $(BUN_DEPS_DIR)/uws/uSockets/src/
@@ -1147,7 +1144,7 @@ wasm-return1:
 
 EMIT_LLVM_FOR_RELEASE= -emit-llvm
 EMIT_LLVM_FOR_DEBUG= 
-EMIT_LLVM=$(EMIT_LLVM_FOR_RELEASE)
+EMIT_LLVM=$(EMIT_LLVM_FOR_DEBUG)
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest

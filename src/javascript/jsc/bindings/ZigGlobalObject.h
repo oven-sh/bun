@@ -12,6 +12,7 @@ class LazyClassStructure;
 
 namespace WebCore {
 class ScriptExecutionContext;
+class DOMGuardedObject;
 }
 
 #include "root.h"
@@ -34,6 +35,7 @@ class ScriptExecutionContext;
 namespace Zig {
 
 using JSDOMStructureMap = HashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
+using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
 
 class GlobalObject : public JSC::JSGlobalObject {
     using Base = JSC::JSGlobalObject;
@@ -41,21 +43,22 @@ class GlobalObject : public JSC::JSGlobalObject {
 public:
     static const JSC::ClassInfo s_info;
     static const JSC::GlobalObjectMethodTable s_globalObjectMethodTable;
-    static constexpr bool needsDestruction = false;
 
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForGlobalObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForGlobalObject = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForGlobalObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForGlobalObject = WTFMove(space); });
+            [](auto& spaces) { return spaces.m_clientSubspaceForWorkerGlobalScope.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWorkerGlobalScope = WTFMove(space); },
+            [](auto& spaces) { return spaces.m_subspaceForWorkerGlobalScope.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForWorkerGlobalScope = WTFMove(space); },
+            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
     }
 
     ~GlobalObject();
+    static void destroy(JSC::JSCell*);
 
     static constexpr const JSC::ClassInfo* info() { return &s_info; }
 
@@ -66,6 +69,19 @@ public:
 
     // Make binding code generation easier.
     GlobalObject* globalObject() { return this; }
+
+    DOMGuardedObjectSet& guardedObjects() WTF_REQUIRES_LOCK(m_gcLock) { return m_guardedObjects; }
+
+    const DOMGuardedObjectSet& guardedObjects() const WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        ASSERT(!Thread::mayBeGCThread());
+        return m_guardedObjects;
+    }
+    DOMGuardedObjectSet& guardedObjects(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
+    {
+        ASSERT(!vm().heap.mutatorShouldBeFenced());
+        return m_guardedObjects;
+    }
 
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure)
     {
@@ -106,6 +122,8 @@ public:
 
     Lock& gcLock() WTF_RETURNS_LOCK(m_gcLock) { return m_gcLock; }
 
+    void clearDOMGuardedObjects();
+
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static void queueMicrotaskToEventLoop(JSC::JSGlobalObject& global, Ref<JSC::Microtask>&& task);
@@ -133,6 +151,7 @@ public:
 
 private:
     void addBuiltinGlobals(JSC::VM&);
+    void finishCreation(JSC::VM&);
     friend void WebCore::JSBuiltinInternalFunctions::initialize(Zig::GlobalObject&);
     WebCore::JSBuiltinInternalFunctions m_builtinInternalFunctions;
     GlobalObject(JSC::VM& vm, JSC::Structure* structure);
@@ -144,6 +163,7 @@ private:
     Ref<WebCore::DOMWrapperWorld> m_world;
     LazyClassStructure m_JSFFIFunctionStructure;
     LazyClassStructure m_NapiClassStructure;
+    DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
 };
 
 class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {

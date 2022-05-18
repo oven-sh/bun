@@ -28,7 +28,7 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMPromise.h"
-#include "WorkerGlobalScope.h"
+// #include "WorkerGlobalScope.h"
 
 namespace WebCore {
 
@@ -50,14 +50,14 @@ template<typename T> struct Converter<IDLPromise<T>> : DefaultConverter<IDLPromi
         auto* promise = JSC::JSPromise::resolvedPromise(globalObject, value);
         if (scope.exception()) {
             auto* scriptExecutionContext = globalObject->scriptExecutionContext();
-            if (is<WorkerGlobalScope>(scriptExecutionContext)) {
-                auto* scriptController = downcast<WorkerGlobalScope>(*scriptExecutionContext).script();
-                bool terminatorCausedException = vm.isTerminationException(scope.exception());
-                if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution())) {
-                    scriptController->forbidExecution();
-                    return nullptr;
-                }
-            }
+            // if (is<WorkerGlobalScope>(scriptExecutionContext)) {
+            //     auto* scriptController = downcast<WorkerGlobalScope>(*scriptExecutionContext).script();
+            //     bool terminatorCausedException = vm.isTerminationException(scope.exception());
+            //     if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution())) {
+            //         scriptController->forbidExecution();
+            //         return nullptr;
+            //     }
+            // }
             exceptionThrower(lexicalGlobalObject, scope);
             return nullptr;
         }

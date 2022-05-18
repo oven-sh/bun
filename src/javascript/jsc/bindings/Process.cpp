@@ -205,7 +205,7 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::CustomGetterSetter::create(vm, Process_getPPID, nullptr),
         static_cast<unsigned>(JSC::PropertyAttribute::CustomValue));
 
-    putDirectCustomAccessor(vm, clientData->builtinNames().titlePublicName(),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "dlopen"_s),
         JSC::CustomGetterSetter::create(vm, Process_getTitle, Process_setTitle),
         static_cast<unsigned>(JSC::PropertyAttribute::CustomValue));
 

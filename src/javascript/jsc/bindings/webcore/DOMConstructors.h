@@ -287,6 +287,7 @@ enum class DOMConstructorID : uint16_t {
     CryptoKey,
     SubtleCrypto,
     CSSConditionRule,
+    CSSContainerRule,
     CSSCounterStyleRule,
     CSSFontFaceRule,
     CSSFontPaletteValuesRule,
@@ -333,6 +334,15 @@ enum class DOMConstructorID : uint16_t {
     CSSUnparsedValue,
     StylePropertyMap,
     StylePropertyMapReadOnly,
+    CSSColor,
+    CSSColorValue,
+    CSSHSL,
+    CSSHWB,
+    CSSLCH,
+    CSSLab,
+    CSSOKLCH,
+    CSSOKLab,
+    CSSRGB,
     CSSMathInvert,
     CSSMathMax,
     CSSMathMin,
@@ -844,13 +854,15 @@ enum class DOMConstructorID : uint16_t {
     XPathResult,
     XSLTProcessor,
 
-    // Bun extras
-    Buffer
+    // --bun--
+    Buffer,
 };
+
+static constexpr unsigned numberOfDOMConstructorsBase = 846;
 
 static constexpr unsigned bunExtraConstructors = 1;
 
-static constexpr unsigned numberOfDOMConstructors = 836 + bunExtraConstructors;
+static constexpr unsigned numberOfDOMConstructors = numberOfDOMConstructorsBase + bunExtraConstructors;
 
 class DOMConstructors {
     WTF_MAKE_NONCOPYABLE(DOMConstructors);

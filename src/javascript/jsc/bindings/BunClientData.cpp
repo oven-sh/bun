@@ -14,21 +14,24 @@
 #include "wtf/MainThread.h"
 
 #include "JSDOMConstructorBase.h"
+#include "JSDOMBuiltinConstructorBase.h"
 
 #include "BunGCOutputConstraint.h"
 #include "WebCoreTypedArrayController.h"
 #include "JavaScriptCore/AbstractSlotVisitorInlines.h"
 #include "JavaScriptCore/JSCellInlines.h"
 #include "JavaScriptCore/WeakInlines.h"
+#include "JSDOMWrapper.h"
 
 namespace WebCore {
 using namespace JSC;
 
 JSHeapData::JSHeapData(Heap& heap)
-    // : m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
-    // ,
-    : m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
+    : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Zig::GlobalObject>())
+    , m_domBuiltinConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMBuiltinConstructorBase)
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
+    , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
+    , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
 
 {
 }
@@ -36,11 +39,14 @@ JSHeapData::JSHeapData(Heap& heap)
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
 JSVMClientData::JSVMClientData(VM& vm)
-    : m_builtinNames(vm)
+    : m_builtinFunctions(vm)
+    , m_builtinNames(vm)
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
+    , CLIENT_ISO_SUBSPACE_INIT(m_domBuiltinConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
+    , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
-    , m_builtinFunctions(vm)
+
 {
 }
 
@@ -59,8 +65,11 @@ JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
     return singleton;
 }
 
-JSVMClientData::~JSVMClientData() {}
-
+JSVMClientData::~JSVMClientData()
+{
+    ASSERT(m_normalWorld->hasOneRef());
+    m_normalWorld = nullptr;
+}
 void JSVMClientData::create(VM* vm)
 {
     JSVMClientData* clientData = new JSVMClientData(*vm);

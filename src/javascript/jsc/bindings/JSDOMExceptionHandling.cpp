@@ -24,6 +24,7 @@
 #include "DOMException.h"
 #include "JSDOMException.h"
 #include "JSDOMExceptionHandling.h"
+#include "JSDOMPromiseDeferred.h"
 
 #include "JavaScriptCore/ErrorHandlingScope.h"
 #include "JavaScriptCore/Exception.h"
@@ -275,10 +276,10 @@ void throwNonFiniteTypeError(JSGlobalObject& lexicalGlobalObject, JSC::ThrowScop
     throwTypeError(&lexicalGlobalObject, scope, "The provided value is non-finite"_s);
 }
 
-// JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const JSC::ClassInfo* classInfo, JSC::PropertyName attributeName)
-// {
-//     return createRejectedPromiseWithTypeError(lexicalGlobalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(classInfo->className, String(attributeName.uid())), RejectedPromiseWithTypeErrorCause::NativeGetter);
-// }
+JSC::EncodedJSValue rejectPromiseWithGetterTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const JSC::ClassInfo* classInfo, JSC::PropertyName attributeName)
+{
+    return createRejectedPromiseWithTypeError(lexicalGlobalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(classInfo->className, String(attributeName.uid())), RejectedPromiseWithTypeErrorCause::NativeGetter);
+}
 
 String makeThisTypeErrorMessage(const char* interfaceName, const char* functionName)
 {
@@ -295,16 +296,16 @@ EncodedJSValue throwThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, JSC:
     return throwTypeError(lexicalGlobalObject, scope, makeThisTypeErrorMessage(interfaceName, functionName));
 }
 
-// JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, const char* interfaceName, const char* methodName)
-// {
-//     promise.reject(TypeError, makeThisTypeErrorMessage(interfaceName, methodName));
-//     return JSValue::encode(jsUndefined());
-// }
+JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromise& promise, const char* interfaceName, const char* methodName)
+{
+    promise.reject(TypeError, makeThisTypeErrorMessage(interfaceName, methodName));
+    return JSValue::encode(jsUndefined());
+}
 
-// JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const char* interfaceName, const char* methodName)
-// {
-//     return createRejectedPromiseWithTypeError(lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, methodName), RejectedPromiseWithTypeErrorCause::InvalidThis);
-// }
+JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject& lexicalGlobalObject, const char* interfaceName, const char* methodName)
+{
+    return createRejectedPromiseWithTypeError(lexicalGlobalObject, makeThisTypeErrorMessage(interfaceName, methodName), RejectedPromiseWithTypeErrorCause::InvalidThis);
+}
 
 void throwDOMSyntaxError(JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope, ASCIILiteral message)
 {

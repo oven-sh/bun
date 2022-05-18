@@ -54,7 +54,7 @@ public:
             func(*space);
     }
 
-    // JSC::IsoSubspace m_domNamespaceObjectSpace;
+    JSC::IsoHeapCellType m_heapCellTypeForJSWorkerGlobalScope;
 
 private:
     Lock m_lock;
@@ -62,6 +62,8 @@ private:
 private:
     std::unique_ptr<ExtendedDOMIsoSubspaces> m_subspaces;
     JSC::IsoSubspace m_domConstructorSpace;
+    JSC::IsoSubspace m_domBuiltinConstructorSpace;
+    JSC::IsoSubspace m_domNamespaceObjectSpace;
 
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 };
@@ -89,6 +91,8 @@ public:
 
     Vector<JSC::IsoSubspace*>& outputConstraintSpaces() { return m_outputConstraintSpaces; }
 
+    JSC::GCClient::IsoSubspace& domBuiltinConstructorSpace() { return m_domBuiltinConstructorSpace; }
+
     template<typename Func> void forEachOutputConstraintSpace(const Func& func)
     {
         for (auto* space : m_outputConstraintSpaces)
@@ -103,8 +107,8 @@ private:
 
     RefPtr<WebCore::DOMWrapperWorld> m_normalWorld;
     JSC::GCClient::IsoSubspace m_domConstructorSpace;
-
-    // JSC::IsoSubspace m_domNamespaceObjectSpace;
+    JSC::GCClient::IsoSubspace m_domBuiltinConstructorSpace;
+    JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
 
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
@@ -168,9 +172,15 @@ static JSVMClientData* clientData(JSC::VM& vm)
     return static_cast<WebCore::JSVMClientData*>(vm.clientData);
 }
 
+static inline BunBuiltinNames& builtinNames(JSC::VM& vm)
+{
+    return clientData(vm)->builtinNames();
+}
+
 } // namespace WebCore
 
 namespace WebCore {
 using JSVMClientData = WebCore::JSVMClientData;
 using JSHeapData = WebCore::JSHeapData;
+
 }

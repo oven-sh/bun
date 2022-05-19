@@ -283,6 +283,96 @@ pub const MutableString = struct {
             return pending.len;
         }
 
+        const E = @import("./js_ast.zig").E;
+        pub fn writeString(this: *BufferedWriter, bytes: *E.String) anyerror!usize {
+            if (bytes.isUTF8()) {
+                return try this.writeAll(bytes.slice(this.context.allocator));
+            }
+
+            return try this.writeAll16(bytes.slice16());
+        }
+
+        pub fn writeAll16(this: *BufferedWriter, bytes: []const u16) anyerror!usize {
+            var pending = bytes;
+
+            if (pending.len >= max) {
+                try this.flush();
+                try this.context.list.ensureUnusedCapacity(this.context.allocator, bytes.len * 2);
+                const decoded = strings.copyUTF16IntoUTF8(
+                    this.remain()[0 .. bytes.len * 2],
+                    []const u16,
+                    bytes,
+                );
+                this.context.list.items.len += @as(usize, decoded.written);
+                return pending.len;
+            }
+
+            if (pending.len > 0) {
+                if ((pending.len * 2) + this.pos > max) {
+                    try this.flush();
+                }
+                const decoded = strings.copyUTF16IntoUTF8(
+                    this.remain()[0 .. bytes.len * 2],
+                    []const u16,
+                    bytes,
+                );
+                this.pos += @as(usize, decoded.written);
+            }
+
+            return pending.len;
+        }
+
+        pub fn writeHTMLAttributeValueString(this: *BufferedWriter, str: *E.String) anyerror!void {
+            if (str.isUTF8()) {
+                try this.writeHTMLAttributeValue(str.slice(this.context.allocator));
+                return;
+            }
+
+            try this.writeHTMLAttributeValue16(str.slice16());
+        }
+
+        pub fn writeHTMLAttributeValue(this: *BufferedWriter, bytes: []const u8) anyerror!void {
+            var slice = bytes;
+            while (slice.len > 0) {
+                if (strings.indexOfAny(slice, "\"<>")) |j| {
+                    _ = try this.writeAll(slice[0..j]);
+                    _ = switch (slice[j]) {
+                        '"' => try this.writeAll("&quot;"),
+                        '<' => try this.writeAll("&lt;"),
+                        '>' => try this.writeAll("&gt;"),
+                        else => unreachable,
+                    };
+
+                    slice = slice[j + 1 ..];
+                    continue;
+                }
+
+                _ = try this.writeAll(slice);
+                break;
+            }
+        }
+
+        pub fn writeHTMLAttributeValue16(this: *BufferedWriter, bytes: []const u16) anyerror!void {
+            var slice = bytes;
+            while (slice.len > 0) {
+                if (strings.indexOfAny16(slice, "\"<>")) |j| {
+                    _ = try this.writeAll16(slice[0..j]);
+                    _ = switch (slice[j]) {
+                        '"' => try this.writeAll("&quot;"),
+                        '<' => try this.writeAll("&lt;"),
+                        '>' => try this.writeAll("&gt;"),
+                        else => unreachable,
+                    };
+
+                    slice = slice[j + 1 ..];
+                    continue;
+                }
+
+                _ = try this.writeAll16(slice);
+                break;
+            }
+        }
+
         pub fn writer(this: *BufferedWriter) BufferedWriter.Writer {
             return BufferedWriter.Writer{ .context = this };
         }

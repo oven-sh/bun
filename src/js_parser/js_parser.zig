@@ -18,7 +18,7 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = bun.MutableString;
+const MutableString = @import("../string_mutable.zig").MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
@@ -198,6 +198,13 @@ const TransposeState = struct {
     is_await_target: bool = false,
     is_then_catch_target: bool = false,
     loc: logger.Loc,
+};
+
+var true_args = &[_]Expr{
+    .{
+        .data = .{ .e_boolean = .{ .value = true } },
+        .loc = logger.Loc.Empty,
+    },
 };
 
 const JSXTag = struct {
@@ -1010,6 +1017,15 @@ const StaticSymbolName = struct {
         pub const __exportValue = NewStaticSymbol("__exportValue");
         pub const __exportDefault = NewStaticSymbol("__exportDefault");
         pub const hmr = NewStaticSymbol("hmr");
+
+        pub const insert = NewStaticSymbol("insert");
+        pub const template = NewStaticSymbol("template");
+        pub const wrap = NewStaticSymbol("wrap");
+        pub const createComponent = NewStaticSymbol("createComponent");
+        pub const setAttribute = NewStaticSymbol("setAttribute");
+        pub const effect = NewStaticSymbol("effect");
+        pub const delegateEvents = NewStaticSymbol("delegateEvents");
+        pub const Solid = NewStaticSymbol("Solid");
     };
 };
 
@@ -2297,11 +2313,11 @@ pub const Parser = struct {
         if (!self.options.ts and self.options.features.is_macro_runtime) return try self._parse(JSParserMacro);
 
         if (self.options.ts and self.options.jsx.parse) {
-            return try self._parse(TSXParser);
+            return if (self.options.jsx.runtime != .solid) try self._parse(TSXParser) else try self._parse(SolidTSXParser);
         } else if (self.options.ts) {
             return try self._parse(TypeScriptParser);
         } else if (self.options.jsx.parse) {
-            return try self._parse(JSXParser);
+            return if (self.options.jsx.runtime != .solid) try self._parse(JSXParser) else try self._parse(SolidJSXParser);
         } else {
             return try self._parse(JavaScriptParser);
         }
@@ -2903,6 +2919,106 @@ pub const Parser = struct {
                     }) catch unreachable;
                 }
             }
+        } else if (comptime ParserType.jsx_transform_type == .solid) {
+            p.resolveGeneratedSymbol(&p.solid.wrap);
+            p.resolveGeneratedSymbol(&p.solid.insert);
+            p.resolveGeneratedSymbol(&p.solid.template);
+            p.resolveGeneratedSymbol(&p.solid.delegateEvents);
+            p.resolveGeneratedSymbol(&p.solid.createComponent);
+            p.resolveGeneratedSymbol(&p.solid.setAttribute);
+            p.resolveGeneratedSymbol(&p.solid.effect);
+            p.resolveGeneratedSymbol(&p.solid.namespace);
+
+            const import_count =
+                @as(usize, @boolToInt(p.symbols.items[p.solid.wrap.ref.innerIndex()].use_count_estimate > 0)) +
+                @as(usize, @boolToInt(p.symbols.items[p.solid.insert.ref.innerIndex()].use_count_estimate > 0)) +
+                @as(usize, @boolToInt(p.symbols.items[p.solid.template.ref.innerIndex()].use_count_estimate > 0)) +
+                @as(usize, @boolToInt(p.symbols.items[p.solid.delegateEvents.ref.innerIndex()].use_count_estimate > 0)) +
+                @as(usize, @boolToInt(p.symbols.items[p.solid.createComponent.ref.innerIndex()].use_count_estimate > 0)) +
+                @as(usize, @boolToInt(p.symbols.items[p.solid.setAttribute.ref.innerIndex()].use_count_estimate > 0)) +
+                @as(usize, @boolToInt(p.symbols.items[p.solid.effect.ref.innerIndex()].use_count_estimate > 0));
+            var import_items = try p.allocator.alloc(js_ast.ClauseItem, import_count);
+
+            // 1. Inject the part containing template declarations and Solid's import statement
+            var stmts_to_inject = p.allocator.alloc(Stmt, @as(usize, @boolToInt(p.solid.template_decls.items.len > 0)) + @as(usize, @boolToInt(import_count > 0))) catch unreachable;
+            var j: usize = 0;
+            const order = .{
+                "createComponent",
+                "delegateEvents",
+                "effect",
+                "insert",
+                "setAttribute",
+                "template",
+                "wrap",
+            };
+
+            try p.named_imports.ensureUnusedCapacity(import_count);
+            try p.is_import_item.ensureUnusedCapacity(p.allocator, @intCast(u32, import_count));
+
+            if (import_count > 0) {
+                const import_record_id = p.addImportRecord(.stmt, logger.Loc.Empty, p.options.jsx.import_source);
+                var declared_symbols = p.allocator.alloc(js_ast.DeclaredSymbol, p.solid.template_decls.items.len) catch unreachable;
+
+                inline for (order) |field_name| {
+                    const ref = @field(p.solid, field_name).ref;
+                    if (p.symbols.items[ref.innerIndex()].use_count_estimate > 0) {
+                        import_items[j] = js_ast.ClauseItem{
+                            .alias = field_name,
+                            .name = .{ .loc = logger.Loc.Empty, .ref = ref },
+                            .alias_loc = logger.Loc.Empty,
+                            .original_name = "",
+                        };
+
+                        p.named_imports.putAssumeCapacity(
+                            ref,
+                            js_ast.NamedImport{
+                                .alias = p.symbols.items[ref.innerIndex()].original_name,
+                                .alias_is_star = false,
+                                .alias_loc = logger.Loc.Empty,
+                                .namespace_ref = p.solid.namespace.ref,
+                                .import_record_index = import_record_id,
+                            },
+                        );
+                        p.is_import_item.putAssumeCapacity(ref, .{});
+                        j += 1;
+                    }
+                }
+
+                p.import_records.items[import_record_id].tag = .jsx_import;
+                stmts_to_inject[0] = p.s(
+                    S.Import{
+                        .namespace_ref = p.solid.namespace.ref,
+                        .star_name_loc = null,
+                        .is_single_line = true,
+                        .import_record_index = import_record_id,
+                        .items = import_items,
+                    },
+                    logger.Loc.Empty,
+                );
+                if (p.solid.template_decls.items.len > 0) {
+                    for (p.solid.template_decls.items) |_, i| {
+                        declared_symbols[i] = js_ast.DeclaredSymbol{
+                            .ref = p.solid.template_decls.items[i].binding.data.b_identifier.ref,
+                            .is_top_level = true,
+                        };
+                    }
+                    stmts_to_inject[1] = p.s(
+                        S.Local{
+                            .decls = p.solid.template_decls.items,
+                        },
+                        logger.Loc.Empty,
+                    );
+                }
+                var import_record_ids = p.allocator.alloc(u32, 1) catch unreachable;
+                import_record_ids[0] = import_record_id;
+
+                before.append(js_ast.Part{
+                    .stmts = stmts_to_inject,
+                    .declared_symbols = declared_symbols,
+                    .import_record_indices = import_record_ids,
+                    .tag = .jsx_import,
+                }) catch unreachable;
+            }
         }
 
         if (p.options.enable_bundling) p.resolveBundlingSymbols();
@@ -3192,8 +3308,234 @@ const JSXTransformType = enum {
     none,
     react,
     macro,
+    solid,
 };
 
+const SolidJS = struct {
+    namespace: GeneratedSymbol = undefined,
+    wrap: GeneratedSymbol = undefined,
+    insert: GeneratedSymbol = undefined,
+    template: GeneratedSymbol = undefined,
+    delegateEvents: GeneratedSymbol = undefined,
+    createComponent: GeneratedSymbol = undefined,
+    setAttribute: GeneratedSymbol = undefined,
+    effect: GeneratedSymbol = undefined,
+
+    component_body: std.ArrayListUnmanaged(Stmt) = .{},
+    component_body_decls: std.ArrayListUnmanaged(G.Decl) = .{},
+    last_template_id: E.Identifier = .{},
+    last_element_id: E.Identifier = .{},
+    prev_had_dynamic: bool = false,
+    temporary_scope: Scope = Scope{
+        .kind = .function_body,
+        .parent = null,
+    },
+    prev_scope: ?*Scope = null,
+    node_count: u32 = 0,
+
+    template_decls: std.ArrayListUnmanaged(G.Decl) = .{},
+    current_template_string: MutableString = .{
+        .allocator = undefined,
+        .list = .{},
+    },
+    buffered_writer: MutableString.BufferedWriter = undefined,
+
+    is_in_jsx_component: bool = false,
+
+    events_to_delegate: Events.Bitset = .{},
+    element_counter: u32 = 0,
+
+    const prefilled_element_names = [_]string{
+        "_el",
+        "_el$1",
+        "_el$2",
+        "_el$3",
+        "_el$4",
+        "_el$5",
+        "_el$6",
+        "_el$7",
+        "_el$8",
+        "_el$9",
+        "_el$10",
+        "_el$11",
+        "_el$12",
+        "_el$13",
+        "_el$14",
+        "_el$15",
+        "_el$16",
+        "_el$17",
+        "_el$18",
+        "_el$19",
+        "_el$20",
+        "_el$21",
+    };
+    const prefilled_template_names = [_]string{
+        "_tmpl",
+        "_tmpl$1",
+        "_tmpl$2",
+        "_tmpl$3",
+        "_tmpl$4",
+        "_tmpl$5",
+        "_tmpl$6",
+        "_tmpl$7",
+        "_tmpl$8",
+        "_tmpl$9",
+        "_tmpl$10",
+        "_tmpl$11",
+        "_tmpl$12",
+        "_tmpl$13",
+        "_tmpl$14",
+        "_tmpl$15",
+        "_tmpl$16",
+        "_tmpl$17",
+        "_tmpl$18",
+        "_tmpl$19",
+        "_tmpl$20",
+        "_tmpl$21",
+    };
+
+    pub fn generateElementName(this: *SolidJS, allocator: std.mem.Allocator) string {
+        if (this.component_body_decls.items.len <= prefilled_element_names.len) {
+            return prefilled_element_names[this.component_body_decls.items.len];
+        }
+        return std.fmt.allocPrint(allocator, "_el${d}", .{this.component_body_decls.items.len}) catch unreachable;
+    }
+
+    pub fn generateTemplateName(this: *SolidJS, allocator: std.mem.Allocator) string {
+        if (this.template_decls.items.len <= prefilled_template_names.len) {
+            return prefilled_template_names[this.template_decls.items.len];
+        }
+        return std.fmt.allocPrint(allocator, "_tmpl${d}", .{this.template_decls.items.len}) catch unreachable;
+    }
+
+    pub fn generateElement(solid: *SolidJS, p: anytype, template_expression: Expr, value_loc: logger.Loc) !E.Identifier {
+        var name = solid.generateElementName(p.allocator);
+
+        var prev_scope = p.current_scope;
+        p.current_scope = &solid.temporary_scope;
+        const ref = p.declareSymbolMaybeGenerated(.import, value_loc, name, true) catch unreachable;
+        p.current_scope = prev_scope;
+        const element = .{ .ref = ref };
+        var decl_value: Expr = undefined;
+        switch (solid.component_body_decls.items.len) {
+            0 => {
+                decl_value = p.e(
+                    E.Call{
+                        .target = p.e(
+                            E.Dot{
+                                .name = "cloneNode",
+                                .name_loc = value_loc,
+                                .target = template_expression,
+                                .can_be_removed_if_unused = true,
+                                .call_can_be_unwrapped_if_unused = true,
+                            },
+                            template_expression.loc,
+                        ),
+                        .args = ExprNodeList.init(true_args),
+                        .can_be_unwrapped_if_unused = true,
+                    },
+                    value_loc,
+                );
+                p.recordUsage(template_expression.data.e_identifier.ref);
+            },
+            1 => {
+                const ident = E.Identifier{ .ref = solid.component_body_decls.items[solid.component_body_decls.items.len - 1].binding.data.b_identifier.ref };
+                decl_value = p.e(
+                    E.Dot{
+                        .target = .{
+                            .data = .{ .e_identifier = ident },
+                            .loc = value_loc,
+                        },
+                        .name = "firstChild",
+                        .name_loc = template_expression.loc,
+                        .can_be_removed_if_unused = true,
+                        .call_can_be_unwrapped_if_unused = true,
+                    },
+                    value_loc,
+                );
+                p.recordUsage(ident.ref);
+            },
+            else => {
+                const ident = E.Identifier{ .ref = solid.component_body_decls.items[solid.component_body_decls.items.len - 1].binding.data.b_identifier.ref };
+                decl_value = p.e(E.Dot{
+                    .target = .{
+                        .data = .{ .e_identifier = ident },
+                        .loc = value_loc,
+                    },
+                    .name_loc = template_expression.loc,
+                    .name = "nextSibling",
+                    .can_be_removed_if_unused = true,
+                    .call_can_be_unwrapped_if_unused = true,
+                }, value_loc);
+                p.recordUsage(ident.ref);
+            },
+        }
+        try solid.component_body_decls.append(
+            p.allocator,
+            G.Decl{ .binding = p.b(B.Identifier{ .ref = ref }, template_expression.loc), .value = decl_value },
+        );
+        return element;
+    }
+
+    pub const Events = enum {
+        Click,
+        Change,
+        Input,
+        Submit,
+        KeyDown,
+        KeyUp,
+        KeyPress,
+        MouseDown,
+        MouseUp,
+        MouseMove,
+        MouseEnter,
+        MouseLeave,
+        MouseOver,
+        MouseOut,
+        Focus,
+        Blur,
+        Scroll,
+        Wheel,
+        TouchStart,
+        TouchMove,
+        TouchEnd,
+        TouchCancel,
+        PointerDown,
+        PointerUp,
+        PointerMove,
+        PointerCancel,
+        PointerEnter,
+        PointerLeave,
+        PointerOver,
+        PointerOut,
+        GotPointerCapture,
+        LostPointerCapture,
+        Select,
+        ContextMenu,
+        DragStart,
+        Drag,
+        DragEnd,
+        DragEnter,
+        DragLeave,
+        DragOver,
+        Drop,
+        Copy,
+        Cut,
+        Paste,
+        CompositionStart,
+        CompositionUpdate,
+        CompositionEnd,
+
+        pub const Bitset = std.enums.EnumSet(Events);
+    };
+};
+
+fn GetSolidJSSymbols(comptime jsx: JSXTransformType) type {
+    if (jsx != .solid)
+        return void;
+
+    return SolidJS;
+}
 const ParserFeatures = struct {
     typescript: bool = false,
     jsx: JSXTransformType = JSXTransformType.none,
@@ -3244,7 +3586,7 @@ const ParserFeatures = struct {
     //
     //
     //
-    react_fast_refresh: bool = false,
+    // react_fast_refresh: bool = false,
 };
 
 // Our implementation diverges somewhat from the official implementation
@@ -3276,20 +3618,17 @@ fn NewParser(
         parser_features.typescript,
         parser_features.jsx,
         parser_features.scan_only,
-        parser_features.react_fast_refresh,
     );
 }
 fn NewParser_(
     comptime parser_feature__typescript: bool,
     comptime parser_feature__jsx: JSXTransformType,
     comptime parser_feature__scan_only: bool,
-    comptime parser_feature__react_fast_refresh: bool,
 ) type {
     const js_parser_features: ParserFeatures = .{
         .typescript = parser_feature__typescript,
         .jsx = parser_feature__jsx,
         .scan_only = parser_feature__scan_only,
-        .react_fast_refresh = parser_feature__react_fast_refresh,
     };
 
     // P is for Parser!
@@ -3406,6 +3745,8 @@ fn NewParser_(
         jsx_classic: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         // only applicable when is_react_fast_refresh_enabled
         jsx_refresh_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+
+        solid: GetSolidJSSymbols(jsx_transform_type) = if (jsx_transform_type == JSXTransformType.solid) SolidJS{} else void{},
 
         bun_jsx_ref: Ref = Ref.None,
 
@@ -4288,7 +4629,7 @@ fn NewParser_(
                 try p.named_imports.put(ref, js_ast.NamedImport{
                     .alias = alias_name,
                     .alias_loc = logger.Loc{},
-                    .namespace_ref = namespace_ref,
+                    .namespace_ref = null,
                     .import_record_index = import_record_i,
                 });
             }
@@ -4430,6 +4771,18 @@ fn NewParser_(
                     if (p.options.jsx.import_source.len > 0) {
                         p.jsx_automatic = p.declareGeneratedSymbol(.other, "ImportSource") catch unreachable;
                     }
+                },
+                .solid => {
+                    p.solid.insert = p.declareGeneratedSymbol(.other, "insert") catch unreachable;
+                    p.solid.template = p.declareGeneratedSymbol(.other, "template") catch unreachable;
+                    p.solid.wrap = p.declareGeneratedSymbol(.other, "wrap") catch unreachable;
+                    p.solid.namespace = p.declareGeneratedSymbol(.other, "Solid") catch unreachable;
+                    p.solid.delegateEvents = p.declareGeneratedSymbol(.other, "delegateEvents") catch unreachable;
+                    p.solid.createComponent = p.declareGeneratedSymbol(.other, "createComponent") catch unreachable;
+                    p.solid.setAttribute = p.declareGeneratedSymbol(.other, "setAttribute") catch unreachable;
+                    p.solid.effect = p.declareGeneratedSymbol(.other, "effect") catch unreachable;
+                    p.solid.current_template_string = MutableString.initEmpty(p.allocator);
+                    p.solid.buffered_writer = p.solid.current_template_string.bufferedWriter();
                 },
                 .macro => {
                     p.bun_jsx_ref = p.declareSymbol(.other, logger.Loc.Empty, "bunJSX") catch unreachable;
@@ -11475,6 +11828,7 @@ fn NewParser_(
                 // Use Expect() not ExpectInsideJSXElement() so we can parse expression tokens
                 try p.lexer.expect(.t_open_brace);
                 const value = try p.parseExpr(.lowest);
+
                 try p.lexer.expectInsideJSXElement(.t_close_brace);
                 return value;
             }
@@ -11496,7 +11850,7 @@ fn NewParser_(
             var previous_string_with_backslash_loc = logger.Loc{};
             var properties = G.Property.List{};
             var key_prop: ?ExprNodeIndex = null;
-            var flags = Flags.JSXElement{};
+            var flags = Flags.JSXElement.Bitset{};
             var start_tag: ?ExprNodeIndex = null;
 
             // Fragments don't have props
@@ -11543,6 +11897,14 @@ fn NewParser_(
                                 value = p.e(E.Boolean{ .value = true }, logger.Loc{ .start = key_range.loc.start + key_range.len });
                             } else {
                                 value = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
+                                if (comptime jsx_transform_type == .solid) {
+                                    switch (value.knownPrimitive()) {
+                                        .unknown => {
+                                            flags.insert(.has_any_dynamic);
+                                        },
+                                        else => {},
+                                    }
+                                }
                             }
 
                             try props.append(G.Property{ .key = prop_name, .value = value });
@@ -11593,6 +11955,15 @@ fn NewParser_(
                                         return error.SyntaxError;
                                     };
 
+                                    if (comptime jsx_transform_type == .solid) {
+                                        switch (expr.knownPrimitive()) {
+                                            .unknown => {
+                                                flags.insert(.has_any_dynamic);
+                                            },
+                                            else => {},
+                                        }
+                                    }
+
                                     try props.append(G.Property{ .value = expr, .key = key, .kind = .normal });
                                 },
                                 // This implements
@@ -11618,8 +11989,9 @@ fn NewParser_(
                     }
                 }
 
-                flags.is_key_before_rest = key_prop_i > -1 and spread_prop_i > key_prop_i;
-                if (flags.is_key_before_rest and p.options.jsx.runtime == .automatic and !p.has_classic_runtime_warned) {
+                const is_key_before_rest = key_prop_i > -1 and spread_prop_i > key_prop_i;
+                flags.setPresent(.is_key_before_rest, is_key_before_rest);
+                if (is_key_before_rest and p.options.jsx.runtime == .automatic and !p.has_classic_runtime_warned) {
                     try p.log.addWarning(p.source, spread_loc, "\"key\" prop before a {...spread} is deprecated in JSX. Falling back to classic runtime.");
                     p.has_classic_runtime_warned = true;
                 }
@@ -11669,6 +12041,7 @@ fn NewParser_(
             // Use ExpectJSXElementChild() so we parse child strings
             try p.lexer.expectJSXElementChild(.t_greater_than);
             var children = ListManaged(Expr).init(p.allocator);
+            // var last_element_i: usize = 0;
 
             while (true) {
                 switch (p.lexer.token) {
@@ -11687,7 +12060,18 @@ fn NewParser_(
 
                         // The expression is optional, and may be absent
                         if (p.lexer.token != .t_close_brace) {
-                            try children.append(try p.parseExpr(.lowest));
+                            if (comptime jsx_transform_type == .solid) {
+                                const child = try p.parseExpr(.lowest);
+                                switch (child.knownPrimitive()) {
+                                    .unknown => {
+                                        flags.insert(.has_any_dynamic);
+                                    },
+                                    else => {},
+                                }
+                                try children.append(child);
+                            } else {
+                                try children.append(try p.parseExpr(.lowest));
+                            }
                         }
 
                         // Use ExpectJSXElementChild() so we parse child strings
@@ -11699,7 +12083,43 @@ fn NewParser_(
 
                         if (p.lexer.token != .t_slash) {
                             // This is a child element
-                            children.append(try p.parseJSXElement(less_than_loc)) catch unreachable;
+                            const child = try p.parseJSXElement(less_than_loc);
+                            if (comptime jsx_transform_type == .solid) {
+                                // if (!flags.contains(.has_dynamic_children)) {
+                                //     if (@as(Expr.Tag, child.data) == .e_jsx_element) {
+                                //         if (child.data.e_jsx_element.flags.contains(.has_dynamic_children) or child.data.e_jsx_element.flags.contains(.has_dynamic_prop)) {
+                                //             flags.insert(.has_dynamic_children);
+
+                                //         }
+                                //     } else {
+                                //         switch (child.knownPrimitive()) {
+                                //             .unknown => {
+                                //                 flags.insert(.has_dynamic_children);
+                                //             },
+                                //             else => {},
+                                //         }
+                                //     }
+                                // }
+
+                                if (!flags.contains(.has_any_dynamic)) {
+                                    if (@as(Expr.Tag, child.data) == .e_jsx_element) {
+                                        if (child.data.e_jsx_element.flags.contains(.has_any_dynamic)) {
+                                            flags.insert(.has_any_dynamic);
+                                        }
+                                    } else {
+                                        switch (child.knownPrimitive()) {
+                                            .unknown => {
+                                                flags.insert(.has_any_dynamic);
+                                            },
+                                            else => {},
+                                        }
+                                    }
+                                }
+
+                                children.append(child) catch unreachable;
+                            } else {
+                                children.append(p.parseJSXElement(less_than_loc) catch unreachable) catch unreachable;
+                            }
 
                             // The call to parseJSXElement() above doesn't consume the last
                             // TGreaterThan because the caller knows what Next() function to call.
@@ -12200,6 +12620,524 @@ fn NewParser_(
                             var writer = WriterType.initWriter(p, &BunJSX.bun_jsx_identifier);
                             return writer.writeFunctionCall(e_.*);
                         },
+                        .solid => {
+                            // The rules:
+                            // 1. Every JSX element with an identifier gets wrapped in a createComponent() call
+                            // 2. HTML string literals of static elements are generated & escaped, injected at the top of the file
+                            // 2a. Static elements are contiguous in the HTML, but dynamic elements get a marker string during if client-side hydration
+                            // Each element becomes a declaration in the top-level scope of the JSX expression (i.e. either the anonymous IIFE or an array)
+                            // Those elements may be markers
+                            // The final count of the markers is passed to the template function
+                            // 3. The first element in a a group of elements becomes .cloneNode(true)
+                            // Subsequent elements call .nextSibling on the previous element.
+                            // The specific function differs if SSR is enabled and if client-side hydration is enabled.
+                            // 4. Non-static JSX children are added like this:
+                            //     insert(topElement, createComponent(MyComponent, props), markerElement)
+                            //
+                            var solid = &p.solid;
+                            const old_is_in_jsx_component = solid.is_in_jsx_component;
+                            solid.is_in_jsx_component = true;
+                            defer solid.is_in_jsx_component = old_is_in_jsx_component;
+
+                            if (!old_is_in_jsx_component) {
+                                solid.current_template_string.reset();
+                                solid.buffered_writer.pos = 0;
+                                solid.component_body.clearRetainingCapacity();
+                                solid.component_body_decls.clearRetainingCapacity();
+
+                                // prepend an empty statement
+                                // this will later become an S.Local for the decls
+                                solid.component_body.append(p.allocator, p.s(S.Empty{}, expr.loc)) catch unreachable;
+
+                                solid.last_element_id = E.Identifier{};
+                                solid.prev_had_dynamic = false;
+                                solid.prev_scope = p.current_scope;
+                                solid.temporary_scope.reset();
+                                solid.node_count = 0;
+                                solid.temporary_scope.kind = .function_body;
+                                solid.temporary_scope.parent = p.current_scope;
+
+                                solid.last_template_id.ref = Ref.None;
+                            }
+
+                            var writer = &solid.buffered_writer;
+
+                            const tag: Expr = tagger: {
+                                if (e_.tag) |_tag| {
+                                    break :tagger p.visitExpr(_tag);
+                                } else {
+                                    break :tagger p.e(E.Array{}, expr.loc);
+                                }
+                            };
+
+                            const jsx_props = e_.properties.slice();
+
+                            var template_expression = Expr{ .loc = expr.loc, .data = .{ .e_identifier = solid.last_template_id } };
+                            var element: ?E.Identifier = null;
+                            var needs_end_bracket = false;
+                            var children = e_.children.slice();
+                            defer {
+                                if (old_is_in_jsx_component) {
+                                    if (element) |el| {
+                                        solid.last_element_id = el;
+                                    }
+                                }
+                            }
+                            switch (tag.data) {
+                                .e_string => {
+                                    // write the template
+                                    _ = writer.writeAll("<") catch unreachable;
+                                    _ = writer.writeString(tag.data.e_string) catch unreachable;
+                                    needs_end_bracket = true;
+
+                                    var wrote_anything = false;
+                                    var had_any_dynamic_content = false;
+                                    for (jsx_props) |*property, i| {
+                                        if (property.kind != .spread) {
+                                            property.key = p.visitExpr(e_.properties.ptr[i].key.?);
+                                        }
+
+                                        if (property.value != null) {
+                                            property.value = p.visitExpr(e_.properties.ptr[i].value.?);
+
+                                            if (property.kind != .spread) {
+                                                var key = property.key.?.data.e_string;
+
+                                                const is_event_listener = key.hasPrefixComptime("on:");
+                                                const is_class = !is_event_listener and
+                                                    // TODO: should this be case-insensitive?
+                                                    (key.eqlComptime("class") or key.eqlComptime("className"));
+
+                                                const primitive = property.value.?.knownPrimitive();
+                                                const is_dynamic = !(primitive == .string or primitive == .number or primitive == .boolean or primitive == .@"null" or primitive == .@"undefined");
+                                                const appears_in_template = !is_event_listener and !is_dynamic;
+                                                if (appears_in_template) {
+                                                    _ = writer.writeAll(" ") catch unreachable;
+                                                    wrote_anything = true;
+                                                }
+
+                                                if (is_class and !is_dynamic) {
+                                                    _ = writer.writeAll("class") catch unreachable;
+                                                } else if (!is_dynamic) {
+                                                    _ = writer.writeString(key) catch unreachable;
+                                                }
+                                                if (appears_in_template) {
+                                                    switch (primitive) {
+                                                        .number, .string => {
+                                                            if (property.value.?.data == .e_string) {
+                                                                const str = property.value.?.data.e_string;
+                                                                if (str.len() > 0) {
+                                                                    _ = writer.writeAll("=") catch unreachable;
+                                                                    writer.writeHTMLAttributeValueString(str) catch unreachable;
+                                                                }
+                                                            } else {
+                                                                writer.writer().print("={d}", .{property.value.?.data.e_number.value}) catch unreachable;
+                                                            }
+                                                        },
+                                                        // TODO: should "null" be written?
+                                                        // TODO: should "undefined" be written?
+                                                        .@"null", .@"undefined" => {},
+                                                        .boolean => {
+                                                            if (!property.value.?.data.e_boolean.value) {
+                                                                _ = writer.writeAll("=false") catch unreachable;
+                                                            }
+                                                        },
+
+                                                        else => unreachable,
+                                                    }
+                                                } else {
+                                                    if (template_expression.data.e_identifier.ref.isNull()) {
+                                                        var new_template_name = solid.generateTemplateName(p.allocator);
+                                                        // declare the template in the module scope
+                                                        p.current_scope = p.module_scope;
+                                                        solid.last_template_id = .{
+                                                            .ref = p.declareSymbolMaybeGenerated(.other, expr.loc, new_template_name, true) catch unreachable,
+                                                            .can_be_removed_if_unused = true,
+                                                            .call_can_be_unwrapped_if_unused = true,
+                                                        };
+                                                        p.current_scope = solid.prev_scope.?;
+                                                        template_expression = .{ .loc = expr.loc, .data = .{ .e_identifier = solid.last_template_id } };
+                                                    }
+                                                    had_any_dynamic_content = true;
+                                                    if (element == null) {
+                                                        element = solid.generateElement(
+                                                            p,
+                                                            template_expression,
+                                                            property.value.?.loc,
+                                                        ) catch unreachable;
+                                                    }
+
+                                                    var stmt: Stmt = undefined;
+                                                    if (!is_event_listener) {
+                                                        var args = p.allocator.alloc(Expr, 3) catch unreachable;
+                                                        args[0] = template_expression;
+                                                        if (is_class) {
+                                                            args[1] = p.e(E.String.init("className"), property.key.?.loc);
+                                                        } else {
+                                                            args[1] = property.key.?;
+                                                        }
+
+                                                        args[2] = property.value.?;
+
+                                                        // setAttribute(template_expression, key, value);
+                                                        const setAttr = p.e(
+                                                            E.Call{
+                                                                .target = p.e(
+                                                                    E.Identifier{
+                                                                        .ref = solid.setAttribute.ref,
+                                                                        .can_be_removed_if_unused = false,
+                                                                        .call_can_be_unwrapped_if_unused = false,
+                                                                    },
+                                                                    property.value.?.loc,
+                                                                ),
+                                                                .args = ExprNodeList.init(args),
+                                                            },
+                                                            property.key.?.loc,
+                                                        );
+
+                                                        p.recordUsage(solid.setAttribute.ref);
+                                                        if (args[2].data == .e_identifier or args[2].data == .e_import_identifier) {
+                                                            if (args[2].data == .e_identifier) p.recordUsage(args[2].data.e_identifier.ref);
+                                                            if (args[2].data == .e_import_identifier) p.recordUsage(args[2].data.e_import_identifier.ref);
+                                                            stmt = p.s(S.SExpr{ .value = setAttr }, property.value.?.loc);
+                                                        } else {
+                                                            var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                                                            stmts[0] = p.s(S.Return{ .value = setAttr }, property.value.?.loc);
+                                                            var arrow = p.e(
+                                                                E.Arrow{
+                                                                    .args = &[_]G.Arg{},
+                                                                    .body = G.FnBody{
+                                                                        .stmts = stmts,
+                                                                        .loc = args[2].loc,
+                                                                    },
+                                                                },
+                                                                property.value.?.loc,
+                                                            );
+                                                            stmt = p.s(S.SExpr{ .value = arrow }, property.value.?.loc);
+                                                        }
+                                                    } else {
+                                                        var args = p.allocator.alloc(Expr, 2) catch unreachable;
+
+                                                        // on:MyEvent => MyEvent
+                                                        property.key.?.data.e_string.data = property.key.?.data.e_string.data[3..];
+                                                        args[0] = property.key.?;
+                                                        args[1] = property.value.?;
+                                                        // $element.addEventListener("MyEvent", (e) => { ... });
+                                                        const addEventListener = p.e(
+                                                            E.Call{
+                                                                .target = p.e(
+                                                                    E.Dot{
+                                                                        .target = p.e(
+                                                                            element.?,
+                                                                            expr.loc,
+                                                                        ),
+                                                                        .name = "addEventListener",
+                                                                        .name_loc = property.key.?.loc,
+                                                                    },
+                                                                    property.key.?.loc,
+                                                                ),
+                                                                .args = ExprNodeList.init(args),
+                                                            },
+                                                            property.key.?.loc,
+                                                        );
+
+                                                        p.recordUsage(element.?.ref);
+                                                        stmt = p.s(S.SExpr{ .value = addEventListener }, property.value.?.loc);
+                                                    }
+
+                                                    solid.component_body.append(p.allocator, stmt) catch unreachable;
+                                                }
+                                            } else {}
+                                        }
+
+                                        if (property.initializer != null) {
+                                            property.initializer = p.visitExpr(e_.properties.ptr[i].initializer.?);
+                                        }
+                                    }
+
+                                    var wrote_any_children = false;
+                                    for (children) |*el, k| {
+                                        if (needs_end_bracket and el.data == .e_jsx_element) {
+                                            _ = writer.writeAll(">") catch unreachable;
+                                            solid.node_count += 1;
+
+                                            needs_end_bracket = false;
+                                        }
+
+                                        const child = p.visitExpr(el.*);
+                                        switch (child.data) {
+                                            // skip it
+                                            .e_missing => {},
+
+                                            // we need to serialize it to HTML
+                                            // it's probably a text node
+                                            .e_string => |str| {
+                                                if (str.len() > 0) {
+                                                    if (needs_end_bracket) {
+                                                        _ = writer.writeAll(">") catch unreachable;
+                                                        solid.node_count += 1;
+                                                        needs_end_bracket = false;
+                                                    }
+                                                    writer.writeHTMLAttributeValueString(str) catch unreachable;
+                                                    wrote_any_children = true;
+                                                }
+                                            },
+                                            .e_number => |str| {
+                                                if (needs_end_bracket) {
+                                                    _ = writer.writeAll(">") catch unreachable;
+                                                    needs_end_bracket = false;
+                                                }
+                                                writer.writer().print("{d}", .{str.value}) catch unreachable;
+                                                wrote_any_children = true;
+                                            },
+
+                                            // debug assertion that we don't get here
+                                            .e_jsx_element => unreachable,
+
+                                            else => {
+                                                if (template_expression.data.e_identifier.ref.isNull()) {
+                                                    var new_template_name = solid.generateTemplateName(p.allocator);
+                                                    // declare the template in the module scope
+                                                    p.current_scope = p.module_scope;
+                                                    solid.last_template_id = .{
+                                                        .ref = p.declareSymbolMaybeGenerated(.other, expr.loc, new_template_name, true) catch unreachable,
+                                                        .can_be_removed_if_unused = true,
+                                                        .call_can_be_unwrapped_if_unused = true,
+                                                    };
+                                                    p.current_scope = solid.prev_scope.?;
+                                                    template_expression = .{ .loc = expr.loc, .data = .{ .e_identifier = solid.last_template_id } };
+                                                }
+                                                p.recordUsage(solid.insert.ref);
+                                                p.recordUsage(template_expression.data.e_identifier.ref);
+                                                var args = p.allocator.alloc(Expr, 3) catch unreachable;
+                                                args[0] = template_expression;
+                                                args[1] = child;
+                                                args[2] = if (k != children.len - 1 and !solid.last_element_id.ref.eql(Ref.None))
+                                                    p.e(solid.last_element_id, expr.loc)
+                                                else
+                                                    p.e(E.Null{}, expr.loc);
+                                                solid.node_count += 1;
+                                                solid.component_body.append(
+                                                    p.allocator,
+                                                    p.s(
+                                                        S.SExpr{
+                                                            .value = p.e(
+                                                                E.Call{
+                                                                    .target = p.e(E.ImportIdentifier{ .ref = solid.insert.ref }, child.loc),
+                                                                    .args = ExprNodeList.init(args),
+                                                                },
+                                                                child.loc,
+                                                            ),
+                                                        },
+                                                        child.loc,
+                                                    ),
+                                                ) catch unreachable;
+                                            },
+                                        }
+                                    }
+
+                                    if (wrote_any_children) {
+                                        solid.node_count += 1;
+                                        _ = writer.writeAll("</") catch unreachable;
+                                        _ = writer.writeString(tag.data.e_string) catch unreachable;
+                                        _ = writer.writeAll(">") catch unreachable;
+                                    } else if (needs_end_bracket) {
+                                        _ = writer.writeAll("/>") catch unreachable;
+                                    }
+
+                                    // this is the root of a template tag, we just finished
+                                    // <div>
+                                    // /* some stuff in here */
+                                    // </div>
+                                    //  ^
+                                    // we are here!
+                                    if (!old_is_in_jsx_component) {
+                                        var args = p.allocator.alloc(Expr, 2) catch unreachable;
+
+                                        if (writer.pos < writer.buffer.len and writer.context.list.items.len == 0) {
+                                            args[0] = p.e(E.String.init(p.allocator.dupe(u8, writer.buffer[0..writer.pos]) catch unreachable), expr.loc);
+                                        } else if (writer.pos == 0 and writer.context.list.items.len == 0) {
+                                            args[0] = p.e(E.String.init(""), expr.loc);
+                                        } else {
+                                            const total = writer.context.list.items.len + writer.pos;
+                                            var buffer = p.allocator.alloc(u8, total) catch unreachable;
+                                            @memcpy(buffer.ptr, writer.context.list.items.ptr, writer.context.list.items.len);
+                                            @memcpy(buffer.ptr + writer.context.list.items.len, &writer.buffer, writer.buffer.len);
+                                            args[0] = p.e(E.String.init(buffer), expr.loc);
+                                        }
+
+                                        args[1] = p.e(E.Number{ .value = @intToFloat(f64, solid.node_count) }, expr.loc);
+                                        solid.node_count = 0;
+
+                                        if (template_expression.data.e_identifier.ref.isNull()) {
+                                            var new_template_name = solid.generateTemplateName(p.allocator);
+                                            // declare the template in the module scope
+                                            p.current_scope = p.module_scope;
+                                            solid.last_template_id = .{
+                                                .ref = p.declareSymbolMaybeGenerated(.other, expr.loc, new_template_name, true) catch unreachable,
+                                                .can_be_removed_if_unused = true,
+                                                .call_can_be_unwrapped_if_unused = true,
+                                            };
+                                            p.current_scope = solid.prev_scope.?;
+                                            template_expression = .{ .loc = expr.loc, .data = .{ .e_identifier = solid.last_template_id } };
+                                        }
+
+                                        solid.template_decls.append(
+                                            p.allocator,
+                                            G.Decl{
+                                                .binding = p.b(B.Identifier{ .ref = template_expression.data.e_identifier.ref }, template_expression.loc),
+                                                .value = p.e(
+                                                    E.Call{
+                                                        .args = ExprNodeList.init(args),
+                                                        .target = p.e(
+                                                            E.ImportIdentifier{
+                                                                .ref = solid.template.ref,
+                                                            },
+                                                            expr.loc,
+                                                        ),
+                                                        .can_be_unwrapped_if_unused = true,
+                                                    },
+                                                    template_expression.loc,
+                                                ),
+                                            },
+                                        ) catch unreachable;
+                                        p.recordUsage(solid.template.ref);
+
+                                        if (p.is_control_flow_dead) {
+                                            return p.e(E.Missing{}, expr.loc);
+                                        }
+
+                                        // 1 means it was actually static
+                                        // that means we can just turn it into a single $template.cloneNode(true)
+                                        if (solid.component_body.items.len == 1) {
+                                            return p.e(E.Call{
+                                                .target = p.e(
+                                                    E.Dot{
+                                                        .name = "cloneNode",
+                                                        .name_loc = expr.loc,
+                                                        .target = template_expression,
+                                                        .can_be_removed_if_unused = true,
+                                                        .call_can_be_unwrapped_if_unused = true,
+                                                    },
+                                                    template_expression.loc,
+                                                ),
+                                                .args = ExprNodeList.init(true_args),
+                                                .can_be_unwrapped_if_unused = true,
+                                            }, expr.loc);
+                                        }
+                                        if (solid.component_body_decls.items.len == 0) {
+                                            solid.component_body_decls.ensureTotalCapacityPrecise(p.allocator, 1) catch unreachable;
+                                            solid.component_body_decls.appendAssumeCapacity(G.Decl{
+                                                .binding = p.b(B.Identifier{ .ref = solid.last_template_id.ref }, expr.loc),
+                                                .value = p.e(E.Call{
+                                                    .target = p.e(
+                                                        E.Dot{
+                                                            .name = "cloneNode",
+                                                            .name_loc = expr.loc,
+                                                            .target = template_expression,
+                                                            .can_be_removed_if_unused = true,
+                                                            .call_can_be_unwrapped_if_unused = true,
+                                                        },
+                                                        template_expression.loc,
+                                                    ),
+                                                    .args = ExprNodeList.init(true_args),
+                                                    .can_be_unwrapped_if_unused = true,
+                                                }, expr.loc),
+                                            });
+                                        }
+
+                                        // we need to wrap the template in a function
+                                        const ret = p.e(E.Identifier{ .ref = solid.component_body_decls.items[0].binding.data.b_identifier.ref }, expr.loc);
+                                        solid.component_body.items[0] = p.s(S.Local{ .decls = solid.component_body_decls.toOwnedSlice(p.allocator) }, expr.loc);
+                                        solid.component_body.append(p.allocator, p.s(S.Return{ .value = ret }, expr.loc)) catch unreachable;
+                                        return p.e(
+                                            E.Arrow{ .args = &[_]G.Arg{}, .body = G.FnBody{ .stmts = solid.component_body.toOwnedSlice(p.allocator), .loc = expr.loc } },
+                                            expr.loc,
+                                        );
+                                        // we don't need to return anything because it's a static element that will live in the template
+                                    } else {
+                                        return p.e(E.Missing{}, expr.loc);
+                                    }
+                                },
+                                .e_import_identifier, .e_identifier => {
+                                    var out_props = p.allocator.alloc(G.Property, jsx_props.len + @as(usize, @boolToInt(e_.key != null)) + @as(usize, @boolToInt(e_.children.len > 0))) catch unreachable;
+                                    var out_props_i: usize = 0;
+                                    for (jsx_props) |property, i| {
+                                        if (property.kind != .spread) {
+                                            e_.properties.ptr[i].key = p.visitExpr(e_.properties.ptr[i].key.?);
+                                        }
+
+                                        if (property.value != null) {
+                                            e_.properties.ptr[i].value = p.visitExpr(e_.properties.ptr[i].value.?);
+                                        }
+
+                                        if (property.initializer != null) {
+                                            e_.properties.ptr[i].initializer = p.visitExpr(e_.properties.ptr[i].initializer.?);
+                                        }
+
+                                        if (property.kind != .spread) {
+                                            const kind = if (property.value.?.data == .e_arrow or property.value.?.data == .e_function) G.Property.Kind.get else G.Property.Kind.normal;
+                                            out_props[out_props_i] = G.Property{
+                                                .key = property.key,
+                                                .value = property.value,
+                                                .kind = kind,
+                                            };
+                                            out_props_i += 1;
+                                        }
+                                    }
+
+                                    if (e_.key) |k| {
+                                        const key = p.visitExpr(k);
+                                        if (key.data != .e_missing) {
+                                            const kind = if (key.data == .e_arrow or key.data == .e_function) Property.Kind.get else Property.Kind.normal;
+                                            out_props[out_props_i] = G.Property{
+                                                .key = p.e(Prefill.String.Key, k.loc),
+                                                .value = key,
+                                                .kind = kind,
+                                            };
+                                            out_props_i += 1;
+                                        }
+                                    }
+
+                                    var out_child_i: usize = 0;
+                                    for (children) |child, j| {
+                                        children[j] = p.visitExpr(child);
+                                        if (children[j].data != .e_missing) {
+                                            children[out_child_i] = children[j];
+                                            out_child_i += 1;
+                                        }
+                                    }
+
+                                    if (out_child_i > 0) {
+                                        const kind = Property.Kind.get;
+
+                                        out_props[out_props_i] = G.Property{
+                                            .key = p.e(Prefill.String.Children, expr.loc),
+                                            .value = p.e(E.Array{ .items = ExprNodeList.init(children[0..out_child_i]) }, expr.loc),
+                                            .kind = kind,
+                                        };
+                                        out_props_i += 1;
+                                    }
+
+                                    var args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                    args[0] = tag;
+                                    args[1] = p.e(E.Object{
+                                        .properties = G.Property.List.init(out_props[0..out_props_i]),
+                                    }, expr.loc);
+                                    p.recordUsage(solid.createComponent.ref);
+                                    return p.e(
+                                        E.Call{
+                                            .target = p.e(E.ImportIdentifier{ .ref = solid.createComponent.ref }, expr.loc),
+                                            .args = ExprNodeList.init(args),
+                                            .close_paren_loc = e_.close_tag_loc,
+                                        },
+                                        expr.loc,
+                                    );
+                                },
+                                .e_array => {},
+                                else => unreachable,
+                            }
+                        },
                         .react => {
                             const tag: Expr = tagger: {
                                 if (e_.tag) |_tag| {
@@ -12228,7 +13166,7 @@ fn NewParser_(
                                 e_.key = p.visitExpr(key);
                             }
 
-                            const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.is_key_before_rest) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
+                            const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.contains(.is_key_before_rest)) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
                             var children_count = e_.children.len;
 
                             const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.slice(p.allocator));
@@ -16199,7 +17137,6 @@ fn NewParser_(
                     }
                     break :list_getter &visited;
                 };
-
                 try p.visitAndAppendStmt(list, stmt);
             }
 
@@ -17213,6 +18150,8 @@ const JavaScriptParser = NewParser(.{});
 const JSXParser = NewParser(.{ .jsx = .react });
 const TSXParser = NewParser(.{ .jsx = .react, .typescript = true });
 const TypeScriptParser = NewParser(.{ .typescript = true });
+const SolidJSXParser = NewParser(.{ .jsx = .solid });
+const SolidTSXParser = NewParser(.{ .jsx = .solid, .typescript = true });
 
 const JSParserMacro = NewParser(.{
     .jsx = .macro,
@@ -17221,11 +18160,6 @@ const TSParserMacro = NewParser(.{
     .jsx = .macro,
     .typescript = true,
 });
-
-const JavaScriptParserFastRefresh = NewParser(.{ .react_fast_refresh = true });
-const JSXParserFastRefresh = NewParser(.{ .jsx = .react, .react_fast_refresh = true });
-const TSXParserFastRefresh = NewParser(.{ .jsx = .react, .typescript = true, .react_fast_refresh = true });
-const TypeScriptParserFastRefresh = NewParser(.{ .typescript = true, .react_fast_refresh = true });
 
 const JavaScriptImportScanner = NewParser(.{ .scan_only = true });
 const JSXImportScanner = NewParser(.{ .jsx = .react, .scan_only = true });

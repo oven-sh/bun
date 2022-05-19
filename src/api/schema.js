@@ -581,14 +581,18 @@ const CSSInJSBehaviorKeys = {
 const JSXRuntime = {
   1: 1,
   2: 2,
+  3: 3,
   automatic: 1,
   classic: 2,
+  solid: 3,
 };
 const JSXRuntimeKeys = {
   1: "automatic",
   2: "classic",
+  3: "solid",
   automatic: "automatic",
   classic: "classic",
+  solid: "solid",
 };
 
 function decodeJSX(bb) {

@@ -1232,9 +1232,8 @@ pub const Resolver = struct {
 
                                 const esmodule = ESModule{
                                     .conditions = switch (kind) {
-                                        ast.ImportKind.stmt, ast.ImportKind.dynamic => r.opts.conditions.import,
                                         ast.ImportKind.require, ast.ImportKind.require_resolve => r.opts.conditions.require,
-                                        else => r.opts.conditions.default,
+                                        else => r.opts.conditions.import,
                                     },
                                     .allocator = r.allocator,
                                     .debug_logs = if (r.debug_logs) |*debug| debug else null,

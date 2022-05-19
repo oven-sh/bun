@@ -124,6 +124,7 @@ smol CSSInJSBehavior {
 smol JSXRuntime {
   automatic = 1;
   classic = 2;
+  solid = 3;
 }
 
 struct JSX {

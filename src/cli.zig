@@ -149,8 +149,10 @@ pub const Arguments = struct {
     pub fn resolve_jsx_runtime(str: string) !Api.JsxRuntime {
         if (strings.eqlComptime(str, "automatic")) {
             return Api.JsxRuntime.automatic;
-        } else if (strings.eqlComptime(str, "fallback")) {
+        } else if (strings.eqlComptime(str, "fallback") or strings.eqlComptime(str, "classic")) {
             return Api.JsxRuntime.classic;
+        } else if (strings.eqlComptime(str, "solid")) {
+            return Api.JsxRuntime.solid;
         } else {
             return error.InvalidJSXRuntime;
         }
@@ -587,14 +589,25 @@ pub const Arguments = struct {
             var default_factory = "".*;
             var default_fragment = "".*;
             var default_import_source = "".*;
-            opts.jsx = Api.Jsx{
-                .factory = constStrToU8(jsx_factory orelse &default_factory),
-                .fragment = constStrToU8(jsx_fragment orelse &default_fragment),
-                .import_source = constStrToU8(jsx_import_source orelse &default_import_source),
-                .runtime = if (jsx_runtime != null) try resolve_jsx_runtime(jsx_runtime.?) else Api.JsxRuntime.automatic,
-                .development = !jsx_production,
-                .react_fast_refresh = react_fast_refresh,
-            };
+            if (opts.jsx == null) {
+                opts.jsx = Api.Jsx{
+                    .factory = constStrToU8(jsx_factory orelse &default_factory),
+                    .fragment = constStrToU8(jsx_fragment orelse &default_fragment),
+                    .import_source = constStrToU8(jsx_import_source orelse &default_import_source),
+                    .runtime = if (jsx_runtime != null) try resolve_jsx_runtime(jsx_runtime.?) else Api.JsxRuntime.automatic,
+                    .development = !jsx_production,
+                    .react_fast_refresh = react_fast_refresh,
+                };
+            } else {
+                opts.jsx = Api.Jsx{
+                    .factory = constStrToU8(jsx_factory orelse opts.jsx.?.factory),
+                    .fragment = constStrToU8(jsx_fragment orelse opts.jsx.?.fragment),
+                    .import_source = constStrToU8(jsx_import_source orelse opts.jsx.?.import_source),
+                    .runtime = if (jsx_runtime != null) try resolve_jsx_runtime(jsx_runtime.?) else opts.jsx.?.runtime,
+                    .development = jsx_production,
+                    .react_fast_refresh = react_fast_refresh,
+                };
+            }
         }
 
         if (args.option("--use")) |entry| {

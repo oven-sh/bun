@@ -903,8 +903,14 @@ pub const JSX = struct {
                 pragma.factory = try memberListToComponentsIfDifferent(allocator, pragma.factory, jsx.factory);
             }
 
+            pragma.runtime = jsx.runtime;
+
             if (jsx.import_source.len > 0) {
                 pragma.import_source = jsx.import_source;
+                if (jsx.import_source.len > "solid-js".len and strings.eqlComptime(jsx.import_source[0.."solid-js".len], "solid-js")) {
+                    pragma.runtime = .solid;
+                    pragma.supports_fast_refresh = false;
+                }
                 pragma.package_name = parsePackageName(pragma.import_source);
             } else if (jsx.development) {
                 pragma.import_source = Defaults.ImportSourceDev;
@@ -915,8 +921,8 @@ pub const JSX = struct {
                 pragma.jsx = Defaults.JSXFunction;
             }
 
+            pragma.supports_fast_refresh = if (pragma.runtime == .solid) false else pragma.supports_fast_refresh;
             pragma.development = jsx.development;
-            pragma.runtime = jsx.runtime;
             pragma.parse = true;
             return pragma;
         }

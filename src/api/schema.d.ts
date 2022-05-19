@@ -158,12 +158,15 @@ export const CSSInJSBehaviorKeys: {
 export const enum JSXRuntime {
   automatic = 1,
   classic = 2,
+  solid = 3,
 }
 export const JSXRuntimeKeys: {
   1: "automatic";
   automatic: "automatic";
   2: "classic";
   classic: "classic";
+  3: "solid";
+  solid: "solid";
 };
 export const enum ScanDependencyMode {
   app = 1,

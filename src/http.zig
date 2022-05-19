@@ -3904,6 +3904,9 @@ pub const Server = struct {
     }
 
     pub fn detectFastRefresh(this: *Server) void {
+        if (this.bundler.options.jsx.runtime == .solid)
+            return;
+
         defer this.bundler.resetStore();
 
         const runtime = this.bundler.options.jsx.refresh_runtime;

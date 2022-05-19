@@ -1366,7 +1366,7 @@ pub const ESModule = struct {
                         .key = keys[last_map_entry_i],
                         .value = slice.items(.value)[last_map_entry_i],
                         // key_range is unused, so we don't need to pull up the array for it.
-                        .key_range = undefined,
+                        .key_range = logger.Range.None,
                     };
                     if (did_find_map_entry and
                         last_map_entry.value.data == .map and

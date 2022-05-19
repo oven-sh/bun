@@ -14,6 +14,30 @@ pub inline fn containsChar(self: string, char: u8) bool {
 pub inline fn contains(self: string, str: string) bool {
     return std.mem.indexOf(u8, self, str) != null;
 }
+
+const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
+pub fn indexOfAny(self: string, comptime str: anytype) ?OptionalUsize {
+    for (self) |c, i| {
+        inline for (str) |a| {
+            if (c == a) {
+                return @intCast(OptionalUsize, i);
+            }
+        }
+    }
+
+    return null;
+}
+pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
+    for (self) |c, i| {
+        inline for (str) |a| {
+            if (c == a) {
+                return @intCast(OptionalUsize, i);
+            }
+        }
+    }
+
+    return null;
+}
 pub inline fn containsComptime(self: string, comptime str: string) bool {
     var remain = self;
     const Int = std.meta.Int(.unsigned, str.len * 8);

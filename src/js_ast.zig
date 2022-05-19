@@ -345,8 +345,10 @@ pub const AssignTarget = enum(u2) {
 pub const LocRef = struct { loc: logger.Loc, ref: ?Ref = null };
 
 pub const Flags = struct {
-    pub const JSXElement = struct {
-        is_key_before_rest: bool = false,
+    pub const JSXElement = enum {
+        is_key_before_rest,
+        has_any_dynamic,
+        pub const Bitset = std.enums.EnumSet(JSXElement);
     };
 
     pub const Property = enum {
@@ -1296,7 +1298,7 @@ pub const E = struct {
         /// key is the key prop like <ListItem key="foo">
         key: ?ExprNodeIndex = null,
 
-        flags: Flags.JSXElement = Flags.JSXElement{},
+        flags: Flags.JSXElement.Bitset = Flags.JSXElement.Bitset{},
 
         close_tag_loc: logger.Loc = logger.Loc.Empty,
 
@@ -1698,6 +1700,7 @@ pub const E = struct {
         rope_len: u32 = 0,
         is_utf16: bool = false,
 
+        pub var class = E.String{ .data = "class" };
         pub fn push(this: *String, other: *String) void {
             std.debug.assert(this.isUTF8());
             std.debug.assert(other.isUTF8());
@@ -1848,6 +1851,16 @@ pub const E = struct {
                 strings.eqlComptime(s.data, value)
             else
                 strings.eqlComptimeUTF16(s.slice16(), value);
+        }
+
+        pub fn hasPrefixComptime(s: *const String, comptime value: anytype) bool {
+            if (s.data.len < value.len)
+                return false;
+
+            return if (s.isUTF8())
+                strings.eqlComptime(s.data[0..value.len], value)
+            else
+                strings.eqlComptimeUTF16(s.slice16()[0..value.len], value);
         }
 
         pub fn string(s: *const String, allocator: std.mem.Allocator) !bun.string {

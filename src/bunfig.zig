@@ -416,6 +416,72 @@ pub const Bunfig = struct {
                 }
             }
 
+            var jsx_factory: string = "";
+            var jsx_fragment: string = "";
+            var jsx_import_source: string = "";
+            var jsx_runtime = Api.JsxRuntime.automatic;
+            var jsx_dev = true;
+
+            if (json.get("jsx")) |expr| {
+                if (expr.asString(allocator)) |value| {
+                    if (strings.eqlComptime(value, "react")) {
+                        jsx_runtime = Api.JsxRuntime.classic;
+                    } else if (strings.eqlComptime(value, "solid")) {
+                        jsx_runtime = Api.JsxRuntime.solid;
+                    } else if (strings.eqlComptime(value, "react-jsx")) {
+                        jsx_runtime = Api.JsxRuntime.automatic;
+                        jsx_dev = false;
+                    } else if (strings.eqlComptime(value, "react-jsxDEV")) {
+                        jsx_runtime = Api.JsxRuntime.automatic;
+                        jsx_dev = true;
+                    } else {
+                        try this.addError(expr.loc, "Invalid jsx runtime, only 'react', 'solid', 'react-jsx', and 'react-jsxDEV' are supported");
+                    }
+                }
+            }
+
+            if (json.get("jsxImportSource")) |expr| {
+                if (expr.asString(allocator)) |value| {
+                    jsx_import_source = value;
+                }
+            }
+
+            if (json.get("jsxFragment")) |expr| {
+                if (expr.asString(allocator)) |value| {
+                    jsx_fragment = value;
+                }
+            }
+
+            if (json.get("jsxFactory")) |expr| {
+                if (expr.asString(allocator)) |value| {
+                    jsx_factory = value;
+                }
+            }
+
+            if (this.bunfig.jsx == null) {
+                this.bunfig.jsx = Api.Jsx{
+                    .factory = bun.constStrToU8(jsx_factory),
+                    .fragment = bun.constStrToU8(jsx_fragment),
+                    .import_source = bun.constStrToU8(jsx_import_source),
+                    .runtime = jsx_runtime,
+                    .development = jsx_dev,
+                    .react_fast_refresh = false,
+                };
+            } else {
+                var jsx: *Api.Jsx = &this.bunfig.jsx.?;
+                if (jsx_factory.len > 0) {
+                    jsx.factory = bun.constStrToU8(jsx_factory);
+                }
+                if (jsx_fragment.len > 0) {
+                    jsx.fragment = bun.constStrToU8(jsx_fragment);
+                }
+                if (jsx_import_source.len > 0) {
+                    jsx.import_source = bun.constStrToU8(jsx_import_source);
+                }
+                jsx.runtime = jsx_runtime;
+                jsx.development = jsx_dev;
+            }
+
             switch (comptime cmd) {
                 .AutoCommand, .DevCommand, .BuildCommand, .BunCommand => {
                     if (json.get("publicDir")) |public_dir| {

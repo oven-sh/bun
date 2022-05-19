@@ -152,10 +152,15 @@ pub const TSConfigJSON = struct {
             // Parse "jsxImportSource"
             if (compiler_opts.expr.asProperty("jsxImportSource")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
-                    if (is_jsx_development) {
-                        result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-dev-runtime", .{str}) catch unreachable;
+                    if (str.len >= "solid-js".len and strings.eqlComptime(str[0.."solid-js".len], "solid-js")) {
+                        result.jsx.import_source = str;
+                        result.jsx.runtime = .solid;
                     } else {
-                        result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-runtime", .{str}) catch unreachable;
+                        if (is_jsx_development) {
+                            result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-dev-runtime", .{str}) catch unreachable;
+                        } else {
+                            result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-runtime", .{str}) catch unreachable;
+                        }
                     }
 
                     result.jsx.package_name = options.JSX.Pragma.parsePackageName(str);

@@ -275,16 +275,21 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-fvisibility-inlines-hidden
 	
 PLATFORM_LINKER_FLAGS =
-		
+
+SYMBOLS=
+
 # This flag is only added to webkit builds on Apple platforms
 # It has something to do with ICU
 ifeq ($(OS_NAME), darwin)
+SYMBOLS=-exported_symbols_list $(realpath src/symbols.txt)
 PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
-		-fno-keep-static-consts \
-		-exported_symbols_list $(realpath src/symbols.txt)
+		-fno-keep-static-consts
 endif
 
+ifeq ($(OS_NAME),linux)
+SYMBOLS=-Wl,--dynamic-list $(realpath src/symbols.dyn)
+endif
 
 SHARED_LIB_EXTENSION = .so
 
@@ -335,8 +340,7 @@ PLATFORM_LINKER_FLAGS = $(CFLAGS) \
 		-fno-semantic-interposition \
 		-flto \
 		-Wl,--allow-multiple-definition \
-		-rdynamic \
-		-Wl,--dynamic-list $(realpath src/symbols.dyn)
+		-rdynamic
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
 endif
@@ -1077,14 +1081,14 @@ mimalloc-wasm:
 	cp $(BUN_DEPS_DIR)/mimalloc/$(MIMALLOC_INPUT_PATH) $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE).wasm
 
 bun-link-lld-debug:
-	$(CXX) $(BUN_LLD_FLAGS) $(DEBUG_FLAGS) \
+	$(CXX) $(BUN_LLD_FLAGS) $(DEBUG_FLAGS) $(SYMBOLS) \
 		-g \
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
 		-o $(DEBUG_BIN)/bun-debug
 
 bun-link-lld-debug-no-jsc:
-	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) \
+	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) $(SYMBOLS) \
 		-g \
 		$(DEBUG_BIN)/bun-debug.o \
 		-W \
@@ -1092,7 +1096,7 @@ bun-link-lld-debug-no-jsc:
 
 
 bun-link-lld-release-no-jsc:
-	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) \
+	$(CXX) $(BUN_LLD_FLAGS_WITHOUT_JSC) $(SYMBOLS) \
 		-g \
 		$(BUN_RELEASE_BIN).o \
 		-W \
@@ -1104,7 +1108,7 @@ bun-relink-copy:
 
 
 bun-link-lld-release:
-	$(CXX) $(BUN_LLD_FLAGS) \
+	$(CXX) $(BUN_LLD_FLAGS) $(SYMBOLS) \
 		$(BUN_RELEASE_BIN).o \
 		-o $(BUN_RELEASE_BIN) \
 		-W \

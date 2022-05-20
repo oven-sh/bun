@@ -284,6 +284,10 @@ pub const MutableString = struct {
         }
 
         const E = @import("./js_ast.zig").E;
+
+        /// Write a E.String to the buffer.
+        /// This automatically encodes UTF-16 into UTF-8 using
+        /// the same code path as TextEncoder
         pub fn writeString(this: *BufferedWriter, bytes: *E.String) anyerror!usize {
             if (bytes.isUTF8()) {
                 return try this.writeAll(bytes.slice(this.context.allocator));
@@ -292,6 +296,9 @@ pub const MutableString = struct {
             return try this.writeAll16(bytes.slice16());
         }
 
+        /// Write a UTF-16 string to the (UTF-8) buffer
+        /// This automatically encodes UTF-16 into UTF-8 using
+        /// the same code path as TextEncoder
         pub fn writeAll16(this: *BufferedWriter, bytes: []const u16) anyerror!usize {
             var pending = bytes;
 
@@ -334,6 +341,7 @@ pub const MutableString = struct {
         pub fn writeHTMLAttributeValue(this: *BufferedWriter, bytes: []const u8) anyerror!void {
             var slice = bytes;
             while (slice.len > 0) {
+                // TODO: SIMD
                 if (strings.indexOfAny(slice, "\"<>")) |j| {
                     _ = try this.writeAll(slice[0..j]);
                     _ = switch (slice[j]) {
@@ -356,6 +364,8 @@ pub const MutableString = struct {
             var slice = bytes;
             while (slice.len > 0) {
                 if (strings.indexOfAny16(slice, "\"<>")) |j| {
+                    // this won't handle strings larger than 4 GB
+                    // that's fine though, 4 GB of SSR'd HTML is quite a lot...
                     _ = try this.writeAll16(slice[0..j]);
                     _ = switch (slice[j]) {
                         '"' => try this.writeAll("&quot;"),

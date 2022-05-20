@@ -843,7 +843,7 @@ That advice unfortunately **lowers** the hard limit to `8096`. This can be a pro
 To fix this issue:
 
 1. Remove any scripts that call `ulimit -n` and restart your shell.
-2. Try agin, and if the error still occurs, try setting `ulimit -n` to an absurdly high number, such as `ulimit -n 2147483646`
+2. Try again, and if the error still occurs, try setting `ulimit -n` to an absurdly high number, such as `ulimit -n 2147483646`
 3. Try again, and if that still doesn’t fix it, open an issue
 
 ### bun install is stuck

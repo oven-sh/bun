@@ -81,6 +81,7 @@ pub const TSConfigJSON = struct {
 
         if (this.has_jsxImportSource) {
             out.import_source = this.jsx.import_source;
+            out.runtime = this.jsx.runtime;
         }
 
         return out;

@@ -3321,77 +3321,29 @@ const SolidJS = struct {
     setAttribute: GeneratedSymbol = undefined,
     effect: GeneratedSymbol = undefined,
 
-    component_body: std.ArrayListUnmanaged(Stmt) = .{},
-    component_body_decls: std.ArrayListUnmanaged(G.Decl) = .{},
-    last_template_id: E.Identifier = .{},
-    last_element_id: E.Identifier = .{},
-    prev_had_dynamic: bool = false,
-    temporary_scope: Scope = Scope{
-        .kind = .function_body,
-        .parent = null,
-    },
-    prev_scope: ?*Scope = null,
-    node_count: u32 = 0,
-
+    events_to_delegate: Events.Bitset = .{},
     template_decls: std.ArrayListUnmanaged(G.Decl) = .{},
-    current_template_string: MutableString = .{
-        .allocator = undefined,
-        .list = .{},
-    },
-    buffered_writer: MutableString.BufferedWriter = undefined,
-
     is_in_jsx_component: bool = false,
 
-    events_to_delegate: Events.Bitset = .{},
-    element_counter: u32 = 0,
+    pub const Stack = struct {
+        component_body: std.ArrayListUnmanaged(Stmt) = .{},
+        component_body_decls: std.ArrayListUnmanaged(G.Decl) = .{},
+        last_template_id: E.Identifier = .{},
+        last_element_id: E.Identifier = .{},
+        temporary_scope: Scope = Scope{
+            .kind = .function_body,
+            .parent = null,
+        },
+        prev_scope: ?*Scope = null,
+        node_count: u32 = 0,
 
-    const prefilled_element_names = [_]string{
-        "_el",
-        "_el$1",
-        "_el$2",
-        "_el$3",
-        "_el$4",
-        "_el$5",
-        "_el$6",
-        "_el$7",
-        "_el$8",
-        "_el$9",
-        "_el$10",
-        "_el$11",
-        "_el$12",
-        "_el$13",
-        "_el$14",
-        "_el$15",
-        "_el$16",
-        "_el$17",
-        "_el$18",
-        "_el$19",
-        "_el$20",
-        "_el$21",
-    };
-    const prefilled_template_names = [_]string{
-        "_tmpl",
-        "_tmpl$1",
-        "_tmpl$2",
-        "_tmpl$3",
-        "_tmpl$4",
-        "_tmpl$5",
-        "_tmpl$6",
-        "_tmpl$7",
-        "_tmpl$8",
-        "_tmpl$9",
-        "_tmpl$10",
-        "_tmpl$11",
-        "_tmpl$12",
-        "_tmpl$13",
-        "_tmpl$14",
-        "_tmpl$15",
-        "_tmpl$16",
-        "_tmpl$17",
-        "_tmpl$18",
-        "_tmpl$19",
-        "_tmpl$20",
-        "_tmpl$21",
+        current_template_string: MutableString = .{
+            .allocator = undefined,
+            .list = .{},
+        },
+        buffered_writer: MutableString.BufferedWriter = undefined,
+
+        element_counter: u32 = 0,
     };
 
     pub fn generateElementName(this: *SolidJS, allocator: std.mem.Allocator) string {
@@ -3527,6 +3479,55 @@ const SolidJS = struct {
         CompositionEnd,
 
         pub const Bitset = std.enums.EnumSet(Events);
+    };
+
+    const prefilled_element_names = [_]string{
+        "_el",
+        "_el$1",
+        "_el$2",
+        "_el$3",
+        "_el$4",
+        "_el$5",
+        "_el$6",
+        "_el$7",
+        "_el$8",
+        "_el$9",
+        "_el$10",
+        "_el$11",
+        "_el$12",
+        "_el$13",
+        "_el$14",
+        "_el$15",
+        "_el$16",
+        "_el$17",
+        "_el$18",
+        "_el$19",
+        "_el$20",
+        "_el$21",
+    };
+    const prefilled_template_names = [_]string{
+        "_tmpl",
+        "_tmpl$1",
+        "_tmpl$2",
+        "_tmpl$3",
+        "_tmpl$4",
+        "_tmpl$5",
+        "_tmpl$6",
+        "_tmpl$7",
+        "_tmpl$8",
+        "_tmpl$9",
+        "_tmpl$10",
+        "_tmpl$11",
+        "_tmpl$12",
+        "_tmpl$13",
+        "_tmpl$14",
+        "_tmpl$15",
+        "_tmpl$16",
+        "_tmpl$17",
+        "_tmpl$18",
+        "_tmpl$19",
+        "_tmpl$20",
+        "_tmpl$21",
     };
 };
 
@@ -12622,9 +12623,8 @@ fn NewParser_(
                         },
                         .solid => {
                             // The rules:
-                            // 1. Every JSX element with an identifier gets wrapped in a createComponent() call
-                            // 2. HTML string literals of static elements are generated & escaped, injected at the top of the file
-                            // 2a. Static elements are contiguous in the HTML, but dynamic elements get a marker string during if client-side hydration
+                            // 1. HTML string literals of static JSX elements are generated & escaped, injected at the top of the file
+                            // 1a. Static elements are contiguous in the HTML, but dynamic elements get a marker string during if client-side hydration
                             // Each element becomes a declaration in the top-level scope of the JSX expression (i.e. either the anonymous IIFE or an array)
                             // Those elements may be markers
                             // The final count of the markers is passed to the template function
@@ -12633,7 +12633,9 @@ fn NewParser_(
                             // The specific function differs if SSR is enabled and if client-side hydration is enabled.
                             // 4. Non-static JSX children are added like this:
                             //     insert(topElement, createComponent(MyComponent, props), markerElement)
-                            //
+                            // 5. Non-statically analyzable attributes are added like this:
+                            //    setAttribute(topElement, "data-foo", "bar")
+                            // 6.
                             var solid = &p.solid;
                             const old_is_in_jsx_component = solid.is_in_jsx_component;
                             solid.is_in_jsx_component = true;
@@ -12650,7 +12652,6 @@ fn NewParser_(
                                 solid.component_body.append(p.allocator, p.s(S.Empty{}, expr.loc)) catch unreachable;
 
                                 solid.last_element_id = E.Identifier{};
-                                solid.prev_had_dynamic = false;
                                 solid.prev_scope = p.current_scope;
                                 solid.temporary_scope.reset();
                                 solid.node_count = 0;
@@ -12662,6 +12663,7 @@ fn NewParser_(
 
                             var writer = &solid.buffered_writer;
 
+                            // The JSX tag used
                             const tag: Expr = tagger: {
                                 if (e_.tag) |_tag| {
                                     break :tagger p.visitExpr(_tag);
@@ -12691,7 +12693,6 @@ fn NewParser_(
                                     needs_end_bracket = true;
 
                                     var wrote_anything = false;
-                                    var had_any_dynamic_content = false;
                                     for (jsx_props) |*property, i| {
                                         if (property.kind != .spread) {
                                             property.key = p.visitExpr(e_.properties.ptr[i].key.?);
@@ -12709,7 +12710,7 @@ fn NewParser_(
                                                     (key.eqlComptime("class") or key.eqlComptime("className"));
 
                                                 const primitive = property.value.?.knownPrimitive();
-                                                const is_dynamic = !(primitive == .string or primitive == .number or primitive == .boolean or primitive == .@"null" or primitive == .@"undefined");
+                                                const is_dynamic = !primitive.isStatic();
                                                 const appears_in_template = !is_event_listener and !is_dynamic;
                                                 if (appears_in_template) {
                                                     _ = writer.writeAll(" ") catch unreachable;
@@ -12738,7 +12739,10 @@ fn NewParser_(
                                                         // TODO: should "undefined" be written?
                                                         .@"null", .@"undefined" => {},
                                                         .boolean => {
+                                                            // existence of an HTML attribute implicitly is true
+                                                            // so we only need to write if it's false
                                                             if (!property.value.?.data.e_boolean.value) {
+                                                                // TODO: verify that SolidJS writes the same value
                                                                 _ = writer.writeAll("=false") catch unreachable;
                                                             }
                                                         },
@@ -12758,7 +12762,6 @@ fn NewParser_(
                                                         p.current_scope = solid.prev_scope.?;
                                                         template_expression = .{ .loc = expr.loc, .data = .{ .e_identifier = solid.last_template_id } };
                                                     }
-                                                    had_any_dynamic_content = true;
                                                     if (element == null) {
                                                         element = solid.generateElement(
                                                             p,
@@ -12769,8 +12772,8 @@ fn NewParser_(
 
                                                     var stmt: Stmt = undefined;
                                                     if (!is_event_listener) {
-                                                        var args = p.allocator.alloc(Expr, 3) catch unreachable;
-                                                        args[0] = template_expression;
+                                                        var args = p.allocator.alloc(Expr, 4) catch unreachable;
+                                                        args[0] = p.e(element.?, expr.loc);
                                                         if (is_class) {
                                                             args[1] = p.e(E.String.init("className"), property.key.?.loc);
                                                         } else {
@@ -12790,7 +12793,7 @@ fn NewParser_(
                                                                     },
                                                                     property.value.?.loc,
                                                                 ),
-                                                                .args = ExprNodeList.init(args),
+                                                                .args = ExprNodeList.init(args[0..3]),
                                                             },
                                                             property.key.?.loc,
                                                         );
@@ -12803,7 +12806,8 @@ fn NewParser_(
                                                         } else {
                                                             var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
                                                             stmts[0] = p.s(S.Return{ .value = setAttr }, property.value.?.loc);
-                                                            var arrow = p.e(
+
+                                                            args[3] = p.e(
                                                                 E.Arrow{
                                                                     .args = &[_]G.Arg{},
                                                                     .body = G.FnBody{
@@ -12813,7 +12817,18 @@ fn NewParser_(
                                                                 },
                                                                 property.value.?.loc,
                                                             );
-                                                            stmt = p.s(S.SExpr{ .value = arrow }, property.value.?.loc);
+                                                            stmt = p.s(S.SExpr{
+                                                                .value = p.e(
+                                                                    E.Call{
+                                                                        .target = p.e(
+                                                                            E.Identifier{
+                                                                                .ref = solid.effect.ref,
+                                                                            },
+                                                                        ),
+                                                                        .args = ExprNodeList.init(args[3..4]),
+                                                                    },
+                                                                ),
+                                                            }, property.value.?.loc);
                                                         }
                                                     } else {
                                                         var args = p.allocator.alloc(Expr, 2) catch unreachable;
@@ -12954,6 +12969,8 @@ fn NewParser_(
                                     if (!old_is_in_jsx_component) {
                                         var args = p.allocator.alloc(Expr, 2) catch unreachable;
 
+                                        // we are done, so it's time to turn our template into a string we can write
+                                        // note that we are writing as UTF-8 but the input may be UTF-16 or UTF-8, depending.
                                         if (writer.pos < writer.buffer.len and writer.context.list.items.len == 0) {
                                             args[0] = p.e(E.String.init(p.allocator.dupe(u8, writer.buffer[0..writer.pos]) catch unreachable), expr.loc);
                                         } else if (writer.pos == 0 and writer.context.list.items.len == 0) {

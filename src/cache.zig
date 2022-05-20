@@ -13,7 +13,7 @@ const C = bun.C;
 
 const js_ast = @import("./js_ast.zig");
 const logger = @import("./logger.zig");
-const js_parser = @import("./js_parser/js_parser.zig");
+const js_parser = @import("./js_parser.zig");
 const json_parser = @import("./json_parser.zig");
 const options = @import("./options.zig");
 const Define = @import("./defines.zig").Define;

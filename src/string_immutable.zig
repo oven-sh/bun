@@ -549,6 +549,10 @@ pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
     return eqlComptimeCheckLenWithType(u8, self, alt, false);
 }
 
+pub fn hasPrefixComptime(self: string, comptime alt: anytype) bool {
+    return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[0..alt.len], alt, false);
+}
+
 pub inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
     @setEvalBranchQuota(9999);
     if (comptime check_len) {

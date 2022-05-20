@@ -156,3 +156,6 @@ pub fn span(ptr: anytype) std.mem.Span(@TypeOf(ptr)) {
         return ptr[0..l];
     }
 }
+
+pub const IdentityContext = @import("./identity_context.zig").IdentityContext;
+pub const ArrayIdentityContext = @import("./identity_context.zig").ArrayIdentityContext;

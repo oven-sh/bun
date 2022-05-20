@@ -3294,6 +3294,7 @@ pub const NodeFS = struct {
                 }
 
                 var buf = args.data.slice();
+                var written: usize = 0;
 
                 while (buf.len > 0) {
                     switch (Syscall.write(fd, buf)) {
@@ -3302,12 +3303,16 @@ pub const NodeFS = struct {
                         },
                         .result => |amt| {
                             buf = buf[amt..];
+                            written += amt;
                             if (amt == 0) {
                                 break;
                             }
                         },
                     }
                 }
+
+                _ = this.ftruncate(.{ .fd = fd, .len = @truncate(JSC.WebCore.Blob.SizeType, written) }, .sync);
+
                 return Maybe(Return.WriteFile).success;
             },
             else => {},

@@ -409,6 +409,10 @@ prepare-types:
 release-types:
 	cd packages/bun-types && npm publish
 
+format:
+	$(PRETTIER) --write integration/bunjs-only-snippets/*.js
+	$(PRETTIER) --write integration/bunjs-only-snippets/solid-dom-fixtures/**/*.js
+
 lolhtml:
 	cd $(BUN_DEPS_DIR)/lol-html/ && cd $(BUN_DEPS_DIR)/lol-html/c-api && cargo build --release && cp target/release/liblolhtml.a $(BUN_DEPS_OUT_DIR)
 

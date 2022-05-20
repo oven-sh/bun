@@ -2291,6 +2291,19 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
+    pub fn wrapInArrow(this: Expr, allocator: std.mem.Allocator) !Expr {
+        var stmts = try allocator.alloc(Stmt, 1);
+        stmts[0] = Stmt.alloc(S.Return, S.Return{ .value = this }, this.loc);
+
+        return Expr.init(E.Arrow, E.Arrow{
+            .args = &.{},
+            .body = .{
+                .loc = this.loc,
+                .stmts = stmts,
+            },
+        }, this.loc);
+    }
+
     pub fn fromBlob(
         blob: *const JSC.WebCore.Blob,
         allocator: std.mem.Allocator,

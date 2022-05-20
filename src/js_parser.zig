@@ -2942,7 +2942,7 @@ pub const Parser = struct {
                 var import_items = try p.allocator.alloc(js_ast.ClauseItem, import_count);
 
                 // 1. Inject the part containing template declarations and Solid's import statement
-                var stmts_to_inject = p.allocator.alloc(Stmt, @as(usize, @boolToInt(p.solid.template_decls.items.len > 0)) + @as(usize, @boolToInt(import_count > 0 and p.options.features.auto_import_jsx))) catch unreachable;
+                var stmts_to_inject = p.allocator.alloc(Stmt, @as(usize, @boolToInt(p.solid.template_decls.count() > 0)) + @as(usize, @boolToInt(import_count > 0 and p.options.features.auto_import_jsx))) catch unreachable;
                 var j: usize = 0;
                 const order = .{
                     "createComponent",
@@ -2957,7 +2957,7 @@ pub const Parser = struct {
                 var stmts_remain = stmts_to_inject;
 
                 if (stmts_to_inject.len > 0) {
-                    var declared_symbols = p.allocator.alloc(js_ast.DeclaredSymbol, p.solid.template_decls.items.len) catch unreachable;
+                    var declared_symbols = p.allocator.alloc(js_ast.DeclaredSymbol, p.solid.template_decls.count()) catch unreachable;
                     var import_record_ids: []u32 = &[_]u32{};
 
                     if (p.options.features.auto_import_jsx) {
@@ -3006,16 +3006,16 @@ pub const Parser = struct {
                         import_record_ids[0] = import_record_id;
                     }
 
-                    if (p.solid.template_decls.items.len > 0) {
-                        for (p.solid.template_decls.items) |_, i| {
+                    if (p.solid.template_decls.count() > 0) {
+                        for (p.solid.template_decls.values()) |val, i| {
                             declared_symbols[i] = js_ast.DeclaredSymbol{
-                                .ref = p.solid.template_decls.items[i].binding.data.b_identifier.ref,
+                                .ref = val.binding.data.b_identifier.ref,
                                 .is_top_level = true,
                             };
                         }
                         stmts_remain[0] = p.s(
                             S.Local{
-                                .decls = p.solid.template_decls.items,
+                                .decls = p.solid.template_decls.values(),
                             },
                             logger.Loc.Empty,
                         );
@@ -3332,11 +3332,56 @@ const SolidJS = struct {
     setAttribute: GeneratedSymbol = undefined,
     effect: GeneratedSymbol = undefined,
 
-    events_to_delegate: Events.Bitset = .{},
-    template_decls: std.ArrayListUnmanaged(G.Decl) = .{},
+    events_to_delegate: Event.Bitset = .{},
+    template_decls: std.ArrayHashMapUnmanaged(u32, G.Decl, bun.ArrayIdentityContext, false) = .{},
     is_in_jsx_component: bool = false,
 
     stack: Stack = .{},
+
+    pub const ExpressionTransform = union(enum) {
+        class: void,
+        nativeEvent: void,
+        nativeEventCaptured: void,
+        style: void,
+        setAttribute: void,
+        event: Event,
+
+        pub fn which(key: []const u8) ExpressionTransform {
+            const len = key.len;
+            if (len < 3)
+                return .{ .setAttribute = {} };
+
+            if (strings.hasPrefixComptime(key, "on:")) {
+                return .{ .nativeEvent = {} };
+            }
+
+            if (strings.hasPrefixComptime(key, "oncapture:")) {
+                return .{ .nativeEventCaptured = {} };
+            }
+
+            if (Event.map.get(key)) |event| {
+                return .{ .event = event };
+            }
+
+            switch (key.len) {
+                "class".len => {
+                    if (strings.eqlComptime(key, "class"))
+                        return .{ .class = {} };
+
+                    if (strings.eqlComptime(key, "style"))
+                        return .{ .style = {} };
+
+                    return .{ .setAttribute = {} };
+                },
+                "className".len => {
+                    if (strings.eqlComptime(key, "className"))
+                        return .{ .class = {} };
+                    return .{ .setAttribute = {} };
+                },
+                else => return .{ .setAttribute = {} },
+            }
+        }
+    };
 
     pub const Stack = struct {
         component_body: std.ArrayListUnmanaged(Stmt) = .{},
@@ -3367,10 +3412,10 @@ const SolidJS = struct {
     }
 
     pub fn generateTemplateName(this: *SolidJS, allocator: std.mem.Allocator) string {
-        if (this.template_decls.items.len <= prefilled_template_names.len) {
-            return prefilled_template_names[this.template_decls.items.len];
+        if (this.template_decls.count() <= prefilled_template_names.len) {
+            return prefilled_template_names[this.template_decls.count()];
         }
-        return std.fmt.allocPrint(allocator, "_tmpl${d}", .{this.template_decls.items.len}) catch unreachable;
+        return std.fmt.allocPrint(allocator, "_tmpl${d}", .{this.template_decls.count()}) catch unreachable;
     }
 
     pub fn generateElement(solid: *SolidJS, p: anytype, template_expression: Expr, value_loc: logger.Loc) !E.Identifier {
@@ -3444,56 +3489,112 @@ const SolidJS = struct {
         return element;
     }
 
-    pub const Events = enum {
-        Click,
-        Change,
-        Input,
-        Submit,
-        KeyDown,
-        KeyUp,
-        KeyPress,
-        MouseDown,
-        MouseUp,
-        MouseMove,
-        MouseEnter,
-        MouseLeave,
-        MouseOver,
-        MouseOut,
-        Focus,
-        Blur,
-        Scroll,
-        Wheel,
-        TouchStart,
-        TouchMove,
-        TouchEnd,
-        TouchCancel,
-        PointerDown,
-        PointerUp,
-        PointerMove,
-        PointerCancel,
-        PointerEnter,
-        PointerLeave,
-        PointerOver,
-        PointerOut,
-        GotPointerCapture,
-        LostPointerCapture,
-        Select,
-        ContextMenu,
-        DragStart,
-        Drag,
-        DragEnd,
-        DragEnter,
-        DragLeave,
-        DragOver,
-        Drop,
-        Copy,
-        Cut,
-        Paste,
-        CompositionStart,
-        CompositionUpdate,
-        CompositionEnd,
+    pub const Event = enum {
+        beforeinput,
+        click,
+        dblclick,
+        contextmenu,
+        focusin,
+        focusout,
+        input,
+        keydown,
+        keyup,
+        mousedown,
+        mousemove,
+        mouseout,
+        mouseover,
+        mouseup,
+        pointerdown,
+        pointermove,
+        pointerout,
+        pointerover,
+        pointerup,
+        touchend,
+        touchmove,
+        touchstart,
 
-        pub const Bitset = std.enums.EnumSet(Events);
+        pub const setter_names = std.enums.EnumArray(Event, string).init(
+            .{
+                .beforeinput = "$$beforeinput",
+                .click = "$$click",
+                .dblclick = "$$dblclick",
+                .contextmenu = "$$contextmenu",
+                .focusin = "$$focusin",
+                .focusout = "$$focusout",
+                .input = "$$input",
+                .keydown = "$$keydown",
+                .keyup = "$$keyup",
+                .mousedown = "$$mousedown",
+                .mousemove = "$$mousemove",
+                .mouseout = "$$mouseout",
+                .mouseover = "$$mouseover",
+                .mouseup = "$$mouseup",
+                .pointerdown = "$$pointerdown",
+                .pointermove = "$$pointermove",
+                .pointerout = "$$pointerout",
+                .pointerover = "$$pointerover",
+                .pointerup = "$$pointerup",
+                .touchend = "$$touchend",
+                .touchmove = "$$touchmove",
+                .touchstart = "$$touchstart",
+            },
+        );
+
+        pub inline fn setter(this: Event) string {
+            return setter_names.get(this);
+        }
+
+        pub const map = ComptimeStringMap(
+            Event,
+            .{
+                .{ "onbeforeinput", Event.beforeinput },
+                .{ "onclick", Event.click },
+                .{ "ondblclick", Event.dblclick },
+                .{ "oncontextmenu", Event.contextmenu },
+                .{ "onfocusin", Event.focusin },
+                .{ "onfocusout", Event.focusout },
+                .{ "oninput", Event.input },
+                .{ "onkeydown", Event.keydown },
+                .{ "onkeyup", Event.keyup },
+                .{ "onmousedown", Event.mousedown },
+                .{ "onmousemove", Event.mousemove },
+                .{ "onmouseout", Event.mouseout },
+                .{ "onmouseover", Event.mouseover },
+                .{ "onmouseup", Event.mouseup },
+                .{ "onpointerdown", Event.pointerdown },
+                .{ "onpointermove", Event.pointermove },
+                .{ "onpointerout", Event.pointerout },
+                .{ "onpointerover", Event.pointerover },
+                .{ "onpointerup", Event.pointerup },
+                .{ "ontouchend", Event.touchend },
+                .{ "ontouchmove", Event.touchmove },
+                .{ "ontouchstart", Event.touchstart },
+                .{ "onbeforeinput", Event.beforeinput },
+                .{ "onClick", Event.click },
+                .{ "onDblclick", Event.dblclick },
+                .{ "onContextMenu", Event.contextmenu },
+                .{ "onFocusIn", Event.focusin },
+                .{ "onFocusOut", Event.focusout },
+                .{ "onInput", Event.input },
+                .{ "onKeydown", Event.keydown },
+                .{ "onKeyup", Event.keyup },
+                .{ "onMouseDown", Event.mousedown },
+                .{ "onMouseMove", Event.mousemove },
+                .{ "onMouseOut", Event.mouseout },
+                .{ "onMouseOver", Event.mouseover },
+                .{ "onMouseUp", Event.mouseup },
+                .{ "onPointerDown", Event.pointerdown },
+                .{ "onPointerMove", Event.pointermove },
+                .{ "onPointerOut", Event.pointerout },
+                .{ "onPointerOver", Event.pointerover },
+                .{ "onPointerUp", Event.pointerup },
+                .{ "onTouchEnd", Event.touchend },
+                .{ "onTouchMove", Event.touchmove },
+                .{ "onTouchStart", Event.touchstart },
+            },
+        );
+
+        pub const Bitset = std.enums.EnumSet(Event);
     };
 
     const prefilled_element_names = [_]string{
@@ -12423,8 +12524,9 @@ fn NewParser_(
             if (only_scan_imports_and_do_not_visit) {
                 @compileError("only_scan_imports_and_do_not_visit must not run this.");
             }
-            // Inline to avoid the extra unnecessary function call in the stack
-            return @call(.{ .modifier = .always_inline }, P.visitExprInOut, .{ p, expr, ExprIn{} });
+
+            // hopefully this gets tailed
+            return p.visitExprInOut(expr, .{});
         }
 
         fn visitFunc(p: *P, _func: G.Fn, open_parens_loc: logger.Loc) G.Fn {
@@ -12711,7 +12813,6 @@ fn NewParser_(
                                     _ = writer.writeString(tag.data.e_string) catch unreachable;
                                     needs_end_bracket = true;
 
-                                    var wrote_anything = false;
                                     for (jsx_props) |*property, i| {
                                         if (property.kind != .spread) {
                                             property.key = p.visitExpr(e_.properties.ptr[i].key.?);
@@ -12723,116 +12824,179 @@ fn NewParser_(
                                             if (property.kind != .spread) {
                                                 var key = property.key.?.data.e_string;
 
-                                                const is_event_listener = key.hasPrefixComptime("on:");
-                                                const is_class = !is_event_listener and
-                                                    // TODO: should this be case-insensitive?
-                                                    (key.eqlComptime("class") or key.eqlComptime("className"));
+                                                const transform: SolidJS.ExpressionTransform =
+                                                    if (key.isUTF8())
+                                                    SolidJS.ExpressionTransform.which(key.slice(p.allocator))
+                                                else
+                                                    SolidJS.ExpressionTransform{ .setAttribute = {} };
 
-                                                const primitive = property.value.?.knownPrimitive();
-                                                const is_dynamic = !primitive.isStatic();
-                                                const appears_in_template = !is_event_listener and !is_dynamic;
-                                                if (appears_in_template) {
-                                                    _ = writer.writeAll(" ") catch unreachable;
-                                                    wrote_anything = true;
-                                                }
-
-                                                if (is_class and !is_dynamic) {
-                                                    _ = writer.writeAll("class") catch unreachable;
-                                                } else if (!is_dynamic) {
-                                                    _ = writer.writeString(key) catch unreachable;
-                                                }
-                                                if (appears_in_template) {
-                                                    switch (primitive) {
-                                                        .number, .string => {
-                                                            if (property.value.?.data == .e_string) {
-                                                                const str = property.value.?.data.e_string;
-                                                                if (str.len() > 0) {
-                                                                    _ = writer.writeAll("=") catch unreachable;
-                                                                    writer.writeHTMLAttributeValueString(str) catch unreachable;
-                                                                }
-                                                            } else {
-                                                                writer.writer().print("={d}", .{property.value.?.data.e_number.value}) catch unreachable;
-                                                            }
-                                                        },
-                                                        // TODO: should "null" be written?
-                                                        // TODO: should "undefined" be written?
-                                                        .@"null", .@"undefined" => {},
-                                                        .boolean => {
-                                                            // existence of an HTML attribute implicitly is true
-                                                            // so we only need to write if it's false
-                                                            if (!property.value.?.data.e_boolean.value) {
-                                                                // TODO: verify that SolidJS writes the same value
-                                                                _ = writer.writeAll("=false") catch unreachable;
-                                                            }
-                                                        },
-
-                                                        else => unreachable,
-                                                    }
-                                                } else {
-                                                    if (template_expression.data.e_identifier.ref.isNull()) {
-                                                        var new_template_name = global_solid.generateTemplateName(p.allocator);
-                                                        // declare the template in the module scope
-                                                        solid.prev_scope = p.current_scope;
-                                                        p.current_scope = p.module_scope;
-                                                        solid.last_template_id = .{
-                                                            .ref = p.declareSymbolMaybeGenerated(.other, expr.loc, new_template_name, true) catch unreachable,
-                                                            .can_be_removed_if_unused = true,
-                                                            .call_can_be_unwrapped_if_unused = true,
-                                                        };
-                                                        p.current_scope = solid.prev_scope.?;
-                                                        template_expression = .{ .loc = expr.loc, .data = .{ .e_identifier = solid.last_template_id } };
-                                                    }
-                                                    if (element == null) {
-                                                        element = global_solid.generateElement(
-                                                            p,
-                                                            template_expression,
-                                                            property.value.?.loc,
-                                                        ) catch unreachable;
-                                                    }
-
-                                                    var stmt: Stmt = undefined;
-                                                    if (!is_event_listener) {
-                                                        var args = p.allocator.alloc(Expr, 4) catch unreachable;
-                                                        args[0] = p.e(element.?, expr.loc);
-                                                        if (is_class) {
-                                                            args[1] = p.e(E.String.init("className"), property.key.?.loc);
-                                                        } else {
-                                                            args[1] = property.key.?;
+                                                const primitive = @as(Expr.Tag, property.value.?.data);
+                                                const is_dynamic = switch (primitive) {
+                                                    .e_string, .e_number, .e_boolean, .e_null, .e_undefined => false,
+                                                    else => true,
+                                                };
+                                                do_transform: {
+                                                    var out: Expr = p.e(E.Missing{}, expr.loc);
+                                                    var needs_wrap = false;
+                                                    if (is_dynamic) {
+                                                        if (template_expression.data.e_identifier.ref.isNull()) {
+                                                            var new_template_name = global_solid.generateTemplateName(p.allocator);
+                                                            // declare the template in the module scope
+                                                            solid.prev_scope = p.current_scope;
+                                                            p.current_scope = p.module_scope;
+                                                            solid.last_template_id = .{
+                                                                .ref = p.declareSymbolMaybeGenerated(.other, expr.loc, new_template_name, true) catch unreachable,
+                                                                .can_be_removed_if_unused = true,
+                                                                .call_can_be_unwrapped_if_unused = true,
+                                                            };
+                                                            p.current_scope = solid.prev_scope.?;
+                                                            template_expression = .{ .loc = expr.loc, .data = .{ .e_identifier = solid.last_template_id } };
                                                         }
 
-                                                        args[2] = property.value.?;
+                                                        if (element == null) {
+                                                            element = global_solid.generateElement(
+                                                                p,
+                                                                template_expression,
+                                                                property.value.?.loc,
+                                                            ) catch unreachable;
+                                                        }
+                                                    }
 
-                                                        // setAttribute(template_expression, key, value);
-                                                        const setAttr = p.e(
-                                                            E.Call{
-                                                                .target = p.e(
-                                                                    E.Identifier{
-                                                                        .ref = symbols.setAttribute.ref,
-                                                                        .can_be_removed_if_unused = false,
-                                                                        .call_can_be_unwrapped_if_unused = false,
+                                                    if (!is_dynamic and (transform == .class or transform == .style or transform == .setAttribute)) {
+                                                        switch (transform) {
+                                                            .class => {
+                                                                switch (property.value.?.data) {
+                                                                    .e_string => |str| {
+                                                                        if (str.len() == 0) break :do_transform;
+                                                                        _ = writer.writeAll(" class=\"") catch unreachable;
+                                                                        _ = writer.writeHTMLAttributeValueString(str) catch unreachable;
+                                                                        _ = writer.writeAll("\"") catch unreachable;
                                                                     },
-                                                                    property.value.?.loc,
-                                                                ),
-                                                                .args = ExprNodeList.init(args[0..3]),
+                                                                    .e_number => |num| {
+                                                                        writer.writer().print(" class={d}", .{num.value}) catch unreachable;
+                                                                    },
+                                                                    else => {},
+                                                                }
                                                             },
-                                                            property.key.?.loc,
-                                                        );
+                                                            .setAttribute => {
+                                                                _ = writer.writeAll(" ") catch unreachable;
+                                                                _ = writer.writeString(property.key.?.data.e_string) catch unreachable;
 
-                                                        p.recordUsage(symbols.setAttribute.ref);
-                                                        if (args[2].data == .e_identifier or args[2].data == .e_import_identifier) {
-                                                            if (args[2].data == .e_identifier) p.recordUsage(args[2].data.e_identifier.ref);
-                                                            if (args[2].data == .e_import_identifier) p.recordUsage(args[2].data.e_import_identifier.ref);
-                                                            stmt = p.s(S.SExpr{ .value = setAttr }, property.value.?.loc);
-                                                        } else {
+                                                                switch (property.value.?.data) {
+                                                                    .e_string => |str| {
+                                                                        if (str.len() == 0) break :do_transform;
+                                                                        _ = writer.writeAll("=\"") catch unreachable;
+                                                                        _ = writer.writeHTMLAttributeValueString(str) catch unreachable;
+                                                                        _ = writer.writeAll("\"") catch unreachable;
+                                                                    },
+                                                                    .e_number => |num| {
+                                                                        writer.writer().print("={d}", .{num.value}) catch unreachable;
+                                                                    },
+                                                                    else => {},
+                                                                }
+                                                            },
+                                                            .style => {},
+                                                            else => unreachable,
+                                                        }
+                                                    } else {
+                                                        switch (transform) {
+                                                            .nativeEvent, .nativeEventCaptured => {
+                                                                var args = p.allocator.alloc(Expr, 2 + @as(usize, @boolToInt(transform == .nativeEventCaptured))) catch unreachable;
+
+                                                                // on:MyEvent => MyEvent
+                                                                property.key.?.data.e_string.data = property.key.?.data.e_string.data[3..];
+
+                                                                args[0] = property.key.?;
+                                                                args[1] = property.value.?;
+
+                                                                if (transform == .nativeEventCaptured) {
+                                                                    args[2] = p.e(E.Boolean{ .value = true }, property.key.?.loc);
+                                                                }
+                                                                // $element.addEventListener("MyEvent", (e) => { ... });
+                                                                out = p.e(
+                                                                    E.Call{
+                                                                        .target = p.e(
+                                                                            E.Dot{
+                                                                                .target = p.e(
+                                                                                    element.?,
+                                                                                    expr.loc,
+                                                                                ),
+                                                                                .name = "addEventListener",
+                                                                                .name_loc = property.key.?.loc,
+                                                                            },
+                                                                            property.key.?.loc,
+                                                                        ),
+                                                                        .args = ExprNodeList.init(args),
+                                                                    },
+                                                                    property.key.?.loc,
+                                                                );
+
+                                                                p.recordUsage(element.?.ref);
+                                                            },
+                                                            .style => {},
+                                                            .class, .setAttribute => {
+                                                                var args = p.allocator.alloc(Expr, 4) catch unreachable;
+                                                                args[0] = p.e(element.?, expr.loc);
+                                                                args[1] = property.key.?;
+                                                                args[2] = property.value.?;
+
+                                                                // setAttribute(template_expression, key, value);
+                                                                out = p.e(
+                                                                    E.Call{
+                                                                        .target = p.e(
+                                                                            E.Identifier{
+                                                                                .ref = symbols.setAttribute.ref,
+                                                                                .can_be_removed_if_unused = false,
+                                                                                .call_can_be_unwrapped_if_unused = false,
+                                                                            },
+                                                                            property.value.?.loc,
+                                                                        ),
+                                                                        .args = ExprNodeList.init(args[0..3]),
+                                                                    },
+                                                                    property.key.?.loc,
+                                                                );
+
+                                                                p.recordUsage(symbols.setAttribute.ref);
+                                                                if (args[2].data == .e_identifier or args[2].data == .e_import_identifier) {
+                                                                    if (args[2].data == .e_identifier) p.recordUsage(args[2].data.e_identifier.ref);
+                                                                    if (args[2].data == .e_import_identifier) p.recordUsage(args[2].data.e_import_identifier.ref);
+                                                                } else {
+                                                                    needs_wrap = true;
+                                                                }
+                                                            },
+                                                            .event => |event| {
+                                                                out = p.e(
+                                                                    E.Binary{
+                                                                        .left = p.e(E.Dot{
+                                                                            .target = p.e(element.?, property.key.?.loc),
+                                                                            .name = event.setter(),
+                                                                            .name_loc = property.key.?.loc,
+                                                                        }, property.key.?.loc),
+                                                                        .op = js_ast.Op.Code.bin_assign,
+                                                                        .right = property.value.?,
+                                                                    },
+                                                                    property.key.?.loc,
+                                                                );
+                                                                needs_wrap = switch (property.value.?.data) {
+                                                                    .e_arrow, .e_function => false,
+                                                                    else => true,
+                                                                };
+                                                                global_solid.events_to_delegate.insert(event);
+                                                            },
+                                                        }
+
+                                                        var stmt: Stmt = undefined;
+
+                                                        if (needs_wrap) {
                                                             var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-                                                            stmts[0] = p.s(S.Return{ .value = setAttr }, property.value.?.loc);
-
-                                                            args[3] = p.e(
+                                                            stmts[0] = p.s(S.Return{ .value = out }, property.value.?.loc);
+                                                            var args = p.allocator.alloc(Expr, 1) catch unreachable;
+                                                            args[0] = p.e(
                                                                 E.Arrow{
                                                                     .args = &[_]G.Arg{},
                                                                     .body = G.FnBody{
                                                                         .stmts = stmts,
-                                                                        .loc = args[2].loc,
+                                                                        .loc = out.loc,
                                                                     },
                                                                 },
                                                                 property.value.?.loc,
@@ -12846,45 +13010,22 @@ fn NewParser_(
                                                                             },
                                                                             property.value.?.loc,
                                                                         ),
-                                                                        .args = ExprNodeList.init(args[3..4]),
+                                                                        .args = ExprNodeList.init(args),
                                                                     },
                                                                     property.value.?.loc,
                                                                 ),
                                                             }, property.value.?.loc);
+                                                            p.recordUsage(symbols.effect.ref);
+                                                        } else {
+                                                            stmt = p.s(S.SExpr{
+                                                                .value = out,
+                                                            }, property.value.?.loc);
                                                         }
-                                                    } else {
-                                                        var args = p.allocator.alloc(Expr, 2) catch unreachable;
 
-                                                        // on:MyEvent => MyEvent
-                                                        property.key.?.data.e_string.data = property.key.?.data.e_string.data[3..];
-                                                        args[0] = property.key.?;
-                                                        args[1] = property.value.?;
-                                                        // $element.addEventListener("MyEvent", (e) => { ... });
-                                                        const addEventListener = p.e(
-                                                            E.Call{
-                                                                .target = p.e(
-                                                                    E.Dot{
-                                                                        .target = p.e(
-                                                                            element.?,
-                                                                            expr.loc,
-                                                                        ),
-                                                                        .name = "addEventListener",
-                                                                        .name_loc = property.key.?.loc,
-                                                                    },
-                                                                    property.key.?.loc,
-                                                                ),
-                                                                .args = ExprNodeList.init(args),
-                                                            },
-                                                            property.key.?.loc,
-                                                        );
-
-                                                        p.recordUsage(element.?.ref);
-                                                        stmt = p.s(S.SExpr{ .value = addEventListener }, property.value.?.loc);
+                                                        solid.component_body.append(p.allocator, stmt) catch unreachable;
                                                     }
-
-                                                    solid.component_body.append(p.allocator, stmt) catch unreachable;
                                                 }
-                                            } else {}
+                                            }
                                         }
 
                                         if (property.initializer != null) {
@@ -12892,7 +13033,7 @@ fn NewParser_(
                                         }
                                     }
 
-                                    var wrote_any_children = false;
+                                    const start_node_count = solid.node_count;
                                     for (children) |*el, k| {
                                         if (needs_end_bracket and el.data == .e_jsx_element) {
                                             _ = writer.writeAll(">") catch unreachable;
@@ -12916,7 +13057,6 @@ fn NewParser_(
                                                         needs_end_bracket = false;
                                                     }
                                                     writer.writeHTMLAttributeValueString(str) catch unreachable;
-                                                    wrote_any_children = true;
                                                 }
                                             },
                                             .e_number => |str| {
@@ -12925,7 +13065,6 @@ fn NewParser_(
                                                     needs_end_bracket = false;
                                                 }
                                                 writer.writer().print("{d}", .{str.value}) catch unreachable;
-                                                wrote_any_children = true;
                                             },
 
                                             // debug assertion that we don't get here
@@ -12975,7 +13114,7 @@ fn NewParser_(
                                         }
                                     }
 
-                                    if (wrote_any_children) {
+                                    if (start_node_count != solid.node_count) {
                                         solid.node_count += 1;
                                         _ = writer.writeAll("</") catch unreachable;
                                         _ = writer.writeString(tag.data.e_string) catch unreachable;
@@ -12996,24 +13135,19 @@ fn NewParser_(
                                             return p.e(E.Missing{}, expr.loc);
                                         }
 
-                                        var args = p.allocator.alloc(Expr, 2) catch unreachable;
-
+                                        var hash: u64 = 0;
                                         // we are done, so it's time to turn our template into a string we can write
                                         // note that we are writing as UTF-8 but the input may be UTF-16 or UTF-8, depending.
-                                        if (writer.pos < writer.buffer.len and writer.context.list.items.len == 0) {
-                                            args[0] = p.e(E.String.init(p.allocator.dupe(u8, writer.buffer[0..writer.pos]) catch unreachable), expr.loc);
-                                        } else if (writer.pos == 0 and writer.context.list.items.len == 0) {
-                                            args[0] = p.e(E.String.init(""), expr.loc);
+                                        if (writer.pos == 0 and writer.context.list.items.len == 0) {} else if (writer.pos < writer.buffer.len and writer.context.list.items.len == 0) {
+                                            hash = std.hash.Wyhash.hash(0, writer.buffer[0..writer.pos]);
                                         } else {
-                                            const total = writer.context.list.items.len + writer.pos;
-                                            var buffer = p.allocator.alloc(u8, total) catch unreachable;
-                                            @memcpy(buffer.ptr, writer.context.list.items.ptr, writer.context.list.items.len);
-                                            @memcpy(buffer.ptr + writer.context.list.items.len, &writer.buffer, writer.buffer.len);
-                                            args[0] = p.e(E.String.init(buffer), expr.loc);
+                                            var hasher = std.hash.Wyhash.init(0);
+                                            hasher.update(writer.context.list.items);
+                                            hasher.update(writer.buffer[0..writer.pos]);
+                                            hash = hasher.final();
                                         }
 
-                                        args[1] = p.e(E.Number{ .value = @intToFloat(f64, solid.node_count) }, expr.loc);
-                                        solid.node_count = 0;
+                                        var gpe = global_solid.template_decls.getOrPut(p.allocator, @truncate(u32, hash)) catch unreachable;
 
                                         if (template_expression.data.e_identifier.ref.isNull()) {
                                             var new_template_name = global_solid.generateTemplateName(p.allocator);
@@ -13028,9 +13162,25 @@ fn NewParser_(
                                             template_expression = .{ .loc = expr.loc, .data = .{ .e_identifier = solid.last_template_id } };
                                         }
 
-                                        global_solid.template_decls.append(
-                                            p.allocator,
-                                            G.Decl{
+                                        if (!gpe.found_existing) {
+                                            var args = p.allocator.alloc(Expr, 2) catch unreachable;
+
+                                            if (writer.pos == 0 and writer.context.list.items.len == 0) {
+                                                args[0] = p.e(E.String.init(""), expr.loc);
+                                            } else if (writer.pos < writer.buffer.len and writer.context.list.items.len == 0) {
+                                                args[0] = p.e(E.String.init(p.allocator.dupe(u8, writer.buffer[0..writer.pos]) catch unreachable), expr.loc);
+                                            } else {
+                                                const total = writer.context.list.items.len + writer.pos;
+                                                var buffer = p.allocator.alloc(u8, total) catch unreachable;
+                                                @memcpy(buffer.ptr, writer.context.list.items.ptr, writer.context.list.items.len);
+                                                @memcpy(buffer.ptr + writer.context.list.items.len, &writer.buffer, writer.buffer.len);
+                                                args[0] = p.e(E.String.init(buffer), expr.loc);
+                                            }
+
+                                            args[1] = p.e(E.Number{ .value = @intToFloat(f64, solid.node_count) }, expr.loc);
+                                            solid.node_count = 0;
+
+                                            gpe.value_ptr.* = G.Decl{
                                                 .binding = p.b(B.Identifier{ .ref = template_expression.data.e_identifier.ref }, template_expression.loc),
                                                 .value = p.e(
                                                     E.Call{
@@ -13045,8 +13195,12 @@ fn NewParser_(
                                                     },
                                                     template_expression.loc,
                                                 ),
-                                            },
-                                        ) catch unreachable;
+                                            };
+                                        } else {
+                                            // link the template to the existing decl
+                                            // this will cause the printer to use the existing template
+                                            p.symbols.items[template_expression.data.e_identifier.ref.innerIndex()].link = gpe.value_ptr.binding.data.b_identifier.ref;
+                                        }
                                         p.recordUsage(symbols.template.ref);
 
                                         // 1 means it was actually static
@@ -13101,7 +13255,7 @@ fn NewParser_(
                                         return p.e(E.Missing{}, expr.loc);
                                     }
                                 },
-                                .e_import_identifier, .e_identifier => {
+                                .e_dot, .e_import_identifier, .e_identifier => {
                                     var out_props = p.allocator.alloc(G.Property, jsx_props.len + @as(usize, @boolToInt(e_.key != null)) + @as(usize, @boolToInt(e_.children.len > 0))) catch unreachable;
                                     var out_props_i: usize = 0;
                                     for (jsx_props) |property, i| {
@@ -13118,10 +13272,18 @@ fn NewParser_(
                                         }
 
                                         if (property.kind != .spread) {
-                                            const kind = if (property.value.?.data == .e_arrow or property.value.?.data == .e_function) G.Property.Kind.get else G.Property.Kind.normal;
+                                            const kind = if (property.value.?.data == .e_arrow or property.value.?.data == .e_function)
+                                                G.Property.Kind.get
+                                            else
+                                                G.Property.Kind.normal;
+
                                             out_props[out_props_i] = G.Property{
                                                 .key = property.key,
-                                                .value = property.value,
+                                                .value = if (kind != .get)
+                                                    property.value.?
+                                                else
+                                                    property.value.?.wrapInArrow(p.allocator) catch unreachable,
+
                                                 .kind = kind,
                                             };
                                             out_props_i += 1;
@@ -13131,7 +13293,11 @@ fn NewParser_(
                                     if (e_.key) |k| {
                                         const key = p.visitExpr(k);
                                         if (key.data != .e_missing) {
-                                            const kind = if (key.data == .e_arrow or key.data == .e_function) Property.Kind.get else Property.Kind.normal;
+                                            const kind = if (key.data == .e_arrow or key.data == .e_function)
+                                                Property.Kind.get
+                                            else
+                                                Property.Kind.normal;
+
                                             out_props[out_props_i] = G.Property{
                                                 .key = p.e(Prefill.String.Key, k.loc),
                                                 .value = key,

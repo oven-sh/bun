@@ -29,3 +29,18 @@ it("ReadableStream", async () => {
   chunks.push(chunk.value);
   expect(chunks[0].join("")).toBe(Buffer.from("abdefgh").join(""));
 });
+
+it("ReadableStream for Blob", async () => {
+  var blob = new Blob(["abdefgh", "ijklmnop"]);
+  var stream = blob.stream();
+  const chunks = [];
+  var reader = stream.getReader();
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    chunks.push(chunk.value);
+  }
+  expect(chunks.map((a) => a.join("")).join("")).toBe(
+    Buffer.from("abdefghijklmnop").join("")
+  );
+});

@@ -1017,6 +1017,33 @@ pub const Fetch = struct {
     }
 };
 
+pub const ReadableStream = opaque {
+    pub fn fromBlob(globalThis: *JSGlobalObject, this: *Blob) JSC.JSValue {
+        if (comptime JSC.is_bindgen)
+            unreachable;
+        var store = this.store orelse {
+            return ReadableStream.empty(globalThis);
+        };
+        store.ref();
+        return ReadableStream__fromBlob(globalThis, store, this.offset, this.size);
+    }
+
+    pub fn empty(globalThis: *JSGlobalObject) JSC.JSValue {
+        if (comptime JSC.is_bindgen)
+            unreachable;
+
+        return ReadableStream__empty(globalThis);
+    }
+
+    extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
+    extern fn ReadableStream__fromBlob(
+        *JSGlobalObject,
+        store: *anyopaque,
+        offset: usize,
+        length: usize,
+    ) JSC.JSValue;
+};
+
 // https://developer.mozilla.org/en-US/docs/Web/API/Headers
 pub const Headers = struct {
     pub usingnamespace HTTPClient.Headers;
@@ -1460,6 +1487,84 @@ pub const Blob = struct {
         ref_count: u32 = 0,
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
+
+        // 2 MB ought to be enough
+        pub const max_chunk_size = 1024 * 1024 * 2;
+
+        pub export fn BlobStore__ref(ptr: *anyopaque) void {
+            var this = bun.cast(*Store, ptr);
+            this.ref();
+        }
+
+        pub export fn BlobStore__deref(ptr: *anyopaque) void {
+            var this = bun.cast(*Store, ptr);
+            this.deref();
+        }
+
+        extern fn BlobStore__onRead(source: ?*anyopaque, ptr: [*]const u8, len: usize) bool;
+        extern fn BlobStore__onError(source: ?*anyopaque, ptr: [*]const u8, len: usize) bool;
+
+        pub export fn BlobStore__requestRead(
+            store: *Blob.Store,
+            ctx: ?*anyopaque,
+            offset: usize,
+            length: usize,
+        ) bool {
+            if (comptime JSC.is_bindgen) unreachable;
+            switch (store.data) {
+                .bytes => |*bytes| {
+                    var slice = bytes.slice();
+                    var base = slice[@minimum(offset, slice.len)..];
+                    slice = base;
+                    slice = if (length > 0)
+                        slice[0..@minimum(@minimum(slice.len, length), max_chunk_size)]
+                    else
+                        slice[0..@minimum(slice.len, max_chunk_size)];
+                    if (slice.len == 0)
+                        return false;
+
+                    const has_more = base.len > slice.len;
+
+                    return BlobStore__onRead(ctx, slice.ptr, slice.len) and has_more;
+                },
+                else => return false,
+            }
+        }
+        pub export fn BlobStore__requestStart(
+            store: *Blob.Store,
+            ctx: ?*anyopaque,
+            offset: usize,
+            length: usize,
+        ) bool {
+            if (comptime JSC.is_bindgen) unreachable;
+            switch (store.data) {
+                .bytes => |*bytes| {
+                    var slice = bytes.slice();
+                    var base = slice[@minimum(offset, slice.len)..];
+                    slice = base;
+                    slice = if (length > 0)
+                        slice[0..@minimum(@minimum(slice.len, length), max_chunk_size)]
+                    else
+                        slice[0..@minimum(slice.len, max_chunk_size)];
+                    if (slice.len == 0)
+                        return false;
+
+                    const has_more = base.len > slice.len;
+
+                    return BlobStore__onRead(ctx, slice.ptr, slice.len) and has_more;
+                },
+                else => return false,
+            }
+        }
+
+        comptime {
+            if (!JSC.is_bindgen) {
+                _ = BlobStore__ref;
+                _ = BlobStore__deref;
+                _ = BlobStore__requestRead;
+                _ = BlobStore__requestStart;
+            }
+        }
 
         pub fn size(this: *const Store) SizeType {
             return switch (this.data) {
@@ -2705,21 +2810,17 @@ pub const Blob = struct {
     pub const Class = NewClass(
         Blob,
         .{ .name = "Blob" },
-        .{
-            .finalize = finalize,
-            .text = .{
-                .rfn = getText,
-            },
-            .json = .{
-                .rfn = getJSON,
-            },
-            .arrayBuffer = .{
-                .rfn = getArrayBuffer,
-            },
-            .slice = .{
-                .rfn = getSlice,
-            },
-        },
+        .{ .finalize = finalize, .text = .{
+            .rfn = getText,
+        }, .json = .{
+            .rfn = getJSON,
+        }, .arrayBuffer = .{
+            .rfn = getArrayBuffer,
+        }, .slice = .{
+            .rfn = getSlice,
+        }, .stream = .{
+            .rfn = getStream,
+        } },
         .{
             .@"type" = .{
                 .get = getType,
@@ -2731,6 +2832,20 @@ pub const Blob = struct {
             },
         },
     );
+
+    pub fn getStream(
+        this: *Blob,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        _: []const js.JSValueRef,
+        _: js.ExceptionRef,
+    ) JSC.C.JSValueRef {
+        return ReadableStream.fromBlob(
+            ctx.ptr(),
+            this,
+        ).asObjectRef();
+    }
 
     fn promisified(
         value: JSC.JSValue,

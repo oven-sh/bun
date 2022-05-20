@@ -27,7 +27,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 #include "config.h"
 #include "ReadableStreamDefaultController.h"
 
@@ -36,6 +35,7 @@
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IdentifierInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/JSCInlines.h>
 
 namespace WebCore {
 
@@ -68,7 +68,6 @@ void ReadableStreamDefaultController::close()
 
     invokeReadableStreamDefaultControllerFunction(globalObject(), privateName, arguments);
 }
-
 
 void ReadableStreamDefaultController::error(const Exception& exception)
 {
@@ -121,8 +120,7 @@ bool ReadableStreamDefaultController::enqueue(RefPtr<JSC::ArrayBuffer>&& buffer)
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
     auto length = buffer->byteLength();
-    auto chunk = JSC::Uint8Array::create(WTFMove(buffer), 0, length);
-    auto value = toJS(&lexicalGlobalObject, &lexicalGlobalObject, chunk.get());
+    auto value = JSC::JSUint8Array::create(&lexicalGlobalObject, lexicalGlobalObject.typedArrayStructure(JSC::TypeUint8), WTFMove(buffer), 0, length);
 
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     RETURN_IF_EXCEPTION(scope, false);

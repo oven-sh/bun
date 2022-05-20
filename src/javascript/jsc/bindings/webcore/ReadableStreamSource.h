@@ -66,8 +66,8 @@ private:
 };
 
 class SimpleReadableStreamSource
-    : public ReadableStreamSource
-    , public CanMakeWeakPtr<SimpleReadableStreamSource> {
+    : public ReadableStreamSource,
+      public CanMakeWeakPtr<SimpleReadableStreamSource> {
 public:
     static Ref<SimpleReadableStreamSource> create() { return adoptRef(*new SimpleReadableStreamSource); }
 
@@ -78,10 +78,10 @@ private:
     SimpleReadableStreamSource() = default;
 
     // ReadableStreamSource
-    void setActive() final { }
-    void setInactive() final { }
-    void doStart() final { }
-    void doPull() final { }
+    void setActive() final {}
+    void setInactive() final {}
+    void doStart() final {}
+    void doPull() final {}
     void doCancel() final;
 
     bool m_isCancelled { false };

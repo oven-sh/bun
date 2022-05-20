@@ -12099,8 +12099,9 @@ fn NewParser_(
 
                         if (p.lexer.token != .t_slash) {
                             // This is a child element
-                            const child = try p.parseJSXElement(less_than_loc);
                             if (comptime jsx_transform_type == .solid) {
+                                const child = try p.parseJSXElement(less_than_loc);
+
                                 // if (!flags.contains(.has_dynamic_children)) {
                                 //     if (@as(Expr.Tag, child.data) == .e_jsx_element) {
                                 //         if (child.data.e_jsx_element.flags.contains(.has_dynamic_children) or child.data.e_jsx_element.flags.contains(.has_dynamic_prop)) {

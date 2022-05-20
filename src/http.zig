@@ -2316,22 +2316,15 @@ pub const RequestContext = struct {
 
                     const SourceMapHandler = JSPrinter.SourceMapHandler.For(SocketPrinterInternal, onSourceMapChunk);
                     pub fn onSourceMapChunk(this: *SocketPrinterInternal, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
-                        defer {
-                            SocketPrinterInternal.buffer.?.* = this.buffer;
-                        }
                         if (this.rctx.has_called_done) return;
-                        this.buffer.reset();
-                        this.buffer = try chunk.printSourceMapContents(
+                        var mutable = try chunk.printSourceMapContents(
                             source,
-                            this.buffer,
+                            MutableString.initEmpty(this.rctx.allocator),
                             this.rctx.header("Mappings-Only") == null,
                             false,
                         );
-                        defer {
-                            this.buffer.reset();
-                            SocketPrinterInternal.buffer.?.* = this.buffer;
-                        }
-                        const buf = this.buffer.toOwnedSliceLeaky();
+
+                        const buf = mutable.toOwnedSliceLeaky();
                         if (buf.len == 0) {
                             try this.rctx.sendNoContent();
                             return;

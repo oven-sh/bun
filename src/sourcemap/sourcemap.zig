@@ -629,7 +629,6 @@ pub const LineOffsetTable = struct {
         var stack_fallback = std.heap.stackFallback(@sizeOf(i32) * 256, allocator);
         var columns_for_non_ascii = std.ArrayList(i32).initCapacity(stack_fallback.get(), 120) catch unreachable;
         const reset_end_index = stack_fallback.fixed_buffer_allocator.end_index;
-        const columns_for_non_ascii_reset = columns_for_non_ascii;
 
         var remaining = contents;
         while (remaining.len > 0) {
@@ -645,10 +644,6 @@ pub const LineOffsetTable = struct {
             }
 
             if (c > 0x7F and columns_for_non_ascii.items.len == 0) {
-                // reset the buffers
-                columns_for_non_ascii = columns_for_non_ascii_reset;
-                stack_fallback.fixed_buffer_allocator.reset();
-                stack_fallback.fixed_buffer_allocator.end_index = reset_end_index;
 
                 // we have a non-ASCII character, so we need to keep track of the
                 // mapping from byte offsets to UTF-16 code unit counts
@@ -701,23 +696,22 @@ pub const LineOffsetTable = struct {
                         remaining = remaining[1..];
                         continue;
                     }
-                    var columns_list = columns_for_non_ascii;
-                    if (columns_for_non_ascii.items.len > 0 and stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(columns_for_non_ascii.items))) {
-                        columns_for_non_ascii.items = allocator.dupe(i32, columns_for_non_ascii.toOwnedSlice()) catch unreachable;
-                        columns_for_non_ascii.capacity = columns_for_non_ascii.items.len;
+
+                    var owned = columns_for_non_ascii.toOwnedSlice();
+                    if (stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(owned))) {
+                        owned = allocator.dupe(i32, owned) catch unreachable;
                     }
 
                     list.append(allocator, .{
                         .byte_offset_to_start_of_line = line_byte_offset,
                         .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
-                        .columns_for_non_ascii = BabyList(i32).fromList(columns_list),
+                        .columns_for_non_ascii = BabyList(i32).init(owned),
                     }) catch unreachable;
 
                     column = 0;
                     byte_offset_to_first_non_ascii = 0;
                     column_byte_offset = 0;
                     line_byte_offset = 0;
-                    columns_for_non_ascii = columns_for_non_ascii_reset;
                     stack_fallback.fixed_buffer_allocator.reset();
                     stack_fallback.fixed_buffer_allocator.end_index = reset_end_index;
                 },
@@ -742,21 +736,21 @@ pub const LineOffsetTable = struct {
                 columns_for_non_ascii.appendAssumeCapacity(column);
             }
         }
-
         {
-            var columns_list = columns_for_non_ascii;
-            if (columns_for_non_ascii.items.len > 0 and stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(columns_for_non_ascii.items))) {
-                columns_for_non_ascii.items = allocator.dupe(i32, columns_for_non_ascii.toOwnedSlice()) catch unreachable;
-                columns_for_non_ascii.capacity = columns_for_non_ascii.items.len;
+            var owned = columns_for_non_ascii.toOwnedSlice();
+            if (stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(owned))) {
+                owned = allocator.dupe(i32, owned) catch unreachable;
             }
-
             list.append(allocator, .{
                 .byte_offset_to_start_of_line = line_byte_offset,
                 .byte_offset_to_first_non_ascii = byte_offset_to_first_non_ascii,
-                .columns_for_non_ascii = BabyList(i32).fromList(columns_list),
+                .columns_for_non_ascii = BabyList(i32).init(owned),
             }) catch unreachable;
         }
 
+        if (list.capacity > list.len) {
+            list.shrinkAndFree(allocator, list.len);
+        }
         return list;
     }
 };

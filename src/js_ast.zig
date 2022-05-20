@@ -557,6 +557,8 @@ pub const Binding = struct {
     }
 };
 
+/// B is for Binding!
+/// These are the types of bindings that can be used in the AST.
 pub const B = union(Binding.Tag) {
     b_identifier: *B.Identifier,
     b_array: *B.Array,
@@ -1286,6 +1288,9 @@ pub const E = struct {
     ///     If React Fast Refresh ends up using this later, then we can revisit this decision.
     ///  [0]: https://github.com/automerge/automerge/issues/177
     pub const JSXElement = struct {
+        /// JSX tag name
+        /// <div> => E.String.init("div")
+        /// <MyComponent> => E.Identifier{.ref = symbolPointingToMyComponent }
         /// null represents a fragment
         tag: ?ExprNodeIndex = null,
 
@@ -3565,6 +3570,22 @@ pub const Expr = struct {
         number,
         @"string",
         bigint,
+
+        pub const static = std.enums.EnumSet(PrimitiveType).init(.{
+            .@"mixed" = true,
+            .@"null" = true,
+            .@"undefined" = true,
+            .@"boolean" = true,
+            .@"number" = true,
+            .@"string" = true,
+            // for our purposes, bigint is dynamic
+            // it is technically static though
+            // .@"bigint" = true,
+        });
+
+        pub inline fn isStatic(this: PrimitiveType) bool {
+            return static.contains(this);
+        }
 
         pub fn merge(left_known: PrimitiveType, right_known: PrimitiveType) PrimitiveType {
             if (right_known == .unknown or left_known == .unknown)

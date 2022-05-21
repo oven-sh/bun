@@ -974,7 +974,7 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
         utf16_remaining = utf16_remaining[replacement.len..];
 
         const count: usize = replacement.utf8Width();
-        try list.ensureUnusedCapacity(i + count);
+        try list.ensureTotalCapacityPrecise(i + count + list.items.len + @floatToInt(usize, (@intToFloat(f64, @truncate(u52, utf16_remaining.len)) * 1.2)));
         list.items.len += i;
 
         copyU16IntoU8(
@@ -992,12 +992,13 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
         );
     }
 
-    try list.ensureUnusedCapacity(utf16_remaining.len);
+    try list.ensureTotalCapacityPrecise(utf16_remaining.len + list.items.len);
     const old_len = list.items.len;
     list.items.len += utf16_remaining.len;
     copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
 
-    return list.toOwnedSlice();
+    // don't call toOwnedSlice() because our 
+    return  list.items;
 }
 
 pub const EncodeIntoResult = struct {

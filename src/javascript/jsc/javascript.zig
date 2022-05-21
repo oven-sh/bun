@@ -15,7 +15,7 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../../mimalloc_arena.zig").Arena;
 const C = bun.C;
 const NetworkThread = @import("http").NetworkThread;
-
+const IO = @import("io");
 pub fn zigCast(comptime Destination: type, value: anytype) *Destination {
     return @ptrCast(*Destination, @alignCast(@alignOf(*Destination), value));
 }
@@ -88,7 +88,7 @@ const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 pub const GlobalConstructors = [_]type{
     WebCore.Blob.Constructor,
     WebCore.TextDecoder.Constructor,
-    WebCore.TextEncoder.Constructor,
+    // WebCore.TextEncoder.Constructor,
     Request.Constructor,
     Response.Constructor,
     JSC.Cloudflare.HTMLRewriter.Constructor,
@@ -575,6 +575,15 @@ pub const VirtualMachine = struct {
     response_objects_pool: ?*Response.Pool = null,
 
     rare_data: ?*JSC.RareData = null,
+    io_: ?IO = null,
+
+    pub fn io(this: *VirtualMachine) *IO {
+        if (this.io_ == null) {
+            this.io_ = IO.init(this) catch @panic("Failed to initialize IO");
+        }
+
+        return &this.io_.?;
+    }
 
     pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
         return this.node_fs orelse brk: {
@@ -712,16 +721,32 @@ pub const VirtualMachine = struct {
 
         // TODO: fix this technical debt
         pub fn tick(this: *EventLoop) void {
-            while (true) {
-                this.tickConcurrent();
+            if (this.virtual_machine.io_ == null) {
+                while (true) {
+                    this.tickConcurrent();
 
-                // this.global.vm().doWork();
+                    // this.global.vm().doWork();
 
-                while (this.tickWithCount() > 0) {}
+                    while (this.tickWithCount() > 0) {}
 
-                this.tickConcurrent();
+                    this.tickConcurrent();
 
-                if (this.tickWithCount() == 0) break;
+                    if (this.tickWithCount() == 0) break;
+                } else {
+                    while (true) {
+                        this.tickConcurrent();
+                        this.virtual_machine.io().tick() catch unreachable;
+
+                        // this.global.vm().doWork();
+
+                        while (this.tickWithCount() > 0) {}
+                        this.virtual_machine.io().tick() catch unreachable;
+
+                        this.tickConcurrent();
+
+                        if (this.tickWithCount() == 0) break;
+                    }
+                }
             }
         }
 

@@ -914,10 +914,14 @@ pub const JSX = struct {
                 pragma.package_name = parsePackageName(pragma.import_source);
             } else if (jsx.development) {
                 pragma.import_source = Defaults.ImportSourceDev;
-                pragma.jsx = Defaults.JSXFunctionDev;
                 pragma.package_name = "react";
             } else {
                 pragma.import_source = Defaults.ImportSource;
+            }
+
+            if (jsx.development) {
+                pragma.jsx = Defaults.JSXFunctionDev;
+            } else {
                 pragma.jsx = Defaults.JSXFunction;
             }
 

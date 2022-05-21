@@ -967,15 +967,12 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
     JSC::JSObject* object = value.getObject();
 
     if (JSC::JSArrayBufferView* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(object)) {
-        if (JSC::ArrayBuffer* buffer = typedArray->possiblySharedBuffer()) {
-            buffer->pinAndLock();
-            arg2->ptr = reinterpret_cast<char*>(buffer->data());
-            arg2->len = typedArray->length();
-            arg2->byte_len = buffer->byteLength();
-            arg2->offset = typedArray->byteOffset();
-            arg2->cell_type = typedArray->type();
-            return true;
-        }
+        arg2->ptr = reinterpret_cast<char*>(typedArray->vector());
+        arg2->len = typedArray->length();
+        arg2->byte_len = typedArray->byteLength();
+        arg2->offset = typedArray->byteOffset();
+        arg2->cell_type = typedArray->type();
+        return true;
     }
 
     if (JSC::ArrayBuffer* buffer = JSC::toPossiblySharedArrayBuffer(vm, value)) {
@@ -2997,4 +2994,10 @@ JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* arg0,
     return JSC::JSValue::encode(
         JSC::JSPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
+}
+
+JSC__JSValue JSC__JSValue__createUninitializedUint8Array(JSC__JSGlobalObject* arg0, size_t arg1)
+{
+    JSC::JSValue value = JSC::JSUint8Array::createUninitialized(arg0, arg0->m_typedArrayUint8.get(arg0), arg1);
+    return JSC::JSValue::encode(value);
 }

@@ -443,7 +443,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForTextDecoder;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStream;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStreamDecoder;
-    // std::unique_ptr<IsoSubspace> m_subspaceForTextEncoder;
+    std::unique_ptr<IsoSubspace> m_subspaceForTextEncoder;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStream;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStreamEncoder;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextEvent;

@@ -130,6 +130,7 @@ using JSBuffer = WebCore::JSBuffer;
 #include "JSWritableStreamDefaultController.h"
 #include "JSWritableStreamDefaultWriter.h"
 #include "JavaScriptCore/BuiltinNames.h"
+#include "JSTextEncoder.h"
 #include "StructuredClone.h"
 
 // #include <iostream>
@@ -376,6 +377,17 @@ JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSBuffer::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSTextEncoder_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSTextEncoder_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSTextEncoder::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
 JSC_DECLARE_CUSTOM_GETTER(JSDOMURL_getter);
@@ -1307,7 +1319,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Buffer"_s), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "TextEncoder"_s), JSC::CustomGetterSetter::create(vm, JSTextEncoder_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().TransformStreamPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().TransformStreamPrivateName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().TransformStreamDefaultControllerPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamDefaultControllerConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));

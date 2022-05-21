@@ -2646,7 +2646,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Stats,
     TextChunk,
     TextDecoder,
-    TextEncoder,
     TimeoutTask,
     Transpiler,
     FFI,

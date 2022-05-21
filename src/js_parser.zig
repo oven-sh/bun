@@ -2548,7 +2548,10 @@ pub const Parser = struct {
         // Auto-import & post-process JSX
         switch (comptime ParserType.jsx_transform_type) {
             .react => {
-                const jsx_filename_symbol = p.symbols.items[p.jsx_filename.ref.innerIndex()];
+                const jsx_filename_symbol = if (p.options.jsx.development)
+                    p.symbols.items[p.jsx_filename.ref.innerIndex()]
+                else
+                    Symbol{ .original_name = "" };
 
                 {
                     const jsx_symbol = p.symbols.items[p.jsx_runtime.ref.innerIndex()];

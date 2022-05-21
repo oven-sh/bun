@@ -42,116 +42,46 @@ const picohttp = @import("picohttp");
 
 pub const TextEncoder = struct {
     filler: u32 = 0,
-    var text_encoder: TextEncoder = TextEncoder{};
-
-    pub const Constructor = JSC.NewConstructor(
-        TextEncoder,
-        .{
-            .constructor = .{ .rfn = constructor },
-        },
-        .{},
-    );
-
-    pub const Class = NewClass(
-        TextEncoder,
-        .{
-            .name = "TextEncoder",
-        },
-        .{
-            .encode = .{
-                .rfn = encode,
-            },
-            .encodeInto = .{
-                .rfn = encodeInto,
-            },
-        },
-        .{
-            .encoding = .{
-                .get = getEncoding,
-                .readOnly = true,
-            },
-        },
-    );
 
     const utf8_string: string = "utf-8";
-    pub fn getEncoding(
-        _: *TextEncoder,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(utf8_string).toValue(ctx.ptr()).asObjectRef();
-    }
 
-    pub fn encode(
-        _: *TextEncoder,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        args: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        var arguments: []const JSC.JSValue = @ptrCast([*]const JSC.JSValue, args.ptr)[0..args.len];
-
-        if (arguments.len < 1) {
-            return JSC.C.JSObjectMakeTypedArray(ctx, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, 0, exception);
-        }
-
-        const value = arguments[0];
-
-        var zig_str = value.getZigString(ctx.ptr());
-
-        var array_buffer: ArrayBuffer = undefined;
+    pub export fn TextEncoder__encode(
+        globalThis: *JSGlobalObject,
+        zig_str: *const ZigString,
+    ) JSValue {
+        var ctx = globalThis.ref();
         if (zig_str.is16Bit()) {
             var bytes = strings.toUTF8AllocWithType(
                 default_allocator,
                 @TypeOf(zig_str.utf16Slice()),
                 zig_str.utf16Slice(),
             ) catch {
-                JSC.throwInvalidArguments("Out of memory", .{}, ctx, exception);
-                return null;
+                return JSC.toInvalidArguments("Out of memory", .{}, ctx);
             };
-            array_buffer = ArrayBuffer.fromBytes(bytes, .Uint8Array);
+            return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJS(ctx, null);
         } else {
-            var bytes = strings.allocateLatin1IntoUTF8(default_allocator, []const u8, zig_str.slice()) catch {
-                JSC.throwInvalidArguments("Out of memory", .{}, ctx, exception);
-                return null;
-            };
-
-            array_buffer = ArrayBuffer.fromBytes(bytes, .Uint8Array);
+            // latin1 always has the same length as utf-8
+            // so we can use the Gigacage to allocate the buffer
+            var array = JSC.JSValue.createUninitializedUint8Array(ctx.ptr(), zig_str.len);
+            var buffer = array.asArrayBuffer(ctx.ptr()) orelse return JSC.toInvalidArguments("Out of memory", .{}, ctx);
+            const result = strings.copyLatin1IntoUTF8(buffer.slice(), []const u8, zig_str.slice());
+            std.debug.assert(result.written == zig_str.len);
+            return array;
         }
 
-        return array_buffer.toJS(ctx, exception).asObjectRef();
+        unreachable;
     }
 
     const read_key = ZigString.init("read");
     const written_key = ZigString.init("written");
 
-    pub fn encodeInto(
-        _: *TextEncoder,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        args: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        var arguments: []const JSC.JSValue = @ptrCast([*]const JSC.JSValue, args.ptr)[0..args.len];
-
-        if (arguments.len < 2) {
-            JSC.throwInvalidArguments("TextEncoder.encodeInto expects (string, Uint8Array)", .{}, ctx, exception);
-            return null;
-        }
-
-        const value = arguments[0];
-
-        const array_buffer = arguments[1].asArrayBuffer(ctx.ptr()) orelse {
-            JSC.throwInvalidArguments("TextEncoder.encodeInto expects a Uint8Array", .{}, ctx, exception);
-            return null;
-        };
-
-        var output = array_buffer.slice();
-        const input = value.getZigString(ctx.ptr());
+    pub export fn TextEncoder__encodeInto(
+        globalThis: *JSC.JSGlobalObject,
+        input: *const ZigString,
+        buf_ptr: [*]u8,
+        buf_len: usize,
+    ) JSC.JSValue {
+        var output = buf_ptr[0..buf_len];
         var result: strings.EncodeIntoResult = strings.EncodeIntoResult{ .read = 0, .written = 0 };
         if (input.is16Bit()) {
             const utf16_slice = input.utf16Slice();
@@ -159,18 +89,16 @@ pub const TextEncoder = struct {
         } else {
             result = strings.copyLatin1IntoUTF8(output, @TypeOf(input.slice()), input.slice());
         }
-        return JSC.JSValue.createObject2(ctx.ptr(), &read_key, &written_key, JSValue.jsNumber(result.read), JSValue.jsNumber(result.written)).asObjectRef();
-    }
-
-    pub fn constructor(
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSObjectRef {
-        return TextEncoder.Class.make(ctx, &text_encoder);
+        return JSC.JSValue.createObject2(globalThis, &read_key, &written_key, JSValue.jsNumber(result.read), JSValue.jsNumber(result.written));
     }
 };
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = TextEncoder.TextEncoder__encode;
+        _ = TextEncoder.TextEncoder__encodeInto;
+    }
+}
 
 /// https://encoding.spec.whatwg.org/encodings.json
 pub const EncodingLabel = enum {

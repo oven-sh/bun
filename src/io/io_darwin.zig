@@ -541,7 +541,7 @@ pub fn run_for_ns(self: *IO, nanoseconds: u63) !void {
 
 fn flush(self: *IO, wait_for_completions: bool) !void {
     var io_pending = self.io_pending.peek();
-    var events: [256]os.Kevent = undefined;
+    var events: [512]os.Kevent = undefined;
 
     // Check timeouts and fill events with completions in io_pending
     // (they will be submitted through kevent).
@@ -711,6 +711,7 @@ const Operation = union(enum) {
         buf: [*]u8,
         len: u32,
         offset: u64,
+        positional: bool = true,
     },
     recv: struct {
         socket: os.socket_t,
@@ -774,9 +775,13 @@ fn submitWithIncrementPending(
         self.pending_count += 1;
     const Context = @TypeOf(context);
     const onCompleteFn = struct {
-        fn onComplete(io: *IO, _completion: *Completion) void {
+        fn onComplete(
+            io: *IO,
+            _completion: *Completion,
+        ) void {
             // Perform the actual operaton
             const op_data = &@field(_completion.operation, @tagName(operation_tag));
+
             const result = OperationImpl.doOperation(op_data);
 
             // Requeue onto io_pending if error.WouldBlock
@@ -1161,8 +1166,9 @@ pub fn read(
     completion: *Completion,
     fd: os.fd_t,
     buffer: []u8,
-    offset: u64,
+    offset: ?u64,
 ) void {
+    const offset_ = offset orelse @as(u64, 0);
     self.submit(
         context,
         callback,
@@ -1172,16 +1178,21 @@ pub fn read(
             .fd = fd,
             .buf = buffer.ptr,
             .len = @intCast(u32, buffer_limit(buffer.len)),
-            .offset = offset,
+            .offset = offset_,
+            .positional = offset != null,
         },
         struct {
             fn doOperation(op: anytype) ReadError!usize {
                 while (true) {
-                    const rc = os.system.pread(
+                    const rc = if (op.positional) os.system.pread(
                         op.fd,
                         op.buf,
                         op.len,
                         @bitCast(isize, op.offset),
+                    ) else os.system.read(
+                        op.fd,
+                        op.buf,
+                        op.len,
                     );
                     return switch (@enumToInt(os.errno(rc))) {
                         0 => @intCast(usize, rc),

@@ -306,10 +306,8 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
 
     JSC::JSValue options = JSC::jsUndefined();
 
-    Structure* errorStructure = JSC_GET_DERIVED_STRUCTURE(vm, errorStructure, globalObject->errorPrototype(), globalObject->errorPrototype());
-
     JSC::JSObject* result
-        = JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
+        = JSC::ErrorInstance::create(globalObject, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, options);
 
     auto clientData = WebCore::clientData(vm);
 

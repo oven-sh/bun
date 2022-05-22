@@ -92,6 +92,29 @@ void ReadableStreamDefaultController::error(const Exception& exception)
     invokeReadableStreamDefaultControllerFunction(globalObject(), privateName, arguments);
 }
 
+void ReadableStreamDefaultController::error(JSC::JSValue error)
+{
+    JSC::JSGlobalObject& lexicalGlobalObject = this->globalObject();
+    auto& vm = lexicalGlobalObject.vm();
+    JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto value = JSC::Exception::create(vm, error);
+
+    if (UNLIKELY(scope.exception())) {
+        ASSERT(vm.hasPendingTerminationException());
+        return;
+    }
+
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(&jsController());
+    arguments.append(value);
+
+    auto* clientData = static_cast<JSVMClientData*>(vm.clientData);
+    auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamDefaultControllerErrorPrivateName();
+
+    invokeReadableStreamDefaultControllerFunction(globalObject(), privateName, arguments);
+}
+
 bool ReadableStreamDefaultController::enqueue(JSC::JSValue value)
 {
     JSC::JSGlobalObject& lexicalGlobalObject = this->globalObject();

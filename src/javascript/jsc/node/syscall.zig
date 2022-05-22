@@ -93,6 +93,8 @@ pub const Tag = enum(u8) {
     sendfile,
     splice,
 
+    kevent,
+    kqueue,
     pub var strings = std.EnumMap(Tag, JSC.C.JSStringRef).initFull(null);
 };
 const PathString = @import("../../../global.zig").PathString;
@@ -279,14 +281,14 @@ pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
 
 pub fn recv(fd: os.fd_t, buf: []u8, flag: u32) Maybe(usize) {
     if (comptime Environment.isMac) {
-        const rc = system.@"recvfrom$NOCANCEL"(fd, buf.ptr, bun.len, flag, null, null);
+        const rc = system.@"recvfrom$NOCANCEL"(fd, buf.ptr, buf.len, flag, null, null);
         if (Maybe(usize).errnoSys(rc, .recv)) |err| {
             return err;
         }
         return Maybe(usize){ .result = @intCast(usize, rc) };
     } else {
         while (true) {
-            const rc = linux.recvfrom(fd, buf.ptr, bun.len, flag | os.SOCK.CLOEXEC | os.MSG.NOSIGNAL, null, null);
+            const rc = linux.recvfrom(fd, buf.ptr, buf.len, flag | os.SOCK.CLOEXEC | linux.MSG.CMSG_CLOEXEC, null, null);
             if (Maybe(usize).errnoSys(rc, .recv)) |err| {
                 if (err.getErrno() == .INTR) continue;
                 return err;

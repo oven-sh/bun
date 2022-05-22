@@ -106,15 +106,12 @@ function validateAndNormalizeQueuingStrategy(size, highWaterMark)
     if (size !== @undefined && typeof size !== "function")
         @throwTypeError("size parameter must be a function");
 
-    const normalizedStrategy = {
-        size: size,
-        highWaterMark: @toNumber(highWaterMark)
-    };
+    const newHighWaterMark = @toNumber(highWaterMark);
 
-    if (@isNaN(normalizedStrategy.highWaterMark) || normalizedStrategy.highWaterMark < 0)
+    if (@isNaN(newHighWaterMark) || newHighWaterMark < 0)
         @throwRangeError("highWaterMark value is negative or not a number");
 
-    return normalizedStrategy;
+    return { size: size, highWaterMark: newHighWaterMark };
 }
 
 function newQueue()

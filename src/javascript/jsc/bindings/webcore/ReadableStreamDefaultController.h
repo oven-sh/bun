@@ -49,15 +49,14 @@ public:
     bool enqueue(RefPtr<JSC::ArrayBuffer>&&);
     bool enqueue(JSC::JSValue);
     void error(const Exception&);
+    void error(JSC::JSValue error);
     void close();
-
-private:
-    JSReadableStreamDefaultController& jsController() const;
-
     JSDOMGlobalObject& globalObject() const;
-
+    JSReadableStreamDefaultController& jsController() const;
     // The owner of ReadableStreamDefaultController is responsible to keep uncollected the JSReadableStreamDefaultController.
     JSReadableStreamDefaultController* m_jsController { nullptr };
+
+private:
 };
 
 inline JSReadableStreamDefaultController& ReadableStreamDefaultController::jsController() const

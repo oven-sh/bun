@@ -15,6 +15,8 @@ public:
     void close();
     void enqueue(JSC::JSValue);
     bool enqueue(const uint8_t* ptr, size_t length);
+    bool enqueue(uint8_t* ptr, size_t read, void* deallocator, JSTypedArrayBytesDeallocator bytesDeallocator);
+    bool isCancelled() const { return m_isCancelled; }
 
     void* streamer() const { return m_streamer; }
 

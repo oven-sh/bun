@@ -13437,7 +13437,7 @@ fn NewParser_(
                                     // jsxDEV(type, arguments, key, isStaticChildren, source, self)
                                     // jsx(type, arguments, key)
                                     const include_filename = FeatureFlags.include_filename_in_jsx and p.options.jsx.development;
-                                    const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 4)) catch unreachable;
+                                    const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @boolToInt(e_.key != null))) catch unreachable;
                                     args[0] = tag;
                                     const allocator = p.allocator;
                                     var props = e_.properties.list();
@@ -13500,7 +13500,7 @@ fn NewParser_(
 
                                     if (e_.key) |key| {
                                         args[2] = key;
-                                    } else {
+                                    } else if (p.options.jsx.development) {
                                         // if (maybeKey !== undefined)
                                         args[2] = Expr{
                                             .loc = expr.loc,

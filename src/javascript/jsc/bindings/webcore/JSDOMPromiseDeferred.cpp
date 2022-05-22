@@ -115,6 +115,17 @@ void DeferredPromise::reject(RejectAsHandled rejectAsHandled)
     reject(lexicalGlobalObject, JSC::jsUndefined(), rejectAsHandled);
 }
 
+void DeferredPromise::reject(JSC::JSValue value, RejectAsHandled rejectAsHandled)
+{
+    if (shouldIgnoreRequestToFulfill())
+        return;
+    ASSERT(deferred());
+    ASSERT(m_globalObject);
+    auto& lexicalGlobalObject = *m_globalObject;
+    JSC::JSLockHolder locker(&lexicalGlobalObject);
+    reject(lexicalGlobalObject, value, rejectAsHandled);
+}
+
 void DeferredPromise::reject(std::nullptr_t, RejectAsHandled rejectAsHandled)
 {
     if (shouldIgnoreRequestToFulfill())

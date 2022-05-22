@@ -33,7 +33,6 @@
 #include "JSReadableStreamSource.h"
 #include "WebCoreJSClientData.h"
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -78,6 +77,24 @@ ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSC::JSGlobalObject& lex
     return create(*JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject), *jsCast<JSReadableStream*>(objectOrException.releaseReturnValue()));
 }
 
+ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSC::JSGlobalObject& lexicalGlobalObject, RefPtr<ReadableStreamSource>&& source, JSC::JSValue nativeTag)
+{
+    auto& builtinNames = WebCore::builtinNames(lexicalGlobalObject.vm());
+    RELEASE_ASSERT(source != nullptr);
+
+    auto objectOrException = invokeConstructor(lexicalGlobalObject, builtinNames.ReadableStreamPrivateName(), [&source, nativeTag](auto& args, auto& lexicalGlobalObject, auto& globalObject) {
+        auto sourceStream = toJSNewlyCreated(&lexicalGlobalObject, &globalObject, source.releaseNonNull());
+        auto tag = WebCore::clientData(lexicalGlobalObject.vm())->builtinNames().bunNativeTagPrivateName();
+        sourceStream.getObject()->putDirect(lexicalGlobalObject.vm(), tag, nativeTag, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
+        args.append(sourceStream);
+    });
+
+    if (objectOrException.hasException())
+        return objectOrException.releaseException();
+
+    return create(*JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject), *jsCast<JSReadableStream*>(objectOrException.releaseReturnValue()));
+}
+
 static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGlobalObject& lexicalGlobalObject, const JSC::Identifier& identifier, JSC::JSValue thisValue, const JSC::MarkedArgumentBuffer& arguments)
 {
     JSC::VM& vm = lexicalGlobalObject.vm();
@@ -91,7 +108,7 @@ static inline std::optional<JSC::JSValue> invokeReadableStreamFunction(JSC::JSGl
     auto result = call(&lexicalGlobalObject, function, callData, thisValue, arguments);
     EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
     if (scope.exception())
-        return { };
+        return {};
     return result;
 }
 
@@ -120,7 +137,7 @@ std::optional<std::pair<Ref<ReadableStream>, Ref<ReadableStream>>> ReadableStrea
     ASSERT(!arguments.hasOverflowed());
     auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
     if (!returnedValue)
-        return { };
+        return {};
 
     auto results = Detail::SequenceConverter<IDLInterface<ReadableStream>>::convert(lexicalGlobalObject, *returnedValue);
 

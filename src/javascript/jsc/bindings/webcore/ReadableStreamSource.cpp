@@ -81,6 +81,17 @@ void ReadableStreamSource::clean()
     }
 }
 
+void ReadableStreamSource::error(JSC::JSValue value)
+{
+    if (m_promise) {
+        m_promise->reject(value, RejectAsHandled::Yes);
+        m_promise = nullptr;
+        setInactive();
+    } else {
+        controller().error(value);
+    }
+}
+
 void SimpleReadableStreamSource::doCancel()
 {
     m_isCancelled = true;

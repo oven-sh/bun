@@ -63,7 +63,8 @@ pub const TextEncoder = struct {
             // latin1 always has the same length as utf-8
             // so we can use the Gigacage to allocate the buffer
             var array = JSC.JSValue.createUninitializedUint8Array(ctx.ptr(), zig_str.len);
-            var buffer = array.asArrayBuffer(ctx.ptr()) orelse return JSC.toInvalidArguments("Out of memory", .{}, ctx);
+            var buffer = array.asArrayBuffer(ctx.ptr()) orelse
+                return JSC.toInvalidArguments("Out of memory", .{}, ctx);
             const result = strings.copyLatin1IntoUTF8(buffer.slice(), []const u8, zig_str.slice());
             std.debug.assert(result.written == zig_str.len);
             return array;

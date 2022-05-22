@@ -1231,7 +1231,7 @@ pub fn read(
     completion: *Completion,
     fd: os.fd_t,
     buffer: []u8,
-    offset: u64,
+    offset: ?u64,
 ) void {
     completion.* = .{
         .io = self,
@@ -1250,7 +1250,8 @@ pub fn read(
             .read = .{
                 .fd = fd,
                 .buffer = buffer,
-                .offset = offset,
+                // pread is irrelevant here
+                .offset = offset orelse 0,
             },
         },
     };

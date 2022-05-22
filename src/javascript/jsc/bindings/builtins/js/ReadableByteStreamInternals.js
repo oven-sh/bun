@@ -316,30 +316,28 @@ function readableByteStreamControllerEnqueue(controller, chunk)
     const stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
     @assert(!@getByIdDirectPrivate(controller, "closeRequested"));
     @assert(@getByIdDirectPrivate(stream, "state") === @streamReadable);
-    const buffer = chunk.buffer;
     const byteOffset = chunk.byteOffset;
     const byteLength = chunk.byteLength;
-    const transferredBuffer = @transferBufferToCurrentRealm(buffer);
 
     if (@readableStreamHasDefaultReader(stream)) {
         if (!@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").length)
-            @readableByteStreamControllerEnqueueChunk(controller, transferredBuffer, byteOffset, byteLength);
+            @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);
         else {
             @assert(!@getByIdDirectPrivate(controller, "queue").content.length);
-            let transferredView = new @Uint8Array(transferredBuffer, byteOffset, byteLength);
+            const transferredView = chunk.constructor === @Uint8Array ? chunk : new @Uint8Array(chunk.buffer, byteOffset, byteLength);
             @readableStreamFulfillReadRequest(stream, transferredView, false);
         }
         return;
     }
 
     if (@readableStreamHasBYOBReader(stream)) {
-        @readableByteStreamControllerEnqueueChunk(controller, transferredBuffer, byteOffset, byteLength);
+        @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);
         @readableByteStreamControllerProcessPullDescriptors(controller);
         return;
     }
 
     @assert(!@isReadableStreamLocked(stream));
-    @readableByteStreamControllerEnqueueChunk(controller, transferredBuffer, byteOffset, byteLength);
+    @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);
 }
 
 // Spec name: readableByteStreamControllerEnqueueChunkToQueue.

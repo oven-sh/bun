@@ -41,6 +41,9 @@ public:
     void start(ReadableStreamDefaultController&&, DOMPromiseDeferred<void>&&);
     void pull(DOMPromiseDeferred<void>&&);
     void cancel(JSC::JSValue);
+    void error(JSC::JSValue error);
+
+    bool hasController() const { return !!m_controller; }
 
     bool isPulling() const { return !!m_promise; }
 
@@ -60,8 +63,9 @@ protected:
     virtual void doPull() = 0;
     virtual void doCancel() = 0;
 
-private:
     std::unique_ptr<DOMPromiseDeferred<void>> m_promise;
+
+private:
     std::optional<ReadableStreamDefaultController> m_controller;
 };
 

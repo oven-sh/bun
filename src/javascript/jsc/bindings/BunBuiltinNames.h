@@ -43,6 +43,7 @@ using namespace JSC;
     macro(associatedReadableByteStreamController) \
     macro(autoAllocateChunkSize) \
     macro(backingMap) \
+    macro(bunNativeTag) \
     macro(backingSet) \
     macro(backpressure) \
     macro(backpressureChangePromise) \
@@ -58,10 +59,12 @@ using namespace JSC;
     macro(closeRequest) \
     macro(closeRequested) \
     macro(closed) \
+    macro(closedPromise) \
     macro(closedPromiseCapability) \
     macro(code) \
     macro(connect) \
     macro(controlledReadableStream) \
+    macro(controller) \
     macro(cork) \
     macro(createReadableStream) \
     macro(createWritableStreamFromInternal) \
@@ -158,6 +161,7 @@ using namespace JSC;
     macro(readyPromise) \
     macro(readyPromiseCapability) \
     macro(relative) \
+    macro(releaseLock) \
     macro(removeEventListener) \
     macro(require) \
     macro(resolve) \

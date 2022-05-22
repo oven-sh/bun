@@ -575,7 +575,7 @@ pub const VirtualMachine = struct {
     response_objects_pool: ?*Response.Pool = null,
 
     rare_data: ?*JSC.RareData = null,
-    io_: ?IO = null,
+    poller: JSC.WebCore.Poller = JSC.WebCore.Poller{},
 
     pub fn io(this: *VirtualMachine) *IO {
         if (this.io_ == null) {
@@ -721,32 +721,18 @@ pub const VirtualMachine = struct {
 
         // TODO: fix this technical debt
         pub fn tick(this: *EventLoop) void {
-            if (this.virtual_machine.io_ == null) {
-                while (true) {
-                    this.tickConcurrent();
+            var poller = &this.virtual_machine.poller;
+            while (true) {
+                this.tickConcurrent();
 
-                    // this.global.vm().doWork();
+                // this.global.vm().doWork();
 
-                    while (this.tickWithCount() > 0) {}
+                while (this.tickWithCount() > 0) {}
+                poller.tick();
 
-                    this.tickConcurrent();
+                this.tickConcurrent();
 
-                    if (this.tickWithCount() == 0) break;
-                } else {
-                    while (true) {
-                        this.tickConcurrent();
-                        this.virtual_machine.io().tick() catch unreachable;
-
-                        // this.global.vm().doWork();
-
-                        while (this.tickWithCount() > 0) {}
-                        this.virtual_machine.io().tick() catch unreachable;
-
-                        this.tickConcurrent();
-
-                        if (this.tickWithCount() == 0) break;
-                    }
-                }
+                if (this.tickWithCount() == 0) break;
             }
         }
 

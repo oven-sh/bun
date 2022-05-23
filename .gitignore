@@ -99,3 +99,6 @@ packages/bun-wasm/*.d.ts
 
 src/fallback.version
 src/runtime.version
+*.sqlite
+*.database
+*.db

@@ -4,6 +4,7 @@ pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse 
 pub const napi = @import("./napi/napi.zig");
 pub usingnamespace @import("./javascript/jsc/bindings/exports.zig");
 pub usingnamespace @import("./javascript/jsc/bindings/bindings.zig");
+pub usingnamespace @import("./javascript/jsc/event_loop.zig");
 pub usingnamespace @import("./javascript/jsc/base.zig");
 pub const RareData = @import("./javascript/jsc/rare_data.zig");
 pub usingnamespace @import("./javascript/jsc/javascript.zig");
@@ -39,3 +40,4 @@ pub const Node = struct {
     pub const Syscall = @import("./javascript/jsc/node/syscall.zig");
     pub const fs = @import("./javascript/jsc/node/node_fs_constant.zig");
 };
+pub const Maybe = Node.Maybe;

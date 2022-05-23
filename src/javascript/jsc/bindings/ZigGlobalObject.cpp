@@ -97,6 +97,7 @@
 #include "napi.h"
 #include "JSZigGlobalObjectBuiltins.h"
 #include "JSSQLStatement.h"
+#include "bun-base64.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;

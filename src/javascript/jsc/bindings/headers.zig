@@ -180,6 +180,7 @@ pub extern fn JSC__JSString__createFromOwnedString(arg0: [*c]JSC__VM, arg1: [*c]
 pub extern fn JSC__JSString__createFromString(arg0: [*c]JSC__VM, arg1: [*c]const WTF__String) [*c]JSC__JSString;
 pub extern fn JSC__JSString__eql(arg0: [*c]const JSC__JSString, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__JSString) bool;
 pub extern fn JSC__JSString__is8Bit(arg0: [*c]const JSC__JSString) bool;
+pub extern fn JSC__JSString__iterator(arg0: [*c]JSC__JSString, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque) void;
 pub extern fn JSC__JSString__length(arg0: [*c]const JSC__JSString) usize;
 pub extern fn JSC__JSString__toObject(arg0: [*c]JSC__JSString, arg1: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSString__value(arg0: [*c]JSC__JSString, arg1: [*c]JSC__JSGlobalObject) bWTF__String;

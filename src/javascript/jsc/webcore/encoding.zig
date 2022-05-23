@@ -73,6 +73,87 @@ pub const TextEncoder = struct {
         unreachable;
     }
 
+    // This is a fast path for copying a Rope string into a Uint8Array.
+    // This keeps us from an extra string temporary allocation
+    const RopeStringEncoder = struct {
+        globalThis: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+        buffer_value: JSC.JSValue,
+        slice: []u8,
+        tail: usize = 0,
+        any_utf16: bool = false,
+
+        pub fn append8(it: *JSC.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.C) void {
+            var this = bun.cast(*RopeStringEncoder, it.data.?);
+            // we use memcpy here instead of encoding
+            // SIMD only has an impact for long strings
+            // so in a case like this, the fastest path is to memcpy
+            // and then later, we can use the SIMD version
+            @memcpy(this.slice.ptr + this.tail, ptr, len);
+            this.tail += len;
+        }
+        pub fn append16(it: *JSC.JSString.Iterator, _: [*]const u16, _: u32) callconv(.C) void {
+            var this = bun.cast(*RopeStringEncoder, it.data.?);
+            this.any_utf16 = true;
+            it.stop = 1;
+            return;
+        }
+        pub fn write8(it: *JSC.JSString.Iterator, ptr: [*]const u8, len: u32, offset: u32) callconv(.C) void {
+            var this = bun.cast(*RopeStringEncoder, it.data.?);
+            // we use memcpy here instead of encoding
+            // SIMD only has an impact for long strings
+            // so in a case like this, the fastest path is to memcpy
+            // and then later, we can use the SIMD version
+            @memcpy(this.slice.ptr + offset, ptr, len);
+        }
+        pub fn write16(it: *JSC.JSString.Iterator, _: [*]const u16, _: u32, _: u32) callconv(.C) void {
+            var this = bun.cast(*RopeStringEncoder, it.data.?);
+            this.any_utf16 = true;
+            it.stop = 1;
+            return;
+        }
+
+        pub fn iter(this: *RopeStringEncoder) JSC.JSString.Iterator {
+            return .{
+                .data = this,
+                .stop = 0,
+                .append8 = append8,
+                .append16 = append16,
+                .write8 = write8,
+                .write16 = write16,
+            };
+        }
+    };
+
+    // This fast path is only suitable for Latin-1 strings.
+    // It's not suitable for UTF-16 strings, because getting the byteLength is unpredictable
+    pub export fn TextEncoder__encodeRopeString(
+        globalThis: *JSGlobalObject,
+        rope_str: *JSC.JSString,
+    ) JSValue {
+        var ctx = globalThis.ref();
+        if (comptime Environment.allow_assert) std.debug.assert(rope_str.is8Bit());
+        var array = JSC.JSValue.createUninitializedUint8Array(ctx.ptr(), rope_str.length());
+        var encoder = RopeStringEncoder{
+            .globalThis = globalThis,
+            .allocator = bun.default_allocator,
+            .buffer_value = array,
+            .slice = (array.asArrayBuffer(globalThis) orelse return JSC.JSValue.jsUndefined()).slice(),
+        };
+        var iter = encoder.iter();
+        rope_str.iterator(globalThis, &iter);
+
+        if (encoder.any_utf16) {
+            return JSC.JSValue.jsUndefined();
+        }
+
+        if (comptime !bun.FeatureFlags.latin1_is_now_ascii) {
+            strings.replaceLatin1WithUTF8(encoder.slice);
+        }
+
+        return array;
+    }
+
     const read_key = ZigString.init("read");
     const written_key = ZigString.init("written");
 
@@ -98,6 +179,7 @@ comptime {
     if (!JSC.is_bindgen) {
         _ = TextEncoder.TextEncoder__encode;
         _ = TextEncoder.TextEncoder__encodeInto;
+        _ = TextEncoder.TextEncoder__encodeRopeString;
     }
 }
 

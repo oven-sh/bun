@@ -924,7 +924,7 @@ const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const napi_async_work = struct {
     task: WorkPoolTask = .{ .callback = runFromThreadPool },
     completion_task: ?*anyopaque = null,
-    event_loop: *JSC.VirtualMachine.EventLoop,
+    event_loop: *JSC.EventLoop,
     global: napi_env,
     execute: napi_async_execute_callback = null,
     complete: napi_async_complete_callback = null,
@@ -1161,7 +1161,7 @@ pub export fn napi_get_node_version(_: napi_env, version: **const napi_node_vers
     version.* = &napi_node_version.global;
     return .ok;
 }
-pub export fn napi_get_uv_event_loop(_: napi_env, loop: **JSC.VirtualMachine.EventLoop) napi_status {
+pub export fn napi_get_uv_event_loop(_: napi_env, loop: **JSC.EventLoop) napi_status {
     // lol
     loop.* = JSC.VirtualMachine.vm.eventLoop();
     return .ok;
@@ -1226,7 +1226,7 @@ pub const ThreadSafeFunction = struct {
 
     owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
     owning_thread_lock: Lock = Lock.init(),
-    event_loop: *JSC.VirtualMachine.EventLoop,
+    event_loop: *JSC.EventLoop,
 
     javascript_function: JSValue,
     finalizer_task: JSC.AnyTask = undefined,

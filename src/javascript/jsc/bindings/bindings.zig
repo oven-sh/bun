@@ -809,6 +809,10 @@ pub const JSString = extern struct {
         return shim.cppFn("value", .{ this, globalObject });
     }
 
+    pub fn iterator(this: *JSString, globalObject: *JSGlobalObject, iter: *anyopaque) void {
+        return shim.cppFn("iterator", .{ this, globalObject, iter });
+    }
+
     pub fn length(this: *const JSString) usize {
         return shim.cppFn("length", .{
             this,
@@ -833,7 +837,20 @@ pub const JSString = extern struct {
         });
     }
 
-    pub const Extern = [_][]const u8{ "toObject", "eql", "value", "length", "is8Bit", "createFromOwnedString", "createFromString" };
+    pub const JStringIteratorAppend8Callback = fn (*Iterator, [*]const u8, u32) callconv(.C) void;
+    pub const JStringIteratorAppend16Callback = fn (*Iterator, [*]const u16, u32) callconv(.C) void;
+    pub const JStringIteratorWrite8Callback = fn (*Iterator, [*]const u8, u32, u32) callconv(.C) void;
+    pub const JStringIteratorWrite16Callback = fn (*Iterator, [*]const u16, u32, u32) callconv(.C) void;
+    pub const Iterator = extern struct {
+        data: ?*anyopaque,
+        stop: u8,
+        append8: ?JStringIteratorAppend8Callback,
+        append16: ?JStringIteratorAppend16Callback,
+        write8: ?JStringIteratorWrite8Callback,
+        write16: ?JStringIteratorWrite16Callback,
+    };
+
+    pub const Extern = [_][]const u8{ "iterator", "toObject", "eql", "value", "length", "is8Bit", "createFromOwnedString", "createFromString" };
 };
 
 pub const JSPromiseRejectionOperation = enum(u32) {

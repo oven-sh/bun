@@ -15,7 +15,7 @@ const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const fd_t = bun.FileDescriptorType;
 const C = @import("../../../global.zig").C;
 const linux = os.linux;
-const Maybe = JSC.Node.Maybe;
+const Maybe = JSC.Maybe;
 
 pub const system = if (Environment.isLinux) linux else @import("io").darwin;
 pub const S = struct {
@@ -541,6 +541,16 @@ pub const Error = struct {
     errno: Int,
     syscall: Syscall.Tag = @intToEnum(Syscall.Tag, 0),
     path: []const u8 = "",
+
+    pub const retry = Error{
+        .errno = if (Environment.isLinux)
+            @intCast(Int, @enumToInt(os.E.AGAIN))
+        else if (Environment.isMac)
+            @intCast(Int, @enumToInt(os.E.WOULDBLOCK))
+        else
+            @intCast(Int, @enumToInt(os.E.INTR)),
+        .syscall = .retry,
+    };
 
     pub inline fn getErrno(this: Error) os.E {
         return @intToEnum(os.E, this.errno);

@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include "root.h"
+
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMWrapper.h"
 #include "TextEncoder.h"
@@ -58,6 +60,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
 protected:
     JSTextEncoder(JSC::Structure*, JSDOMGlobalObject&, Ref<TextEncoder>&&);
 
@@ -93,6 +96,5 @@ template<> struct JSDOMWrapperConverterTraits<TextEncoder> {
 template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSC::JSGlobalObject&, JSC::JSValue);
 
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const TextEncoder::EncodeIntoResult&);
-
 
 } // namespace WebCore

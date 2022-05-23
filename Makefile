@@ -153,8 +153,8 @@ DEFAULT_LINKER_FLAGS= -pthread -ldl
 endif
 ifeq ($(OS_NAME),darwin)
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
-	_MIMALLOC_FILE = libmimalloc.a
-	_MIMALLOC_INPUT_PATH = libmimalloc.a
+	_MIMALLOC_FILE = libmimalloc.o
+	_MIMALLOC_INPUT_PATH = CMakeFiles/mimalloc-obj.dir/src/static.c.o
 endif
 
 MIMALLOC_FILE=
@@ -1121,7 +1121,7 @@ ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym:
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
 	-$(STRIP) $(BUN_RELEASE_BIN)
-	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+	cp $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
 copy-to-bun-release-dir-dsym:
 	gzip --keep -c $(PACKAGE_DIR)/bun.dSYM > $(BUN_RELEASE_DIR)/bun.dSYM.gz
@@ -1144,7 +1144,7 @@ wasm-return1:
 
 EMIT_LLVM_FOR_RELEASE= -emit-llvm
 EMIT_LLVM_FOR_DEBUG= 
-EMIT_LLVM=$(EMIT_LLVM_FOR_RELEASE)
+EMIT_LLVM=$(EMIT_LLVM_FOR_DEBUG)
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest

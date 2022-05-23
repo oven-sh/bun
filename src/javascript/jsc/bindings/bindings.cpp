@@ -2582,6 +2582,11 @@ void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0)
     callback(ctx);
 }
 
+void JSC__JSString__iterator(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, void* arg2)
+{
+    jsstring_iterator* iter = (jsstring_iterator*)arg2;
+    arg0->value(iter);
+}
 void JSC__VM__deferGC(JSC__VM* vm, void* ctx, void (*callback)(void* arg0))
 {
     JSC::GCDeferralContext deferralContext(reinterpret_cast<JSC__VM&>(vm));

@@ -1,4 +1,6 @@
 const Api = @import("../api/schema.zig").Api;
+const std = @import("std");
+const Environment = @import("../env.zig");
 pub const u_int8_t = u8;
 pub const u_int16_t = c_ushort;
 pub const u_int32_t = c_uint;
@@ -17,10 +19,13 @@ pub const Loop = opaque {
         return us_wakeup_loop(this);
     }
 
+    pub fn tick(this: *Loop) void {
+        us_loop_tick(this);
+    }
+
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
         const Handler = struct {
             pub fn callback(data: *anyopaque) callconv(.C) void {
-                const std = @import("std");
                 deferCallback(@ptrCast(UserType, @alignCast(@alignOf(std.meta.Child(UserType)), data)));
             }
         };
@@ -34,7 +39,6 @@ pub const Loop = opaque {
                 return uws_loop_removePostHandler(handler.loop, callback);
             }
             pub fn callback(data: *anyopaque, _: *Loop) callconv(.C) void {
-                const std = @import("std");
                 callback(@ptrCast(UserType, @alignCast(@alignOf(std.meta.Child(UserType)), data)));
             }
         };
@@ -56,6 +60,7 @@ pub const Loop = opaque {
     extern fn us_loop_free(loop: ?*Loop) void;
     extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
     extern fn us_loop_run(loop: ?*Loop) void;
+    extern fn us_loop_tick(loop: ?*Loop) void;
     extern fn us_wakeup_loop(loop: ?*Loop) void;
     extern fn us_loop_integrate(loop: ?*Loop) void;
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
@@ -104,7 +109,68 @@ extern fn us_socket_context_adopt_socket(ssl: c_int, context: ?*us_socket_contex
 extern fn us_create_child_socket_context(ssl: c_int, context: ?*us_socket_context_t, context_ext_size: c_int) ?*us_socket_context_t;
 
 pub const Poll = opaque {
-    extern fn us_create_poll(loop: ?*Loop, fallthrough: c_int, ext_size: c_uint) *Poll;
+    pub fn create(
+        loop: *Loop,
+        comptime Data: type,
+        file: c_int,
+        val: Data,
+        fallthrough: bool,
+        flags: Flags,
+        callback: CallbackType,
+    ) ?*Poll {
+        var poll = us_create_callback(loop, @as(c_int, @boolToInt(fallthrough)), file, @sizeOf(Data));
+        if (comptime Data != void) {
+            poll.data(Data).* = val;
+        }
+        var flags_int: c_int = 0;
+        if (flags.read) {
+            flags_int |= Flags.read_flag;
+        }
+
+        if (flags.write) {
+            flags_int |= Flags.write_flag;
+        }
+
+        us_callback_set(poll, flags_int, callback);
+        return poll;
+    }
+
+    pub fn stop(self: *Poll, loop: *Loop) void {
+        us_poll_stop(self, loop);
+    }
+
+    pub fn data(self: *Poll, comptime Data: type) *Data {
+        return us_poll_ext(self).?;
+    }
+
+    pub fn fd(self: *Poll) @import("std").os.fd_t {
+        return @intCast(@import("std").os.fd_t, us_poll_fd(self));
+    }
+
+    pub fn start(self: *Poll, poll_type: Flags) void {
+        // us_poll_start(self, loop: ?*Loop, events: c_int)
+        _ = self;
+        _ = poll_type;
+    }
+
+    pub const Flags = struct {
+        read: bool = false,
+        write: bool = false,
+
+        //#define LIBUS_SOCKET_READABLE
+        pub const read_flag = if (Environment.isLinux) std.os.linux.EPOLL.IN else 1;
+        // #define LIBUS_SOCKET_WRITABLE
+        pub const write_flag = if (Environment.isLinux) std.os.linux.EPOLL.OUT else 2;
+    };
+
+    pub fn deinit(self: *Poll) void {
+        us_poll_free(self);
+    }
+
+    // (void* userData, int fd, int events, int error, struct us_poll_t *poll)
+    pub const CallbackType = fn (?*anyopaque, c_int, c_int, c_int, *Poll) void;
+    extern fn us_create_callback(loop: ?*Loop, fallthrough: c_int, fd: c_int, ext_size: c_uint) *Poll;
+    extern fn us_callback_set(poll: *Poll, events: c_int, callback: CallbackType) *Poll;
     extern fn us_poll_free(p: ?*Poll, loop: ?*Loop) void;
     extern fn us_poll_init(p: ?*Poll, fd: c_int, poll_type: c_int) void;
     extern fn us_poll_start(p: ?*Poll, loop: ?*Loop, events: c_int) void;

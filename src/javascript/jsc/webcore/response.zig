@@ -38,11 +38,12 @@ const JSError = JSC.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
-const Task = @import("../javascript.zig").Task;
+const Task = JSC.Task;
 const JSPrinter = @import("../../../js_printer.zig");
 const picohttp = @import("picohttp");
 const StringJoiner = @import("../../../string_joiner.zig");
 const uws = @import("uws");
+
 pub const Response = struct {
     pub const Pool = struct {
         response_objects_pool: [127]JSC.C.JSObjectRef = undefined,
@@ -92,6 +93,7 @@ pub const Response = struct {
         },
         .{},
     );
+
     pub const Class = NewClass(
         Response,
         .{ .name = "Response" },
@@ -1017,7 +1019,7 @@ pub const Fetch = struct {
     }
 };
 
-pub const ReadableStream = opaque {
+pub const ReadableStream = struct {
     pub fn fromBlob(globalThis: *JSGlobalObject, this: *Blob) JSC.JSValue {
         if (comptime JSC.is_bindgen)
             unreachable;
@@ -1125,164 +1127,6 @@ const PathOrBlob = union(enum) {
 
         return null;
     }
-};
-
-pub const Poller = struct {
-    /// kqueue() or epoll()
-    /// 0 == unset
-    watch_fd: i32 = 0,
-
-    pub const PlatformSpecificFlags = struct {};
-
-    const Completion = fn (ctx: ?*anyopaque, sizeOrOffset: i64, flags: u16) void;
-    const kevent64 = std.os.system.kevent64_s;
-    pub fn dispatchKQueueEvent(kqueue_event: *const kevent64) void {
-        if (comptime !Environment.isMac) {
-            unreachable;
-        }
-
-        const ptr = @intToPtr(?*anyopaque, kqueue_event.udata);
-        const callback: Completion = @intToPtr(Completion, kqueue_event.ext[0]);
-        callback(ptr, @bitCast(i64, kqueue_event.data), kqueue_event.flags);
-    }
-    const timeout = std.mem.zeroes(std.os.timespec);
-
-    pub fn watch(this: *Poller, fd: JSC.Node.FileDescriptor, flag: Flag, ctx: ?*anyopaque, completion: Completion) JSC.Node.Maybe(void) {
-        if (comptime Environment.isLinux) {
-            std.debug.assert(this.watch_fd != 0);
-        } else if (comptime Environment.isMac) {
-            if (this.watch_fd == 0) {
-                this.watch_fd = std.c.kqueue();
-                if (this.watch_fd == -1) {
-                    defer this.watch_fd = 0;
-                    return JSC.Node.Maybe(void).errnoSys(this.watch_fd, .kqueue).?;
-                }
-            }
-            std.debug.assert(this.watch_fd != 0);
-            var events_list = std.mem.zeroes([2]kevent64);
-            events_list[0] = switch (flag) {
-                .read => .{
-                    .ident = @intCast(u64, fd),
-                    .filter = std.os.system.EVFILT_READ,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @ptrToInt(ctx),
-                    .flags = std.c.EV_ADD | std.c.EV_ENABLE | std.c.EV_ONESHOT,
-                    .ext = .{ @ptrToInt(completion), 0 },
-                },
-                .write => .{
-                    .ident = @intCast(u64, fd),
-                    .filter = std.os.system.EVFILT_WRITE,
-                    .data = 0,
-                    .fflags = 0,
-                    .udata = @ptrToInt(ctx),
-                    .flags = std.c.EV_ADD | std.c.EV_ENABLE | std.c.EV_ONESHOT,
-                    .ext = .{ @ptrToInt(completion), 0 },
-                },
-            };
-
-            // The kevent() system call returns the number of events placed in
-            // the eventlist, up to the value given by nevents.  If the time
-            // limit expires, then kevent() returns 0.
-            const rc = std.os.system.kevent64(
-                this.watch_fd,
-                &events_list,
-                1,
-                // The same array may be used for the changelist and eventlist.
-                &events_list,
-                1,
-                0,
-                &timeout,
-            );
-
-            // If an error occurs while
-            // processing an element of the changelist and there is enough room
-            // in the eventlist, then the event will be placed in the eventlist
-            // with EV_ERROR set in flags and the system error in data.
-            if (events_list[0].flags == std.c.EV_ERROR) {
-                return JSC.Node.Maybe(void).errnoSys(events_list[0].data, .kevent).?;
-                // Otherwise, -1 will be returned, and errno will be set to
-                // indicate the error condition.
-            }
-
-            switch (rc) {
-                std.math.minInt(@TypeOf(rc))...-1 => return JSC.Node.Maybe(void).errnoSys(@enumToInt(std.c.getErrno(rc)), .kevent).?,
-                0 => return JSC.Node.Maybe(void).success,
-                1 => {
-                    dispatchKQueueEvent(&events_list[0]);
-                    return JSC.Node.Maybe(void).success;
-                },
-                2 => {
-                    dispatchKQueueEvent(&events_list[0]);
-                    dispatchKQueueEvent(&events_list[1]);
-                    return JSC.Node.Maybe(void).success;
-                },
-                else => unreachable,
-            }
-        } else {
-            @compileError("TODO: Poller");
-        }
-    }
-
-    const kqueue_events_ = std.mem.zeroes([4]kevent64);
-    pub fn tick(this: *Poller) void {
-        if (comptime Environment.isMac) {
-            if (this.watch_fd == 0) return;
-
-            var events_list = kqueue_events_;
-            //             ub extern "c" fn kevent64(
-            //     kq: c_int,
-            //     changelist: [*]const kevent64_s,
-            //     nchanges: c_int,
-            //     eventlist: [*]kevent64_s,
-            //     nevents: c_int,
-            //     flags: c_uint,
-            //     timeout: ?*const timespec,
-            // ) c_int;
-            const rc = std.os.system.kevent64(
-                this.watch_fd,
-                &events_list,
-                0,
-                // The same array may be used for the changelist and eventlist.
-                &events_list,
-                4,
-                0,
-                &timeout,
-            );
-
-            switch (rc) {
-                std.math.minInt(@TypeOf(rc))...-1 => {
-                    // EINTR is fine
-                    switch (std.c.getErrno(rc)) {
-                        .INTR => return,
-                        else => |errno| std.debug.panic("kevent64() failed: {d}", .{errno}),
-                    }
-                },
-                0 => {},
-                1 => {
-                    dispatchKQueueEvent(&events_list[0]);
-                },
-                2 => {
-                    dispatchKQueueEvent(&events_list[0]);
-                    dispatchKQueueEvent(&events_list[1]);
-                },
-                3 => {
-                    dispatchKQueueEvent(&events_list[0]);
-                    dispatchKQueueEvent(&events_list[1]);
-                    dispatchKQueueEvent(&events_list[2]);
-                },
-                4 => {
-                    dispatchKQueueEvent(&events_list[0]);
-                    dispatchKQueueEvent(&events_list[1]);
-                    dispatchKQueueEvent(&events_list[2]);
-                    dispatchKQueueEvent(&events_list[3]);
-                },
-                else => unreachable,
-            }
-        }
-    }
-
-    pub const Flag = enum { read, write };
 };
 
 pub const Blob = struct {
@@ -1702,313 +1546,76 @@ pub const Blob = struct {
             offset: usize,
             length: usize,
         ) bool {
+            _ = store;
             _ = stream;
-            store.ref();
-            defer store.deref();
-            if (comptime JSC.is_bindgen) unreachable;
-            switch (store.data) {
-                .bytes => |*bytes| {
-                    var slice = bytes.slice();
-                    var base = slice[@minimum(offset, slice.len)..];
-                    slice = base;
-                    slice = if (length > 0)
-                        slice[0..@minimum(@minimum(slice.len, length), max_chunk_size)]
-                    else
-                        slice[0..@minimum(slice.len, max_chunk_size)];
-                    if (slice.len == 0)
-                        return false;
-
-                    const has_more = base.len > slice.len;
-
-                    return BlobStore__onRead(ctx, slice.ptr, slice.len) and has_more;
-                },
-                .file => |*file| {
-                    _ = file;
-                    const fd = stream.fd();
-
-                    // invalid fd
-                    if (fd == std.math.maxInt(@TypeOf(fd))) {
-                        return false;
-                    }
-                    const auto_close = file.pathlike == .path;
-
-                    const chunk_size = if (length > 0) @minimum(length, max_chunk_size) else max_chunk_size;
-
-                    const this_chunk_size = if (file.max_size > 0)
-                        @minimum(chunk_size, file.max_size)
-                    else if (std.os.S.ISFIFO(file.mode))
-                        fifo_chunk_size
-                    else
-                        chunk_size;
-
-                    var buf = bun.default_allocator.alloc(
-                        u8,
-                        this_chunk_size,
-                    ) catch {
-                        const err = JSC.SystemError{
-                            .code = ZigString.init("ENOMEM"),
-                            .path = if (file.pathlike == .path)
-                                ZigString.init(file.pathlike.path.slice())
-                            else
-                                ZigString.Empty,
-                            .message = ZigString.init("Out of memory"),
-                            .syscall = ZigString.init("malloc"),
-                        };
-                        BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
-
-                        if (auto_close) {
-                            _ = JSC.Node.Syscall.close(fd);
-                        }
-                        return false;
-                    };
-
-                    const rc = // read() for files
-                        JSC.Node.Syscall.read(fd, buf);
-
-                    switch (rc) {
-                        .err => |err| {
-                            const retry = comptime if (Environment.isLinux)
-                                std.os.E.WOULDBLOCK
-                            else
-                                std.os.E.AGAIN;
-
-                            switch (err.getErrno()) {
-                                retry => {
-                                    outer: {
-                                        NetworkThread.init() catch break :outer;
-
-                                        _ = AsyncStreamRequest.init(
-                                            bun.default_allocator,
-                                            ctx,
-                                            buf,
-                                            fd,
-                                            file.mode,
-                                            if (!std.os.S.ISREG(file.mode)) @as(?u64, null) else offset,
-                                        ) catch {
-                                            const sys = JSC.SystemError{
-                                                .code = ZigString.init("ENOMEM"),
-                                                .path = if (file.pathlike == .path)
-                                                    ZigString.init(file.pathlike.path.slice())
-                                                else
-                                                    ZigString.Empty,
-                                                .message = ZigString.init("Out of memory"),
-                                                .syscall = ZigString.init("malloc"),
-                                            };
-                                            BlobStore__onError(ctx, &sys, JSC.VirtualMachine.vm.global);
-
-                                            if (auto_close) {
-                                                _ = JSC.Node.Syscall.close(fd);
-                                            }
-                                            return false;
-                                        };
-                                        return true;
-                                    }
-                                },
-                                else => {},
-                            }
-                            const sys = err.toSystemError();
-
-                            if (auto_close) {
-                                _ = JSC.Node.Syscall.close(fd);
-                            }
-
-                            BlobStore__onError(ctx, &sys, JSC.VirtualMachine.vm.global);
-                            bun.default_allocator.free(buf);
-                            return false;
-                        },
-                        .result => |result| {
-                            // this handles:
-                            // - empty file
-                            // - stream closed for some reason
-                            if ((result == 0 and (file.seekable orelse false)) or
-                                BlobReadableStreamSource_isCancelled(ctx))
-                            {
-                                bun.default_allocator.free(buf);
-                                return false;
-                            }
-
-                            const will_continue = BlobStore__onReadExternal(
-                                ctx,
-                                buf.ptr,
-                                result,
-                                buf.ptr,
-                                JSC.MarkedArrayBuffer_deallocator,
-                            ) and
-                                // if it's not a regular file, we don't know how much to read so we should continue
-                                (!(file.seekable orelse false) or
-                                // if it is a regular file, we stop reading when we've read all the data
-                                !((file.seekable orelse false) and @intCast(SizeType, result + offset) >= file.max_size));
-
-                            return will_continue;
-                        },
-                    }
-                },
-            }
-
+            _ = ctx;
+            _ = offset;
+            _ = length;
             return false;
+            // _ = stream;
+            // store.ref();
+            // defer store.deref();
+            // if (comptime JSC.is_bindgen) unreachable;
+            // switch (store.data) {
+            //     .bytes => |*bytes| {
+            //         var slice = bytes.slice();
+            //         var base = slice[@minimum(offset, slice.len)..];
+            //         slice = base;
+            //         slice = if (length > 0)
+            //             slice[0..@minimum(@minimum(slice.len, length), max_chunk_size)]
+            //         else
+            //             slice[0..@minimum(slice.len, max_chunk_size)];
+            //         if (slice.len == 0)
+            //             return false;
+
+            //         const has_more = base.len > slice.len;
+
+            //         return BlobStore__onRead(ctx, slice.ptr, slice.len) and has_more;
+            //     },
+            //     .file => |*file| {
+            //         _ = file;
+            //         const fd = stream.fd();
+
+            //         // invalid fd
+            //         if (fd == std.math.maxInt(@TypeOf(fd))) {
+            //             return false;
+            //         }
+            //         const auto_close = file.pathlike == .path;
+
+            //         const chunk_size = if (length > 0) @minimum(length, max_chunk_size) else max_chunk_size;
+
+            //         const this_chunk_size = if (file.max_size > 0)
+            //             @minimum(chunk_size, file.max_size)
+            //         else if (std.os.S.ISFIFO(file.mode))
+            //             fifo_chunk_size
+            //         else
+            //             chunk_size;
+
+            //         var buf = bun.default_allocator.alloc(
+            //             u8,
+            //             this_chunk_size,
+            //         ) catch {
+            //             const err = JSC.SystemError{
+            //                 .code = ZigString.init("ENOMEM"),
+            //                 .path = if (file.pathlike == .path)
+            //                     ZigString.init(file.pathlike.path.slice())
+            //                 else
+            //                     ZigString.Empty,
+            //                 .message = ZigString.init("Out of memory"),
+            //                 .syscall = ZigString.init("malloc"),
+            //             };
+            //             BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
+
+            //             if (auto_close) {
+            //                 _ = JSC.Node.Syscall.close(fd);
+            //             }
+            //             return false;
+            //         };
+            //     },
+            // }
+
+            // return false;
         }
-        const StreamingRead = struct {
-            buf_ptr: [*]u8,
-            buf_len: SizeType = 0,
-            buf_tail: SizeType = 0,
-            ref_count: u32 = 0,
-            store: *Blob.Store,
-            ctx: ?*anyopaque = null,
-
-            has_pending_read: bool = false,
-
-            pub fn owns(this: *const StreamingRead, ptr: ?*const anyopaque) bool {
-                const addr = @ptrToInt(ptr);
-                return addr >= @ptrToInt(this.buf_ptr) and addr < @ptrToInt(this.buf_ptr) + this.buf_len;
-            }
-
-            pub fn deref(this: *StreamingRead) void {
-                if (this.ref_count == 0)
-                    unreachable;
-
-                this.ref_count -= 1;
-                if (this.ref_count == 0 and !this.has_pending_read) {
-                    bun.default_allocator.destroy(this);
-                    return;
-                }
-            }
-
-            pub fn ref(this: *StreamingRead) void {
-                this.ref_count +|= 1;
-            }
-        };
-
-        const AsyncStreamRequest = struct {
-            buf: []u8,
-            fd: JSC.Node.FileDescriptor,
-            // task: NetworkThread.Task = .{ .callback = callback },
-            // completion: AsyncIO.Completion = undefined,
-            offset: ?u64 = null,
-            read_len: u64 = 0,
-            loop: *JSC.VirtualMachine.EventLoop = undefined,
-            allocator: std.mem.Allocator,
-            source: ?*anyopaque,
-            mode: JSC.Node.Mode,
-
-            pub fn init(allocator: std.mem.Allocator, source: ?*anyopaque, buf: []u8, fd: JSC.Node.FileDescriptor, mode: JSC.Node.Mode, offset: ?u64) !*AsyncStreamRequest {
-                var req = try allocator.create(AsyncStreamRequest);
-                req.* = .{
-                    .buf = buf,
-                    .fd = fd,
-                    .source = source,
-                    .offset = offset,
-                    .loop = JSC.VirtualMachine.vm.eventLoop(),
-                    .allocator = allocator,
-                    .mode = mode,
-                };
-                _ = JSC.VirtualMachine.vm.poller.watch(fd, .read, req, callback);
-                return req;
-            }
-
-            pub fn callback(task: ?*anyopaque, sizeOrOffset: i64, _: u16) void {
-                var this: *AsyncStreamRequest = bun.cast(*AsyncStreamRequest, task.?);
-                var buf = this.buf;
-                if (comptime Environment.isMac) {
-                    if (std.os.S.ISREG(this.mode)) {
-
-                        // Returns when the file pointer is not at the end of
-                        // file.  data contains the offset from current position
-                        // to end of file, and may be negative.
-                        buf = buf[0..@minimum(@intCast(usize, sizeOrOffset), this.buf.len)];
-                    } else if (std.os.S.ISCHR(this.mode) or std.os.S.ISFIFO(this.mode)) {
-                        buf = buf[0..@minimum(@intCast(usize, sizeOrOffset), this.buf.len)];
-                    }
-                }
-
-                const rc = JSC.Node.Syscall.read(this.fd, buf);
-
-                switch (rc) {
-                    .err => |err| {
-                        // const retry = comptime if (Environment.isLinux)
-                        //     std.os.E.WOULDBLOCK
-                        // else
-                        //     std.os.E.AGAIN;
-
-                        // switch (err.getErrno()) {
-                        //     retry => {
-                        //         outer: {
-                        //             NetworkThread.init() catch break :outer;
-
-                        //             _ = AsyncStreamRequest.init(
-                        //                 bun.default_allocator,
-                        //                 this.source,
-                        //                 buf,
-                        //                 fd,
-                        //                 if (!std.os.S.ISREG(file.mode)) null else offset,
-                        //             ) catch {
-                        //                 const sys = JSC.SystemError{
-                        //                     .code = ZigString.init("ENOMEM"),
-                        //                     .path = if (file.pathlike == .path)
-                        //                         ZigString.init(file.pathlike.path.slice())
-                        //                     else
-                        //                         ZigString.Empty,
-                        //                     .message = ZigString.init("Out of memory"),
-                        //                     .syscall = ZigString.init("malloc"),
-                        //                 };
-                        //                 BlobStore__onError(ctx, &sys, JSC.VirtualMachine.vm.global);
-
-                        //                 if (auto_close) {
-                        //                     _ = JSC.Node.Syscall.close(fd);
-                        //                 }
-                        //                 return false;
-                        //             };
-                        //             return true;
-                        //         }
-                        //     },
-                        //     else => {},
-                        // }
-                        const sys = err.toSystemError();
-
-                        BlobStore__onError(this.source, &sys, JSC.VirtualMachine.vm.global);
-                        const allocator = this.allocator;
-                        allocator.free(this.buf);
-                        allocator.destroy(this);
-                        return;
-                    },
-                    .result => |result| {
-                        // this handles:
-                        // - empty file
-                        // - stream closed for some reason
-                        if (result == 0) {
-                            _ = BlobStore__onRead(this.source, null, 0);
-                            return;
-                        }
-
-                        _ = BlobStore__onReadExternal(
-                            this.source,
-                            buf.ptr,
-                            result,
-                            buf.ptr,
-                            JSC.MarkedArrayBuffer_deallocator,
-                        );
-                    },
-                }
-                // }
-
-            }
-
-            pub fn runFromJS(task: *anyopaque) void {
-                var this: *AsyncStreamRequest = bun.cast(*AsyncStreamRequest, task);
-                var allocator = this.allocator;
-                defer allocator.destroy(this);
-                if (this.errno) |err| {
-                    const system_error = JSC.SystemError{
-                        .code = ZigString.init(std.mem.span(@errorName(err))),
-                        .path = ZigString.Empty, // TODO
-                        .syscall = ZigString.init("read"),
-                    };
-                    BlobStore__onError(this.source, &system_error, this.loop.global);
-                    return;
-                }
-
-                _ = BlobStore__onReadExternal(this.source, this.buf.ptr, this.read_len, this.buf.ptr, JSC.MarkedArrayBuffer_deallocator);
-            }
-        };
 
         const fifo_chunk_size = 512;
         pub export fn BlobStore__requestStart(
@@ -2018,247 +1625,253 @@ pub const Blob = struct {
             offset: usize,
             length: usize,
         ) bool {
-            store.ref();
-            defer store.deref();
-            if (comptime JSC.is_bindgen) unreachable;
-            const chunk_size = if (length > 0) @minimum(length, max_chunk_size) else max_chunk_size;
-            switch (store.data) {
-                .bytes => |*bytes| {
-                    var slice = bytes.slice();
-                    var base = slice[@minimum(offset, slice.len)..];
-                    slice = base;
-                    slice = slice[0..@minimum(slice.len, chunk_size)];
-                    if (slice.len == 0)
-                        return false;
+            _ = store;
+            _ = streamer;
+            _ = ctx;
+            _ = offset;
+            _ = length;
+            return false;
+            // store.ref();
+            // defer store.deref();
+            // if (comptime JSC.is_bindgen) unreachable;
+            // const chunk_size = if (length > 0) @minimum(length, max_chunk_size) else max_chunk_size;
+            // switch (store.data) {
+            //     .bytes => |*bytes| {
+            //         var slice = bytes.slice();
+            //         var base = slice[@minimum(offset, slice.len)..];
+            //         slice = base;
+            //         slice = slice[0..@minimum(slice.len, chunk_size)];
+            //         if (slice.len == 0)
+            //             return false;
 
-                    const has_more = base.len > slice.len;
+            //         const has_more = base.len > slice.len;
 
-                    return BlobStore__onRead(ctx, slice.ptr, slice.len) and has_more;
-                },
-                .file => |*file| {
-                    var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-                    var auto_close = file.pathlike != .fd;
-                    var fd = if (!auto_close)
-                        file.pathlike.fd
-                    else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
-                        .result => |_fd| _fd,
-                        .err => |err| {
-                            BlobStore__onError(ctx, &err.withPath(file.pathlike.path.slice()).toSystemError(), JSC.VirtualMachine.vm.global);
-                            return false;
-                        },
-                    };
+            //         return BlobStore__onRead(ctx, slice.ptr, slice.len) and has_more;
+            //     },
+            //     .file => |*file| {
+            //         var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+            //         var auto_close = file.pathlike != .fd;
+            //         var fd = if (!auto_close)
+            //             file.pathlike.fd
+            //         else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+            //             .result => |_fd| _fd,
+            //             .err => |err| {
+            //                 BlobStore__onError(ctx, &err.withPath(file.pathlike.path.slice()).toSystemError(), JSC.VirtualMachine.vm.global);
+            //                 return false;
+            //             },
+            //         };
 
-                    if (!auto_close) {
-                        // ensure we have non-blocking IO set
-                        const flags = (std.os.fcntl(fd, std.os.F.GETFL, 0) catch return false);
+            //         if (!auto_close) {
+            //             // ensure we have non-blocking IO set
+            //             const flags = (std.os.fcntl(fd, std.os.F.GETFL, 0) catch return false);
 
-                        // if we do not, clone the descriptor and set non-blocking
-                        // it is important for us to clone it so we don't cause Weird Things to happen
-                        if ((flags & std.os.O.NONBLOCK) == 0) {
-                            auto_close = false;
-                            fd = @intCast(@TypeOf(fd), std.os.fcntl(fd, std.os.F.DUPFD, 0) catch return false);
-                            _ = std.os.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK) catch return false;
-                        }
-                    }
+            //             // if we do not, clone the descriptor and set non-blocking
+            //             // it is important for us to clone it so we don't cause Weird Things to happen
+            //             if ((flags & std.os.O.NONBLOCK) == 0) {
+            //                 auto_close = false;
+            //                 fd = @intCast(@TypeOf(fd), std.os.fcntl(fd, std.os.F.DUPFD, 0) catch return false);
+            //                 _ = std.os.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK) catch return false;
+            //             }
+            //         }
 
-                    const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
-                        .result => |result| result,
-                        .err => |err| {
-                            BlobStore__onError(ctx, &err.withPath(file.pathlike.path.slice()).toSystemError(), JSC.VirtualMachine.vm.global);
+            //         const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+            //             .result => |result| result,
+            //             .err => |err| {
+            //                 BlobStore__onError(ctx, &err.withPath(file.pathlike.path.slice()).toSystemError(), JSC.VirtualMachine.vm.global);
 
-                            if (auto_close) {
-                                _ = JSC.Node.Syscall.close(fd);
-                            }
-                            return false;
-                        },
-                    };
+            //                 if (auto_close) {
+            //                     _ = JSC.Node.Syscall.close(fd);
+            //                 }
+            //                 return false;
+            //             },
+            //         };
 
-                    if (std.os.S.ISDIR(stat.mode)) {
-                        const err = JSC.SystemError{
-                            .code = ZigString.init("EISDIR"),
-                            .path = if (file.pathlike == .path)
-                                ZigString.init(file.pathlike.path.slice())
-                            else
-                                ZigString.Empty,
-                            .message = ZigString.init("Directories cannot be read like files"),
-                            .syscall = ZigString.init("read"),
-                        };
+            //         if (std.os.S.ISDIR(stat.mode)) {
+            //             const err = JSC.SystemError{
+            //                 .code = ZigString.init("EISDIR"),
+            //                 .path = if (file.pathlike == .path)
+            //                     ZigString.init(file.pathlike.path.slice())
+            //                 else
+            //                     ZigString.Empty,
+            //                 .message = ZigString.init("Directories cannot be read like files"),
+            //                 .syscall = ZigString.init("read"),
+            //             };
 
-                        BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
+            //             BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
 
-                        if (auto_close) {
-                            _ = JSC.Node.Syscall.close(fd);
-                        }
-                        return false;
-                    }
+            //             if (auto_close) {
+            //                 _ = JSC.Node.Syscall.close(fd);
+            //             }
+            //             return false;
+            //         }
 
-                    if (std.os.S.ISSOCK(stat.mode)) {
-                        const err = JSC.SystemError{
-                            .code = ZigString.init("ENOTSUP"),
-                            .path = if (file.pathlike == .path)
-                                ZigString.init(file.pathlike.path.slice())
-                            else
-                                ZigString.Empty,
-                            .message = ZigString.init("Sockets cannot be read like files with this API"),
-                            .syscall = ZigString.init("read"),
-                        };
+            //         if (std.os.S.ISSOCK(stat.mode)) {
+            //             const err = JSC.SystemError{
+            //                 .code = ZigString.init("ENOTSUP"),
+            //                 .path = if (file.pathlike == .path)
+            //                     ZigString.init(file.pathlike.path.slice())
+            //                 else
+            //                     ZigString.Empty,
+            //                 .message = ZigString.init("Sockets cannot be read like files with this API"),
+            //                 .syscall = ZigString.init("read"),
+            //             };
 
-                        BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
+            //             BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
 
-                        if (auto_close) {
-                            _ = JSC.Node.Syscall.close(fd);
-                        }
-                        return false;
-                    }
+            //             if (auto_close) {
+            //                 _ = JSC.Node.Syscall.close(fd);
+            //             }
+            //             return false;
+            //         }
 
-                    // if (comptime Environment.isMac) {
-                    // if (std.os.S.ISSOCK(stat.mode)) {
-                    //     // darwin doesn't support os.MSG.NOSIGNAL,
-                    //     // but instead a socket option to avoid SIGPIPE.
-                    //     const _bytes = &std.mem.toBytes(@as(c_int, 1));
-                    //     _ = std.os.darwin.setsockopt(fd, std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, _bytes, @intCast(std.os.socklen_t, _bytes.len));
-                    // }
-                    // }
+            //         // if (comptime Environment.isMac) {
+            //         // if (std.os.S.ISSOCK(stat.mode)) {
+            //         //     // darwin doesn't support os.MSG.NOSIGNAL,
+            //         //     // but instead a socket option to avoid SIGPIPE.
+            //         //     const _bytes = &std.mem.toBytes(@as(c_int, 1));
+            //         //     _ = std.os.darwin.setsockopt(fd, std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, _bytes, @intCast(std.os.socklen_t, _bytes.len));
+            //         // }
+            //         // }
 
-                    file.seekable = std.os.S.ISREG(stat.mode);
-                    file.mode = @intCast(JSC.Node.Mode, stat.mode);
+            //         file.seekable = std.os.S.ISREG(stat.mode);
+            //         file.mode = @intCast(JSC.Node.Mode, stat.mode);
 
-                    if (file.seekable orelse false)
-                        file.max_size = @intCast(SizeType, stat.size);
+            //         if (file.seekable orelse false)
+            //             file.max_size = @intCast(SizeType, stat.size);
 
-                    if ((file.seekable orelse false) and file.max_size == 0) {
-                        if (auto_close) {
-                            _ = JSC.Node.Syscall.close(fd);
-                        }
-                        return false;
-                    }
+            //         if ((file.seekable orelse false) and file.max_size == 0) {
+            //             if (auto_close) {
+            //                 _ = JSC.Node.Syscall.close(fd);
+            //             }
+            //             return false;
+            //         }
 
-                    const this_chunk_size = if (file.max_size > 0)
-                        @minimum(chunk_size, file.max_size)
-                    else if (std.os.S.ISFIFO(stat.mode))
-                        fifo_chunk_size
-                    else
-                        chunk_size;
+            //         const this_chunk_size = if (file.max_size > 0)
+            //             @minimum(chunk_size, file.max_size)
+            //         else if (std.os.S.ISFIFO(stat.mode))
+            //             fifo_chunk_size
+            //         else
+            //             chunk_size;
 
-                    var buf = bun.default_allocator.alloc(
-                        u8,
-                        this_chunk_size,
-                    ) catch {
-                        const err = JSC.SystemError{
-                            .code = ZigString.init("ENOMEM"),
-                            .path = if (file.pathlike == .path)
-                                ZigString.init(file.pathlike.path.slice())
-                            else
-                                ZigString.Empty,
-                            .message = ZigString.init("Out of memory"),
-                            .syscall = ZigString.init("malloc"),
-                        };
-                        BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
+            //         var buf = bun.default_allocator.alloc(
+            //             u8,
+            //             this_chunk_size,
+            //         ) catch {
+            //             const err = JSC.SystemError{
+            //                 .code = ZigString.init("ENOMEM"),
+            //                 .path = if (file.pathlike == .path)
+            //                     ZigString.init(file.pathlike.path.slice())
+            //                 else
+            //                     ZigString.Empty,
+            //                 .message = ZigString.init("Out of memory"),
+            //                 .syscall = ZigString.init("malloc"),
+            //             };
+            //             BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
 
-                        if (auto_close) {
-                            _ = JSC.Node.Syscall.close(fd);
-                        }
-                        return false;
-                    };
+            //             if (auto_close) {
+            //                 _ = JSC.Node.Syscall.close(fd);
+            //             }
+            //             return false;
+            //         };
 
-                    const rc = // read() for files
-                        JSC.Node.Syscall.read(fd, buf);
+            //         const rc = // read() for files
+            //             JSC.Node.Syscall.read(fd, buf);
 
-                    switch (rc) {
-                        .err => |err| {
-                            const retry = comptime if (Environment.isLinux)
-                                std.os.E.WOULDBLOCK
-                            else
-                                std.os.E.AGAIN;
+            //         switch (rc) {
+            //             .err => |err| {
+            //                 const retry = comptime if (Environment.isLinux)
+            //                     std.os.E.WOULDBLOCK
+            //                 else
+            //                     std.os.E.AGAIN;
 
-                            switch (err.getErrno()) {
-                                retry => {
-                                    outer: {
-                                        NetworkThread.init() catch break :outer;
+            //                 switch (err.getErrno()) {
+            //                     retry => {
+            //                         outer: {
+            //                             NetworkThread.init() catch break :outer;
 
-                                        _ = AsyncStreamRequest.init(
-                                            bun.default_allocator,
-                                            ctx,
-                                            buf,
-                                            fd,
-                                            file.mode,
-                                            if (!std.os.S.ISREG(stat.mode)) @as(?u64, null) else offset,
-                                        ) catch {
-                                            const sys = JSC.SystemError{
-                                                .code = ZigString.init("ENOMEM"),
-                                                .path = if (file.pathlike == .path)
-                                                    ZigString.init(file.pathlike.path.slice())
-                                                else
-                                                    ZigString.Empty,
-                                                .message = ZigString.init("Out of memory"),
-                                                .syscall = ZigString.init("malloc"),
-                                            };
-                                            BlobStore__onError(ctx, &sys, JSC.VirtualMachine.vm.global);
+            //                             _ = FileReader.init(
+            //                                 bun.default_allocator,
+            //                                 ctx,
+            //                                 buf,
+            //                                 fd,
+            //                                 file.mode,
+            //                                 if (!std.os.S.ISREG(stat.mode)) @as(?u64, null) else offset,
+            //                             ) catch {
+            //                                 const sys = JSC.SystemError{
+            //                                     .code = ZigString.init("ENOMEM"),
+            //                                     .path = if (file.pathlike == .path)
+            //                                         ZigString.init(file.pathlike.path.slice())
+            //                                     else
+            //                                         ZigString.Empty,
+            //                                     .message = ZigString.init("Out of memory"),
+            //                                     .syscall = ZigString.init("malloc"),
+            //                                 };
+            //                                 BlobStore__onError(ctx, &sys, JSC.VirtualMachine.vm.global);
 
-                                            if (auto_close) {
-                                                _ = JSC.Node.Syscall.close(fd);
-                                            }
-                                            return false;
-                                        };
-                                        streamer.* = ReadableStream.StreamTag.init(fd);
-                                        return true;
-                                    }
-                                },
-                                else => {},
-                            }
-                            const sys = err.toSystemError();
+            //                                 if (auto_close) {
+            //                                     _ = JSC.Node.Syscall.close(fd);
+            //                                 }
+            //                                 return false;
+            //                             };
+            //                             streamer.* = ReadableStream.StreamTag.init(fd);
+            //                             return true;
+            //                         }
+            //                     },
+            //                     else => {},
+            //                 }
+            //                 const sys = err.toSystemError();
 
-                            if (auto_close) {
-                                _ = JSC.Node.Syscall.close(fd);
-                            }
+            //                 if (auto_close) {
+            //                     _ = JSC.Node.Syscall.close(fd);
+            //                 }
 
-                            BlobStore__onError(ctx, &sys, JSC.VirtualMachine.vm.global);
-                            bun.default_allocator.free(buf);
-                            return false;
-                        },
-                        .result => |result| {
-                            // this handles:
-                            // - empty file
-                            // - stream closed for some reason
-                            if ((result == 0 and (file.seekable orelse false)) or
-                                BlobReadableStreamSource_isCancelled(ctx))
-                            {
-                                if (auto_close) {
-                                    _ = JSC.Node.Syscall.close(fd);
-                                }
+            //                 BlobStore__onError(ctx, &sys, JSC.VirtualMachine.vm.global);
+            //                 bun.default_allocator.free(buf);
+            //                 return false;
+            //             },
+            //             .result => |result| {
+            //                 // this handles:
+            //                 // - empty file
+            //                 // - stream closed for some reason
+            //                 if ((result == 0 and (file.seekable orelse false)) or
+            //                     BlobReadableStreamSource_isCancelled(ctx))
+            //                 {
+            //                     if (auto_close) {
+            //                         _ = JSC.Node.Syscall.close(fd);
+            //                     }
 
-                                bun.default_allocator.free(buf);
-                                return false;
-                            }
+            //                     bun.default_allocator.free(buf);
+            //                     return false;
+            //                 }
 
-                            const will_continue = BlobStore__onReadExternal(
-                                ctx,
-                                buf.ptr,
-                                result,
-                                buf.ptr,
-                                JSC.MarkedArrayBuffer_deallocator,
-                            ) and
-                                // if it's not a regular file, we don't know how much to read so we should continue
-                                (!(file.seekable orelse false) or
-                                // if it is a regular file, we stop reading when we've read all the data
-                                !((file.seekable orelse false) and @intCast(SizeType, result) >= file.max_size));
+            //                 const will_continue = BlobStore__onReadExternal(
+            //                     ctx,
+            //                     buf.ptr,
+            //                     result,
+            //                     buf.ptr,
+            //                     JSC.MarkedArrayBuffer_deallocator,
+            //                 ) and
+            //                     // if it's not a regular file, we don't know how much to read so we should continue
+            //                     (!(file.seekable orelse false) or
+            //                     // if it is a regular file, we stop reading when we've read all the data
+            //                     !((file.seekable orelse false) and @intCast(SizeType, result) >= file.max_size));
 
-                            // did the first read cover the whole file?
-                            // if yes, then we are done!
-                            // we can safely close the file descriptor now
-                            if (auto_close and !will_continue) {
-                                _ = JSC.Node.Syscall.close(fd);
-                            }
+            //                 // did the first read cover the whole file?
+            //                 // if yes, then we are done!
+            //                 // we can safely close the file descriptor now
+            //                 if (auto_close and !will_continue) {
+            //                     _ = JSC.Node.Syscall.close(fd);
+            //                 }
 
-                            if (will_continue) {
-                                streamer.* = ReadableStream.StreamTag.init(fd);
-                            }
+            //                 if (will_continue) {
+            //                     streamer.* = ReadableStream.StreamTag.init(fd);
+            //                 }
 
-                            return will_continue;
-                        },
-                    }
-                },
-            }
+            //                 return will_continue;
+            //             },
+            //         }
+            //     },
+            // }
         }
 
         comptime {
@@ -4309,6 +3922,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.DataView,
                 => {
                     var buf = try bun.default_allocator.dupe(u8, top_value.asArrayBuffer(global).?.byteSlice());
+
                     return Blob.init(buf, bun.default_allocator, global);
                 },
 
@@ -4339,6 +3953,7 @@ pub const Blob = struct {
         var stack_mem_all = stack_allocator.get();
         var stack: std.ArrayList(JSValue) = std.ArrayList(JSValue).init(stack_mem_all);
         var joiner = StringJoiner{ .use_pool = false, .node_allocator = stack_mem_all };
+        var could_have_non_ascii = false;
 
         defer if (stack_allocator.fixed_buffer_allocator.end_index >= 1024) stack.deinit();
 
@@ -4350,6 +3965,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
                     var sliced = current.toSlice(global, bun.default_allocator);
+                    could_have_non_ascii = could_have_non_ascii or sliced.allocated;
                     joiner.append(
                         sliced.slice(),
                         0,
@@ -4378,6 +3994,7 @@ pub const Blob = struct {
                                 JSC.JSValue.JSType.DerivedStringObject,
                                 => {
                                     var sliced = item.toSlice(global, bun.default_allocator);
+                                    could_have_non_ascii = could_have_non_ascii or sliced.allocated;
                                     joiner.append(
                                         sliced.slice(),
                                         0,
@@ -4399,12 +4016,14 @@ pub const Blob = struct {
                                 JSC.JSValue.JSType.BigUint64Array,
                                 JSC.JSValue.JSType.DataView,
                                 => {
+                                    could_have_non_ascii = true;
                                     var buf = item.asArrayBuffer(global).?;
                                     joiner.append(buf.byteSlice(), 0, null);
                                     continue;
                                 },
                                 .Array, .DerivedArray => {
                                     any_arrays = true;
+                                    could_have_non_ascii = true;
                                     break;
                                 },
                                 else => {
@@ -4413,6 +4032,7 @@ pub const Blob = struct {
                                         switch (data.tag()) {
                                             .Blob => {
                                                 var blob: *Blob = data.as(Blob);
+                                                could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
                                                 joiner.append(blob.sharedView(), 0, null);
                                                 continue;
                                             },
@@ -4443,6 +4063,7 @@ pub const Blob = struct {
                 => {
                     var buf = current.asArrayBuffer(global).?;
                     joiner.append(buf.slice(), 0, null);
+                    could_have_non_ascii = true;
                 },
 
                 else => {
@@ -4452,6 +4073,7 @@ pub const Blob = struct {
                             switch (data.tag()) {
                                 .Blob => {
                                     var blob: *Blob = data.as(Blob);
+                                    could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
                                     joiner.append(blob.sharedView(), 0, null);
                                     break :outer;
                                 },
@@ -4460,6 +4082,7 @@ pub const Blob = struct {
                         }
 
                         var sliced = current.toSlice(global, bun.default_allocator);
+                        could_have_non_ascii = could_have_non_ascii or sliced.allocated;
                         joiner.append(
                             sliced.slice(),
                             0,
@@ -4472,6 +4095,10 @@ pub const Blob = struct {
         }
 
         var joined = try joiner.done(bun.default_allocator);
+
+        if (!could_have_non_ascii) {
+            return Blob.initWithAllASCII(joined, bun.default_allocator, global, true);
+        }
         return Blob.init(joined, bun.default_allocator, global);
     }
 };
@@ -4592,6 +4219,8 @@ pub const Body = struct {
 
     pub const PendingValue = struct {
         promise: ?JSValue = null,
+        readable: JSValue = JSValue.zero,
+
         global: *JSGlobalObject,
         task: ?*anyopaque = null,
         /// runs after the data is available.
@@ -5521,3 +5150,456 @@ pub const FetchEvent = struct {
         return js.JSValueMakeUndefined(ctx);
     }
 };
+
+pub const StreamResult = union(enum) {
+    owned: bun.ByteList(u8),
+    temporary: bun.ByteList(u8),
+    pending: anyframe->StreamResult,
+    err: JSC.Node.Syscall.Error,
+    done: void,
+};
+
+pub fn WritableStreamSink(
+    comptime Context: type,
+    comptime onStart: ?fn (this: Context) void,
+    comptime onWrite: fn (this: Context, bytes: []const u8) JSC.Maybe(Blob.SizeType),
+    comptime onAbort: ?fn (this: Context) void,
+    comptime onClose: ?fn (this: Context) void,
+    comptime deinit: ?fn (this: Context) void,
+) type {
+    return struct {
+        context: Context,
+        closed: bool = false,
+        deinited: bool = false,
+        pending_err: ?JSC.Node.Syscall.Error = null,
+        aborted: bool = false,
+
+        abort_signaler: ?*anyopaque = null,
+        onAbortCallback: ?fn (?*anyopaque) void = null,
+
+        close_signaler: ?*anyopaque = null,
+        onCloseCallback: ?fn (?*anyopaque) void = null,
+
+        pub const This = @This();
+
+        pub fn write(this: *This, bytes: []const u8) JSC.Maybe(Blob.SizeType) {
+            if (this.pending_err) |err| {
+                this.pending_err = null;
+                return .{ .err = err };
+            }
+
+            if (this.closed or this.aborted or this.deinited) {
+                return .{ .result = 0 };
+            }
+            return onWrite(this.context, bytes);
+        }
+
+        pub fn start(this: *This) StreamResult {
+            return onStart(this.context);
+        }
+
+        pub fn abort(this: *This) void {
+            if (this.closed or this.deinited or this.aborted) {
+                return;
+            }
+
+            this.aborted = true;
+            onAbort(this.context);
+        }
+
+        pub fn didAbort(this: *This) void {
+            if (this.closed or this.deinited or this.aborted) {
+                return;
+            }
+            this.aborted = true;
+
+            if (this.onAbortCallback) |cb| {
+                this.onAbortCallback = null;
+                cb(this.abort_signaler);
+            }
+        }
+
+        pub fn didClose(this: *This) void {
+            if (this.closed or this.deinited or this.aborted) {
+                return;
+            }
+            this.closed = true;
+
+            if (this.onCloseCallback) |cb| {
+                this.onCloseCallback = null;
+                cb(this.close_signaler);
+            }
+        }
+
+        pub fn close(this: *This) void {
+            if (this.closed or this.deinited or this.aborted) {
+                return;
+            }
+
+            this.closed = true;
+            onClose(this.context);
+        }
+
+        pub fn deinit(this: *This) void {
+            if (this.deinited) {
+                return;
+            }
+            this.deinited = true;
+            deinit(this.context);
+        }
+
+        pub fn getError(this: *This) ?JSC.Node.Syscall.Error {
+            if (this.pending_err) |err| {
+                this.pending_err = null;
+                return err;
+            }
+
+            return null;
+        }
+    };
+}
+
+pub fn HTTPServerWritable(comptime ssl: bool) type {
+    return struct {
+        pub const UWSResponse = uws.NewApp(ssl).Response;
+        res: *UWSResponse,
+        pending_chunk: []const u8 = "",
+        is_listening_for_abort: bool = false,
+        wrote: Blob.SizeType = 0,
+        callback: anyframe->JSC.Maybe(Blob.SizeType) = undefined,
+        writable: Writable,
+
+        pub fn onWritable(this: *@This(), available: c_ulong, _: *UWSResponse) callconv(.C) bool {
+            const to_write = @minimum(@truncate(Blob.SizeType, available), @truncate(Blob.SizeType, this.pending_chunk.len));
+            if (!this.res.write(this.pending_chunk[0..to_write])) {
+                return true;
+            }
+
+            this.pending_chunk = this.pending_chunk[to_write..];
+            this.wrote += to_write;
+            if (this.pending_chunk.len > 0) {
+                this.res.onWritable(*@This(), onWritable, this);
+                return true;
+            }
+
+            var callback = this.callback;
+            this.callback = undefined;
+            // TODO: clarify what the boolean means
+            resume callback;
+            bun.default_allocator.destroy(callback.*);
+            return false;
+        }
+
+        pub fn onStart(this: *@This()) void {
+            if (this.res.hasResponded()) {
+                this.writable.didClose();
+            }
+        }
+        pub fn onWrite(this: *@This(), bytes: []const u8) JSC.Maybe(Blob.SizeType) {
+            if (this.writable.aborted) {
+                return .{ .result = 0 };
+            }
+
+            if (this.pending_chunk.len > 0) {
+                return JSC.Maybe(Blob.SizeType).retry;
+            }
+
+            if (this.res.write(bytes)) {
+                return .{ .result = @truncate(Blob.SizeType, bytes.len) };
+            }
+
+            this.pending_chunk = bytes;
+            this.writable.pending_err = null;
+            suspend {
+                if (!this.is_listening_for_abort) {
+                    this.is_listening_for_abort = true;
+                    this.res.onAborted(*@This(), onAborted);
+                }
+
+                this.res.onWritable(*@This(), onWritable, this);
+                var frame = bun.default_allocator.create(@TypeOf(@Frame(onWrite))) catch unreachable;
+                this.callback = frame;
+                frame.* = @frame().*;
+            }
+            const wrote = this.wrote;
+            this.wrote = 0;
+            if (this.writable.pending_err) |err| {
+                this.writable.pending_err = null;
+                return .{ .err = err };
+            }
+            return .{ .result = wrote };
+        }
+
+        // client-initiated
+        pub fn onAborted(this: *@This(), _: *UWSResponse) void {
+            this.writable.didAbort();
+        }
+        // writer-initiated
+        pub fn onAbort(this: *@This()) void {
+            this.res.end("", true);
+        }
+        pub fn onClose(this: *@This()) void {
+            this.res.end("", false);
+        }
+        pub fn deinit(_: *@This()) void {}
+
+        pub const Writable = WritableStreamSink(@This(), onStart, onWrite, onAbort, onClose, deinit);
+    };
+}
+pub const HTTPSWriter = HTTPServerWritable(true);
+pub const HTTPWriter = HTTPServerWritable(false);
+
+pub fn ReadableStreamSource(
+    comptime Context: type,
+    comptime onStart: fn (this: Context) StreamResult,
+    comptime onPull: fn (this: Context) StreamResult,
+    comptime onCancel: fn (this: Context) void,
+    comptime deinit: fn (this: Context) void,
+) type {
+    return struct {
+        context: Context,
+        cancelled: bool = false,
+        deinited: bool = false,
+        pending_err: ?JSC.Node.Syscall.Error = null,
+
+        pub const This = @This();
+
+        pub fn pull(this: *This) StreamResult {
+            return onPull(this.context);
+        }
+
+        pub fn start(this: *This) StreamResult {
+            return onStart(this.context);
+        }
+
+        pub fn cancel(this: *This) void {
+            if (this.cancelled or this.deinited) {
+                return;
+            }
+
+            this.cancelled = true;
+            onCancel(this.context);
+        }
+
+        pub fn deinit(this: *This) void {
+            if (this.deinited) {
+                return;
+            }
+            this.deinited = true;
+            deinit(this.context);
+        }
+
+        pub fn getError(this: *This) ?JSC.Node.Syscall.Error {
+            if (this.pending_err) |err| {
+                this.pending_err = null;
+                return err;
+            }
+
+            return null;
+        }
+
+        pub const JSReadableStreamSource = struct {
+            pub fn pull(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame)  
+            pub fn start(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame)  
+            pub fn cancel(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame)  
+            pub fn deinit(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame)  
+
+        };
+    };
+}
+
+const ByteBlobLoader = struct {
+    offset: Blob.SizeType = 0,
+    store: *Blob.Store,
+    chunk_size: Blob.SizeType = 1024 * 1024 * 2,
+    remain: Blob.SizeType = 1024 * 1024 * 2,
+    source: Source,
+    done: bool = false,
+
+    pub fn setup(
+        this: *ByteBlobLoader,
+        blob: Blob,
+    ) ByteBlobLoader {
+        blob.store.ref();
+        this.* = ByteBlobLoader{
+            .offset = blob.offset,
+            .store = blob.store,
+            .chunk_size = @minimum(1024 * 1024 * 2, blob.size),
+            .remain = blob.size,
+            .source = Source{ .context = this },
+            .done = false,
+        };
+    }
+
+    pub fn onStart(this: *ByteBlobLoader) StreamResult {
+        return this.onPull();
+    }
+
+    pub fn onPull(this: *ByteBlobLoader) StreamResult {
+        if (this.done) {
+            return .{ .done = {} };
+        }
+
+        var temporary = this.store.sharedView();
+        temporary = temporary[this.offset..];
+        temporary = temporary[0..@minimum(this.chunk_size, @minimum(temporary.len, this.remain))];
+        if (temporary.len == 0) {
+            this.store.deref();
+            this.done = true;
+            return .{ .done = {} };
+        }
+
+        this.remain -|= @intCast(Blob.SizeType, temporary.len);
+        this.offset +|= @intCast(Blob.SizeType, temporary.len);
+
+        return .{
+            .temporary = temporary,
+        };
+    }
+
+    pub fn onCancel(_: *ByteBlobLoader) void {}
+
+    pub fn deinit(this: *ByteBlobLoader) void {
+        if (!this.done)
+            this.store.deref();
+    }
+
+    const Source = ReadableStreamSource(@This(), onStart, onPull, onCancel, deinit);
+};
+
+pub fn NewFileReader(
+    comptime Context: type,
+    comptime onRead: fn (ctx: *Context, buf: []u8, len: Blob.SizeType) bool,
+    comptime onError: fn (ctx: *Context, err: JSC.SystemError) void,
+    comptime onWouldBlock: fn (ctx: *Context, err: JSC.SystemError) void,
+    comptime isCancelled: fn (ctx: *Context) bool,
+) type {
+    return struct {
+        buf: []u8,
+        fd: JSC.Node.FileDescriptor,
+        loop: *JSC.EventLoop = undefined,
+        mode: JSC.Node.Mode,
+        ctx: *Context,
+
+        const FileReader = @This();
+
+        pub fn init(ctx: *Context, buf: []u8, fd: JSC.Node.FileDescriptor, mode: JSC.Node.Mode) FileReader {
+            return .{
+                .buf = buf,
+                .fd = fd,
+                .ctx = ctx,
+                .loop = JSC.VirtualMachine.vm.eventLoop(),
+                .mode = mode,
+            };
+        }
+
+        pub fn watch(this: *FileReader) void {
+            _ = JSC.VirtualMachine.vm.poller.watch(this.fd, .read, this, callback);
+        }
+
+        pub fn read(
+            ctx: *Context,
+            path: []const u8,
+            buf: []u8,
+            fd: JSC.Node.FileDescriptor,
+            remaining: usize,
+            global: *JSGlobalObject,
+            would_block: ?*bool,
+        ) bool {
+            const rc = // read() for files
+                JSC.Node.Syscall.read(fd, buf);
+
+            switch (rc) {
+                .err => |err| {
+                    const retry = comptime if (Environment.isLinux)
+                        std.os.E.WOULDBLOCK
+                    else
+                        std.os.E.AGAIN;
+
+                    switch (err.getErrno()) {
+                        retry => {
+                            if (would_block) |blocker| {
+                                blocker.* = true;
+                            } else {
+                                onWouldBlock(ctx);
+                            }
+
+                            return true;
+                        },
+                        else => {},
+                    }
+                    const sys = if (path.len > 0) err.withPath(path).toSystemError() else err.toSystemError();
+
+                    onError(ctx, &sys, global);
+                    return false;
+                },
+                .result => |result| {
+                    // this handles:
+                    // - empty file
+                    // - stream closed for some reason
+                    if ((result == 0 and remaining == 0) or
+                        isCancelled(ctx))
+                    {
+                        return false;
+                    }
+
+                    return onRead(
+                        ctx,
+                        buf,
+                        result,
+                    ) and
+                        // if it's not a regular file, we don't know how much to read so we should continue
+                        (remaining == std.math.maxInt(usize)) or
+                        // if it is a regular file, we stop reading when we've read all the data
+                        !(@intCast(Blob.SizeType, result) >= remaining);
+                },
+            }
+        }
+
+        pub fn callback(task: ?*anyopaque, sizeOrOffset: i64, _: u16) void {
+            var this: *FileReader = bun.cast(*FileReader, task.?);
+            var buf = this.buf;
+            var blocked = false;
+            var remaining = std.math.maxInt(usize);
+            if (comptime Environment.isMac) {
+                if (std.os.S.ISREG(this.mode)) {
+                    remaining = @intCast(usize, @maximum(sizeOrOffset, 0));
+                    // Returns when the file pointer is not at the end of
+                    // file.  data contains the offset from current position
+                    // to end of file, and may be negative.
+                    buf = buf[0..@minimum(remaining, this.buf.len)];
+                } else if (std.os.S.ISCHR(this.mode) or std.os.S.ISFIFO(this.mode)) {
+                    buf = buf[0..@minimum(@intCast(usize, @maximum(sizeOrOffset, 0)), this.buf.len)];
+                }
+            }
+
+            if (read(this.ctx, "", buf, this.fd, remaining, this.loop.global, &blocked) and blocked) {
+                this.watch();
+                return;
+            }
+        }
+    };
+}
+
+// pub const BlobFileLoader = struct {
+//     reader: Reader,
+//     source: ?*anyopaque = null,
+//     store: *Store,
+//     pub const Reader = NewFileReader(onRead, onError, onWouldBlock, isCancelled);
+
+//     pub fn onRead(this: *BlobFileReader, buf: []u8, len: Blob.SizeType) bool {
+//         if (len == 0) {
+//             return BlobStore__onRead(this.source, null, 0);
+//         }
+
+//         return BlobStore__onReadExternal(this.source, buf.ptr, len, buf.ptr, JSC.MarkedArrayBuffer_deallocator);
+//     }
+
+//     pub fn onError(ctx: *BlobFileReader, err: JSC.SystemError) void {
+//         _ = BlobStore__onError(ctx.source, &err, ctx.reader.global);
+//     }
+
+//     pub fn isCancelled(ctx: *BlobFileReader) bool {
+//         return BlobStore__isCancelled(ctx.source);
+//     }
+// };

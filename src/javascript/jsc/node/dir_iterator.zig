@@ -15,7 +15,7 @@ const PathString = JSC.PathString;
 const IteratorError = error{ AccessDenied, SystemResources } || os.UnexpectedError;
 const mem = std.mem;
 const strings = @import("../../../global.zig").strings;
-const Maybe = JSC.Node.Maybe;
+const Maybe = JSC.Maybe;
 const File = std.fs.File;
 const Result = Maybe(?Entry);
 

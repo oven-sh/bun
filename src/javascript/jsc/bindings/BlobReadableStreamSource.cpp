@@ -94,8 +94,6 @@ void BlobReadableStreamSource::doStart()
         }
         return;
     }
-
-    JSC::gcProtect(&this->controller().jsController());
 }
 void BlobReadableStreamSource::doPull()
 {
@@ -106,8 +104,6 @@ void BlobReadableStreamSource::doPull()
 
         return;
     }
-
-    JSC::gcProtect(&this->controller().jsController());
 }
 
 void BlobReadableStreamSource::doCancel()
@@ -119,16 +115,12 @@ void BlobReadableStreamSource::close()
 {
     if (!m_isCancelled)
         controller().close();
-
-    JSC::gcUnprotect(&this->controller().jsController());
 }
 
 void BlobReadableStreamSource::enqueue(JSC::JSValue value)
 {
     if (!m_isCancelled)
         controller().enqueue(value);
-
-    JSC::gcUnprotect(&this->controller().jsController());
 }
 
 bool BlobReadableStreamSource::enqueue(const uint8_t* ptr, size_t size)
@@ -137,7 +129,6 @@ bool BlobReadableStreamSource::enqueue(const uint8_t* ptr, size_t size)
     if (m_isCancelled)
         return false;
 
-    JSC::gcUnprotect(&this->controller().jsController());
     auto arrayBuffer = JSC::ArrayBuffer::tryCreate(ptr, size);
     if (!arrayBuffer)
         return false;
@@ -153,8 +144,6 @@ bool BlobReadableStreamSource::enqueue(uint8_t* ptr, size_t read, void* ctx, JST
         bytesDeallocator(ctx, ptr);
         return false;
     }
-
-    JSC::gcUnprotect(&this->controller().jsController());
 
     auto buffer = ArrayBuffer::createFromBytes(ptr, read, createSharedTask<void(void*)>([bytesDeallocator, ctx](void* p) {
         if (bytesDeallocator) {

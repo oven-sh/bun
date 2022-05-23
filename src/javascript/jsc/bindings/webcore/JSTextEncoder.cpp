@@ -18,36 +18,42 @@
     Boston, MA 02110-1301, USA.
 */
 
-#include "config.h"
+#include "root.h"
+
 #include "JSTextEncoder.h"
 
+#include "JavaScriptCore/JavaScript.h"
+#include "JavaScriptCore/APICast.h"
+
+#include "JavaScriptCore/FunctionPrototype.h"
+#include "JavaScriptCore/HeapAnalyzer.h"
+#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
+#include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/SlotVisitorMacros.h"
+#include "JavaScriptCore/SubspaceInlines.h"
+#include "wtf/GetPtr.h"
+#include "wtf/PointerPreparations.h"
+#include "wtf/URL.h"
+// #include "JavaScriptCore/JSTypedArrays.h"
+
+#include "GCDefferalContext.h"
 #include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
-#include "JSDOMBinding.h"
+// #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
-#include "JSDOMConvertBufferSource.h"
+// #include "JSDOMConvertBufferSource.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertStrings.h"
-#include "JSDOMExceptionHandling.h"
-#include "JSDOMGlobalObject.h"
+// #include "JSDOMExceptionHandling.h"
+// #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
-#include "ScriptExecutionContext.h"
-#include "WebCoreJSClientData.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-#include <JavaScriptCore/HeapAnalyzer.h>
-#include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
-#include <JavaScriptCore/ObjectConstructor.h>
-#include <JavaScriptCore/SlotVisitorMacros.h>
-#include <JavaScriptCore/SubspaceInlines.h>
-#include <wtf/GetPtr.h>
-#include <wtf/PointerPreparations.h>
-#include <wtf/URL.h>
+// #include "ScriptExecutionContext.h"
+// #include "WebCoreJSClientData.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -267,6 +273,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoder_encoding, (JSGlobalObject * lexicalGlobal
 
 extern "C" JSC::EncodedJSValue TextEncoder__encode(JSC::JSGlobalObject* lexicalGlobalObject, const ZigString*);
 extern "C" JSC::EncodedJSValue TextEncoder__encodeInto(JSC::JSGlobalObject* lexicalGlobalObject, const ZigString*, void* ptr, size_t len);
+extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
 
 static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSTextEncoder>::ClassParameter castedThis)
 {
@@ -274,14 +281,16 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
-    if (argument0.value().isUndefined()) {
-        return JSValue::encode(JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, lexicalGlobalObject->m_typedArrayUint8.get(lexicalGlobalObject), 0));
+    JSC::JSString* input = argument0.value().toStringOrNull(lexicalGlobalObject);
+    if (input && input->is8Bit() && input->isRope()) {
+        auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
+        if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
+            RELEASE_AND_RETURN(throwScope, encodedValue);
+        }
     }
-    auto input = argument0.value().toWTFString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto str = Zig::toZigString(WTFMove(input));
+
+    auto str = Zig::toZigString(input->tryGetValue(lexicalGlobalObject));
     auto res = TextEncoder__encode(lexicalGlobalObject, &str);
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
@@ -308,10 +317,15 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
     auto source = argument0.value().toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto destination = convert<IDLAllowSharedAdaptor<IDLUint8Array>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "destination", "TextEncoder", "encodeInto", "Uint8Array"); });
+    auto* destination = JSC::jsDynamicCast<JSC::JSUint8Array*>(argument1.value());
+    if (!destination) {
+        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
+        return encodedJSValue();
+    }
+
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto str = Zig::toZigString(WTFMove(source));
-    auto res = TextEncoder__encodeInto(lexicalGlobalObject, &str, destination->data(), destination->length());
+    auto res = TextEncoder__encodeInto(lexicalGlobalObject, &str, destination->vector(), destination->length());
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
         return encodedJSValue();

@@ -1522,7 +1522,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.listen_callback = JSC.AnyTask.New(ThisServer, run).init(this);
             this.vm.eventLoop().enqueueTask(JSC.Task.init(&this.listen_callback));
             if (needs_post_handler) {
-                _ = this.vm.uws_event_loop.?.addPostHandler(*JSC.VirtualMachine.EventLoop, this.vm.eventLoop(), JSC.VirtualMachine.EventLoop.tick);
+                _ = this.vm.uws_event_loop.?.addPostHandler(*JSC.EventLoop, this.vm.eventLoop(), JSC.EventLoop.tick);
             }
         }
 

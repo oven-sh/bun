@@ -73,6 +73,10 @@ pub fn Maybe(comptime ResultType: type) type {
         err: Syscall.Error,
         result: ReturnType,
 
+        pub const retry: @This() = .{
+            .err = Syscall.Error.retry,
+        };
+
         pub const Tag = enum { err, result };
 
         pub const success: @This() = @This(){

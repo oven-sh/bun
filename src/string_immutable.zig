@@ -997,8 +997,8 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
     list.items.len += utf16_remaining.len;
     copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
 
-    // don't call toOwnedSlice() because our 
-    return  list.items;
+    // don't call toOwnedSlice() because our
+    return list.items;
 }
 
 pub const EncodeIntoResult = struct {
@@ -1006,6 +1006,12 @@ pub const EncodeIntoResult = struct {
     written: u32 = 0,
 };
 pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type, latin1_: Type) ![]u8 {
+    if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
+        var out = try allocator.alloc(u8, latin1_.len);
+        @memcpy(out.ptr, latin1_.ptr, latin1_.len);
+        return out;
+    }
+
     var list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len);
     var latin1 = latin1_;
     while (latin1.len > 0) {
@@ -1133,6 +1139,11 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
 }
 
 pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) EncodeIntoResult {
+    if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
+        const to_copy = @truncate(u32, @minimum(buf_.len, latin1_.len));
+        @memcpy(buf_.ptr, latin1_.ptr, to_copy);
+        return .{ .written = to_copy, .read = to_copy };
+    }
     var buf = buf_;
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
@@ -1169,6 +1180,14 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
         .read = @truncate(u32, buf_.len - buf.len),
         .written = @truncate(u32, latin1_.len - latin1.len),
     };
+}
+
+pub fn replaceLatin1WithUTF8(buf_: []u8) void {
+    var latin1 = buf_;
+    while (strings.firstNonASCII(latin1)) |i| {
+        latin1[i..][0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[i]);
+        latin1 = latin1[i + 2 ..];
+    }
 }
 
 pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {

@@ -97,7 +97,7 @@
 #include "napi.h"
 #include "JSZigGlobalObjectBuiltins.h"
 #include "JSSQLStatement.h"
-#include "bun-base64.h"
+#include "ReadableStreamBuiltins.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -902,6 +902,27 @@ JSC:
         static NeverDestroyed<const String> sqliteString(MAKE_STATIC_STRING_IMPL("sqlite"));
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
         JSC::JSValue moduleName = callFrame->argument(0);
+        if (moduleName.isNumber()) {
+            switch (moduleName.toInt32(globalObject)) {
+            case 0: {
+                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                JSC::throwTypeError(globalObject, scope, "lazyLoad expects a string"_s);
+                scope.release();
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+
+            case 1: {
+                return ByteBlob__JSReadableStreamSource__load(globalObject);
+            }
+            default: {
+                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                JSC::throwTypeError(globalObject, scope, "lazyLoad expects a string"_s);
+                scope.release();
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            }
+        }
+
         auto string = moduleName.toWTFString(globalObject);
         if (string.isNull()) {
             auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -1181,6 +1202,24 @@ JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
     return JSValue::encode(jsBoolean(callFrame->uncheckedArgument(0).inherits<JSAbortSignal>()));
 }
 
+extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeID, JSC__JSValue nativeTag);
+extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeID, JSC__JSValue nativeTag)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto clientData = WebCore::clientData(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    auto function = globalObject->getDirect(vm, builtinNames.createNativeReadableStreamPrivateName()).getObject();
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(nativeID));
+    arguments.append(JSValue::decode(nativeTag));
+
+    auto callData = JSC::getCallData(function);
+    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
 void GlobalObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -1284,6 +1323,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
 
     extraStaticGlobals.releaseBuffer();
+
+    putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
         JSC::PropertyAttribute::CustomAccessor | 0);

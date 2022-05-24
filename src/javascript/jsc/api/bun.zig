@@ -2375,7 +2375,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref());
         }
 
-        return JSC.JSValue.jsNumber(@bitCast(f64, @as(usize, addr)));
+        return JSC.JSValue.fromPtrAddress(addr);
     }
 
     const ValueOrError = union(enum) {

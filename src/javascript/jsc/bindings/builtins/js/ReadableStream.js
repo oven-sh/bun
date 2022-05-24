@@ -88,6 +88,84 @@ function initializeReadableStream(underlyingSource, strategy)
     return this;
 }
 
+@globalPrivate
+function createNativeReadableStream(nativeTag, nativeID) {
+    var cached = @getByIdDirectPrivate(globalThis, "nativeReadableStreamPrototype");
+    if (!cached) {
+        cached = new @Map();
+        @putByIdDirectPrivate(globalThis, "nativeReadableStreamPrototype", cached);
+    }
+    var Prototype = cached.get(nativeID);
+    if (!Prototype) {
+        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for("Bun.lazy")](nativeID);
+        Prototype = class NativeReadableStreamSource {
+            constructor(tag) {
+                this.pull = this.pull_.bind(tag);
+                this.start = this.start_.bind(tag);
+                this.cancel = this.cancel_.bind(tag);
+            }
+
+            pull;
+            start;
+            cancel;
+            
+            pull_(controller) {
+                var result;
+                try {
+                    result = pull(this);
+                } catch (e) {
+                    controller.error(e);
+                    return;
+                }
+                    
+                if (result === false) {
+                    // close on next tick
+                    new @Promise((resolve, reject) => resolve(controller.close())).then(() => {}, () => {});
+                    return;
+                }
+
+                if (@isPromise(result)) {
+                    result.then(controller.enqueue, controller.error);
+                } else {
+                    controller.enqueue(result);
+                }
+            }
+
+            start_(controller) {
+                setClose(this, controller.close);
+                const result = start(this, controller.enqueue, controller.error);
+                if (result === false) {
+                    // close on next tick
+                    new @Promise((resolve, reject) => resolve(controller.close())).then(() => {}, () => {});
+                    return;
+                }
+
+
+                if (@isPromise(result)) {
+                    result.then(controller.enqueue, controller.error);
+                } else {
+                    controller.enqueue(result);
+                }
+
+                return result;
+            }
+
+            cancel_(reason) {
+                cancel(this, reason);
+            }
+
+            static registry = new FinalizationRegistry(deinit);
+        }
+        cached.set(nativeID, Prototype);
+    }
+    
+    var instance = new Prototype(nativeTag);
+    Prototype.registry.register(instance, nativeTag);
+    var stream = new @ReadableStream(instance);
+    @putByIdDirectPrivate(stream, "bunNativeTag", nativeID);
+    return stream;
+}
+
 function cancel(reason)
 {
     "use strict";

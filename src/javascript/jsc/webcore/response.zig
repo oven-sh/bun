@@ -7,7 +7,7 @@ const ZigURL = @import("../../../url.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
-const JSC = @import("../../../jsc.zig");
+const JSC = @import("javascript_core");
 const js = JSC.C;
 
 const Method = @import("../../../http/method.zig").Method;
@@ -1020,14 +1020,35 @@ pub const Fetch = struct {
 };
 
 pub const ReadableStream = struct {
-    pub fn fromBlob(globalThis: *JSGlobalObject, this: *Blob) JSC.JSValue {
+    pub const Tag = enum(i32) {
+        Blob = 1,
+        File = 2,
+    };
+
+    extern fn ZigGlobalObject__createNativeReadableStream(*JSGlobalObject, nativeTag: JSValue, nativeID: JSValue) JSValue;
+
+    pub fn fromNative(globalThis: *JSGlobalObject, id: Tag, ptr: *anyopaque) JSC.JSValue {
+        return ZigGlobalObject__createNativeReadableStream(globalThis, JSValue.fromPtr(ptr), JSValue.jsNumber(@enumToInt(id)));
+    }
+    pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob) JSC.JSValue {
         if (comptime JSC.is_bindgen)
             unreachable;
-        var store = this.store orelse {
+        var store = blob.store orelse {
             return ReadableStream.empty(globalThis);
         };
-        store.ref();
-        return ReadableStream__fromBlob(globalThis, store, this.offset, this.size);
+        switch (store.data) {
+            .bytes => {
+                var reader = bun.default_allocator.create(ByteBlobLoader.Source) catch unreachable;
+                reader.* = .{
+                    .context = undefined,
+                };
+                reader.context.setup(blob);
+                return reader.toJS(globalThis);
+            },
+            .file => {
+                return JSValue.jsUndefined();
+            },
+        }
     }
 
     pub fn empty(globalThis: *JSGlobalObject) JSC.JSValue {
@@ -1648,230 +1669,9 @@ pub const Blob = struct {
 
             //         return BlobStore__onRead(ctx, slice.ptr, slice.len) and has_more;
             //     },
-            //     .file => |*file| {
-            //         var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
-            //         var auto_close = file.pathlike != .fd;
-            //         var fd = if (!auto_close)
-            //             file.pathlike.fd
-            //         else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
-            //             .result => |_fd| _fd,
-            //             .err => |err| {
-            //                 BlobStore__onError(ctx, &err.withPath(file.pathlike.path.slice()).toSystemError(), JSC.VirtualMachine.vm.global);
-            //                 return false;
-            //             },
-            //         };
-
-            //         if (!auto_close) {
-            //             // ensure we have non-blocking IO set
-            //             const flags = (std.os.fcntl(fd, std.os.F.GETFL, 0) catch return false);
-
-            //             // if we do not, clone the descriptor and set non-blocking
-            //             // it is important for us to clone it so we don't cause Weird Things to happen
-            //             if ((flags & std.os.O.NONBLOCK) == 0) {
-            //                 auto_close = false;
-            //                 fd = @intCast(@TypeOf(fd), std.os.fcntl(fd, std.os.F.DUPFD, 0) catch return false);
-            //                 _ = std.os.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK) catch return false;
-            //             }
-            //         }
-
-            //         const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
-            //             .result => |result| result,
-            //             .err => |err| {
-            //                 BlobStore__onError(ctx, &err.withPath(file.pathlike.path.slice()).toSystemError(), JSC.VirtualMachine.vm.global);
-
-            //                 if (auto_close) {
-            //                     _ = JSC.Node.Syscall.close(fd);
-            //                 }
-            //                 return false;
-            //             },
-            //         };
-
-            //         if (std.os.S.ISDIR(stat.mode)) {
-            //             const err = JSC.SystemError{
-            //                 .code = ZigString.init("EISDIR"),
-            //                 .path = if (file.pathlike == .path)
-            //                     ZigString.init(file.pathlike.path.slice())
-            //                 else
-            //                     ZigString.Empty,
-            //                 .message = ZigString.init("Directories cannot be read like files"),
-            //                 .syscall = ZigString.init("read"),
-            //             };
-
-            //             BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
-
-            //             if (auto_close) {
-            //                 _ = JSC.Node.Syscall.close(fd);
-            //             }
-            //             return false;
-            //         }
-
-            //         if (std.os.S.ISSOCK(stat.mode)) {
-            //             const err = JSC.SystemError{
-            //                 .code = ZigString.init("ENOTSUP"),
-            //                 .path = if (file.pathlike == .path)
-            //                     ZigString.init(file.pathlike.path.slice())
-            //                 else
-            //                     ZigString.Empty,
-            //                 .message = ZigString.init("Sockets cannot be read like files with this API"),
-            //                 .syscall = ZigString.init("read"),
-            //             };
-
-            //             BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
-
-            //             if (auto_close) {
-            //                 _ = JSC.Node.Syscall.close(fd);
-            //             }
-            //             return false;
-            //         }
-
-            //         // if (comptime Environment.isMac) {
-            //         // if (std.os.S.ISSOCK(stat.mode)) {
-            //         //     // darwin doesn't support os.MSG.NOSIGNAL,
-            //         //     // but instead a socket option to avoid SIGPIPE.
-            //         //     const _bytes = &std.mem.toBytes(@as(c_int, 1));
-            //         //     _ = std.os.darwin.setsockopt(fd, std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, _bytes, @intCast(std.os.socklen_t, _bytes.len));
-            //         // }
-            //         // }
-
-            //         file.seekable = std.os.S.ISREG(stat.mode);
-            //         file.mode = @intCast(JSC.Node.Mode, stat.mode);
-
-            //         if (file.seekable orelse false)
-            //             file.max_size = @intCast(SizeType, stat.size);
-
-            //         if ((file.seekable orelse false) and file.max_size == 0) {
-            //             if (auto_close) {
-            //                 _ = JSC.Node.Syscall.close(fd);
-            //             }
-            //             return false;
-            //         }
-
-            //         const this_chunk_size = if (file.max_size > 0)
-            //             @minimum(chunk_size, file.max_size)
-            //         else if (std.os.S.ISFIFO(stat.mode))
-            //             fifo_chunk_size
-            //         else
-            //             chunk_size;
-
-            //         var buf = bun.default_allocator.alloc(
-            //             u8,
-            //             this_chunk_size,
-            //         ) catch {
-            //             const err = JSC.SystemError{
-            //                 .code = ZigString.init("ENOMEM"),
-            //                 .path = if (file.pathlike == .path)
-            //                     ZigString.init(file.pathlike.path.slice())
-            //                 else
-            //                     ZigString.Empty,
-            //                 .message = ZigString.init("Out of memory"),
-            //                 .syscall = ZigString.init("malloc"),
-            //             };
-            //             BlobStore__onError(ctx, &err, JSC.VirtualMachine.vm.global);
-
-            //             if (auto_close) {
-            //                 _ = JSC.Node.Syscall.close(fd);
-            //             }
-            //             return false;
-            //         };
-
-            //         const rc = // read() for files
-            //             JSC.Node.Syscall.read(fd, buf);
-
-            //         switch (rc) {
-            //             .err => |err| {
-            //                 const retry = comptime if (Environment.isLinux)
-            //                     std.os.E.WOULDBLOCK
-            //                 else
-            //                     std.os.E.AGAIN;
-
-            //                 switch (err.getErrno()) {
-            //                     retry => {
-            //                         outer: {
-            //                             NetworkThread.init() catch break :outer;
-
-            //                             _ = FileReader.init(
-            //                                 bun.default_allocator,
-            //                                 ctx,
-            //                                 buf,
-            //                                 fd,
-            //                                 file.mode,
-            //                                 if (!std.os.S.ISREG(stat.mode)) @as(?u64, null) else offset,
-            //                             ) catch {
-            //                                 const sys = JSC.SystemError{
-            //                                     .code = ZigString.init("ENOMEM"),
-            //                                     .path = if (file.pathlike == .path)
-            //                                         ZigString.init(file.pathlike.path.slice())
-            //                                     else
-            //                                         ZigString.Empty,
-            //                                     .message = ZigString.init("Out of memory"),
-            //                                     .syscall = ZigString.init("malloc"),
-            //                                 };
-            //                                 BlobStore__onError(ctx, &sys, JSC.VirtualMachine.vm.global);
-
-            //                                 if (auto_close) {
-            //                                     _ = JSC.Node.Syscall.close(fd);
-            //                                 }
-            //                                 return false;
-            //                             };
-            //                             streamer.* = ReadableStream.StreamTag.init(fd);
-            //                             return true;
-            //                         }
-            //                     },
-            //                     else => {},
-            //                 }
-            //                 const sys = err.toSystemError();
-
-            //                 if (auto_close) {
-            //                     _ = JSC.Node.Syscall.close(fd);
-            //                 }
-
-            //                 BlobStore__onError(ctx, &sys, JSC.VirtualMachine.vm.global);
-            //                 bun.default_allocator.free(buf);
-            //                 return false;
-            //             },
-            //             .result => |result| {
-            //                 // this handles:
-            //                 // - empty file
-            //                 // - stream closed for some reason
-            //                 if ((result == 0 and (file.seekable orelse false)) or
-            //                     BlobReadableStreamSource_isCancelled(ctx))
-            //                 {
-            //                     if (auto_close) {
-            //                         _ = JSC.Node.Syscall.close(fd);
-            //                     }
-
-            //                     bun.default_allocator.free(buf);
-            //                     return false;
-            //                 }
-
-            //                 const will_continue = BlobStore__onReadExternal(
-            //                     ctx,
-            //                     buf.ptr,
-            //                     result,
-            //                     buf.ptr,
-            //                     JSC.MarkedArrayBuffer_deallocator,
-            //                 ) and
-            //                     // if it's not a regular file, we don't know how much to read so we should continue
-            //                     (!(file.seekable orelse false) or
-            //                     // if it is a regular file, we stop reading when we've read all the data
-            //                     !((file.seekable orelse false) and @intCast(SizeType, result) >= file.max_size));
-
-            //                 // did the first read cover the whole file?
-            //                 // if yes, then we are done!
-            //                 // we can safely close the file descriptor now
-            //                 if (auto_close and !will_continue) {
-            //                     _ = JSC.Node.Syscall.close(fd);
-            //                 }
-
-            //                 if (will_continue) {
-            //                     streamer.* = ReadableStream.StreamTag.init(fd);
-            //                 }
-
-            //                 return will_continue;
-            //             },
-            //         }
-            //     },
-            // }
+                .file => |*file| {
+                  
+            }
         }
 
         comptime {
@@ -5152,11 +4952,43 @@ pub const FetchEvent = struct {
 };
 
 pub const StreamResult = union(enum) {
-    owned: bun.ByteList(u8),
-    temporary: bun.ByteList(u8),
-    pending: anyframe->StreamResult,
+    owned: bun.ByteList,
+    temporary: bun.ByteList,
+    pending: JSC.Async(StreamResult),
     err: JSC.Node.Syscall.Error,
     done: void,
+
+    pub fn toJS(this: *const StreamResult, globalThis: *JSGlobalObject) JSValue {
+        switch (this.*) {
+            .owned => |list| {
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis.ref(), null);
+            },
+            .temporary => |temp| {
+                var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var slice = array.asArrayBuffer(globalThis).?.slice();
+                @memcpy(slice.ptr, temp.ptr, temp.len);
+                return array;
+            },
+            .pending => |pend| {
+                if (pend.promise.*) |promise| {
+                    return promise.asValue(globalThis);
+                }
+
+                pend.promise.* = JSC.JSPromise.create(globalThis);
+                return pend.promise.*.?.asValue(globalThis);
+            },
+
+            .err => |err| {
+                return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis.ref()))).asValue(globalThis);
+            },
+
+            // false == controller.close()
+            // undefined == noop, but we probably won't send it
+            .done => {
+                return JSC.JSValue.jsBoolean(false);
+            },
+        }
+    }
 };
 
 pub fn WritableStreamSink(
@@ -5191,11 +5023,11 @@ pub fn WritableStreamSink(
             if (this.closed or this.aborted or this.deinited) {
                 return .{ .result = 0 };
             }
-            return onWrite(this.context, bytes);
+            return onWrite(&this.context, bytes);
         }
 
         pub fn start(this: *This) StreamResult {
-            return onStart(this.context);
+            return onStart(&this.context);
         }
 
         pub fn abort(this: *This) void {
@@ -5204,7 +5036,7 @@ pub fn WritableStreamSink(
             }
 
             this.aborted = true;
-            onAbort(this.context);
+            onAbort(&this.context);
         }
 
         pub fn didAbort(this: *This) void {
@@ -5351,25 +5183,41 @@ pub const HTTPWriter = HTTPServerWritable(false);
 
 pub fn ReadableStreamSource(
     comptime Context: type,
-    comptime onStart: fn (this: Context) StreamResult,
-    comptime onPull: fn (this: Context) StreamResult,
-    comptime onCancel: fn (this: Context) void,
-    comptime deinit: fn (this: Context) void,
+    comptime name_: []const u8,
+    comptime onStart: anytype,
+    comptime onPull: anytype,
+    comptime onCancel: fn (this: *Context) void,
+    comptime deinit: fn (this: *Context) void,
 ) type {
     return struct {
         context: Context,
         cancelled: bool = false,
         deinited: bool = false,
         pending_err: ?JSC.Node.Syscall.Error = null,
+        close_handler: ?fn (*anyopaque) void = null,
+        close_ctx: ?*anyopaque = null,
+        close_jsvalue: JSValue = JSValue.zero,
+        globalThis: *JSGlobalObject = undefined,
 
-        pub const This = @This();
+        const This = @This();
+        const ReadableStreamSourceType = @This();
 
         pub fn pull(this: *This) StreamResult {
-            return onPull(this.context);
+            return onPull(this.context, undefined, false);
         }
 
-        pub fn start(this: *This) StreamResult {
-            return onStart(this.context);
+        pub fn start(
+            this: *This,
+        ) StreamResult {
+            return onStart(&this.context, undefined, false);
+        }
+
+        pub fn pullFromJS(this: *This, globalThis: *JSGlobalObject) StreamResult {
+            return onPull(&this.context, globalThis, true);
+        }
+
+        pub fn startFromJS(this: *This, globalThis: *JSGlobalObject) StreamResult {
+            return onStart(&this.context, globalThis, true);
         }
 
         pub fn cancel(this: *This) void {
@@ -5378,7 +5226,18 @@ pub fn ReadableStreamSource(
             }
 
             this.cancelled = true;
-            onCancel(this.context);
+            onCancel(&this.context);
+        }
+
+        pub fn onClose(this: *This) void {
+            if (this.cancelled or this.deinited) {
+                return;
+            }
+
+            if (this.close_handler) |close| {
+                this.close_handler = null;
+                close(this.close_ctx);
+            }
         }
 
         pub fn deinit(this: *This) void {
@@ -5386,7 +5245,7 @@ pub fn ReadableStreamSource(
                 return;
             }
             this.deinited = true;
-            deinit(this.context);
+            deinit(&this.context);
         }
 
         pub fn getError(this: *This) ?JSC.Node.Syscall.Error {
@@ -5398,44 +5257,118 @@ pub fn ReadableStreamSource(
             return null;
         }
 
-        pub const JSReadableStreamSource = struct {
-            pub fn pull(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame)  
-            pub fn start(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame)  
-            pub fn cancel(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame)  
-            pub fn deinit(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame)  
+        pub fn toJS(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject) JSC.JSValue {
+            return ReadableStream.fromNative(globalThis, Context.tag, this);
+        }
 
+        pub const JSReadableStreamSource = struct {
+            pub const shim = JSC.Shimmer(std.mem.span(name_), "JSReadableStreamSource", @This());
+            pub const name = std.fmt.comptimePrint("{s}_JSReadableStreamSource", .{std.mem.span(name_)});
+
+            pub fn pull(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
+                return this.pullFromJS(globalThis).toJS(globalThis);
+            }
+            pub fn start(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
+                return this.startFromJS(globalThis).toJS(globalThis);
+            }
+            pub fn cancel(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
+                this.cancel();
+                return JSC.JSValue.jsUndefined();
+            }
+            pub fn setClose(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
+                this.close_ctx = this;
+                this.close_handler = JSReadableStreamSource.onClose;
+                this.globalThis = globalThis;
+                this.close_jsvalue = callFrame.argument(1);
+                return JSC.JSValue.jsUndefined();
+            }
+
+            fn onClose(ptr: *anyopaque) void {
+                var this = bun.cast(*ReadableStreamSourceType, ptr);
+                _ = this.close_jsvalue.call(this.globalThis, &.{});
+                //    this.closer
+            }
+
+            pub fn deinit(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
+                this.deinit();
+                return JSValue.jsUndefined();
+            }
+
+            pub fn load(globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+                if (comptime JSC.is_bindgen) unreachable;
+                if (comptime Environment.allow_assert) {
+                    // this should be cached per globals object
+                    const OnlyOnce = struct {
+                        pub threadlocal var last_globals: ?*JSGlobalObject = null;
+                    };
+                    if (OnlyOnce.last_globals) |last_globals| {
+                        std.debug.assert(last_globals != globalThis);
+                    }
+                    OnlyOnce.last_globals = globalThis;
+                }
+                return JSC.JSArray.from(globalThis, &.{
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.pull),
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.start),
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.cancel),
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.setClose),
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.deinit),
+                });
+            }
+
+            pub const Export = shim.exportFunctions(.{
+                .@"load" = load,
+            });
+
+            comptime {
+                if (!JSC.is_bindgen) {
+                    @export(load, .{ .name = Export[0].symbol_name });
+                    _ = JSReadableStreamSource.pull;
+                    _ = JSReadableStreamSource.start;
+                    _ = JSReadableStreamSource.cancel;
+                    _ = JSReadableStreamSource.setClose;
+                    _ = JSReadableStreamSource.load;
+                }
+            }
         };
     };
 }
 
-const ByteBlobLoader = struct {
+pub const ByteBlobLoader = struct {
     offset: Blob.SizeType = 0,
     store: *Blob.Store,
     chunk_size: Blob.SizeType = 1024 * 1024 * 2,
     remain: Blob.SizeType = 1024 * 1024 * 2,
-    source: Source,
     done: bool = false,
+
+    pub const tag = ReadableStream.Tag.Blob;
 
     pub fn setup(
         this: *ByteBlobLoader,
-        blob: Blob,
-    ) ByteBlobLoader {
-        blob.store.ref();
+        blob: *const Blob,
+    ) void {
+        blob.store.?.ref();
+        var blobe = blob.*;
+        blobe.resolveSize();
         this.* = ByteBlobLoader{
-            .offset = blob.offset,
-            .store = blob.store,
-            .chunk_size = @minimum(1024 * 1024 * 2, blob.size),
-            .remain = blob.size,
-            .source = Source{ .context = this },
+            .offset = blobe.offset,
+            .store = blobe.store.?,
+            .chunk_size = @minimum(1024 * 1024 * 2, blobe.size),
+            .remain = blobe.size,
+
             .done = false,
         };
     }
 
-    pub fn onStart(this: *ByteBlobLoader) StreamResult {
-        return this.onPull();
+    pub fn onStart(this: *ByteBlobLoader, global: *JSGlobalObject, comptime is_js: bool) StreamResult {
+        return this.onPull(global, is_js);
     }
 
-    pub fn onPull(this: *ByteBlobLoader) StreamResult {
+    pub fn onPull(this: *ByteBlobLoader, _: *JSGlobalObject, comptime _: bool) StreamResult {
         if (this.done) {
             return .{ .done = {} };
         }
@@ -5453,133 +5386,136 @@ const ByteBlobLoader = struct {
         this.offset +|= @intCast(Blob.SizeType, temporary.len);
 
         return .{
-            .temporary = temporary,
+            .temporary = bun.ByteList.init(temporary),
         };
     }
 
     pub fn onCancel(_: *ByteBlobLoader) void {}
 
     pub fn deinit(this: *ByteBlobLoader) void {
-        if (!this.done)
+        if (!this.done) {
+            this.done = true;
             this.store.deref();
+        }
+
+        bun.default_allocator.destroy(this);
     }
 
-    const Source = ReadableStreamSource(@This(), onStart, onPull, onCancel, deinit);
+    pub const Source = ReadableStreamSource(@This(), "ByteBlob", onStart, onPull, onCancel, deinit);
 };
 
-pub fn NewFileReader(
-    comptime Context: type,
-    comptime onRead: fn (ctx: *Context, buf: []u8, len: Blob.SizeType) bool,
-    comptime onError: fn (ctx: *Context, err: JSC.SystemError) void,
-    comptime onWouldBlock: fn (ctx: *Context, err: JSC.SystemError) void,
-    comptime isCancelled: fn (ctx: *Context) bool,
-) type {
-    return struct {
-        buf: []u8,
-        fd: JSC.Node.FileDescriptor,
-        loop: *JSC.EventLoop = undefined,
-        mode: JSC.Node.Mode,
-        ctx: *Context,
 
-        const FileReader = @This();
+// pub const FileStreamReader = struct {
+//         buf: []u8,
+//         fd: JSC.Node.FileDescriptor,
+//         loop: *JSC.EventLoop = undefined,
+//         mode: JSC.Node.Mode,
+//         pending: ?*JSC.JSPromise = null,
 
-        pub fn init(ctx: *Context, buf: []u8, fd: JSC.Node.FileDescriptor, mode: JSC.Node.Mode) FileReader {
-            return .{
-                .buf = buf,
-                .fd = fd,
-                .ctx = ctx,
-                .loop = JSC.VirtualMachine.vm.eventLoop(),
-                .mode = mode,
-            };
-        }
+// onRead: fn (ctx: *Context, buf: []u8, len: Blob.SizeType) bool
+// onError: fn (ctx: *Context, err: JSC.SystemError) void
+// onWouldBlock: fn (ctx: *Context,) void
+// isCancelled: fn (ctx: *Context) bool
 
-        pub fn watch(this: *FileReader) void {
-            _ = JSC.VirtualMachine.vm.poller.watch(this.fd, .read, this, callback);
-        }
+//         const FileReader = @This();
 
-        pub fn read(
-            ctx: *Context,
-            path: []const u8,
-            buf: []u8,
-            fd: JSC.Node.FileDescriptor,
-            remaining: usize,
-            global: *JSGlobalObject,
-            would_block: ?*bool,
-        ) bool {
-            const rc = // read() for files
-                JSC.Node.Syscall.read(fd, buf);
+//         pub fn init(ctx: *Context, buf: []u8, fd: JSC.Node.FileDescriptor, mode: JSC.Node.Mode) FileReader {
+//             return .{
+//                 .buf = buf,
+//                 .fd = fd,
+//                 .ctx = ctx,
+//                 .loop = JSC.VirtualMachine.vm.eventLoop(),
+//                 .mode = mode,
+//             };
+//         }
 
-            switch (rc) {
-                .err => |err| {
-                    const retry = comptime if (Environment.isLinux)
-                        std.os.E.WOULDBLOCK
-                    else
-                        std.os.E.AGAIN;
+//         pub fn watch(this: *FileReader) void {
+//             _ = JSC.VirtualMachine.vm.poller.watch(this.fd, .read, this, callback);
+//         }
 
-                    switch (err.getErrno()) {
-                        retry => {
-                            if (would_block) |blocker| {
-                                blocker.* = true;
-                            } else {
-                                onWouldBlock(ctx);
-                            }
+//         pub fn read(
+//             ctx: *Context,
+//             path: []const u8,
+//             buf: []u8,
+//             fd: JSC.Node.FileDescriptor,
+//             remaining: usize,
+//             global: *JSGlobalObject,
+//             would_block: ?*bool,
+//         ) bool {
+//             const rc = // read() for files
+//                 JSC.Node.Syscall.read(fd, buf);
 
-                            return true;
-                        },
-                        else => {},
-                    }
-                    const sys = if (path.len > 0) err.withPath(path).toSystemError() else err.toSystemError();
+//             switch (rc) {
+//                 .err => |err| {
+//                     const retry = comptime if (Environment.isLinux)
+//                         std.os.E.WOULDBLOCK
+//                     else
+//                         std.os.E.AGAIN;
 
-                    onError(ctx, &sys, global);
-                    return false;
-                },
-                .result => |result| {
-                    // this handles:
-                    // - empty file
-                    // - stream closed for some reason
-                    if ((result == 0 and remaining == 0) or
-                        isCancelled(ctx))
-                    {
-                        return false;
-                    }
+//                     switch (err.getErrno()) {
+//                         retry => {
+//                             if (would_block) |blocker| {
+//                                 blocker.* = true;
+//                             } else {
+//                                 onWouldBlock(ctx);
+//                             }
 
-                    return onRead(
-                        ctx,
-                        buf,
-                        result,
-                    ) and
-                        // if it's not a regular file, we don't know how much to read so we should continue
-                        (remaining == std.math.maxInt(usize)) or
-                        // if it is a regular file, we stop reading when we've read all the data
-                        !(@intCast(Blob.SizeType, result) >= remaining);
-                },
-            }
-        }
+//                             return true;
+//                         },
+//                         else => {},
+//                     }
+//                     const sys = if (path.len > 0) err.withPath(path).toSystemError() else err.toSystemError();
 
-        pub fn callback(task: ?*anyopaque, sizeOrOffset: i64, _: u16) void {
-            var this: *FileReader = bun.cast(*FileReader, task.?);
-            var buf = this.buf;
-            var blocked = false;
-            var remaining = std.math.maxInt(usize);
-            if (comptime Environment.isMac) {
-                if (std.os.S.ISREG(this.mode)) {
-                    remaining = @intCast(usize, @maximum(sizeOrOffset, 0));
-                    // Returns when the file pointer is not at the end of
-                    // file.  data contains the offset from current position
-                    // to end of file, and may be negative.
-                    buf = buf[0..@minimum(remaining, this.buf.len)];
-                } else if (std.os.S.ISCHR(this.mode) or std.os.S.ISFIFO(this.mode)) {
-                    buf = buf[0..@minimum(@intCast(usize, @maximum(sizeOrOffset, 0)), this.buf.len)];
-                }
-            }
+//                     onError(ctx, &sys, global);
+//                     return false;
+//                 },
+//                 .result => |result| {
+//                     // this handles:
+//                     // - empty file
+//                     // - stream closed for some reason
+//                     if ((result == 0 and remaining == 0) or
+//                         isCancelled(ctx))
+//                     {
+//                         return false;
+//                     }
 
-            if (read(this.ctx, "", buf, this.fd, remaining, this.loop.global, &blocked) and blocked) {
-                this.watch();
-                return;
-            }
-        }
-    };
-}
+//                     return onRead(
+//                         ctx,
+//                         buf,
+//                         result,
+//                     ) and
+//                         // if it's not a regular file, we don't know how much to read so we should continue
+//                         (remaining == std.math.maxInt(usize)) or
+//                         // if it is a regular file, we stop reading when we've read all the data
+//                         !(@intCast(Blob.SizeType, result) >= remaining);
+//                 },
+//             }
+//         }
+
+//         pub fn callback(task: ?*anyopaque, sizeOrOffset: i64, _: u16) void {
+//             var this: *FileReader = bun.cast(*FileReader, task.?);
+//             var buf = this.buf;
+//             var blocked = false;
+//             var remaining = std.math.maxInt(usize);
+//             if (comptime Environment.isMac) {
+//                 if (std.os.S.ISREG(this.mode)) {
+//                     remaining = @intCast(usize, @maximum(sizeOrOffset, 0));
+//                     // Returns when the file pointer is not at the end of
+//                     // file.  data contains the offset from current position
+//                     // to end of file, and may be negative.
+//                     buf = buf[0..@minimum(remaining, this.buf.len)];
+//                 } else if (std.os.S.ISCHR(this.mode) or std.os.S.ISFIFO(this.mode)) {
+//                     buf = buf[0..@minimum(@intCast(usize, @maximum(sizeOrOffset, 0)), this.buf.len)];
+//                 }
+//             }
+
+//             if (read(this.ctx, "", buf, this.fd, remaining, this.loop.global, &blocked) and blocked) {
+//                 this.watch();
+//                 return;
+//             }
+//         }
+//     };
+
 
 // pub const BlobFileLoader = struct {
 //     reader: Reader,

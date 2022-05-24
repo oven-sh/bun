@@ -436,7 +436,7 @@ const char* const s_readableByteStreamInternalsTransferBufferToCurrentRealmCode 
 
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1423;
+const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1440;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCode =
     "(function (controller, chunk)\n" \
@@ -446,30 +446,28 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnque
     "    const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n" \
     "    @assert(!@getByIdDirectPrivate(controller, \"closeRequested\"));\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === @streamReadable);\n" \
-    "    const buffer = chunk.buffer;\n" \
     "    const byteOffset = chunk.byteOffset;\n" \
     "    const byteLength = chunk.byteLength;\n" \
-    "    const transferredBuffer = @transferBufferToCurrentRealm(buffer);\n" \
     "\n" \
     "    if (@readableStreamHasDefaultReader(stream)) {\n" \
     "        if (!@getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\").length)\n" \
-    "            @readableByteStreamControllerEnqueueChunk(controller, transferredBuffer, byteOffset, byteLength);\n" \
+    "            @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);\n" \
     "        else {\n" \
     "            @assert(!@getByIdDirectPrivate(controller, \"queue\").content.length);\n" \
-    "            let transferredView = new @Uint8Array(transferredBuffer, byteOffset, byteLength);\n" \
+    "            const transferredView = chunk.constructor === @Uint8Array ? chunk : new @Uint8Array(chunk.buffer, byteOffset, byteLength);\n" \
     "            @readableStreamFulfillReadRequest(stream, transferredView, false);\n" \
     "        }\n" \
     "        return;\n" \
     "    }\n" \
     "\n" \
     "    if (@readableStreamHasBYOBReader(stream)) {\n" \
-    "        @readableByteStreamControllerEnqueueChunk(controller, transferredBuffer, byteOffset, byteLength);\n" \
+    "        @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);\n" \
     "        @readableByteStreamControllerProcessPullDescriptors(controller);\n" \
     "        return;\n" \
     "    }\n" \
     "\n" \
     "    @assert(!@isReadableStreamLocked(stream));\n" \
-    "    @readableByteStreamControllerEnqueueChunk(controller, transferredBuffer, byteOffset, byteLength);\n" \
+    "    @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);\n" \
     "})\n" \
 ;
 

@@ -164,7 +164,7 @@ const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode =
 
 const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength = 486;
+const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength = 430;
 static const JSC::Intrinsic s_streamInternalsValidateAndNormalizeQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode =
     "(function (size, highWaterMark)\n" \
@@ -174,15 +174,12 @@ const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode =
     "    if (size !== @undefined && typeof size !== \"function\")\n" \
     "        @throwTypeError(\"size parameter must be a function\");\n" \
     "\n" \
-    "    const normalizedStrategy = {\n" \
-    "        size: size,\n" \
-    "        highWaterMark: @toNumber(highWaterMark)\n" \
-    "    };\n" \
+    "    const newHighWaterMark = @toNumber(highWaterMark);\n" \
     "\n" \
-    "    if (@isNaN(normalizedStrategy.highWaterMark) || normalizedStrategy.highWaterMark < 0)\n" \
+    "    if (@isNaN(newHighWaterMark) || newHighWaterMark < 0)\n" \
     "        @throwRangeError(\"highWaterMark value is negative or not a number\");\n" \
     "\n" \
-    "    return normalizedStrategy;\n" \
+    "    return { size: size, highWaterMark: newHighWaterMark };\n" \
     "})\n" \
 ;
 

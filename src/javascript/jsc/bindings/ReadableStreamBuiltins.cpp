@@ -117,6 +117,89 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamCreateNativeReadableStreamCodeLength = 2522;
+static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamCreateNativeReadableStreamCode =
+    "(function (nativeTag, nativeID) {\n" \
+    "    var cached = @getByIdDirectPrivate(globalThis, \"nativeReadableStreamPrototype\");\n" \
+    "    if (!cached) {\n" \
+    "        cached = new @Map();\n" \
+    "        @putByIdDirectPrivate(globalThis, \"nativeReadableStreamPrototype\", cached);\n" \
+    "    }\n" \
+    "    var Prototype = cached.get(nativeID);\n" \
+    "    if (!Prototype) {\n" \
+    "        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for(\"Bun.lazy\")](nativeID);\n" \
+    "        Prototype = class NativeReadableStreamSource {\n" \
+    "            constructor(tag) {\n" \
+    "                this.pull = this.pull_.bind(tag);\n" \
+    "                this.start = this.start_.bind(tag);\n" \
+    "                this.cancel = this.cancel_.bind(tag);\n" \
+    "            }\n" \
+    "\n" \
+    "            pull;\n" \
+    "            start;\n" \
+    "            cancel;\n" \
+    "            \n" \
+    "            pull_(controller) {\n" \
+    "                var result;\n" \
+    "                try {\n" \
+    "                    result = pull(this);\n" \
+    "                } catch (e) {\n" \
+    "                    controller.error(e);\n" \
+    "                    return;\n" \
+    "                }\n" \
+    "                    \n" \
+    "                if (result === false) {\n" \
+    "                    //\n" \
+    "                    new @Promise((resolve, reject) => resolve(controller.close())).then(() => {}, () => {});\n" \
+    "                    return;\n" \
+    "                }\n" \
+    "\n" \
+    "                if (@isPromise(result)) {\n" \
+    "                    result.then(controller.enqueue, controller.error);\n" \
+    "                } else {\n" \
+    "                    controller.enqueue(result);\n" \
+    "                }\n" \
+    "            }\n" \
+    "\n" \
+    "            start_(controller) {\n" \
+    "                setClose(this, controller.close);\n" \
+    "                const result = start(this, controller.enqueue, controller.error);\n" \
+    "                if (result === false) {\n" \
+    "                    //\n" \
+    "                    new @Promise((resolve, reject) => resolve(controller.close())).then(() => {}, () => {});\n" \
+    "                    return;\n" \
+    "                }\n" \
+    "\n" \
+    "\n" \
+    "                if (@isPromise(result)) {\n" \
+    "                    result.then(controller.enqueue, controller.error);\n" \
+    "                } else {\n" \
+    "                    controller.enqueue(result);\n" \
+    "                }\n" \
+    "\n" \
+    "                return result;\n" \
+    "            }\n" \
+    "\n" \
+    "            cancel_(reason) {\n" \
+    "                cancel(this, reason);\n" \
+    "            }\n" \
+    "\n" \
+    "            static registry = new FinalizationRegistry(deinit);\n" \
+    "        }\n" \
+    "        cached.set(nativeID, Prototype);\n" \
+    "    }\n" \
+    "    \n" \
+    "    var instance = new Prototype(nativeTag);\n" \
+    "    Prototype.registry.register(instance, nativeTag);\n" \
+    "    var stream = new @ReadableStream(instance);\n" \
+    "    @putByIdDirectPrivate(stream, \"bunNativeTag\", nativeID);\n" \
+    "    return stream;\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_readableStreamCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCancelCodeConstructorKind = JSC::ConstructorKind::None;
 const int s_readableStreamCancelCodeLength = 324;

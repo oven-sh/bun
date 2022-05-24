@@ -40,12 +40,10 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 // Functions
-
 
 // Attributes
 
@@ -109,15 +107,14 @@ template<> FunctionExecutable* JSReadableStreamDOMConstructor::initializeExecuta
 
 /* Hash table for prototype */
 
-static const HashTableValue JSReadableStreamPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsReadableStreamConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "locked"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamLockedCodeGenerator), (intptr_t) (0) } },
-    { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamCancelCodeGenerator), (intptr_t) (0) } },
-    { "getReader"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamGetReaderCodeGenerator), (intptr_t) (0) } },
-    { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamPipeToCodeGenerator), (intptr_t) (1) } },
-    { "pipeThrough"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamPipeThroughCodeGenerator), (intptr_t) (2) } },
-    { "tee"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamTeeCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsReadableStreamConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "locked"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamLockedCodeGenerator), (intptr_t)(0) } },
+    { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamCancelCodeGenerator), (intptr_t)(0) } },
+    { "getReader"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamGetReaderCodeGenerator), (intptr_t)(0) } },
+    { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamPipeToCodeGenerator), (intptr_t)(1) } },
+    { "pipeThrough"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamPipeThroughCodeGenerator), (intptr_t)(2) } },
+    { "tee"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamTeeCodeGenerator), (intptr_t)(0) } },
 };
 
 const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };
@@ -125,6 +122,8 @@ const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base:
 void JSReadableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
+    auto clientData = WebCore::clientData(vm);
+    this->putDirect(vm, clientData->builtinNames().bunNativeTagPrivateName(), jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
     reifyStaticProperties(vm, JSReadableStream::info(), JSReadableStreamPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
@@ -132,13 +131,14 @@ void JSReadableStreamPrototype::finishCreation(VM& vm)
 const ClassInfo JSReadableStream::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStream) };
 
 JSReadableStream::JSReadableStream(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSReadableStream::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSReadableStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -162,7 +162,7 @@ void JSReadableStream::destroy(JSC::JSCell* cell)
     thisObject->JSReadableStream::~JSReadableStream();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -174,13 +174,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamConstructor, (JSGlobalObject* lexicalGl
 
 JSC::GCClient::IsoSubspace* JSReadableStream::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStream, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForReadableStream.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStream = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForReadableStream.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForReadableStream = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSReadableStream, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStream = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForReadableStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStream = WTFMove(space); });
 }
-
 
 }

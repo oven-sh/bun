@@ -177,8 +177,10 @@ pub const ZigErrorType = extern struct {
 pub const NodeReadableStream = JSC.Node.Readable.State;
 /// do not use this reference directly, use JSC.Node.Writable
 pub const NodeWritableStream = JSC.Node.Writable.State;
-
 pub const NodePath = JSC.Node.Path;
+
+// Web Streams
+pub const BlobReadableStream = JSC.WebCore.ByteBlobLoader.Source.JSReadableStreamSource;
 
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
@@ -2503,6 +2505,7 @@ comptime {
         std.testing.refAllDecls(Bun.Timer);
         std.testing.refAllDecls(NodeWritableStream);
         std.testing.refAllDecls(NodePath);
+        std.testing.refAllDecls(BlobReadableStream);
         _ = ZigString__free;
         _ = ZigString__free_global;
     }

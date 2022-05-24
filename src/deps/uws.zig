@@ -7,7 +7,7 @@ pub const u_int32_t = c_uint;
 pub const u_int64_t = c_ulonglong;
 pub const LIBUS_LISTEN_DEFAULT: c_int = 0;
 pub const LIBUS_LISTEN_EXCLUSIVE_PORT: c_int = 1;
-pub const us_socket_t = opaque {};
+pub const Socket = opaque {};
 pub const us_timer_t = opaque {};
 pub const us_socket_context_t = opaque {};
 pub const Loop = opaque {
@@ -90,22 +90,22 @@ extern fn us_socket_context_on_server_name(ssl: c_int, context: ?*us_socket_cont
 extern fn us_socket_context_get_native_handle(ssl: c_int, context: ?*us_socket_context_t) ?*anyopaque;
 extern fn us_create_socket_context(ssl: c_int, loop: ?*Loop, ext_size: c_int, options: us_socket_context_options_t) ?*us_socket_context_t;
 extern fn us_socket_context_free(ssl: c_int, context: ?*us_socket_context_t) void;
-extern fn us_socket_context_on_open(ssl: c_int, context: ?*us_socket_context_t, on_open: ?fn (?*us_socket_t, c_int, [*c]u8, c_int) callconv(.C) ?*us_socket_t) void;
-extern fn us_socket_context_on_close(ssl: c_int, context: ?*us_socket_context_t, on_close: ?fn (?*us_socket_t, c_int, ?*anyopaque) callconv(.C) ?*us_socket_t) void;
-extern fn us_socket_context_on_data(ssl: c_int, context: ?*us_socket_context_t, on_data: ?fn (?*us_socket_t, [*c]u8, c_int) callconv(.C) ?*us_socket_t) void;
-extern fn us_socket_context_on_writable(ssl: c_int, context: ?*us_socket_context_t, on_writable: ?fn (*us_socket_t) callconv(.C) ?*us_socket_t) void;
-extern fn us_socket_context_on_timeout(ssl: c_int, context: ?*us_socket_context_t, on_timeout: ?fn (?*us_socket_t) callconv(.C) ?*us_socket_t) void;
-extern fn us_socket_context_on_connect_error(ssl: c_int, context: ?*us_socket_context_t, on_connect_error: ?fn (?*us_socket_t, c_int) callconv(.C) ?*us_socket_t) void;
-extern fn us_socket_context_on_end(ssl: c_int, context: ?*us_socket_context_t, on_end: ?fn (?*us_socket_t) callconv(.C) ?*us_socket_t) void;
+extern fn us_socket_context_on_open(ssl: c_int, context: ?*us_socket_context_t, on_open: ?fn (?*Socket, c_int, [*c]u8, c_int) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_close(ssl: c_int, context: ?*us_socket_context_t, on_close: ?fn (?*Socket, c_int, ?*anyopaque) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_data(ssl: c_int, context: ?*us_socket_context_t, on_data: ?fn (?*Socket, [*c]u8, c_int) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_writable(ssl: c_int, context: ?*us_socket_context_t, on_writable: ?fn (*Socket) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_timeout(ssl: c_int, context: ?*us_socket_context_t, on_timeout: ?fn (?*Socket) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_connect_error(ssl: c_int, context: ?*us_socket_context_t, on_connect_error: ?fn (?*Socket, c_int) callconv(.C) ?*Socket) void;
+extern fn us_socket_context_on_end(ssl: c_int, context: ?*us_socket_context_t, on_end: ?fn (?*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_ext(ssl: c_int, context: ?*us_socket_context_t) ?*anyopaque;
 
 extern fn us_socket_context_listen(ssl: c_int, context: ?*us_socket_context_t, host: [*c]const u8, port: c_int, options: c_int, socket_ext_size: c_int) ?*listen_socket_t;
 
-extern fn us_socket_context_connect(ssl: c_int, context: ?*us_socket_context_t, host: [*c]const u8, port: c_int, source_host: [*c]const u8, options: c_int, socket_ext_size: c_int) ?*us_socket_t;
-extern fn us_socket_is_established(ssl: c_int, s: ?*us_socket_t) c_int;
-extern fn us_socket_close_connecting(ssl: c_int, s: ?*us_socket_t) ?*us_socket_t;
+extern fn us_socket_context_connect(ssl: c_int, context: ?*us_socket_context_t, host: [*c]const u8, port: c_int, source_host: [*c]const u8, options: c_int, socket_ext_size: c_int) ?*Socket;
+extern fn us_socket_is_established(ssl: c_int, s: ?*Socket) c_int;
+extern fn us_socket_close_connecting(ssl: c_int, s: ?*Socket) ?*Socket;
 extern fn us_socket_context_loop(ssl: c_int, context: ?*us_socket_context_t) ?*Loop;
-extern fn us_socket_context_adopt_socket(ssl: c_int, context: ?*us_socket_context_t, s: ?*us_socket_t, ext_size: c_int) ?*us_socket_t;
+extern fn us_socket_context_adopt_socket(ssl: c_int, context: ?*us_socket_context_t, s: ?*Socket, ext_size: c_int) ?*Socket;
 extern fn us_create_child_socket_context(ssl: c_int, context: ?*us_socket_context_t, context_ext_size: c_int) ?*us_socket_context_t;
 
 pub const Poll = opaque {
@@ -182,19 +182,19 @@ pub const Poll = opaque {
     extern fn us_poll_resize(p: ?*Poll, loop: ?*Loop, ext_size: c_uint) ?*Poll;
 };
 
-extern fn us_socket_get_native_handle(ssl: c_int, s: ?*us_socket_t) ?*anyopaque;
-extern fn us_socket_write(ssl: c_int, s: ?*us_socket_t, data: [*c]const u8, length: c_int, msg_more: c_int) c_int;
-extern fn us_socket_timeout(ssl: c_int, s: ?*us_socket_t, seconds: c_uint) void;
-extern fn us_socket_ext(ssl: c_int, s: ?*us_socket_t) ?*anyopaque;
-extern fn us_socket_context(ssl: c_int, s: ?*us_socket_t) ?*us_socket_context_t;
-extern fn us_socket_flush(ssl: c_int, s: ?*us_socket_t) void;
-extern fn us_socket_shutdown(ssl: c_int, s: ?*us_socket_t) void;
-extern fn us_socket_shutdown_read(ssl: c_int, s: ?*us_socket_t) void;
-extern fn us_socket_is_shut_down(ssl: c_int, s: ?*us_socket_t) c_int;
-extern fn us_socket_is_closed(ssl: c_int, s: ?*us_socket_t) c_int;
-extern fn us_socket_close(ssl: c_int, s: ?*us_socket_t, code: c_int, reason: ?*anyopaque) ?*us_socket_t;
-extern fn us_socket_local_port(ssl: c_int, s: ?*us_socket_t) c_int;
-extern fn us_socket_remote_address(ssl: c_int, s: ?*us_socket_t, buf: [*c]u8, length: [*c]c_int) void;
+extern fn us_socket_get_native_handle(ssl: c_int, s: ?*Socket) ?*anyopaque;
+extern fn us_socket_write(ssl: c_int, s: ?*Socket, data: [*c]const u8, length: c_int, msg_more: c_int) c_int;
+extern fn Socketimeout(ssl: c_int, s: ?*Socket, seconds: c_uint) void;
+extern fn us_socket_ext(ssl: c_int, s: ?*Socket) ?*anyopaque;
+extern fn us_socket_context(ssl: c_int, s: ?*Socket) ?*us_socket_context_t;
+extern fn us_socket_flush(ssl: c_int, s: ?*Socket) void;
+extern fn us_socket_shutdown(ssl: c_int, s: ?*Socket) void;
+extern fn us_socket_shutdown_read(ssl: c_int, s: ?*Socket) void;
+extern fn us_socket_is_shut_down(ssl: c_int, s: ?*Socket) c_int;
+extern fn us_socket_is_closed(ssl: c_int, s: ?*Socket) c_int;
+extern fn us_socket_close(ssl: c_int, s: ?*Socket, code: c_int, reason: ?*anyopaque) ?*Socket;
+extern fn us_socket_local_port(ssl: c_int, s: ?*Socket) c_int;
+extern fn us_socket_remote_address(ssl: c_int, s: ?*Socket, buf: [*c]u8, length: [*c]c_int) void;
 pub const uws_app_s = opaque {};
 pub const uws_req_s = opaque {};
 pub const uws_websocket_s = opaque {};
@@ -673,7 +673,7 @@ pub fn NewApp(comptime ssl: bool) type {
             //     };
 
             //     const OnWritable = struct {
-            //         pub fn handle(socket: *us_socket_t) callconv(.C) ?*us_socket_t {
+            //         pub fn handle(socket: *Socket) callconv(.C) ?*Socket {
             //             if (comptime UserDataType == void) {
             //                 @call(.{ .modifier = .always_inline }, handler, .{
             //                     void{},
@@ -710,7 +710,7 @@ pub fn NewApp(comptime ssl: bool) type {
     };
 }
 extern fn uws_res_prepare_for_sendfile(ssl: c_int, res: *uws_res) void;
-extern fn uws_res_get_native_handle(ssl: c_int, res: *uws_res) *us_socket_t;
+extern fn uws_res_get_native_handle(ssl: c_int, res: *uws_res) *Socket;
 extern fn uws_create_app(ssl: c_int, options: us_socket_context_options_t) *uws_app_t;
 extern fn uws_app_destroy(ssl: c_int, app: *uws_app_t) void;
 extern fn uws_app_get(ssl: c_int, app: *uws_app_t, pattern: [*c]const u8, handler: uws_method_handler, user_data: ?*anyopaque) void;

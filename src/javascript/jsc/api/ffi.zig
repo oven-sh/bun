@@ -351,7 +351,7 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |compiled| {
-                    var cb = Bun__CreateFFIFunction(
+                    var cb = JSC.NewFunctionPtr(
                         global,
                         &ZigString.init(std.mem.span(function_name)),
                         @intCast(u32, function.arg_types.items.len),
@@ -443,7 +443,7 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |compiled| {
-                    var cb = Bun__CreateFFIFunction(
+                    var cb = JSC.NewFunctionPtr(
                         global,
                         &ZigString.init(std.mem.span(function_name)),
                         @intCast(u32, function.arg_types.items.len),
@@ -1434,10 +1434,3 @@ pub const FFI = struct {
         }
     };
 };
-
-extern fn Bun__CreateFFIFunction(
-    globalObject: *JSGlobalObject,
-    symbolName: *const ZigString,
-    argCount: u32,
-    functionPointer: *anyopaque,
-) *anyopaque;

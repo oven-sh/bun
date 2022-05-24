@@ -7,6 +7,7 @@ pub usingnamespace @import("./javascript/jsc/bindings/bindings.zig");
 pub usingnamespace @import("./javascript/jsc/event_loop.zig");
 pub usingnamespace @import("./javascript/jsc/base.zig");
 pub const RareData = @import("./javascript/jsc/rare_data.zig");
+pub const Shimmer = @import("./javascript/jsc/bindings/shimmer.zig").Shimmer;
 pub usingnamespace @import("./javascript/jsc/javascript.zig");
 pub const C = @import("./javascript/jsc/javascript_core_c_api.zig");
 pub const WebCore = @import("./javascript/jsc/webcore.zig");

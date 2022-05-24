@@ -43,12 +43,12 @@ using namespace JSC;
     macro(associatedReadableByteStreamController) \
     macro(autoAllocateChunkSize) \
     macro(backingMap) \
-    macro(bunNativeTag) \
     macro(backingSet) \
     macro(backpressure) \
     macro(backpressureChangePromise) \
     macro(basename) \
     macro(body) \
+    macro(bunNativeTag) \
     macro(byobRequest) \
     macro(cancel) \
     macro(cancelAlgorithm) \
@@ -67,6 +67,7 @@ using namespace JSC;
     macro(controller) \
     macro(cork) \
     macro(createReadableStream) \
+    macro(createNativeReadableStream) \
     macro(createWritableStreamFromInternal) \
     macro(cwd) \
     macro(dataView) \
@@ -123,6 +124,7 @@ using namespace JSC;
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
     macro(map) \
+    macro(nativeReadableStreamPrototype) \
     macro(nextTick) \
     macro(normalize) \
     macro(on) \

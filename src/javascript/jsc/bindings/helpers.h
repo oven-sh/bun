@@ -58,9 +58,6 @@ template<class To, class From> To ccast(From v)
     return *static_cast<const To*>(static_cast<const void*>(v));
 }
 
-typedef JSC__JSValue (*NativeCallbackFunction)(void* arg0, JSC__JSGlobalObject* arg1,
-    JSC__CallFrame* arg2);
-
 static const JSC::ArgList makeArgs(JSC__JSValue* v, size_t count)
 {
     JSC::MarkedArgumentBuffer args = JSC::MarkedArgumentBuffer();

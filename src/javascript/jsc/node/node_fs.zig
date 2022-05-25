@@ -3219,7 +3219,7 @@ pub const NodeFS = struct {
 
                 const size = @intCast(u64, @maximum(stat_.size, 0));
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
-                buf.ensureTotalCapacity(size + 16) catch unreachable;
+                buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
                 buf.expandToCapacity();
                 var total: usize = 0;
 
@@ -3232,7 +3232,7 @@ pub const NodeFS = struct {
                             total += amt;
                             // There are cases where stat()'s size is wrong or out of date
                             if (total > size and amt != 0) {
-                                buf.ensureUnusedCapacity(512384) catch unreachable;
+                                buf.ensureUnusedCapacity(8096) catch unreachable;
                                 buf.expandToCapacity();
                                 continue;
                             }

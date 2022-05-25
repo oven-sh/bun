@@ -2513,13 +2513,14 @@ bool JSC__VM__isEntered(JSC__VM* arg0) { return (*arg0).isEntered(); }
 
 void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1) { (*arg0).setExecutionForbidden(); }
 
-bool JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__ThrowScope* arg2,
-    const unsigned char* arg3, size_t arg4)
+void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue value)
 {
-    auto scope = arg2;
-    auto global = arg1;
-    const String& message = WTF::String(arg3, arg4);
-    return JSC::throwException(global, (*scope), createError(global, message));
+    JSC::VM& vm = *reinterpret_cast<JSC::VM*>(vm_);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* error = JSC::JSValue::decode(value).getObject();
+    JSC::Exception* exception = JSC::Exception::create(vm, error);
+    scope.throwException(arg1, exception);
 }
 
 #pragma mark - JSC::ThrowScope

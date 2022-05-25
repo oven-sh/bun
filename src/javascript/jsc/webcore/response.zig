@@ -1030,7 +1030,7 @@ pub const ReadableStream = struct {
     pub fn fromNative(globalThis: *JSGlobalObject, id: Tag, ptr: *anyopaque) JSC.JSValue {
         return ZigGlobalObject__createNativeReadableStream(globalThis, JSValue.fromPtr(ptr), JSValue.jsNumber(@enumToInt(id)));
     }
-    pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob) JSC.JSValue {
+    pub fn fromBlob(globalThis: *JSGlobalObject, blob: *const Blob, recommended_chunk_size: Blob.SizeType) JSC.JSValue {
         if (comptime JSC.is_bindgen)
             unreachable;
         var store = blob.store orelse {
@@ -1042,11 +1042,16 @@ pub const ReadableStream = struct {
                 reader.* = .{
                     .context = undefined,
                 };
-                reader.context.setup(blob);
+                reader.context.setup(blob, recommended_chunk_size);
                 return reader.toJS(globalThis);
             },
             .file => {
-                return JSValue.jsUndefined();
+                var reader = bun.default_allocator.create(FileBlobLoader.Source) catch unreachable;
+                reader.* = .{
+                    .context = undefined,
+                };
+                reader.context.setup(store, recommended_chunk_size);
+                return reader.toJS(globalThis);
             },
         }
     }
@@ -1669,9 +1674,7 @@ pub const Blob = struct {
 
             //         return BlobStore__onRead(ctx, slice.ptr, slice.len) and has_more;
             //     },
-                .file => |*file| {
-                  
-            }
+
         }
 
         comptime {
@@ -2957,12 +2960,22 @@ pub const Blob = struct {
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
         _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
     ) JSC.C.JSValueRef {
+        var recommended_chunk_size: SizeType = 0;
+        if (arguments.len > 0) {
+            if (!JSValue.c(arguments[0]).isNumber() and !JSValue.c(arguments[0]).isUndefinedOrNull()) {
+                JSC.throwInvalidArguments("chunkSize must be a number", .{}, ctx, exception);
+                return null;
+            }
+
+            recommended_chunk_size = @intCast(SizeType, @maximum(0, @truncate(i52, JSValue.c(arguments[0]).toInt64())));
+        }
         return ReadableStream.fromBlob(
             ctx.ptr(),
             this,
+            recommended_chunk_size,
         ).asObjectRef();
     }
 
@@ -4953,14 +4966,50 @@ pub const FetchEvent = struct {
 
 pub const StreamResult = union(enum) {
     owned: bun.ByteList,
+    owned_and_done: bun.ByteList,
+    temporary_and_done: bun.ByteList,
     temporary: bun.ByteList,
-    pending: JSC.Async(StreamResult),
+    pending: *Pending,
     err: JSC.Node.Syscall.Error,
     done: void,
+
+    pub const Pending = struct {
+        frame: anyframe,
+        result: StreamResult,
+        used: bool = false,
+    };
+
+    fn toPromisedWrap(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Pending) void {
+        suspend {}
+
+        pending.used = true;
+        const result: StreamResult = pending.result;
+
+        switch (result) {
+            .err => |err| {
+                promise.reject(globalThis, err.toJSC(globalThis));
+            },
+            .done => {
+                promise.resolve(globalThis, JSValue.jsBoolean(false));
+            },
+            else => {
+                promise.resolve(globalThis, result.toJS(globalThis));
+            },
+        }
+    }
+
+    pub fn toPromised(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Pending) void {
+        var frame = bun.default_allocator.create(@Frame(toPromisedWrap)) catch unreachable;
+        frame.* = async toPromisedWrap(globalThis, promise, pending);
+        pending.frame = frame;
+    }
 
     pub fn toJS(this: *const StreamResult, globalThis: *JSGlobalObject) JSValue {
         switch (this.*) {
             .owned => |list| {
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis.ref(), null);
+            },
+            .owned_and_done => |list| {
                 return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis.ref(), null);
             },
             .temporary => |temp| {
@@ -4969,13 +5018,16 @@ pub const StreamResult = union(enum) {
                 @memcpy(slice.ptr, temp.ptr, temp.len);
                 return array;
             },
-            .pending => |pend| {
-                if (pend.promise.*) |promise| {
-                    return promise.asValue(globalThis);
-                }
-
-                pend.promise.* = JSC.JSPromise.create(globalThis);
-                return pend.promise.*.?.asValue(globalThis);
+            .temporary_and_done => |temp| {
+                var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
+                var slice = array.asArrayBuffer(globalThis).?.slice();
+                @memcpy(slice.ptr, temp.ptr, temp.len);
+                return array;
+            },
+            .pending => |pending| {
+                var promise = JSC.JSPromise.create(globalThis);
+                toPromised(globalThis, promise, pending);
+                return promise.asValue(globalThis);
             },
 
             .err => |err| {
@@ -5203,21 +5255,21 @@ pub fn ReadableStreamSource(
         const ReadableStreamSourceType = @This();
 
         pub fn pull(this: *This) StreamResult {
-            return onPull(this.context, undefined, false);
+            return onPull(&this.context);
         }
 
         pub fn start(
             this: *This,
         ) StreamResult {
-            return onStart(&this.context, undefined, false);
+            return onStart(&this.context);
         }
 
-        pub fn pullFromJS(this: *This, globalThis: *JSGlobalObject) StreamResult {
-            return onPull(&this.context, globalThis, true);
+        pub fn pullFromJS(this: *This) StreamResult {
+            return onPull(&this.context);
         }
 
-        pub fn startFromJS(this: *This, globalThis: *JSGlobalObject) StreamResult {
-            return onStart(&this.context, globalThis, true);
+        pub fn startFromJS(this: *This) StreamResult {
+            return onStart(&this.context);
         }
 
         pub fn cancel(this: *This) void {
@@ -5267,11 +5319,33 @@ pub fn ReadableStreamSource(
 
             pub fn pull(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
-                return this.pullFromJS(globalThis).toJS(globalThis);
+                return processResult(
+                    globalThis,
+                    callFrame,
+                    this.pullFromJS(),
+                );
             }
             pub fn start(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
-                return this.startFromJS(globalThis).toJS(globalThis);
+                return processResult(
+                    globalThis,
+                    callFrame,
+                    this.startFromJS(),
+                );
+            }
+
+            pub fn processResult(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame, result: StreamResult) JSC.JSValue {
+                switch (result) {
+                    .err => |err| {
+                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        return JSValue.jsUndefined();
+                    },
+                    .temporary_and_done, .owned_and_done => {
+                        JSC.C.JSObjectSetPropertyAtIndex(globalThis.ref(), callFrame.argument(1).asObjectRef(), 0, JSValue.jsBoolean(true).asObjectRef(), null);
+                        return result.toJS(globalThis);
+                    },
+                    else => return result.toJS(globalThis),
+                }
             }
             pub fn cancel(_: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
                 var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
@@ -5350,6 +5424,7 @@ pub const ByteBlobLoader = struct {
     pub fn setup(
         this: *ByteBlobLoader,
         blob: *const Blob,
+        user_chunk_size: Blob.SizeType,
     ) void {
         blob.store.?.ref();
         var blobe = blob.*;
@@ -5357,18 +5432,17 @@ pub const ByteBlobLoader = struct {
         this.* = ByteBlobLoader{
             .offset = blobe.offset,
             .store = blobe.store.?,
-            .chunk_size = @minimum(1024 * 1024 * 2, blobe.size),
+            .chunk_size = if (user_chunk_size > 0) @minimum(user_chunk_size, blobe.size) else @minimum(1024 * 1024 * 2, blobe.size),
             .remain = blobe.size,
-
             .done = false,
         };
     }
 
-    pub fn onStart(this: *ByteBlobLoader, global: *JSGlobalObject, comptime is_js: bool) StreamResult {
-        return this.onPull(global, is_js);
+    pub fn onStart(this: *ByteBlobLoader) StreamResult {
+        return this.onPull();
     }
 
-    pub fn onPull(this: *ByteBlobLoader, _: *JSGlobalObject, comptime _: bool) StreamResult {
+    pub fn onPull(this: *ByteBlobLoader) StreamResult {
         if (this.done) {
             return .{ .done = {} };
         }
@@ -5404,118 +5478,284 @@ pub const ByteBlobLoader = struct {
     pub const Source = ReadableStreamSource(@This(), "ByteBlob", onStart, onPull, onCancel, deinit);
 };
 
+pub const FileBlobLoader = struct {
+    buf: []u8 = &[_]u8{},
+    fd: JSC.Node.FileDescriptor = 0,
+    auto_close: bool = false,
+    loop: *JSC.EventLoop = undefined,
+    mode: JSC.Node.Mode = 0,
+    store: *Blob.Store,
+    total_read: Blob.SizeType = 0,
+    callback: anyframe = undefined,
+    pending: StreamResult.Pending = StreamResult.Pending{
+        .frame = undefined,
+        .used = false,
+        .result = .{ .done = {} },
+    },
+    cancelled: bool = false,
+    user_chunk_size: Blob.SizeType = 0,
 
-// pub const FileStreamReader = struct {
-//         buf: []u8,
-//         fd: JSC.Node.FileDescriptor,
-//         loop: *JSC.EventLoop = undefined,
-//         mode: JSC.Node.Mode,
-//         pending: ?*JSC.JSPromise = null,
+    const FileReader = @This();
+    pub const tag = ReadableStream.Tag.File;
 
-// onRead: fn (ctx: *Context, buf: []u8, len: Blob.SizeType) bool
-// onError: fn (ctx: *Context, err: JSC.SystemError) void
-// onWouldBlock: fn (ctx: *Context,) void
-// isCancelled: fn (ctx: *Context) bool
+    pub fn setup(this: *FileBlobLoader, store: *Blob.Store, chunk_size: Blob.SizeType) void {
+        store.ref();
+        this.* = .{
+            .loop = JSC.VirtualMachine.vm.eventLoop(),
+            .auto_close = store.data.file.pathlike == .path,
+            .store = store,
+            .user_chunk_size = chunk_size,
+        };
+    }
 
-//         const FileReader = @This();
+    pub fn watch(this: *FileReader) void {
+        _ = JSC.VirtualMachine.vm.poller.watch(this.fd, .read, this, callback);
+    }
 
-//         pub fn init(ctx: *Context, buf: []u8, fd: JSC.Node.FileDescriptor, mode: JSC.Node.Mode) FileReader {
-//             return .{
-//                 .buf = buf,
-//                 .fd = fd,
-//                 .ctx = ctx,
-//                 .loop = JSC.VirtualMachine.vm.eventLoop(),
-//                 .mode = mode,
-//             };
-//         }
+    const default_fifo_chunk_size = 1024;
+    const default_file_chunk_size = 1024 * 1024 * 2;
+    pub fn onStart(this: *FileBlobLoader) StreamResult {
+        var file = &this.store.data.file;
+        var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var auto_close = this.auto_close;
+        defer this.auto_close = auto_close;
+        var fd = if (!auto_close)
+            file.pathlike.fd
+        else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+            .result => |_fd| _fd,
+            .err => |err| {
+                return .{ .err = err.withPath(file.pathlike.path.slice()) };
+            },
+        };
 
-//         pub fn watch(this: *FileReader) void {
-//             _ = JSC.VirtualMachine.vm.poller.watch(this.fd, .read, this, callback);
-//         }
+        if (!auto_close) {
+            // ensure we have non-blocking IO set
+            const flags = std.os.fcntl(fd, std.os.F.GETFL, 0) catch return .{ .err = JSC.Node.Syscall.Error.fromCode(std.os.E.BADF, .fcntl) };
 
-//         pub fn read(
-//             ctx: *Context,
-//             path: []const u8,
-//             buf: []u8,
-//             fd: JSC.Node.FileDescriptor,
-//             remaining: usize,
-//             global: *JSGlobalObject,
-//             would_block: ?*bool,
-//         ) bool {
-//             const rc = // read() for files
-//                 JSC.Node.Syscall.read(fd, buf);
+            // if we do not, clone the descriptor and set non-blocking
+            // it is important for us to clone it so we don't cause Weird Things to happen
+            if ((flags & std.os.O.NONBLOCK) == 0) {
+                auto_close = true;
+                fd = @intCast(@TypeOf(fd), std.os.fcntl(fd, std.os.F.DUPFD, 0) catch return .{ .err = JSC.Node.Syscall.Error.fromCode(std.os.E.BADF, .fcntl) });
+                _ = std.os.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK) catch return .{ .err = JSC.Node.Syscall.Error.fromCode(std.os.E.BADF, .fcntl) };
+            }
+        }
 
-//             switch (rc) {
-//                 .err => |err| {
-//                     const retry = comptime if (Environment.isLinux)
-//                         std.os.E.WOULDBLOCK
-//                     else
-//                         std.os.E.AGAIN;
+        const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+            .result => |result| result,
+            .err => |err| {
+                if (auto_close) {
+                    _ = JSC.Node.Syscall.close(fd);
+                }
+                return .{ .err = err.withPath(file.pathlike.path.slice()) };
+            },
+        };
 
-//                     switch (err.getErrno()) {
-//                         retry => {
-//                             if (would_block) |blocker| {
-//                                 blocker.* = true;
-//                             } else {
-//                                 onWouldBlock(ctx);
-//                             }
+        if (std.os.S.ISDIR(stat.mode)) {
+            const err = JSC.Node.Syscall.Error.fromCode(.ISDIR, .fstat);
+            if (auto_close) {
+                _ = JSC.Node.Syscall.close(fd);
+            }
+            return .{ .err = err };
+        }
 
-//                             return true;
-//                         },
-//                         else => {},
-//                     }
-//                     const sys = if (path.len > 0) err.withPath(path).toSystemError() else err.toSystemError();
+        if (std.os.S.ISSOCK(stat.mode)) {
+            const err = JSC.Node.Syscall.Error.fromCode(.INVAL, .fstat);
 
-//                     onError(ctx, &sys, global);
-//                     return false;
-//                 },
-//                 .result => |result| {
-//                     // this handles:
-//                     // - empty file
-//                     // - stream closed for some reason
-//                     if ((result == 0 and remaining == 0) or
-//                         isCancelled(ctx))
-//                     {
-//                         return false;
-//                     }
+            if (auto_close) {
+                _ = JSC.Node.Syscall.close(fd);
+            }
+            return .{ .err = err };
+        }
 
-//                     return onRead(
-//                         ctx,
-//                         buf,
-//                         result,
-//                     ) and
-//                         // if it's not a regular file, we don't know how much to read so we should continue
-//                         (remaining == std.math.maxInt(usize)) or
-//                         // if it is a regular file, we stop reading when we've read all the data
-//                         !(@intCast(Blob.SizeType, result) >= remaining);
-//                 },
-//             }
-//         }
+        // if (comptime Environment.isMac) {
+        // if (std.os.S.ISSOCK(stat.mode)) {
+        //     // darwin doesn't support os.MSG.NOSIGNAL,
+        //     // but instead a socket option to avoid SIGPIPE.
+        //     const _bytes = &std.mem.toBytes(@as(c_int, 1));
+        //     _ = std.os.darwin.setsockopt(fd, std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, _bytes, @intCast(std.os.socklen_t, _bytes.len));
+        // }
+        // }
 
-//         pub fn callback(task: ?*anyopaque, sizeOrOffset: i64, _: u16) void {
-//             var this: *FileReader = bun.cast(*FileReader, task.?);
-//             var buf = this.buf;
-//             var blocked = false;
-//             var remaining = std.math.maxInt(usize);
-//             if (comptime Environment.isMac) {
-//                 if (std.os.S.ISREG(this.mode)) {
-//                     remaining = @intCast(usize, @maximum(sizeOrOffset, 0));
-//                     // Returns when the file pointer is not at the end of
-//                     // file.  data contains the offset from current position
-//                     // to end of file, and may be negative.
-//                     buf = buf[0..@minimum(remaining, this.buf.len)];
-//                 } else if (std.os.S.ISCHR(this.mode) or std.os.S.ISFIFO(this.mode)) {
-//                     buf = buf[0..@minimum(@intCast(usize, @maximum(sizeOrOffset, 0)), this.buf.len)];
-//                 }
-//             }
+        file.seekable = std.os.S.ISREG(stat.mode);
+        file.mode = @intCast(JSC.Node.Mode, stat.mode);
+        this.mode = file.mode;
 
-//             if (read(this.ctx, "", buf, this.fd, remaining, this.loop.global, &blocked) and blocked) {
-//                 this.watch();
-//                 return;
-//             }
-//         }
-//     };
+        if (file.seekable orelse false)
+            file.max_size = @intCast(Blob.SizeType, stat.size);
 
+        if ((file.seekable orelse false) and file.max_size == 0) {
+            if (auto_close) {
+                _ = JSC.Node.Syscall.close(fd);
+            }
+            return .{ .done = {} };
+        }
+
+        this.fd = fd;
+        this.auto_close = auto_close;
+
+        if (this.allocateBuffer(std.math.maxInt(usize))) |err| {
+            return .{ .err = err };
+        }
+
+        return this.read(this.buf);
+    }
+
+    fn allocateBuffer(this: *FileBlobLoader, available_to_read: usize) ?JSC.Node.Syscall.Error {
+        var file = &this.store.data.file;
+        const chunk_size: usize = if (this.user_chunk_size > 0)
+            @as(usize, this.user_chunk_size)
+        else if (file.seekable orelse false)
+            @as(usize, default_file_chunk_size)
+        else
+            @as(usize, default_fifo_chunk_size);
+
+        const this_chunk_size = if (file.max_size > 0)
+            if (available_to_read != std.math.maxInt(usize)) @minimum(chunk_size, available_to_read) else @minimum(@maximum(this.total_read, file.max_size) - this.total_read, chunk_size)
+        else
+            @minimum(available_to_read, chunk_size);
+
+        var buf = bun.default_allocator.alloc(
+            u8,
+            this_chunk_size,
+        ) catch {
+            this.maybeAutoClose();
+            return JSC.Node.Syscall.Error.oom.withPath(if (file.pathlike.path.slice().len > 0) file.pathlike.path.slice() else "");
+        };
+
+        this.buf = buf;
+
+        return null;
+    }
+
+    pub fn onPull(this: *FileBlobLoader) StreamResult {
+        if (this.buf.len == 0) {
+            if (this.allocateBuffer(std.math.maxInt(usize))) |err| {
+                return .{ .err = err };
+            }
+        }
+
+        return this.read(this.buf);
+    }
+
+    fn maybeAutoClose(this: *FileBlobLoader) void {
+        if (this.auto_close) {
+            _ = JSC.Node.Syscall.close(this.fd);
+            this.auto_close = false;
+        }
+    }
+
+    pub fn read(
+        this: *FileBlobLoader,
+        read_buf: []u8,
+    ) StreamResult {
+        const rc =
+            JSC.Node.Syscall.read(this.fd, read_buf);
+
+        switch (rc) {
+            .err => |err| {
+                const retry = comptime if (Environment.isLinux)
+                    std.os.E.WOULDBLOCK
+                else
+                    std.os.E.AGAIN;
+
+                switch (err.getErrno()) {
+                    retry => {
+                        this.watch();
+                        return .{
+                            .pending = &this.pending,
+                        };
+                    },
+                    else => {},
+                }
+                const sys = if (this.store.data.file.pathlike == .path and this.store.data.file.pathlike.path.slice().len > 0)
+                    err.withPath(this.store.data.file.pathlike.path.slice())
+                else
+                    err;
+
+                return .{ .err = sys };
+            },
+            .result => |result| {
+                this.total_read += @intCast(Blob.SizeType, result);
+                const remaining: Blob.SizeType = if (this.store.data.file.seekable orelse false)
+                    this.store.data.file.max_size -| this.total_read
+                else
+                    @as(Blob.SizeType, std.math.maxInt(Blob.SizeType));
+
+                defer this.buf = &.{};
+
+                // this handles:
+                // - empty file
+                // - stream closed for some reason
+                if ((result == 0 and remaining == 0)) {
+                    this.maybeAutoClose();
+                    bun.default_allocator.free(this.buf);
+                    return .{ .done = {} };
+                }
+
+                const has_more = remaining > 0;
+
+                if (!has_more) {
+                    defer this.maybeAutoClose();
+                    return .{
+                        .owned_and_done = bun.ByteList.init(read_buf[0..result]),
+                    };
+                }
+
+                return .{
+                    .owned = bun.ByteList.init(read_buf[0..result]),
+                };
+            },
+        }
+    }
+
+    pub fn callback(task: ?*anyopaque, sizeOrOffset: i64, _: u16) void {
+        var this: *FileReader = bun.cast(*FileReader, task.?);
+        var available_to_read: usize = std.math.maxInt(usize);
+        if (comptime Environment.isMac) {
+            if (std.os.S.ISREG(this.mode)) {
+                // Returns when the file pointer is not at the end of
+                // file.  data contains the offset from current position
+                // to end of file, and may be negative.
+                available_to_read = @intCast(usize, @maximum(sizeOrOffset, 0));
+            } else if (std.os.S.ISCHR(this.mode) or std.os.S.ISFIFO(this.mode)) {
+                available_to_read = @intCast(usize, @maximum(sizeOrOffset, 0));
+            }
+        }
+        if (this.cancelled)
+            return;
+
+        if (this.buf.len == 0) {
+            if (this.allocateBuffer(available_to_read)) |err| {
+                this.pending.result = .{ .err = err };
+                resume this.pending.frame;
+                return;
+            }
+        } else {
+            this.buf.len = @minimum(this.buf.len, available_to_read);
+        }
+
+        this.pending.result = this.read(this.buf);
+        resume this.pending.frame;
+    }
+
+    pub fn deinit(this: *FileBlobLoader) void {
+        if (this.buf.len > 0) {
+            bun.default_allocator.free(this.buf);
+            this.buf = &.{};
+        }
+
+        this.maybeAutoClose();
+
+        this.store.deref();
+    }
+
+    pub fn onCancel(this: *FileBlobLoader) void {
+        this.cancelled = true;
+    }
+
+    pub const Source = ReadableStreamSource(@This(), "FileBlobLoader", onStart, onPull, onCancel, deinit);
+};
 
 // pub const BlobFileLoader = struct {
 //     reader: Reader,

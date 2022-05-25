@@ -437,6 +437,7 @@ pub const Poller = struct {
     /// kqueue() or epoll()
     /// 0 == unset
     watch_fd: i32 = 0,
+    active: u32 = 0,
 
     pub const PlatformSpecificFlags = struct {};
 
@@ -464,6 +465,7 @@ pub const Poller = struct {
                     return JSC.Maybe(void).errnoSys(this.watch_fd, .kqueue).?;
                 }
             }
+
             std.debug.assert(this.watch_fd != 0);
             var events_list = std.mem.zeroes([2]kevent64);
             events_list[0] = switch (flag) {
@@ -513,13 +515,18 @@ pub const Poller = struct {
 
             switch (rc) {
                 std.math.minInt(@TypeOf(rc))...-1 => return JSC.Maybe(void).errnoSys(@enumToInt(std.c.getErrno(rc)), .kevent).?,
-                0 => return JSC.Maybe(void).success,
+                0 => {
+                    this.active += 1;
+                    return JSC.Maybe(void).success;
+                },
                 1 => {
                     dispatchKQueueEvent(&events_list[0]);
                     return JSC.Maybe(void).success;
                 },
                 2 => {
                     dispatchKQueueEvent(&events_list[0]);
+                    this.active -= 1;
+
                     dispatchKQueueEvent(&events_list[1]);
                     return JSC.Maybe(void).success;
                 },
@@ -533,7 +540,7 @@ pub const Poller = struct {
     const kqueue_events_ = std.mem.zeroes([4]kevent64);
     pub fn tick(this: *Poller) void {
         if (comptime Environment.isMac) {
-            if (this.watch_fd == 0) return;
+            if (this.active == 0) return;
 
             var events_list = kqueue_events_;
             //             ub extern "c" fn kevent64(
@@ -566,18 +573,22 @@ pub const Poller = struct {
                 },
                 0 => {},
                 1 => {
+                    this.active -= 1;
                     dispatchKQueueEvent(&events_list[0]);
                 },
                 2 => {
+                    this.active -= 2;
                     dispatchKQueueEvent(&events_list[0]);
                     dispatchKQueueEvent(&events_list[1]);
                 },
                 3 => {
+                    this.active -= 3;
                     dispatchKQueueEvent(&events_list[0]);
                     dispatchKQueueEvent(&events_list[1]);
                     dispatchKQueueEvent(&events_list[2]);
                 },
                 4 => {
+                    this.active -= 4;
                     dispatchKQueueEvent(&events_list[0]);
                     dispatchKQueueEvent(&events_list[1]);
                     dispatchKQueueEvent(&events_list[2]);

@@ -542,6 +542,12 @@ pub const Error = struct {
     syscall: Syscall.Tag = @intToEnum(Syscall.Tag, 0),
     path: []const u8 = "",
 
+    pub fn fromCode(errno: os.E, syscall: Syscall.Tag) Error {
+        return .{ .errno = @truncate(Int, @enumToInt(errno)), .syscall = syscall };
+    }
+
+    pub const oom = fromCode(os.E.NOMEM, .read);
+
     pub const retry = Error{
         .errno = if (Environment.isLinux)
             @intCast(Int, @enumToInt(os.E.AGAIN))

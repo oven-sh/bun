@@ -404,7 +404,7 @@ pub extern fn JSC__VM__runGC(arg0: [*c]JSC__VM, arg1: bool) JSC__JSValue;
 pub extern fn JSC__VM__setExecutionForbidden(arg0: [*c]JSC__VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionTimeLimit(arg0: [*c]JSC__VM, arg1: f64) void;
 pub extern fn JSC__VM__shrinkFootprint(arg0: [*c]JSC__VM) void;
-pub extern fn JSC__VM__throwError(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__ThrowScope, arg3: [*c]const u8, arg4: usize) bool;
+pub extern fn JSC__VM__throwError(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__VM__whenIdle(arg0: [*c]JSC__VM, ArgFn1: ?fn (...) callconv(.C) void) void;
 pub extern fn JSC__ThrowScope__clearException(arg0: [*c]JSC__ThrowScope) void;
 pub extern fn JSC__ThrowScope__declare(arg0: [*c]JSC__VM, arg1: [*c]u8, arg2: [*c]u8, arg3: usize) bJSC__ThrowScope;

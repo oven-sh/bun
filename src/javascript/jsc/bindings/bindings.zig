@@ -3009,15 +3009,11 @@ pub const VM = extern struct {
         });
     }
 
-    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, scope: *ThrowScope, message: [*]const u8, len: usize) bool {
+    pub fn throwError(vm: *VM, global_object: *JSGlobalObject, value: JSValue) void {
         return cppFn("throwError", .{
             vm,
-
             global_object,
-            scope,
-
-            message,
-            len,
+            value,
         });
     }
 
@@ -3036,7 +3032,7 @@ pub const VM = extern struct {
             vm,
         });
     }
-    pub const Extern = [_][]const u8{ "doWork", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "throwError", "doWork", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {

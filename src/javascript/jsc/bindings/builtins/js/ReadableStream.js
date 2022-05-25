@@ -90,14 +90,25 @@ function initializeReadableStream(underlyingSource, strategy)
 
 @globalPrivate
 function createNativeReadableStream(nativeTag, nativeID) {
-    var cached = @getByIdDirectPrivate(globalThis, "nativeReadableStreamPrototype");
-    if (!cached) {
-        cached = new @Map();
-        @putByIdDirectPrivate(globalThis, "nativeReadableStreamPrototype", cached);
-    }
-    var Prototype = cached.get(nativeID);
-    if (!Prototype) {
+    var cached =  globalThis[Symbol.for("Bun.nativeReadableStreamPrototype")] ||= new @Map;
+    var Prototype = cached.@get(nativeID);
+    if (Prototype === @undefined) {
         var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for("Bun.lazy")](nativeID);
+        var closer = [false];
+
+        var handleResult = function handleResult(result, controller) {
+            if (result && @isPromise(result)) {
+                result.then((val) => handleResult(val, controller), err => controller.error(err));
+            } else if (result !== false) {
+                controller.enqueue(result);
+            }
+
+            if (closer[0] || result === false) {
+                new @Promise((resolve, reject) => resolve(controller.close())).then(() => {}, () => {});
+                closer[0] = false;
+            }
+        }
+
         Prototype = class NativeReadableStreamSource {
             constructor(tag) {
                 this.pull = this.pull_.bind(tag);
@@ -110,44 +121,30 @@ function createNativeReadableStream(nativeTag, nativeID) {
             cancel;
             
             pull_(controller) {
+                closer[0] = false;
                 var result;
+
                 try {
-                    result = pull(this);
-                } catch (e) {
-                    controller.error(e);
-                    return;
-                }
-                    
-                if (result === false) {
-                    // close on next tick
-                    new @Promise((resolve, reject) => resolve(controller.close())).then(() => {}, () => {});
-                    return;
+                    result = pull(this, closer);
+                } catch(err) {
+                    return controller.error(err);
                 }
 
-                if (@isPromise(result)) {
-                    result.then(controller.enqueue, controller.error);
-                } else {
-                    controller.enqueue(result);
-                }
+                 handleResult(result, controller);
             }
 
             start_(controller) {
                 setClose(this, controller.close);
-                const result = start(this, controller.enqueue, controller.error);
-                if (result === false) {
-                    // close on next tick
-                    new @Promise((resolve, reject) => resolve(controller.close())).then(() => {}, () => {});
-                    return;
+                closer[0] = false;
+                var result;
+
+                try {
+                    result = start(this, closer);
+                } catch(err) {
+                    return controller.error(err);
                 }
 
-
-                if (@isPromise(result)) {
-                    result.then(controller.enqueue, controller.error);
-                } else {
-                    controller.enqueue(result);
-                }
-
-                return result;
+                 handleResult(result, controller);
             }
 
             cancel_(reason) {
@@ -156,7 +153,7 @@ function createNativeReadableStream(nativeTag, nativeID) {
 
             static registry = new FinalizationRegistry(deinit);
         }
-        cached.set(nativeID, Prototype);
+        cached.@set(nativeID, Prototype);
     }
     
     var instance = new Prototype(nativeTag);

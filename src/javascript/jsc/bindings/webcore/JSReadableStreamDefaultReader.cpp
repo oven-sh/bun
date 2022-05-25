@@ -40,12 +40,10 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 // Functions
-
 
 // Attributes
 
@@ -109,13 +107,13 @@ template<> FunctionExecutable* JSReadableStreamDefaultReaderDOMConstructor::init
 
 /* Hash table for prototype */
 
-static const HashTableValue JSReadableStreamDefaultReaderPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsReadableStreamDefaultReaderConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamDefaultReaderClosedCodeGenerator), (intptr_t) (0) } },
-    { "read"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamDefaultReaderReadCodeGenerator), (intptr_t) (0) } },
-    { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamDefaultReaderCancelCodeGenerator), (intptr_t) (0) } },
-    { "releaseLock"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamDefaultReaderReleaseLockCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSReadableStreamDefaultReaderPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsReadableStreamDefaultReaderConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultReaderClosedCodeGenerator), (intptr_t)(0) } },
+    { "read"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultReaderReadCodeGenerator), (intptr_t)(0) } },
+    { "readMany"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultReaderReadManyCodeGenerator), (intptr_t)(0) } },
+    { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultReaderCancelCodeGenerator), (intptr_t)(0) } },
+    { "releaseLock"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultReaderReleaseLockCodeGenerator), (intptr_t)(0) } },
 };
 
 const ClassInfo JSReadableStreamDefaultReaderPrototype::s_info = { "ReadableStreamDefaultReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultReaderPrototype) };
@@ -130,13 +128,14 @@ void JSReadableStreamDefaultReaderPrototype::finishCreation(VM& vm)
 const ClassInfo JSReadableStreamDefaultReader::s_info = { "ReadableStreamDefaultReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultReader) };
 
 JSReadableStreamDefaultReader::JSReadableStreamDefaultReader(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSReadableStreamDefaultReader::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSReadableStreamDefaultReader::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -160,7 +159,7 @@ void JSReadableStreamDefaultReader::destroy(JSC::JSCell* cell)
     thisObject->JSReadableStreamDefaultReader::~JSReadableStreamDefaultReader();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -172,13 +171,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderConstructor, (JSGlobalObje
 
 JSC::GCClient::IsoSubspace* JSReadableStreamDefaultReader::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamDefaultReader, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForReadableStreamDefaultReader.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultReader = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForReadableStreamDefaultReader.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultReader = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSReadableStreamDefaultReader, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamDefaultReader.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultReader = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForReadableStreamDefaultReader.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultReader = WTFMove(space); });
 }
-
 
 }

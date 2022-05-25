@@ -55,6 +55,10 @@ extern const char* const s_readableStreamDefaultReaderCancelCode;
 extern const int s_readableStreamDefaultReaderCancelCodeLength;
 extern const JSC::ConstructAbility s_readableStreamDefaultReaderCancelCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamDefaultReaderCancelCodeConstructorKind;
+extern const char* const s_readableStreamDefaultReaderReadManyCode;
+extern const int s_readableStreamDefaultReaderReadManyCodeLength;
+extern const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind;
 extern const char* const s_readableStreamDefaultReaderReadCode;
 extern const int s_readableStreamDefaultReaderReadCodeLength;
 extern const JSC::ConstructAbility s_readableStreamDefaultReaderReadCodeConstructAbility;
@@ -71,12 +75,14 @@ extern const JSC::ConstructorKind s_readableStreamDefaultReaderClosedCodeConstru
 #define WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_DATA(macro) \
     macro(initializeReadableStreamDefaultReader, readableStreamDefaultReaderInitializeReadableStreamDefaultReader, 1) \
     macro(cancel, readableStreamDefaultReaderCancel, 1) \
+    macro(readMany, readableStreamDefaultReaderReadMany, 0) \
     macro(read, readableStreamDefaultReaderRead, 0) \
     macro(releaseLock, readableStreamDefaultReaderReleaseLock, 0) \
     macro(closed, readableStreamDefaultReaderClosed, 0) \
 
 #define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_INITIALIZEREADABLESTREAMDEFAULTREADER 1
 #define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_CANCEL 1
+#define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_READMANY 1
 #define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_READ 1
 #define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_RELEASELOCK 1
 #define WEBCORE_BUILTIN_READABLESTREAMDEFAULTREADER_CLOSED 1
@@ -84,6 +90,7 @@ extern const JSC::ConstructorKind s_readableStreamDefaultReaderClosedCodeConstru
 #define WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_CODE(macro) \
     macro(readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCode, initializeReadableStreamDefaultReader, ASCIILiteral(), s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength) \
     macro(readableStreamDefaultReaderCancelCode, cancel, ASCIILiteral(), s_readableStreamDefaultReaderCancelCodeLength) \
+    macro(readableStreamDefaultReaderReadManyCode, readMany, ASCIILiteral(), s_readableStreamDefaultReaderReadManyCodeLength) \
     macro(readableStreamDefaultReaderReadCode, read, ASCIILiteral(), s_readableStreamDefaultReaderReadCodeLength) \
     macro(readableStreamDefaultReaderReleaseLockCode, releaseLock, ASCIILiteral(), s_readableStreamDefaultReaderReleaseLockCodeLength) \
     macro(readableStreamDefaultReaderClosedCode, closed, "get closed"_s, s_readableStreamDefaultReaderClosedCodeLength) \
@@ -93,6 +100,7 @@ extern const JSC::ConstructorKind s_readableStreamDefaultReaderClosedCodeConstru
     macro(closed) \
     macro(initializeReadableStreamDefaultReader) \
     macro(read) \
+    macro(readMany) \
     macro(releaseLock) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \

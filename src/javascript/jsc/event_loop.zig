@@ -452,6 +452,7 @@ pub const Poller = struct {
         const callback: Completion = @intToPtr(Completion, kqueue_event.ext[0]);
         callback(ptr, @bitCast(i64, kqueue_event.data), kqueue_event.flags);
     }
+
     const timeout = std.mem.zeroes(std.os.timespec);
 
     pub fn watch(this: *Poller, fd: JSC.Node.FileDescriptor, flag: Flag, ctx: ?*anyopaque, completion: Completion) JSC.Maybe(void) {
@@ -466,7 +467,6 @@ pub const Poller = struct {
                 }
             }
 
-            std.debug.assert(this.watch_fd != 0);
             var events_list = std.mem.zeroes([2]kevent64);
             events_list[0] = switch (flag) {
                 .read => .{
@@ -520,13 +520,14 @@ pub const Poller = struct {
                     return JSC.Maybe(void).success;
                 },
                 1 => {
+                    // if we immediately get an event, we can skip the reference counting
                     dispatchKQueueEvent(&events_list[0]);
                     return JSC.Maybe(void).success;
                 },
                 2 => {
                     dispatchKQueueEvent(&events_list[0]);
-                    this.active -= 1;
 
+                    this.active -= 1;
                     dispatchKQueueEvent(&events_list[1]);
                     return JSC.Maybe(void).success;
                 },

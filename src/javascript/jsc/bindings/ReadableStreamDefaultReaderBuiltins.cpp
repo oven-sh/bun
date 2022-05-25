@@ -87,6 +87,93 @@ const char* const s_readableStreamDefaultReaderCancelCode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 2999;
+static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamDefaultReaderReadManyCode =
+    "(function ()\n" \
+    "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    "    if (!@isReadableStreamDefaultReader(this))\n" \
+    "        @throwTypeError(\"ReadableStreamDefaultReader.readMany() should not be called directly\");\n" \
+    "\n" \
+    "    const stream = @getByIdDirectPrivate(this, \"ownerReadableStream\");\n" \
+    "    if (!stream)\n" \
+    "        @throwTypeError(\"readMany() called on a reader owned by no readable stream\");\n" \
+    "\n" \
+    "    const state = @getByIdDirectPrivate(stream, \"state\");\n" \
+    "    const wasDisturbed = @getByIdDirectPrivate(stream, \"disturbed\");\n" \
+    "    @putByIdDirectPrivate(stream, \"disturbed\", true);\n" \
+    "    if (state === @streamClosed)\n" \
+    "        return {value: [], done: true};\n" \
+    "    else if (state === @streamErrored) {\n" \
+    "        throw @getByIdDirectPrivate(stream, \"storedError\");\n" \
+    "    }\n" \
+    "\n" \
+    "    const controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n" \
+    "    const content = @getByIdDirectPrivate(controller, \"queue\").content;\n" \
+    "\n" \
+    "    var values = new @Array(content.length);\n" \
+    "\n" \
+    "    if (content.length > 0) {\n" \
+    "        if (\"buffer\" in content[0]) {\n" \
+    "            for (var i = 0; i < content.length; ++i) {\n" \
+    "                @putByValDirect(values, i, new @Uint8Array(content[i].buffer, content[i].byteOffset, content[i].byteLength));\n" \
+    "            }\n" \
+    "        } else {\n" \
+    "            for (var i = 0; i < content.length; ++i) {\n" \
+    "                @putByValDirect(values, i, content[i].value);\n" \
+    "            }\n" \
+    "        }\n" \
+    "\n" \
+    "        @resetQueue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
+    "\n" \
+    "        if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n" \
+    "            @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
+    "        else\n" \
+    "            @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
+    "    } else {\n" \
+    "        return controller.@pull(controller).@then(({value, done}) => {\n" \
+    "           if (done) {\n" \
+    "               return {value: [], done: true};\n" \
+    "           }\n" \
+    "\n" \
+    "           const content = @getByIdDirectPrivate(controller, \"queue\").content;\n" \
+    "           var values = new @Array(content.length + 1);\n" \
+    "           \n" \
+    "\n" \
+    "\n" \
+    "           if (\"buffer\" in content[0]) {\n" \
+    "                values[0] = new @Uint8Array(content[0].buffer, content[0].byteOffset, content[0].byteLength);\n" \
+    "                for (var i = 0; i < content.length; ++i) {\n" \
+    "                    @putByValDirect(values, i+1, new @Uint8Array(content[i].buffer, content[i].byteOffset, content[i].byteLength));\n" \
+    "                }\n" \
+    "            } else {\n" \
+    "                values[0] = value;\n" \
+    "                for (var i = 0; i < content.length; ++i) {\n" \
+    "                    @putByValDirect(values, i+1, content[i].value);\n" \
+    "                }\n" \
+    "            }\n" \
+    "\n" \
+    "            @resetQueue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
+    "\n" \
+    "            if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n" \
+    "                @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
+    "            else\n" \
+    "                @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
+    "\n" \
+    "           return {value: values, done: false};\n" \
+    "        });\n" \
+    "    }\n" \
+    "\n" \
+    "   \n" \
+    "\n" \
+    "    return {value: values, done: false};\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadCodeConstructorKind = JSC::ConstructorKind::None;
 const int s_readableStreamDefaultReaderReadCodeLength = 395;

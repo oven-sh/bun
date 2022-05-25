@@ -199,7 +199,7 @@ const char* const s_readableStreamInternalsAcquireReadableStreamDefaultReaderCod
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 3210;
+const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 3213;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCode =
     "(function (source, destination, preventClose, preventAbort, preventCancel, signal)\n" \
@@ -211,7 +211,7 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "    @assert(signal === @undefined || @isAbortSignal(signal));\n" \
     "\n" \
     "    if (@getByIdDirectPrivate(source, \"underlyingByteSource\") !== @undefined)\n" \
-    "        return @Promise.@reject(\"Piping of readable by strean is not supported\");\n" \
+    "        return @Promise.@reject(\"Piping to a readable bytestream is not supported\");\n" \
     "\n" \
     "    let pipeState = { source : source, destination : destination, preventAbort : preventAbort, preventCancel : preventCancel, preventClose : preventClose, signal : signal };\n" \
     "\n" \
@@ -870,24 +870,23 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCancel
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerPullCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadableStreamDefaultControllerPullCodeLength = 777;
+const int s_readableStreamInternalsReadableStreamDefaultControllerPullCodeLength = 805;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerPullCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerPullCode =
     "(function (controller)\n" \
     "{\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n" \
     "    if (@getByIdDirectPrivate(controller, \"queue\").content.length) {\n" \
     "        const chunk = @dequeueValue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
     "        if (@getByIdDirectPrivate(controller, \"closeRequested\") && @getByIdDirectPrivate(controller, \"queue\").content.length === 0)\n" \
-    "            @readableStreamClose(stream);\n" \
+    "            @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
     "        else\n" \
     "            @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
     "\n" \
     "        return @createFulfilledPromise({ value: chunk, done: false });\n" \
     "    }\n" \
-    "    const pendingPromise = @readableStreamAddReadRequest(stream);\n" \
+    "    const pendingPromise = @readableStreamAddReadRequest(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
     "    @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
     "    return pendingPromise;\n" \
     "})\n" \

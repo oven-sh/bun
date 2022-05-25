@@ -153,7 +153,7 @@ function readableStreamPipeToWritableStream(source, destination, preventClose, p
     @assert(signal === @undefined || @isAbortSignal(signal));
 
     if (@getByIdDirectPrivate(source, "underlyingByteSource") !== @undefined)
-        return @Promise.@reject("Piping of readable by strean is not supported");
+        return @Promise.@reject("Piping to a readable bytestream is not supported");
 
     let pipeState = { source : source, destination : destination, preventAbort : preventAbort, preventCancel : preventCancel, preventClose : preventClose, signal : signal };
 
@@ -670,17 +670,16 @@ function readableStreamDefaultControllerPull(controller)
 {
     "use strict";
 
-    const stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
     if (@getByIdDirectPrivate(controller, "queue").content.length) {
         const chunk = @dequeueValue(@getByIdDirectPrivate(controller, "queue"));
         if (@getByIdDirectPrivate(controller, "closeRequested") && @getByIdDirectPrivate(controller, "queue").content.length === 0)
-            @readableStreamClose(stream);
+            @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
         else
             @readableStreamDefaultControllerCallPullIfNeeded(controller);
 
         return @createFulfilledPromise({ value: chunk, done: false });
     }
-    const pendingPromise = @readableStreamAddReadRequest(stream);
+    const pendingPromise = @readableStreamAddReadRequest(@getByIdDirectPrivate(controller, "controlledReadableStream"));
     @readableStreamDefaultControllerCallPullIfNeeded(controller);
     return pendingPromise;
 }

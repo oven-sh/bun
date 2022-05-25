@@ -90,6 +90,7 @@ function initializeReadableStream(underlyingSource, strategy)
 
 @globalPrivate
 function createNativeReadableStream(nativeTag, nativeID) {
+    "use strict";
     var cached =  globalThis[Symbol.for("Bun.nativeReadableStreamPrototype")] ||= new @Map;
     var Prototype = cached.@get(nativeID);
     if (Prototype === @undefined) {

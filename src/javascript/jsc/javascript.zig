@@ -249,9 +249,14 @@ pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
     return JSC.VirtualMachine.vm.global;
 }
 
+pub export fn Bun__getVM() *JSC.VirtualMachine {
+    return JSC.VirtualMachine.vm;
+}
+
 comptime {
     if (!JSC.is_bindgen) {
         _ = Bun__getDefaultGlobal;
+        _ = Bun__getVM;
     }
 }
 
@@ -1101,12 +1106,17 @@ pub const VirtualMachine = struct {
         ret.path = result_path.text;
     }
     pub fn queueMicrotaskToEventLoop(
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         microtask: *Microtask,
     ) void {
         std.debug.assert(VirtualMachine.vm_loaded);
 
-        vm.enqueueTask(Task.init(microtask));
+        var vm_ = globalObject.bunVM();
+        if (vm_.global == globalObject) {
+            vm_.enqueueTask(Task.init(@ptrCast(*JSC.MicrotaskForDefaultGlobalObject, microtask)));
+        } else {
+            vm_.enqueueTask(Task.init(microtask));
+        }
     }
 
     pub fn resolveForAPI(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString) void {

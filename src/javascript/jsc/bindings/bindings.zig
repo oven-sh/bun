@@ -1904,19 +1904,27 @@ pub const String = extern struct {
     };
 };
 
-pub const JSValue = enum(u64) {
+pub const JSValue = enum(i64) {
     @"undefined" = 0xa,
     _,
 
     pub const shim = Shimmer("JSC", "JSValue", @This());
     pub const is_pointer = false;
-    pub const Type = u64;
+    pub const Type = i64;
     const cppFn = shim.cppFn;
+
+    pub const Encoded = extern union {
+        asInt64: i64,
+        ptr: *JSCell,
+        asBits: extern struct { payload: i32, tag: i32 },
+        asPtr: *anyopaque,
+        asDouble: f64,
+    };
 
     pub const include = "JavaScriptCore/JSValue.h";
     pub const name = "JSC::JSValue";
     pub const namespace = "JSC";
-    pub const zero = @intToEnum(JSValue, @as(u64, 0));
+    pub const zero = @intToEnum(JSValue, @as(i64, 0));
     pub const JSType = enum(u8) {
         // The Cell value must come before any JS that is a JSCell.
         Cell,
@@ -2401,7 +2409,14 @@ pub const JSValue = enum(u64) {
     }
 
     pub fn toInt64(this: JSValue) i64 {
-        return cppFn("toInt64", .{this});
+        // these magic numbers came from zig translate-c on FFI.h
+        // FFI.h came from reading JSCJSValue source code
+        return switch (@bitCast(c_ulonglong, @enumToInt(this)) & @as(c_ulonglong, 18446181123756130304)) {
+            0 => cppFn("toInt64", .{this}),
+            // int32
+            18446181123756130304 => toInt32(this),
+            else => @bitCast(i64, @trunc(this.asDouble())),
+        };
     }
 
     pub inline fn isUndefined(this: JSValue) bool {
@@ -2438,15 +2453,23 @@ pub const JSValue = enum(u64) {
     pub fn isUInt32AsAnyInt(this: JSValue) bool {
         return cppFn("isUInt32AsAnyInt", .{this});
     }
-    pub fn isInt32(this: JSValue) bool {
-        return cppFn("isInt32", .{this});
+
+    pub fn asEncoded(this: JSValue) Encoded {
+        return @bitCast(Encoded, this);
     }
+
+    pub fn isInt32(this: JSValue) bool {
+        return (@bitCast(c_ulonglong, @enumToInt(this)) & @as(c_ulonglong, 18446181123756130304)) == @as(c_ulonglong, 18446181123756130304);
+    }
+
     pub fn isInt32AsAnyInt(this: JSValue) bool {
         return cppFn("isInt32AsAnyInt", .{this});
     }
+
     pub fn isNumber(this: JSValue) bool {
-        return cppFn("isNumber", .{this});
+        return (@bitCast(c_ulonglong, @enumToInt(this)) & @as(c_ulonglong, 18446181123756130304)) != 0;
     }
+
     pub fn isError(this: JSValue) bool {
         return cppFn("isError", .{this});
     }
@@ -2724,13 +2747,31 @@ pub const JSValue = enum(u64) {
     }
 
     pub fn asNumber(this: JSValue) f64 {
+        if (this.isInt32()) {
+            return @intToFloat(f64, this.toInt32());
+        }
+
+        if (isNumber(this)) {
+            return asDouble(this);
+        }
+
+        if (this.isUndefinedOrNull()) {
+            return 0.0;
+        } else if (this.isBoolean()) {
+            return if (asBoolean(this)) 1.0 else 0.0;
+        }
+
         return cppFn("asNumber", .{
             this,
         });
     }
 
+    pub fn asDouble(this: JSValue) f64 {
+        return @bitCast(f64, @enumToInt(this) - comptime (@as(c_longlong, 1) << @intCast(@import("std").math.Log2Int(c_longlong), 49)));
+    }
+
     pub fn asPtr(this: JSValue, comptime Pointer: type) *Pointer {
-        return @intToPtr(*Pointer, @bitCast(usize, this.asNumber()));
+        return @intToPtr(*Pointer, @bitCast(usize, @enumToInt(this)));
     }
 
     pub fn fromPtrAddress(addr: anytype) JSValue {
@@ -2742,15 +2783,33 @@ pub const JSValue = enum(u64) {
     }
 
     pub fn toBoolean(this: JSValue) bool {
-        return cppFn("toBoolean", .{
+        if (isUndefinedOrNull(this)) {
+            return false;
+        }
+
+        return asBoolean(this);
+    }
+
+    pub fn asBoolean(this: JSValue) bool {
+        return @enumToInt(this) == @bitCast(c_longlong, @as(c_longlong, (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1)));
+    }
+
+    pub fn toInt32(this: JSValue) i32 {
+        if (this.isInt32()) {
+            return asInt32(this);
+        }
+
+        if (this.isNumber()) {
+            return @truncate(i32, @floatToInt(i64, asDouble(this)));
+        }
+
+        return cppFn("toInt32", .{
             this,
         });
     }
 
-    pub fn toInt32(this: JSValue) i32 {
-        return cppFn("toInt32", .{
-            this,
-        });
+    pub fn asInt32(this: JSValue) i32 {
+        return @bitCast(i32, @truncate(c_int, @enumToInt(this)));
     }
 
     pub inline fn toU16(this: JSValue) u16 {
@@ -2831,6 +2890,7 @@ pub const JSValue = enum(u64) {
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
+extern "c" fn Microtask__run_default(*MicrotaskForDefaultGlobalObject, *JSGlobalObject) void;
 
 pub const Microtask = opaque {
     pub const name = "Zig::JSMicrotaskCallback";
@@ -2842,6 +2902,16 @@ pub const Microtask = opaque {
         }
 
         return Microtask__run(this, global_object);
+    }
+};
+
+pub const MicrotaskForDefaultGlobalObject = opaque {
+    pub fn run(this: *MicrotaskForDefaultGlobalObject, global_object: *JSGlobalObject) void {
+        if (comptime is_bindgen) {
+            return;
+        }
+
+        return Microtask__run_default(this, global_object);
     }
 };
 

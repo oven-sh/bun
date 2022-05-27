@@ -77,15 +77,15 @@ ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSC::JSGlobalObject& lex
     return create(*JSC::jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject), *jsCast<JSReadableStream*>(objectOrException.releaseReturnValue()));
 }
 
-ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSC::JSGlobalObject& lexicalGlobalObject, RefPtr<ReadableStreamSource>&& source, JSC::JSValue nativeTag)
+ExceptionOr<Ref<ReadableStream>> ReadableStream::create(JSC::JSGlobalObject& lexicalGlobalObject, RefPtr<ReadableStreamSource>&& source, JSC::JSValue nativePtr)
 {
     auto& builtinNames = WebCore::builtinNames(lexicalGlobalObject.vm());
     RELEASE_ASSERT(source != nullptr);
 
-    auto objectOrException = invokeConstructor(lexicalGlobalObject, builtinNames.ReadableStreamPrivateName(), [&source, nativeTag](auto& args, auto& lexicalGlobalObject, auto& globalObject) {
+    auto objectOrException = invokeConstructor(lexicalGlobalObject, builtinNames.ReadableStreamPrivateName(), [&source, nativePtr](auto& args, auto& lexicalGlobalObject, auto& globalObject) {
         auto sourceStream = toJSNewlyCreated(&lexicalGlobalObject, &globalObject, source.releaseNonNull());
-        auto tag = WebCore::clientData(lexicalGlobalObject.vm())->builtinNames().bunNativeTagPrivateName();
-        sourceStream.getObject()->putDirect(lexicalGlobalObject.vm(), tag, nativeTag, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
+        auto tag = WebCore::clientData(lexicalGlobalObject.vm())->builtinNames().bunNativePtrPrivateName();
+        sourceStream.getObject()->putDirect(lexicalGlobalObject.vm(), tag, nativePtr, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum);
         args.append(sourceStream);
     });
 

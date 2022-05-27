@@ -119,15 +119,15 @@ const char* const s_readableStreamInitializeReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamCreateNativeReadableStreamCodeLength = 2373;
+const int s_readableStreamCreateNativeReadableStreamCodeLength = 2446;
 static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateNativeReadableStreamCode =
-    "(function (nativeTag, nativeID) {\n" \
+    "(function (nativePtr, nativeType) {\n" \
     "    \"use strict\";\n" \
     "    var cached =  globalThis[Symbol.for(\"Bun.nativeReadableStreamPrototype\")] ||= new @Map;\n" \
-    "    var Prototype = cached.@get(nativeID);\n" \
+    "    var Prototype = cached.@get(nativeType);\n" \
     "    if (Prototype === @undefined) {\n" \
-    "        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for(\"Bun.lazy\")](nativeID);\n" \
+    "        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for(\"Bun.lazy\")](nativeType);\n" \
     "        var closer = [false];\n" \
     "\n" \
     "        var handleResult = function handleResult(result, controller) {\n" \
@@ -187,13 +187,14 @@ const char* const s_readableStreamCreateNativeReadableStreamCode =
     "\n" \
     "            static registry = new FinalizationRegistry(deinit);\n" \
     "        }\n" \
-    "        cached.@set(nativeID, Prototype);\n" \
+    "        cached.@set(nativeType, Prototype);\n" \
     "    }\n" \
     "    \n" \
-    "    var instance = new Prototype(nativeTag);\n" \
-    "    Prototype.registry.register(instance, nativeTag);\n" \
+    "    var instance = new Prototype(nativePtr);\n" \
+    "    Prototype.registry.register(instance, nativePtr);\n" \
     "    var stream = new @ReadableStream(instance);\n" \
-    "    @putByIdDirectPrivate(stream, \"bunNativeTag\", nativeID);\n" \
+    "    @putByIdDirectPrivate(stream, \"bunNativeType\", nativeType);\n" \
+    "    @putByIdDirectPrivate(stream, \"bunNativePtr\", nativePtr);\n" \
     "    return stream;\n" \
     "})\n" \
 ;
@@ -219,7 +220,7 @@ const char* const s_readableStreamCancelCode =
 
 const JSC::ConstructAbility s_readableStreamGetReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamGetReaderCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamGetReaderCodeLength = 476;
+const int s_readableStreamGetReaderCodeLength = 481;
 static const JSC::Intrinsic s_readableStreamGetReaderCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamGetReaderCode =
     "(function (options)\n" \
@@ -237,6 +238,7 @@ const char* const s_readableStreamGetReaderCode =
     "    if (mode == 'byob')\n" \
     "        return new @ReadableStreamBYOBReader(this);\n" \
     "\n" \
+    "    \n" \
     "    @throwTypeError(\"Invalid mode is specified\");\n" \
     "})\n" \
 ;

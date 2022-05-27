@@ -2792,7 +2792,7 @@ pub fn wrapWithHasContainer(
             arguments: []const js.JSValueRef,
             exception: js.ExceptionRef,
         ) js.JSObjectRef {
-            var iter = JSC.Node.ArgumentsSlice.from(arguments);
+            var iter = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
             var args: Args = undefined;
 
             comptime var i: usize = 0;
@@ -2933,14 +2933,15 @@ pub fn wrapWithHasContainer(
             }
 
             if (comptime maybe_async) {
-                JavaScript.VirtualMachine.vm.tick();
+                var vm = ctx.ptr().bunVM();
+                vm.tick();
 
                 var promise = JSC.JSInternalPromise.resolvedPromise(ctx.ptr(), result);
 
                 switch (promise.status(ctx.ptr().vm())) {
                     JSC.JSPromise.Status.Pending => {
                         while (promise.status(ctx.ptr().vm()) == .Pending) {
-                            JavaScript.VirtualMachine.vm.tick();
+                            vm.tick();
                         }
                         result = promise.result(ctx.ptr().vm());
                     },

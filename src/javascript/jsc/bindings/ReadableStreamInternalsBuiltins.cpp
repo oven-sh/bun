@@ -950,7 +950,7 @@ const char* const s_readableStreamInternalsReadableStreamFulfillReadRequestCode 
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeLength = 979;
+const int s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeLength = 917;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCode =
     "(function (controller, chunk)\n" \
@@ -958,7 +958,8 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerEnqueu
     "    \"use strict\";\n" \
     "\n" \
     "    const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n" \
-    "    @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));\n" \
+    "    //\n" \
+    "    //\n" \
     "\n" \
     "    if (@isReadableStreamLocked(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\").length) {\n" \
     "        @readableStreamFulfillReadRequest(stream, chunk, false);\n" \

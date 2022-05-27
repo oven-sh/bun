@@ -63,30 +63,37 @@ function readMany()
         @throwTypeError("readMany() called on a reader owned by no readable stream");
 
     const state = @getByIdDirectPrivate(stream, "state");
-    const wasDisturbed = @getByIdDirectPrivate(stream, "disturbed");
     @putByIdDirectPrivate(stream, "disturbed", true);
     if (state === @streamClosed)
-        return {value: [], done: true};
+        return {value: [], size: 0, done: true};
     else if (state === @streamErrored) {
         throw @getByIdDirectPrivate(stream, "storedError");
     }
 
     const controller = @getByIdDirectPrivate(stream, "readableStreamController");
+    
     const content = @getByIdDirectPrivate(controller, "queue").content;
+    var size = @getByIdDirectPrivate(controller, "queue").size;
 
     var values = new @Array(content.length);
 
     if (content.length > 0) {
         if ("buffer" in content[0]) {
+            values[0] = new @Uint8Array(content[0].buffer, content[0].byteOffset, content[0].byteLength);
             for (var i = 0; i < content.length; ++i) {
-                @putByValDirect(values, i, new @Uint8Array(content[i].buffer, content[i].byteOffset, content[i].byteLength));
+                @putByValDirect(values, i+1, new @Uint8Array(content[i].buffer, content[i].byteOffset, content[i].byteLength));
+            }
+        } else if (typeof content[0] === 'object' && content[0] && "byteLength" in content[0]) {
+            size = 0;
+            for (var i = 0; i < content.length; ++i) {
+                @putByValDirect(values, i+1, content[i].value);
+                size += content[i].value.byteLength;
             }
         } else {
             for (var i = 0; i < content.length; ++i) {
-                @putByValDirect(values, i, content[i].value);
+                @putByValDirect(values, i+1, content[i].value);
             }
         }
-
         @resetQueue(@getByIdDirectPrivate(controller, "queue"));
 
         if (@getByIdDirectPrivate(controller, "closeRequested"))
@@ -96,19 +103,28 @@ function readMany()
     } else {
         return controller.@pull(controller).@then(({value, done}) => {
            if (done) {
-               return {value: [], done: true};
+               return {value: [], size: 0, done: true};
            }
 
-           const content = @getByIdDirectPrivate(controller, "queue").content;
+           const content = queue.content;
            var values = new @Array(content.length + 1);
            
-
+            var size = queue.size;
 
            if ("buffer" in content[0]) {
-                values[0] = new @Uint8Array(content[0].buffer, content[0].byteOffset, content[0].byteLength);
+                values[0] = new @Uint8Array(value.buffer, value.byteOffset, value.byteLength);
                 for (var i = 0; i < content.length; ++i) {
                     @putByValDirect(values, i+1, new @Uint8Array(content[i].buffer, content[i].byteOffset, content[i].byteLength));
                 }
+                size += value.byteLength;
+            } else if (typeof value === 'object' && value && "byteLength" in value) {
+                size += value.byteLength;
+                values[0] = value;
+                for (var i = 0; i < content.length; ++i) {
+                    @putByValDirect(values, i+1, content[i].value);
+                    size += content[i].value.byteLength;
+                }
+
             } else {
                 values[0] = value;
                 for (var i = 0; i < content.length; ++i) {
@@ -116,18 +132,18 @@ function readMany()
                 }
             }
 
-            @resetQueue(@getByIdDirectPrivate(controller, "queue"));
+            @resetQueue(queue);
 
             if (@getByIdDirectPrivate(controller, "closeRequested"))
                 @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
             else
                 @readableStreamDefaultControllerCallPullIfNeeded(controller);
 
-           return {value: values, done: false};
+           return {value: values, size: size, done: false};
         });
     }
 
-    return {value: values, done: false};
+    return {value: values, size, done: false};
 }
 
 function read()

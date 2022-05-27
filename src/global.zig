@@ -161,3 +161,19 @@ pub const IdentityContext = @import("./identity_context.zig").IdentityContext;
 pub const ArrayIdentityContext = @import("./identity_context.zig").ArrayIdentityContext;
 pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
+
+pub fn DebugOnly(comptime Type: type) type {
+    if (comptime Environment.isDebug) {
+        return Type;
+    }
+
+    return void;
+}
+
+pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.isDebug) @TypeOf(val) else void {
+    if (comptime Environment.isDebug) {
+        return val;
+    }
+
+    return {};
+}

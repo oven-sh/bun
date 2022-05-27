@@ -123,7 +123,7 @@ void JSReadableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     auto clientData = WebCore::clientData(vm);
-    this->putDirect(vm, clientData->builtinNames().bunNativeTagPrivateName(), jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    this->putDirect(vm, clientData->builtinNames().bunNativePtrPrivateName(), jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
     reifyStaticProperties(vm, JSReadableStream::info(), JSReadableStreamPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }

@@ -165,6 +165,8 @@ extern "C" void JSCInitialize()
     }
 }
 
+extern "C" void* Bun__getVM();
+
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObjectClass, int count,
     void* console_client)
 {
@@ -181,7 +183,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     JSC::JSLockHolder locker(vm);
     Zig::GlobalObject* globalObject = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
     globalObject->setConsole(globalObject);
-
+    globalObject->isThreadLocalDefaultGlobalObject = true;
     if (count > 0) {
         globalObject->installAPIGlobals(globalObjectClass, count, vm);
     }
@@ -325,6 +327,7 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     , m_builtinInternalFunctions(vm)
 
 {
+    m_bunVM = Bun__getVM();
 
     m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
 }
@@ -1205,8 +1208,8 @@ JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
     return JSValue::encode(jsBoolean(callFrame->uncheckedArgument(0).inherits<JSAbortSignal>()));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeID, JSC__JSValue nativeTag);
-extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeID, JSC__JSValue nativeTag)
+extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeType, JSC__JSValue nativePtr);
+extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeType, JSC__JSValue nativePtr)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1216,8 +1219,8 @@ extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalO
 
     auto function = globalObject->getDirect(vm, builtinNames.createNativeReadableStreamPrivateName()).getObject();
     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-    arguments.append(JSValue::decode(nativeID));
-    arguments.append(JSValue::decode(nativeTag));
+    arguments.append(JSValue::decode(nativeType));
+    arguments.append(JSValue::decode(nativePtr));
 
     auto callData = JSC::getCallData(function);
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
@@ -1716,9 +1719,14 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,
 void GlobalObject::queueMicrotaskToEventLoop(JSC::JSGlobalObject& global,
     Ref<JSC::Microtask>&& task)
 {
-
-    Zig__GlobalObject__queueMicrotaskToEventLoop(
-        &global, &JSMicrotaskCallback::create(global, WTFMove(task)).leakRef());
+    auto& globalObject = reinterpret_cast<GlobalObject&>(global);
+    if (globalObject.isThreadLocalDefaultGlobalObject) {
+        Zig__GlobalObject__queueMicrotaskToEventLoop(
+            &global, reinterpret_cast<JSMicrotaskCallback*>(&JSMicrotaskCallbackDefaultGlobal::create(WTFMove(task)).leakRef()));
+    } else {
+        Zig__GlobalObject__queueMicrotaskToEventLoop(
+            &global, &JSMicrotaskCallback::create(global, WTFMove(task)).leakRef());
+    }
 }
 
 } // namespace Zig

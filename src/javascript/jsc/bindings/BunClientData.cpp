@@ -77,7 +77,6 @@ void JSVMClientData::create(VM* vm)
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);
 
     vm->heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
-
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
 }
 

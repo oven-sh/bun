@@ -62,3 +62,4 @@ pub const Bun__ArrayBuffer = bindings.ArrayBuffer;
 pub const struct_WebCore__DOMURL = bindings.DOMURL;
 pub const struct_WebCore__FetchHeaders = bindings.FetchHeaders;
 pub const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
+pub const struct_VirtualMachine = bindings.VirtualMachine;

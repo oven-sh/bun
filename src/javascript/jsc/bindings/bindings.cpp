@@ -505,7 +505,7 @@ JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 }
 
 // TODO: prevent this from allocating so much memory
-void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3))
+void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3))
 {
 
     globalObject->vm().drainMicrotasks();
@@ -513,7 +513,7 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObjec
     JSC::Strong<JSC::Unknown> promiseValue = { globalObject->vm(), cell };
 
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), [&promiseValue, ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        globalObject->vm(), globalObject, 1, String(), [promiseValue, ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
             auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
 
             WTF::Vector<JSC::EncodedJSValue, 16> arguments;
@@ -524,13 +524,13 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObjec
                 }
             }
 
-            ArgFn3(globalObject, ctx, reinterpret_cast<JSC__JSValue>(arguments.data()), argCount);
+            ArgFn3(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
 
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
     JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
         globalObject->vm(), globalObject, 1, String(),
-        [&promiseValue, ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        [promiseValue, ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
             auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
             WTF::Vector<JSC::EncodedJSValue, 16> arguments;
             arguments.reserveInitialCapacity(argCount);
@@ -540,7 +540,7 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObjec
                 }
             }
 
-            ArgFn4(globalObject, ctx, reinterpret_cast<JSC__JSValue>(arguments.data()), argCount);
+            ArgFn4(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
 
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
@@ -804,6 +804,11 @@ bWTF__String JSC__JSString__value(JSC__JSString* arg0, JSC__JSGlobalObject* arg1
 void Microtask__run(void* microtask, void* global)
 {
     reinterpret_cast<Zig::JSMicrotaskCallback*>(microtask)->call();
+}
+
+void Microtask__run_default(void* microtask, void* global)
+{
+    reinterpret_cast<Zig::JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
 }
 
 bool JSC__JSModuleLoader__checkSyntax(JSC__JSGlobalObject* arg0, const JSC__SourceCode* arg1,
@@ -1096,6 +1101,11 @@ JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObje
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
         arg1->vm(),
         ExternalStringImpl::create(Zig::untag(str.ptr), str.len, nullptr, free_global_string))));
+}
+
+VirtualMachine* JSC__JSGlobalObject__bunVM(JSC__JSGlobalObject* arg0)
+{
+    return reinterpret_cast<VirtualMachine*>(reinterpret_cast<Zig::GlobalObject*>(arg0)->bunVM());
 }
 
 JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1)

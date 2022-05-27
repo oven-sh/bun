@@ -149,6 +149,9 @@ public:
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
+    void* bunVM() { return m_bunVM; }
+    bool isThreadLocalDefaultGlobalObject = false;
+
 private:
     void addBuiltinGlobals(JSC::VM&);
     void finishCreation(JSC::VM&);
@@ -164,9 +167,36 @@ private:
     LazyClassStructure m_JSFFIFunctionStructure;
     LazyClassStructure m_NapiClassStructure;
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
+    void* m_bunVM;
 };
 
-class JSMicrotaskCallback : public RefCounted<JSMicrotaskCallback> {
+class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {
+public:
+    static Ref<JSMicrotaskCallbackDefaultGlobal> create(Ref<JSC::Microtask>&& task)
+    {
+        return adoptRef(*new JSMicrotaskCallbackDefaultGlobal(WTFMove(task).leakRef()));
+    }
+
+    void call(JSC::JSGlobalObject* globalObject)
+    {
+
+        JSC::VM& vm = globalObject->vm();
+        auto task = &m_task.leakRef();
+        task->run(globalObject);
+
+        delete this;
+    }
+
+private:
+    JSMicrotaskCallbackDefaultGlobal(Ref<JSC::Microtask>&& task)
+        : m_task { WTFMove(task) }
+    {
+    }
+
+    Ref<JSC::Microtask> m_task;
+};
+
+class JSMicrotaskCallback final : public RefCounted<JSMicrotaskCallback> {
 public:
     static Ref<JSMicrotaskCallback> create(JSC::JSGlobalObject& globalObject,
         Ref<JSC::Microtask>&& task)
@@ -176,21 +206,27 @@ public:
 
     void call()
     {
+        auto* globalObject = m_globalObject.get();
+        if (UNLIKELY(!globalObject)) {
+            delete this;
+            return;
+        }
+
         JSC::VM& vm = m_globalObject->vm();
         auto task = &m_task.leakRef();
-        task->run(m_globalObject.get());
+        task->run(globalObject);
 
-        task->~Microtask();
+        delete this;
     }
 
 private:
     JSMicrotaskCallback(JSC::JSGlobalObject& globalObject, Ref<JSC::Microtask>&& task)
-        : m_globalObject { globalObject.vm(), &globalObject }
+        : m_globalObject { &globalObject }
         , m_task { WTFMove(task) }
     {
     }
 
-    JSC::Strong<JSC::JSGlobalObject> m_globalObject;
+    JSC::Weak<JSC::JSGlobalObject> m_globalObject;
     Ref<JSC::Microtask> m_task;
 };
 

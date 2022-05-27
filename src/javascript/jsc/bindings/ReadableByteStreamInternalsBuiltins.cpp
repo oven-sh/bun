@@ -360,7 +360,7 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullC
 
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength = 815;
+const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength = 868;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode =
     "(function (controller)\n" \
@@ -375,7 +375,7 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerShoul
     "        return false;\n" \
     "    if (!@getByIdDirectPrivate(controller, \"started\"))\n" \
     "        return false;\n" \
-    "    if (@readableStreamHasDefaultReader(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\").length > 0)\n" \
+    "    if (@readableStreamHasDefaultReader(stream) && (@getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\").length > 0 || !!@getByIdDirectPrivate(reader, \"bunNativePtr\")))\n" \
     "        return true;\n" \
     "    if (@readableStreamHasBYOBReader(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readIntoRequests\").length > 0)\n" \
     "        return true;\n" \
@@ -434,9 +434,28 @@ const char* const s_readableByteStreamInternalsTransferBufferToCurrentRealmCode 
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableByteStreamInternalsReadableStreamReaderKindCodeLength = 266;
+static const JSC::Intrinsic s_readableByteStreamInternalsReadableStreamReaderKindCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableByteStreamInternalsReadableStreamReaderKindCode =
+    "(function (reader) {\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    "\n" \
+    "    if (!!@getByIdDirectPrivate(reader, \"readRequests\"))\n" \
+    "        return @getByIdDirectPrivate(reader, \"bunNativePtr\") ? 3 : 1;\n" \
+    "\n" \
+    "    if (!!@getByIdDirectPrivate(reader, \"readIntoRequests\"))\n" \
+    "        return 2;\n" \
+    "\n" \
+    "    return 0;\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1440;
+const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1629;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCode =
     "(function (controller, chunk)\n" \
@@ -446,28 +465,42 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnque
     "    const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n" \
     "    @assert(!@getByIdDirectPrivate(controller, \"closeRequested\"));\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === @streamReadable);\n" \
-    "    const byteOffset = chunk.byteOffset;\n" \
-    "    const byteLength = chunk.byteLength;\n" \
+    "    var reader = @getByIdDirectPrivate(stream, \"reader\");\n" \
     "\n" \
-    "    if (@readableStreamHasDefaultReader(stream)) {\n" \
-    "        if (!@getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\").length)\n" \
-    "            @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);\n" \
-    "        else {\n" \
-    "            @assert(!@getByIdDirectPrivate(controller, \"queue\").content.length);\n" \
-    "            const transferredView = chunk.constructor === @Uint8Array ? chunk : new @Uint8Array(chunk.buffer, byteOffset, byteLength);\n" \
-    "            @readableStreamFulfillReadRequest(stream, transferredView, false);\n" \
+    "\n" \
+    "    switch (@readableStreamReaderKind(reader)) {\n" \
+    "        \n" \
+    "        case 1: {\n" \
+    "            if (!@getByIdDirectPrivate(reader, \"readRequests\").length)\n" \
+    "                @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);\n" \
+    "            else {\n" \
+    "                @assert(!@getByIdDirectPrivate(controller, \"queue\").content.length);\n" \
+    "                const transferredView = chunk.constructor === @Uint8Array ? chunk : new @Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);\n" \
+    "                @readableStreamFulfillReadRequest(stream, transferredView, false);\n" \
+    "            }\n" \
+    "            break;\n" \
     "        }\n" \
-    "        return;\n" \
-    "    }\n" \
     "\n" \
-    "    if (@readableStreamHasBYOBReader(stream)) {\n" \
-    "        @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);\n" \
-    "        @readableByteStreamControllerProcessPullDescriptors(controller);\n" \
-    "        return;\n" \
-    "    }\n" \
+    "        \n" \
+    "        case 2: {\n" \
+    "            @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);\n" \
+    "            @readableByteStreamControllerProcessPullDescriptors(controller);\n" \
+    "            break;\n" \
+    "        }\n" \
     "\n" \
-    "    @assert(!@isReadableStreamLocked(stream));\n" \
-    "    @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);\n" \
+    "        \n" \
+    "        case 3: {\n" \
+    "            //\n" \
+    "\n" \
+    "            break;\n" \
+    "        }\n" \
+    "\n" \
+    "        default: {\n" \
+    "            @assert(!@isReadableStreamLocked(stream));\n" \
+    "            @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);\n" \
+    "            break;\n" \
+    "        }\n" \
+    "    }\n" \
     "})\n" \
 ;
 

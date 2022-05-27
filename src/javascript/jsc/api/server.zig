@@ -238,7 +238,7 @@ pub const ServerConfig = struct {
     };
 
     pub fn fromJS(global: *JSC.JSGlobalObject, arguments: *JSC.Node.ArgumentsSlice, exception: JSC.C.ExceptionRef) ServerConfig {
-        var env = VirtualMachine.vm.bundler.env;
+        var env = arguments.vm.bundler.env;
 
         var args = ServerConfig{
             .port = 3000,
@@ -250,7 +250,7 @@ pub const ServerConfig = struct {
             args.development = false;
         }
 
-        if (VirtualMachine.vm.bundler.options.production) {
+        if (arguments.vm.bundler.options.production) {
             args.development = false;
         }
 
@@ -264,11 +264,11 @@ pub const ServerConfig = struct {
             }
         }
 
-        if (VirtualMachine.vm.bundler.options.transform_options.port) |port| {
+        if (arguments.vm.bundler.options.transform_options.port) |port| {
             args.port = port;
         }
 
-        if (VirtualMachine.vm.bundler.options.transform_options.origin) |origin| {
+        if (arguments.vm.bundler.options.transform_options.origin) |origin| {
             args.base_uri = origin;
         }
 
@@ -515,6 +515,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         url: string,
         method: HTTP.Method,
         aborted: bool = false,
+        finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
+
+        /// We can only safely free once the request body promise is finalized
+        /// and the response is rejected
+        pending_promises_for_abort: u8 = 0,
 
         has_marked_complete: bool = false,
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
@@ -549,7 +554,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             arguments: []const JSC.JSValue,
         ) void {
             if (ctx.aborted) {
-                ctx.finalize();
+                ctx.finalizeForAbort();
                 return;
             }
 
@@ -579,16 +584,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.render(response);
         }
 
+        pub fn finalizeForAbort(this: *RequestContext) void {
+            this.pending_promises_for_abort -|= 1;
+            if (this.pending_promises_for_abort == 0) this.finalize();
+        }
+
         pub fn onReject(
             ctx: *RequestContext,
             _: *JSC.JSGlobalObject,
             arguments: []const JSC.JSValue,
         ) void {
             if (ctx.aborted) {
-                ctx.finalize();
+                ctx.finalizeForAbort();
                 return;
             }
-
             handleReject(ctx, if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined());
         }
 
@@ -598,10 +607,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             );
 
             if (ctx.aborted) {
-                ctx.finalize();
+                ctx.finalizeForAbort();
                 return;
             }
-
             if (!ctx.resp.hasResponded()) {
                 ctx.renderMissing();
             }
@@ -674,8 +682,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onWritableResponseBuffer(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+            std.debug.assert(this.resp == resp);
             if (this.aborted) {
-                this.finalize();
+                this.finalizeForAbort();
                 return false;
             }
             return this.sendWritableBytes(this.response_buf_owned.items, write_offset, resp);
@@ -694,10 +703,69 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
         }
 
-        pub fn onAbort(this: *RequestContext, _: *App.Response) void {
+        pub fn isDeadRequest(this: *RequestContext) bool {
+            if (this.pending_promises_for_abort > 0) return false;
+
+            if (this.promise != null) {
+                return false;
+            }
+
+            if (this.request_js_object) |obj| {
+                if (obj.value().as(Request)) |req| {
+                    if (req.body == .Locked) {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
+            std.debug.assert(this.resp == resp);
+            std.debug.assert(!this.aborted);
             this.aborted = true;
-            this.finalizeWithoutDeinit();
-            this.markComplete();
+
+            // if we can, free the request now.
+            if (this.isDeadRequest()) {
+                this.finalizeWithoutDeinit();
+                this.markComplete();
+                this.deinit();
+            } else {
+                this.pending_promises_for_abort = 0;
+
+                // if we cannot, we have to reject pending promises
+                // first, we reject the request body promise
+                if (this.request_js_object != null) {
+                    var request_js = this.request_js_object.?.value();
+                    request_js.ensureStillAlive();
+
+                    this.request_js_object = null;
+                    defer request_js.ensureStillAlive();
+                    defer JSC.C.JSValueUnprotect(this.server.globalThis.ref(), request_js.asObjectRef());
+                    // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
+                    // but we received nothing or the connection was aborted
+                    if (request_js.as(Request)) |req| {
+                        // the promise is pending
+                        if (req.body == .Locked and (req.body.Locked.action != .none or req.body.Locked.promise != null)) {
+                            this.pending_promises_for_abort += 1;
+                            req.body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                        }
+                        req.uws_request = null;
+                    }
+                }
+
+                // then, we reject the response promise
+                if (this.promise) |promise| {
+                    this.pending_promises_for_abort += 1;
+                    this.promise = null;
+                    promise.asPromise().?.reject(this.server.globalThis, JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis));
+                }
+
+                if (this.pending_promises_for_abort > 0) {
+                    this.server.vm.tick();
+                }
+            }
         }
 
         pub fn markComplete(this: *RequestContext) void {
@@ -709,7 +777,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // so it's important that we can safely do that
         pub fn finalizeWithoutDeinit(this: *RequestContext) void {
             this.blob.detach();
-            this.request_body_buf.clearAndFree(this.allocator);
+
+            if (comptime Environment.allow_assert) {
+                std.debug.assert(!this.finalized);
+                this.finalized = true;
+            }
 
             if (!this.response_jsvalue.isEmpty()) {
                 this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
@@ -717,38 +789,56 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.request_js_object != null) {
+                var request_js = this.request_js_object.?.value();
+                request_js.ensureStillAlive();
+
+                this.request_js_object = null;
+                defer request_js.ensureStillAlive();
+                defer JSC.C.JSValueUnprotect(this.server.globalThis.ref(), request_js.asObjectRef());
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
-                // but we received nothing
-                if (JSC.JSValue.fromRef(this.request_js_object).as(Request)) |req| {
+                // but we received nothing or the connection was aborted
+                if (request_js.as(Request)) |req| {
+                    // the promise is pending
                     if (req.body == .Locked and req.body.Locked.action != .none and req.body.Locked.promise != null) {
-                        var old_body = req.body;
-                        req.body = JSC.WebCore.Body.Value.empty;
-                        old_body.Locked.callback = null;
-                        old_body.resolve(&req.body, this.server.globalThis);
-                        VirtualMachine.vm.tick();
+                        req.body.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                     }
                     req.uws_request = null;
-                    JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.request_js_object);
-                    this.request_js_object = null;
                 }
             }
 
-            if (this.promise != null) {
-                JSC.C.JSValueUnprotect(this.server.globalThis.ref(), this.promise.?.asObjectRef());
+            if (this.promise) |promise| {
                 this.promise = null;
+
+                if (promise.asInternalPromise()) |prom| {
+                    prom.rejectAsHandled(this.server.globalThis, (JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis)));
+                } else if (promise.asPromise()) |prom| {
+                    prom.rejectAsHandled(this.server.globalThis, (JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis)));
+                }
+                JSC.C.JSValueUnprotect(this.server.globalThis.ref(), promise.asObjectRef());
             }
 
             if (this.response_headers != null) {
                 this.response_headers.?.deref();
                 this.response_headers = null;
             }
-
-            this.response_buf_owned.clearAndFree(this.allocator);
         }
         pub fn finalize(this: *RequestContext) void {
-            var server = this.server;
             this.finalizeWithoutDeinit();
             this.markComplete();
+            this.deinit();
+        }
+
+        pub fn deinit(this: *RequestContext) void {
+            if (comptime Environment.allow_assert)
+                std.debug.assert(this.finalized);
+
+            if (comptime Environment.allow_assert)
+                std.debug.assert(this.has_marked_complete);
+
+            var server = this.server;
+            this.request_body_buf.clearAndFree(this.allocator);
+            this.response_buf_owned.clearAndFree(this.allocator);
+
             server.request_pool_allocator.destroy(this);
         }
 
@@ -855,8 +945,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn onWritableBytes(this: *RequestContext, write_offset: c_ulong, resp: *App.Response) callconv(.C) bool {
+            std.debug.assert(this.resp == resp);
             if (this.aborted) {
-                this.finalize();
+                this.finalizeForAbort();
                 return false;
             }
 
@@ -865,6 +956,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn sendWritableBytes(this: *RequestContext, bytes_: []const u8, write_offset: c_ulong, resp: *App.Response) bool {
+            std.debug.assert(this.resp == resp);
+
             var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
             if (resp.tryEnd(bytes, bytes_.len)) {
                 this.finalize();
@@ -976,7 +1069,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn doSendfile(this: *RequestContext, blob: Blob) void {
             if (this.aborted) {
-                this.finalize();
+                this.finalizeForAbort();
                 return;
             }
 
@@ -994,7 +1087,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onReadFile(this: *RequestContext, result: Blob.Store.ReadFile.ResultType) void {
             if (this.aborted) {
-                this.finalize();
+                this.finalizeForAbort();
                 return;
             }
 
@@ -1024,7 +1117,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     const err = value.Error;
                     _ = value.use();
                     if (this.aborted) {
-                        this.finalize();
+                        this.finalizeForAbort();
                         return;
                     }
                     this.runErrorHandler(err);
@@ -1034,7 +1127,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.blob = value.use();
 
                     if (this.aborted) {
-                        this.finalize();
+                        this.finalizeForAbort();
                         return;
                     }
 
@@ -1068,7 +1161,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn doRender(this: *RequestContext) void {
             if (this.aborted) {
-                this.finalize();
+                this.finalizeForAbort();
                 return;
             }
             var response = this.response_ptr.?;
@@ -1232,7 +1325,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn resolveRequestBody(this: *RequestContext) void {
             if (this.aborted) {
-                this.finalize();
+                this.finalizeForAbort();
                 return;
             }
 
@@ -1251,7 +1344,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn onBodyChunk(this: *RequestContext, _: *App.Response, chunk: []const u8, last: bool) void {
+        pub fn onBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
+            std.debug.assert(this.resp == resp);
+
             if (this.aborted) return;
             this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
             if (last) {
@@ -1617,10 +1712,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
 
             if (ctx.aborted) {
-                ctx.finalize();
+                ctx.finalizeForAbort();
                 return;
             }
-
             if (response_value.isEmptyOrUndefinedOrNull() and !ctx.resp.hasResponded()) {
                 ctx.renderMissing();
                 return;

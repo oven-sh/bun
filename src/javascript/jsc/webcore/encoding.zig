@@ -742,51 +742,51 @@ pub const Encoder = struct {
 
     export fn Bun__encoding__constructFromLatin1AsHex(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .hex);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsASCII(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .ascii);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsURLSafeBase64(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .base64url);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsUTF16(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .utf16le);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsUTF8(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, JSC.Node.Encoding.utf8);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsBase64(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .base64);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsBase64(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .base64);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsHex(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .hex);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsURLSafeBase64(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .base64url);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, JSC.Node.Encoding.utf16le);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsUTF8(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .utf8);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsASCII(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .utf8);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
 
     export fn Bun__encoding__toStringUTF16(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {

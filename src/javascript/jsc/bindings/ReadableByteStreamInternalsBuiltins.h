@@ -115,6 +115,10 @@ extern const char* const s_readableByteStreamInternalsTransferBufferToCurrentRea
 extern const int s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeConstructorKind;
+extern const char* const s_readableByteStreamInternalsReadableStreamReaderKindCode;
+extern const int s_readableByteStreamInternalsReadableStreamReaderKindCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamReaderKindCodeConstructorKind;
 extern const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCode;
 extern const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructAbility;
@@ -202,6 +206,7 @@ extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAdd
     macro(readableByteStreamControllerShouldCallPull, readableByteStreamInternalsReadableByteStreamControllerShouldCallPull, 1) \
     macro(readableByteStreamControllerCallPullIfNeeded, readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeeded, 1) \
     macro(transferBufferToCurrentRealm, readableByteStreamInternalsTransferBufferToCurrentRealm, 1) \
+    macro(readableStreamReaderKind, readableByteStreamInternalsReadableStreamReaderKind, 1) \
     macro(readableByteStreamControllerEnqueue, readableByteStreamInternalsReadableByteStreamControllerEnqueue, 2) \
     macro(readableByteStreamControllerEnqueueChunk, readableByteStreamInternalsReadableByteStreamControllerEnqueueChunk, 4) \
     macro(readableByteStreamControllerRespondWithNewView, readableByteStreamInternalsReadableByteStreamControllerRespondWithNewView, 2) \
@@ -237,6 +242,7 @@ extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAdd
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERSHOULDCALLPULL 1
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERCALLPULLIFNEEDED 1
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_TRANSFERBUFFERTOCURRENTREALM 1
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMREADERKIND 1
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERENQUEUE 1
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERENQUEUECHUNK 1
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLEBYTESTREAMCONTROLLERRESPONDWITHNEWVIEW 1
@@ -273,6 +279,7 @@ extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAdd
     macro(readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode, readableByteStreamControllerShouldCallPull, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength) \
     macro(readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCode, readableByteStreamControllerCallPullIfNeeded, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerCallPullIfNeededCodeLength) \
     macro(readableByteStreamInternalsTransferBufferToCurrentRealmCode, transferBufferToCurrentRealm, ASCIILiteral(), s_readableByteStreamInternalsTransferBufferToCurrentRealmCodeLength) \
+    macro(readableByteStreamInternalsReadableStreamReaderKindCode, readableStreamReaderKind, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamReaderKindCodeLength) \
     macro(readableByteStreamInternalsReadableByteStreamControllerEnqueueCode, readableByteStreamControllerEnqueue, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength) \
     macro(readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCode, readableByteStreamControllerEnqueueChunk, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerEnqueueChunkCodeLength) \
     macro(readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCode, readableByteStreamControllerRespondWithNewView, ASCIILiteral(), s_readableByteStreamInternalsReadableByteStreamControllerRespondWithNewViewCodeLength) \
@@ -325,6 +332,7 @@ extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAdd
     macro(readableStreamFulfillReadIntoRequest) \
     macro(readableStreamHasBYOBReader) \
     macro(readableStreamHasDefaultReader) \
+    macro(readableStreamReaderKind) \
     macro(transferBufferToCurrentRealm) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \

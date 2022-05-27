@@ -319,7 +319,8 @@ pub const Response = struct {
     pub fn makeMaybePooled(ctx: js.JSContextRef, ptr: *Response) JSC.C.JSObjectRef {
         if (comptime JSC.is_bindgen)
             unreachable;
-        if (JSC.VirtualMachine.vm.response_objects_pool) |pool| {
+        var vm = ctx.bunVM();
+        if (vm.response_objects_pool) |pool| {
             if (pool.get(ptr)) |object| {
                 JSC.C.JSValueUnprotect(ctx, object);
                 return object;
@@ -419,7 +420,7 @@ pub const Response = struct {
         _: js.ExceptionRef,
     ) js.JSObjectRef {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
         // var response = getAllocator(ctx).create(Response) catch unreachable;
 
         var response = Response{
@@ -482,7 +483,7 @@ pub const Response = struct {
         _: js.ExceptionRef,
     ) js.JSObjectRef {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
         // var response = getAllocator(ctx).create(Response) catch unreachable;
 
         var response = Response{
@@ -894,7 +895,7 @@ pub const Fetch = struct {
         var headers: ?Headers = null;
         var body: MutableString = MutableString.initEmpty(bun.default_allocator);
         var method = Method.GET;
-        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
         var url: ZigURL = undefined;
         var first_arg = args.nextEat().?;
         var blob_store: ?*Blob.Store = null;
@@ -1025,7 +1026,7 @@ pub const ReadableStream = struct {
         File = 2,
     };
 
-    extern fn ZigGlobalObject__createNativeReadableStream(*JSGlobalObject, nativeTag: JSValue, nativeID: JSValue) JSValue;
+    extern fn ZigGlobalObject__createNativeReadableStream(*JSGlobalObject, nativePtr: JSValue, nativeType: JSValue) JSValue;
 
     pub fn fromNative(globalThis: *JSGlobalObject, id: Tag, ptr: *anyopaque) JSC.JSValue {
         return ZigGlobalObject__createNativeReadableStream(globalThis, JSValue.fromPtr(ptr), JSValue.jsNumber(@enumToInt(id)));
@@ -1093,6 +1094,22 @@ pub const ReadableStream = struct {
             return @intCast(JSC.Node.FileDescriptor, out);
         }
     };
+
+    // pub fn NativeReader(
+    //     comptime Context: type,
+    //     comptime onEnqueue: anytype,
+    //     comptime onClose: anytype,
+    //     comptime onAsJS: anytype,
+    // ) type {
+    //     return struct {
+    //         pub const tag = Context.tag;
+
+    //         pub fn enqueue(globalThis: *JSAGlobalObject, callframe: *const JSC.CallFrame) callconv(.C) JSC.JSValue {
+    //             var this = callframe.argument(0).asPtr(*Context);
+    //             return onEnqueue(this, globalThis, callframe.argument(1));
+    //         }
+    //     };
+    // }
 };
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Headers
@@ -1120,7 +1137,7 @@ pub const Headers = struct {
         };
         headers.entries.ensureTotalCapacity(allocator, header_count) catch unreachable;
         headers.entries.len = header_count;
-        headers.buf.ensureTotalCapacity(allocator, buf_len) catch unreachable;
+        headers.buf.ensureTotalCapacityPrecise(allocator, buf_len) catch unreachable;
         headers.buf.items.len = buf_len;
         var sliced = headers.entries.slice();
         var names = sliced.items(.name);
@@ -1353,7 +1370,7 @@ pub const Blob = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
-        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
         // accept a path or a blob
         var path_or_blob = PathOrBlob.fromJS(ctx, &args, exception) orelse {
             exception.* = JSC.toInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{}, ctx).asObjectRef();
@@ -1476,7 +1493,7 @@ pub const Blob = struct {
         arguments: []const js.JSValueRef,
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
-        var args = JSC.Node.ArgumentsSlice.from(arguments);
+        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
         defer args.deinit();
 
         var path = JSC.Node.PathOrFileDescriptor.fromJS(ctx, &args, exception) orelse {
@@ -1494,7 +1511,8 @@ pub const Blob = struct {
 
     pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
         var path = path_;
-        if (VirtualMachine.vm.getFileBlob(path)) |blob| {
+        var vm = globalThis.bunVM();
+        if (vm.getFileBlob(path)) |blob| {
             blob.ref();
             return Blob.initWithStore(blob, globalThis);
         }
@@ -1510,15 +1528,15 @@ pub const Blob = struct {
             .fd => {
                 switch (path.fd) {
                     std.os.STDIN_FILENO => return Blob.initWithStore(
-                        VirtualMachine.vm.rareData().stdin(),
+                        vm.rareData().stdin(),
                         globalThis,
                     ),
                     std.os.STDERR_FILENO => return Blob.initWithStore(
-                        VirtualMachine.vm.rareData().stderr(),
+                        vm.rareData().stderr(),
                         globalThis,
                     ),
                     std.os.STDOUT_FILENO => return Blob.initWithStore(
-                        VirtualMachine.vm.rareData().stdout(),
+                        vm.rareData().stdout(),
                         globalThis,
                     ),
                     else => {},
@@ -1527,7 +1545,7 @@ pub const Blob = struct {
         }
 
         const result = Blob.initWithStore(Blob.Store.initFile(path, null, bun.default_allocator) catch unreachable, globalThis);
-        VirtualMachine.vm.putFileBlob(path, result.store.?) catch unreachable;
+        vm.putFileBlob(path, result.store.?) catch unreachable;
         return result;
     }
 
@@ -3062,7 +3080,7 @@ pub const Blob = struct {
         // If the optional end parameter is not used as a parameter when making this call, let relativeEnd be size.
         var relativeEnd: i64 = @intCast(i64, this.size);
 
-        var args_iter = JSC.Node.ArgumentsSlice.from(args);
+        var args_iter = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), args);
         if (args_iter.nextEat()) |start_| {
             const start = start_.toInt64();
             if (start < 0) {
@@ -3664,7 +3682,7 @@ pub const Blob = struct {
             },
             .ret = undefined,
         };
-        JSC.VirtualMachine.vm.global.vm().deferGC(&ctx, DeferCtx.run);
+        global.vm().deferGC(&ctx, DeferCtx.run);
         return ctx.ret;
     }
 
@@ -4166,6 +4184,12 @@ pub const Body = struct {
             }
 
             this.* = .{ .Error = error_instance };
+        }
+
+        pub fn toErrorString(this: *Value, comptime err: string, global: *JSGlobalObject) void {
+            var error_str = ZigString.init(err);
+            var error_instance = error_str.toErrorInstance(global);
+            return this.toErrorInstance(error_instance, global);
         }
 
         pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) void {

@@ -623,7 +623,7 @@ pub fn openInEditor(
 ) js.JSValueRef {
     var edit = &VirtualMachine.vm.rareData().editor_context;
 
-    var arguments = JSC.Node.ArgumentsSlice.from(args);
+    var arguments = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), args);
     defer arguments.deinit();
     var path: string = "";
     var editor_choice: ?Editor = null;
@@ -822,7 +822,7 @@ fn doResolve(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) ?JSC.JSValue {
-    var args = JSC.Node.ArgumentsSlice.from(arguments);
+    var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
     defer args.deinit();
     const specifier = args.protectEatNext() orelse {
         JSC.throwInvalidArguments("Expected a specifier and a from path", .{}, ctx, exception);
@@ -1543,7 +1543,7 @@ pub fn serve(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    var args = JSC.Node.ArgumentsSlice.from(arguments);
+    var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
     var config = JSC.API.ServerConfig.fromJS(ctx.ptr(), &args, exception);
     if (exception.* != null) {
         return null;
@@ -1620,7 +1620,7 @@ pub fn allocUnsafe(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    var args = JSC.Node.ArgumentsSlice.from(arguments);
+    var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
 
     const length = @intCast(
         usize,
@@ -1649,7 +1649,7 @@ pub fn mmapFile(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    var args = JSC.Node.ArgumentsSlice.from(arguments);
+    var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
 
     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const path = getFilePath(ctx, arguments[0..@minimum(1, arguments.len)], &buf, exception) orelse return null;
@@ -1795,7 +1795,7 @@ pub const Hash = struct {
                 arguments: []const js.JSValueRef,
                 exception: js.ExceptionRef,
             ) js.JSValueRef {
-                var args = JSC.Node.ArgumentsSlice.from(arguments);
+                var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
                 var input: []const u8 = "";
                 var input_slice = ZigString.Slice.empty;
                 defer input_slice.deinit();

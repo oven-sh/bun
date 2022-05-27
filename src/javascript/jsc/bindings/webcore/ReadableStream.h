@@ -41,7 +41,7 @@ public:
     static Ref<ReadableStream> create(JSDOMGlobalObject& globalObject, JSReadableStream& readableStream) { return adoptRef(*new ReadableStream(globalObject, readableStream)); }
 
     static ExceptionOr<Ref<ReadableStream>> create(JSC::JSGlobalObject&, RefPtr<ReadableStreamSource>&&);
-    static ExceptionOr<Ref<ReadableStream>> create(JSC::JSGlobalObject& lexicalGlobalObject, RefPtr<ReadableStreamSource>&& source, JSC::JSValue nativeTag);
+    static ExceptionOr<Ref<ReadableStream>> create(JSC::JSGlobalObject& lexicalGlobalObject, RefPtr<ReadableStreamSource>&& source, JSC::JSValue nativePtr);
 
     WEBCORE_EXPORT static bool isDisturbed(JSC::JSGlobalObject&, JSC::JSValue);
 

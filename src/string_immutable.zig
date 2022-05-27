@@ -1036,6 +1036,56 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
     return list.toOwnedSlice();
 }
 
+pub fn allocateLatin1IntoUTF8ForArrayBuffer(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime Type: type, latin1_: Type) !JSC.JSValue {
+    if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
+        var out = try allocator.alloc(u8, latin1_.len);
+        @memcpy(out.ptr, latin1_.ptr, latin1_.len);
+        return out;
+    }
+
+    var latin1 = latin1_;
+
+    if (firstNonASCII(latin1)) |start_i| {
+        var list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len + 2);
+        list.items.len = start_i;
+        @memcpy(list.items.ptr, latin1.ptr, start_i);
+        {
+            var buf = list.items.ptr[list.items.len .. list.items.len + 2][0..2];
+            list.items.len += 2;
+            buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
+            latin1 = latin1[1..];
+        }
+
+        while (latin1.len > 0) {
+            const read = @as(usize, firstNonASCII(latin1) orelse @intCast(u32, latin1.len));
+            try list.ensureTotalCapacityPrecise(
+                list.items.len + read + if (read != latin1.len) @as(usize, 2) else @as(usize, 0),
+            );
+            const before = list.items.len;
+            list.items.len += read;
+            @memcpy(list.items[before..].ptr, latin1.ptr, read);
+            latin1 = latin1[read..];
+
+            if (latin1.len > 0) {
+                try list.ensureUnusedCapacity(2);
+                var buf = list.items.ptr[list.items.len .. list.items.len + 2][0..2];
+                list.items.len += 2;
+                buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
+                latin1 = latin1[1..];
+            }
+        }
+
+        return JSC.ArrayBuffer.fromBytes(list.toOwnedSlice(), .Uint8Array).toJS(globalThis, null);
+    }
+
+    {
+        const array_buffer = JSC.JSValue.createUninitializedUint8Array(globalThis, latin1.len);
+        var bytes = array_buffer.asArrayBuffer(globalThis).?.slice();
+        @memcpy(bytes.ptr, latin1.ptr, latin1.len);
+        return array_buffer;
+    }
+}
+
 pub const UTF16Replacement = struct {
     code_point: u32 = unicode_replacement,
     len: u3 = 0,
@@ -1144,6 +1194,7 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
         @memcpy(buf_.ptr, latin1_.ptr, to_copy);
         return .{ .written = to_copy, .read = to_copy };
     }
+
     var buf = buf_;
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
@@ -1164,11 +1215,11 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
 
         while (read < latin1.len and latin1[read] < 0x80) : (read += 1) {}
 
-        const written = @minimum(read, buf.len);
-        if (written == 0) break;
-        @memcpy(buf.ptr, latin1.ptr, written);
-        latin1 = latin1[written..];
-        buf = buf[written..];
+        const to_copy = @minimum(read, buf.len);
+        @memcpy(buf.ptr, latin1.ptr, to_copy);
+        latin1 = latin1[to_copy..];
+        buf = buf[to_copy..];
+
         if (latin1.len > 0 and buf.len >= 2) {
             buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
             latin1 = latin1[1..];
@@ -1177,8 +1228,8 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
     }
 
     return .{
-        .read = @truncate(u32, buf_.len - buf.len),
-        .written = @truncate(u32, latin1_.len - latin1.len),
+        .written = @truncate(u32, buf_.len - buf.len),
+        .read = @truncate(u32, latin1_.len - latin1.len),
     };
 }
 

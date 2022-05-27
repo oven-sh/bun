@@ -62,6 +62,7 @@ pub const Bun__ArrayBuffer = bindings.ArrayBuffer;
 pub const struct_WebCore__DOMURL = bindings.DOMURL;
 pub const struct_WebCore__FetchHeaders = bindings.FetchHeaders;
 pub const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
+pub const struct_VirtualMachine = bindings.VirtualMachine;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;
@@ -75,6 +76,8 @@ pub const __mbstate_t = extern union {
     __mbstate8: [128]u8,
     _mbstateL: c_longlong,
 };
+
+pub const VirtualMachine = struct_VirtualMachine;
 
 pub const JSC__GeneratorPrototype = struct_JSC__GeneratorPrototype;
 
@@ -233,6 +236,7 @@ pub extern fn JSC__JSGlobalObject__asyncGeneratorPrototype(arg0: [*c]JSC__JSGlob
 pub extern fn JSC__JSGlobalObject__asyncIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__AsyncIteratorPrototype;
 pub extern fn JSC__JSGlobalObject__bigIntPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__BigIntPrototype;
 pub extern fn JSC__JSGlobalObject__booleanPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
+pub extern fn JSC__JSGlobalObject__bunVM(arg0: [*c]JSC__JSGlobalObject) ?*VirtualMachine;
 pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]*anyopaque, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString) void;
@@ -297,7 +301,7 @@ pub extern fn WTF__String__isEmpty(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isExternal(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isStatic(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__length(arg0: [*c]WTF__String) usize;
-pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue, usize) callconv(.C) void, ArgFn4: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue, usize) callconv(.C) void) void;
+pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, [*c]*anyopaque, usize) callconv(.C) void, ArgFn4: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, [*c]*anyopaque, usize) callconv(.C) void) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]JSC__JSCell;
 pub extern fn JSC__JSValue__asInternalPromise(JSValue0: JSC__JSValue) [*c]JSC__JSInternalPromise;

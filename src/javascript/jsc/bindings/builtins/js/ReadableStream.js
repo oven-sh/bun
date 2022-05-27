@@ -89,12 +89,12 @@ function initializeReadableStream(underlyingSource, strategy)
 }
 
 @globalPrivate
-function createNativeReadableStream(nativeTag, nativeID) {
+function createNativeReadableStream(nativePtr, nativeType) {
     "use strict";
     var cached =  globalThis[Symbol.for("Bun.nativeReadableStreamPrototype")] ||= new @Map;
-    var Prototype = cached.@get(nativeID);
+    var Prototype = cached.@get(nativeType);
     if (Prototype === @undefined) {
-        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for("Bun.lazy")](nativeID);
+        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for("Bun.lazy")](nativeType);
         var closer = [false];
 
         var handleResult = function handleResult(result, controller) {
@@ -154,13 +154,14 @@ function createNativeReadableStream(nativeTag, nativeID) {
 
             static registry = new FinalizationRegistry(deinit);
         }
-        cached.@set(nativeID, Prototype);
+        cached.@set(nativeType, Prototype);
     }
     
-    var instance = new Prototype(nativeTag);
-    Prototype.registry.register(instance, nativeTag);
+    var instance = new Prototype(nativePtr);
+    Prototype.registry.register(instance, nativePtr);
     var stream = new @ReadableStream(instance);
-    @putByIdDirectPrivate(stream, "bunNativeTag", nativeID);
+    @putByIdDirectPrivate(stream, "bunNativeType", nativeType);
+    @putByIdDirectPrivate(stream, "bunNativePtr", nativePtr);
     return stream;
 }
 
@@ -192,6 +193,7 @@ function getReader(options)
     if (mode == 'byob')
         return new @ReadableStreamBYOBReader(this);
 
+    
     @throwTypeError("Invalid mode is specified");
 }
 

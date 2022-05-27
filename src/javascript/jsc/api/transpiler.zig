@@ -737,7 +737,7 @@ pub fn constructor(
     exception: js.ExceptionRef,
 ) js.JSObjectRef {
     var temp = std.heap.ArenaAllocator.init(getAllocator(ctx));
-    var args = JSC.Node.ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     defer temp.deinit();
     const transpiler_options: TranspilerOptions = if (arguments.len > 0)
         transformOptionsFromJSC(ctx, temp.allocator(), &args, exception) catch {
@@ -874,7 +874,7 @@ pub fn scan(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) JSC.C.JSObjectRef {
-    var args = JSC.Node.ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
         JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
@@ -965,7 +965,7 @@ pub fn transform(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) JSC.C.JSObjectRef {
-    var args = JSC.Node.ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
         JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
@@ -1006,7 +1006,7 @@ pub fn transformSync(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) JSC.C.JSObjectRef {
-    var args = JSC.Node.ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
         JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
@@ -1193,7 +1193,7 @@ pub fn scanImports(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) JSC.C.JSObjectRef {
-    var args = JSC.Node.ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+    var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     const code_arg = args.next() orelse {
         JSC.throwInvalidArguments("Expected a string or Uint8Array", .{}, ctx, exception);
         return null;

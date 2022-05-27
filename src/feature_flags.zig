@@ -91,4 +91,6 @@ pub const atomic_file_watcher = env.isLinux;
 
 pub const node_streams = env.isDebug or env.isTest;
 pub const simd = true;
-pub const latin1_is_now_ascii = true;
+
+// This change didn't seem to make a meaningful difference in microbenchmarks
+pub const latin1_is_now_ascii = false;

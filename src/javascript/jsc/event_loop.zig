@@ -260,11 +260,12 @@ pub const AnyTask = struct {
     }
 };
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
-
+const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
     Microtask,
+    MicrotaskForDefaultGlobalObject,
     AsyncTransformTask,
     BunTimerTimeoutTask,
     ReadFileTask,
@@ -296,6 +297,11 @@ pub const EventLoop = struct {
             switch (task.tag()) {
                 .Microtask => {
                     var micro: *Microtask = task.as(Microtask);
+                    micro.run(global);
+                    finished += 1;
+                },
+                .MicrotaskForDefaultGlobalObject => {
+                    var micro: *MicrotaskForDefaultGlobalObject = task.as(MicrotaskForDefaultGlobalObject);
                     micro.run(global);
                     finished += 1;
                 },

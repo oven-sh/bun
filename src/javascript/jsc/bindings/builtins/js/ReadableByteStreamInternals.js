@@ -263,7 +263,7 @@ function readableByteStreamControllerShouldCallPull(controller)
         return false;
     if (!@getByIdDirectPrivate(controller, "started"))
         return false;
-    if (@readableStreamHasDefaultReader(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").length > 0)
+    if (@readableStreamHasDefaultReader(stream) && (@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").length > 0 || !!@getByIdDirectPrivate(reader, "bunNativePtr")))
         return true;
     if (@readableStreamHasBYOBReader(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readIntoRequests").length > 0)
         return true;
@@ -309,6 +309,18 @@ function transferBufferToCurrentRealm(buffer)
     return buffer;
 }
 
+function readableStreamReaderKind(reader) {
+    "use strict";
+
+
+    if (!!@getByIdDirectPrivate(reader, "readRequests"))
+        return @getByIdDirectPrivate(reader, "bunNativePtr") ? 3 : 1;
+
+    if (!!@getByIdDirectPrivate(reader, "readIntoRequests"))
+        return 2;
+
+    return 0;
+}
 function readableByteStreamControllerEnqueue(controller, chunk)
 {
     "use strict";
@@ -316,28 +328,42 @@ function readableByteStreamControllerEnqueue(controller, chunk)
     const stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
     @assert(!@getByIdDirectPrivate(controller, "closeRequested"));
     @assert(@getByIdDirectPrivate(stream, "state") === @streamReadable);
-    const byteOffset = chunk.byteOffset;
-    const byteLength = chunk.byteLength;
+    var reader = @getByIdDirectPrivate(stream, "reader");
 
-    if (@readableStreamHasDefaultReader(stream)) {
-        if (!@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").length)
-            @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);
-        else {
-            @assert(!@getByIdDirectPrivate(controller, "queue").content.length);
-            const transferredView = chunk.constructor === @Uint8Array ? chunk : new @Uint8Array(chunk.buffer, byteOffset, byteLength);
-            @readableStreamFulfillReadRequest(stream, transferredView, false);
+
+    switch (@readableStreamReaderKind(reader)) {
+        /* default reader */
+        case 1: {
+            if (!@getByIdDirectPrivate(reader, "readRequests").length)
+                @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);
+            else {
+                @assert(!@getByIdDirectPrivate(controller, "queue").content.length);
+                const transferredView = chunk.constructor === @Uint8Array ? chunk : new @Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+                @readableStreamFulfillReadRequest(stream, transferredView, false);
+            }
+            break;
         }
-        return;
-    }
 
-    if (@readableStreamHasBYOBReader(stream)) {
-        @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);
-        @readableByteStreamControllerProcessPullDescriptors(controller);
-        return;
-    }
+        /* BYOB */
+        case 2: {
+            @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);
+            @readableByteStreamControllerProcessPullDescriptors(controller);
+            break;
+        }
 
-    @assert(!@isReadableStreamLocked(stream));
-    @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), byteOffset, byteLength);
+        /* NativeReader */
+        case 3: {
+            // reader.@enqueueNative(@getByIdDirectPrivate(reader, "bunNativePtr"), chunk);
+
+            break;
+        }
+
+        default: {
+            @assert(!@isReadableStreamLocked(stream));
+            @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);
+            break;
+        }
+    }
 }
 
 // Spec name: readableByteStreamControllerEnqueueChunkToQueue.

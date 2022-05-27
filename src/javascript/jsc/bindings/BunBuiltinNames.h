@@ -48,7 +48,8 @@ using namespace JSC;
     macro(backpressureChangePromise) \
     macro(basename) \
     macro(body) \
-    macro(bunNativeTag) \
+    macro(bunNativePtr) \
+    macro(bunNativeType) \
     macro(byobRequest) \
     macro(cancel) \
     macro(cancelAlgorithm) \

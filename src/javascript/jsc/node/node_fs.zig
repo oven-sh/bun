@@ -3222,9 +3222,8 @@ pub const NodeFS = struct {
                 buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
                 buf.expandToCapacity();
                 var total: usize = 0;
-
                 while (total < size) {
-                    switch (Syscall.read(fd, buf.items[total..])) {
+                    switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
                         .err => |err| return .{
                             .err = err,
                         },

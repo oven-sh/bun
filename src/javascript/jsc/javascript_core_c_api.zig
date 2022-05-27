@@ -1,15 +1,19 @@
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
-    pub inline fn ptr(this: *@This()) *cpp.JSGlobalObject {
-        return @ptrCast(*cpp.JSGlobalObject, @alignCast(@alignOf(*cpp.JSGlobalObject), this));
+    pub fn value(this: *const @This()) cpp.JSValue {
+        return @bitCast(cpp.JSValue.Type, @ptrToInt(this));
+    }
+
+    pub inline fn bunVM(this: *@This()) *@import("javascript_core").VirtualMachine {
+        return this.ptr().bunVM();
     }
 };
 pub const Private = anyopaque;
 pub const struct_OpaqueJSContextGroup = generic;
 pub const JSContextGroupRef = ?*const struct_OpaqueJSContextGroup;
 pub const struct_OpaqueJSContext = generic;
-pub const JSContextRef = *struct_OpaqueJSContext;
-pub const JSGlobalContextRef = ?*struct_OpaqueJSContext;
+pub const JSContextRef = *cpp.JSGlobalObject;
+pub const JSGlobalContextRef = ?*cpp.JSGlobalObject;
 pub const struct_OpaqueJSString = generic;
 pub const JSStringRef = ?*struct_OpaqueJSString;
 pub const struct_OpaqueJSClass = opaque {
@@ -26,7 +30,7 @@ pub const JSTypedArrayBytesDeallocator = ?fn (*anyopaque, *anyopaque) callconv(.
 pub const OpaqueJSValue = generic;
 pub const JSValueRef = ?*OpaqueJSValue;
 pub const JSObjectRef = ?*OpaqueJSValue;
-pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: JSObjectRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSValueRef;
+pub extern fn JSEvaluateScript(ctx: JSContextRef, script: JSStringRef, thisObject: ?*anyopaque, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) JSValueRef;
 pub extern fn JSCheckScriptSyntax(ctx: JSContextRef, script: JSStringRef, sourceURL: JSStringRef, startingLineNumber: c_int, exception: ExceptionRef) bool;
 pub extern fn JSGarbageCollect(ctx: JSContextRef) void;
 pub const JSType = enum(c_uint) {

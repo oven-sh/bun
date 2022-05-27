@@ -1506,6 +1506,10 @@ pub const JSGlobalObject = extern struct {
     }
     pub const ctx = ref;
 
+    pub inline fn ptr(this: *JSGlobalObject) *JSGlobalObject {
+        return this;
+    }
+
     pub fn objectPrototype(this: *JSGlobalObject) *ObjectPrototype {
         return cppFn("objectPrototype", .{this});
     }
@@ -1603,7 +1607,20 @@ pub const JSGlobalObject = extern struct {
         return cppFn("deleteModuleRegistryEntry", .{ this, name_ });
     }
 
+    pub fn bunVM_(this: *JSGlobalObject) *anyopaque {
+        return cppFn("bunVM", .{this});
+    }
+
+    pub fn bunVM(this: *JSGlobalObject) *JSC.VirtualMachine {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(this.bunVM_() == @ptrCast(*anyopaque, JSC.VirtualMachine.vm));
+        }
+
+        return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));
+    }
+
     pub const Extern = [_][]const u8{
+        "bunVM",
         "putCachedObject",
         "getCachedObject",
         "createAggregateError",
@@ -2601,7 +2618,7 @@ pub const JSValue = enum(u64) {
     const Thenable = fn (
         global: [*c]JSGlobalObject,
         ctx: ?*anyopaque,
-        arguments_ptr: JSC.JSValue,
+        arguments_ptr: [*c]*anyopaque,
         arguments_len: usize,
     ) callconv(.C) void;
     pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: Thenable, reject: Thenable) void {
@@ -2612,23 +2629,21 @@ pub const JSValue = enum(u64) {
             fn resolve(
                 globalThis: [*c]JSGlobalObject,
                 ptr: ?*anyopaque,
-                arguments_ptr_: JSC.JSValue,
+                arguments_ptr: [*c]*anyopaque,
                 arguments_len: usize,
             ) callconv(.C) void {
                 @setRuntimeSafety(false);
-                var arguments_ptr = @intToPtr([*]const JSC.JSValue, @enumToInt(arguments_ptr_));
-                onResolve(bun.cast(*Then, ptr.?), globalThis, arguments_ptr[0..arguments_len]);
+                onResolve(bun.cast(*Then, ptr.?), globalThis, @ptrCast([*]const JSC.JSValue, arguments_ptr)[0..arguments_len]);
             }
 
             pub fn reject(
                 globalThis: [*c]JSGlobalObject,
                 ptr: ?*anyopaque,
-                arguments_ptr_: JSC.JSValue,
+                arguments_ptr: [*c]*anyopaque,
                 arguments_len: usize,
             ) callconv(.C) void {
                 @setRuntimeSafety(false);
-                var arguments_ptr = @intToPtr([*]const JSC.JSValue, @enumToInt(arguments_ptr_));
-                onReject(bun.cast(*Then, ptr.?), globalThis, arguments_ptr[0..arguments_len]);
+                onReject(bun.cast(*Then, ptr.?), globalThis, @ptrCast([*]const JSC.JSValue, arguments_ptr)[0..arguments_len]);
             }
         };
 
@@ -2781,15 +2796,15 @@ pub const JSValue = enum(u64) {
     }
 
     pub inline fn asRef(this: JSValue) C_API.JSValueRef {
-        return @intToPtr(C_API.JSValueRef, @intCast(usize, @enumToInt(this)));
+        return @intToPtr(C_API.JSValueRef, @bitCast(usize, @enumToInt(this)));
     }
 
     pub inline fn c(this: C_API.JSValueRef) JSValue {
-        return @intToEnum(JSValue, @ptrToInt(this));
+        return @intToEnum(JSValue, @bitCast(JSValue.Type, @ptrToInt(this)));
     }
 
     pub inline fn fromRef(this: C_API.JSValueRef) JSValue {
-        return @intToEnum(JSValue, @ptrToInt(this));
+        return @intToEnum(JSValue, @bitCast(JSValue.Type, @ptrToInt(this)));
     }
 
     pub inline fn asObjectRef(this: JSValue) C_API.JSObjectRef {
@@ -2809,7 +2824,7 @@ pub const JSValue = enum(u64) {
                 @panic("JSValue is null");
             }
         }
-        return @intToPtr(*anyopaque, @enumToInt(this));
+        return @intToPtr(*anyopaque, @bitCast(usize, @enumToInt(this)));
     }
 
     pub const Extern = [_][]const u8{ "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "getReadableStreamState", "getWritableStreamState", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };

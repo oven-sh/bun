@@ -96,7 +96,7 @@ BITCODE_OR_SECTIONS=-fdata-sections -ffunction-sections
 LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
 LIBTOOL=glibtoolize
-AR=llvm-ar
+AR=$(LLVM_PREFIX)/bin/llvm-ar
 BITCODE_OR_SECTIONS=
 endif
 

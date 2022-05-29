@@ -322,7 +322,8 @@ To create a new Next.js app with bun:
 ```bash
 bun create next ./app
 cd app
-bun
+bun # bundle dependencies
+bun dev # start dev server
 ```
 
 To use an existing Next.js app with bun:

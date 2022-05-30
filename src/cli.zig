@@ -272,7 +272,14 @@ pub const Arguments = struct {
         var config_path_: []const u8 = user_config_path_ orelse "";
 
         var auto_loaded: bool = false;
-        if (config_path_.len == 0 and (user_config_path_ != null or Command.Tag.always_loads_config.get(cmd))) {
+        if (config_path_.len == 0 and (user_config_path_ != null or
+            Command.Tag.always_loads_config.get(cmd) or
+            (cmd == .AutoCommand and
+            // "bun"
+            (ctx.positionals.len == 0 or
+            // "bun file.js"
+            ctx.positionals.len > 0 and options.defaultLoaders.has(std.fs.path.extension(ctx.positionals[0]))))))
+        {
             config_path_ = "bunfig.toml";
             auto_loaded = true;
         }
@@ -343,6 +350,7 @@ pub const Arguments = struct {
         }
 
         ctx.args.absolute_working_dir = cwd;
+        ctx.positionals = args.positionals();
 
         if (comptime Command.Tag.loads_config.get(cmd)) {
             try loadConfigWithCmdArgs(cmd, allocator, args, ctx);
@@ -397,7 +405,6 @@ pub const Arguments = struct {
         opts.no_summary = args.flag("--no-summary");
         opts.disable_hmr = args.flag("--disable-hmr");
 
-        ctx.positionals = args.positionals();
         ctx.debug.silent = args.flag("--silent");
         if (opts.port != null and opts.origin == null) {
             opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
@@ -444,7 +451,7 @@ pub const Arguments = struct {
         }
 
         if (opts.entry_points.len == 0) {
-            var entry_points = args.positionals();
+            var entry_points = ctx.positionals;
 
             switch (comptime cmd) {
                 .BunCommand => {

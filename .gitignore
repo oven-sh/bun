@@ -99,5 +99,3 @@ packages/bun-wasm/*.d.ts
 
 src/fallback.version
 src/runtime.version
-src/javascript/jsc/bindings/headers-cpp.h
-src/javascript/jsc/bindings/headers.h

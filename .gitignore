@@ -96,3 +96,8 @@ packages/bun-wasm/*.map
 packages/bun-wasm/*.js
 packages/bun-wasm/*.d.ts
 *.bc
+
+src/fallback.version
+src/runtime.version
+src/javascript/jsc/bindings/headers-cpp.h
+src/javascript/jsc/bindings/headers.h

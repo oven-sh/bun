@@ -297,13 +297,26 @@ pub const RunCommand = struct {
         child_process.stdout_behavior = .Inherit;
 
         const result = child_process.spawnAndWait() catch |err| {
-            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
+            if (err == error.AccessDenied) {
+                {
+                    var stat = std.mem.zeroes(std.c.Stat);
+                    const rc = bun.C.stat(std.meta.assumeSentinel(executable, 0), &stat);
+                    if (rc == 0) {
+                        if (std.os.S.ISDIR(stat.mode)) {
+                            Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
+                            Output.flush();
+                            Global.exit(1);
+                        }
+                    }
+                }
+            }
+            Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
             Output.flush();
-            return false;
+            Global.exit(1);
         };
 
         if (result.Exited > 0) {
-            Output.prettyErrorln("<r><red>error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ std.fs.path.basename(executable), result.Exited });
+            Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), result.Exited });
             Output.flush();
             Global.exit(result.Exited);
         }
@@ -947,7 +960,7 @@ pub const RunCommand = struct {
         }
 
         if (comptime log_errors) {
-            Output.prettyError("<r><red>error:<r> Missing script: <b>{s}<r>\n", .{script_name_to_search});
+            Output.prettyError("<r><red>error:<r> Missing script \"<b>{s}<r>\"\n", .{script_name_to_search});
             Output.flush();
             Global.exit(0);
         }

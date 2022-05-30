@@ -1131,8 +1131,10 @@ pub const Command = struct {
                     }
                 }
 
+                var was_js_like = false;
                 if (options.defaultLoaders.get(extension)) |loader| {
                     if (loader.isJavaScriptLike()) {
+                        was_js_like = true;
                         possibly_open_with_bun_js: {
                             const script_name_to_search = ctx.args.entry_points[0];
 
@@ -1205,6 +1207,26 @@ pub const Command = struct {
                     if (try RunCommand.exec(ctx, true, false)) {
                         return;
                     }
+
+                    Output.prettyErrorln("<r><red>error<r>: Script not found \"<b>{s}<r>\"", .{
+                        ctx.positionals[0],
+                    });
+                    Output.flush();
+                    Global.exit(1);
+                }
+
+                if (was_js_like) {
+                    Output.prettyErrorln("<r><red>error<r>: Module not found \"<b>{s}<r>\"", .{
+                        ctx.positionals[0],
+                    });
+                    Output.flush();
+                    Global.exit(1);
+                } else if (ctx.positionals.len > 0) {
+                    Output.prettyErrorln("<r><red>error<r>: File not found \"<b>{s}<r>\"", .{
+                        ctx.positionals[0],
+                    });
+                    Output.flush();
+                    Global.exit(1);
                 }
 
                 if (FeatureFlags.dev_only) {

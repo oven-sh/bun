@@ -855,15 +855,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
 
 /* Hash table for constructor */
 static const HashTableValue JSSQLStatementConstructorTableValues[] = {
-    { "open", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementOpenStatementFunction), (intptr_t)(2) } },
-    { "close", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementCloseStatementFunction), (intptr_t)(1) } },
-    { "prepare", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementPrepareStatementFunction), (intptr_t)(2) } },
-    { "run", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteFunction), (intptr_t)(3) } },
-    { "isInTransaction", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementIsInTransactionFunction), (intptr_t)(1) } },
-    { "loadExtension", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementLoadExtensionFunction), (intptr_t)(2) } },
-    { "setCustomSQLite", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementSetCustomSQLite), (intptr_t)(1) } },
-    { "serialize", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementSerialize), (intptr_t)(1) } },
-    { "deserialize", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementDeserialize), (intptr_t)(2) } },
+    { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementOpenStatementFunction), (intptr_t)(2) } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementCloseStatementFunction), (intptr_t)(1) } },
+    { "prepare"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementPrepareStatementFunction), (intptr_t)(2) } },
+    { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteFunction), (intptr_t)(3) } },
+    { "isInTransaction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementIsInTransactionFunction), (intptr_t)(1) } },
+    { "loadExtension"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementLoadExtensionFunction), (intptr_t)(2) } },
+    { "setCustomSQLite"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementSetCustomSQLite), (intptr_t)(1) } },
+    { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementSerialize), (intptr_t)(1) } },
+    { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementDeserialize), (intptr_t)(2) } },
 };
 
 const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
@@ -1358,15 +1358,15 @@ const ClassInfo JSSQLStatement::s_info = { "SQLStatement"_s, nullptr, nullptr, n
 
 /* Hash table for prototype */
 static const HashTableValue JSSQLStatementTableValues[] = {
-    { "run", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionRun), (intptr_t)(1) } },
-    { "get", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionGet), (intptr_t)(1) } },
-    { "all", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionAll), (intptr_t)(1) } },
-    { "values", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionRows), (intptr_t)(1) } },
-    { "finalize", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementFunctionFinalize), (intptr_t)(0) } },
-    { "toString", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementToStringFunction), (intptr_t)(0) } },
-    { "columns", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsSqlStatementGetColumnNames), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "columnsCount", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsSqlStatementGetColumnCount), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "paramsCount", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsSqlStatementGetParamCount), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionRun), (intptr_t)(1) } },
+    { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionGet), (intptr_t)(1) } },
+    { "all"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionAll), (intptr_t)(1) } },
+    { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementExecuteStatementFunctionRows), (intptr_t)(1) } },
+    { "finalize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementFunctionFinalize), (intptr_t)(0) } },
+    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsSQLStatementToStringFunction), (intptr_t)(0) } },
+    { "columns"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsSqlStatementGetColumnNames), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "columnsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsSqlStatementGetColumnCount), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "paramsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsSqlStatementGetParamCount), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
 };
 
 void JSSQLStatement::finishCreation(VM& vm)

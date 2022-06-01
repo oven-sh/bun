@@ -455,7 +455,7 @@ const char* const s_readableByteStreamInternalsReadableStreamReaderKindCode =
 
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1629;
+const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1642;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCode =
     "(function (controller, chunk)\n" \
@@ -468,7 +468,7 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnque
     "    var reader = @getByIdDirectPrivate(stream, \"reader\");\n" \
     "\n" \
     "\n" \
-    "    switch (@readableStreamReaderKind(reader)) {\n" \
+    "    switch (reader ? @readableStreamReaderKind(reader) : 0) {\n" \
     "        \n" \
     "        case 1: {\n" \
     "            if (!@getByIdDirectPrivate(reader, \"readRequests\").length)\n" \

@@ -119,7 +119,7 @@ const char* const s_readableStreamInitializeReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamCreateNativeReadableStreamCodeLength = 2446;
+const int s_readableStreamCreateNativeReadableStreamCodeLength = 2905;
 static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateNativeReadableStreamCode =
     "(function (nativePtr, nativeType) {\n" \
@@ -130,15 +130,31 @@ const char* const s_readableStreamCreateNativeReadableStreamCode =
     "        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for(\"Bun.lazy\")](nativeType);\n" \
     "        var closer = [false];\n" \
     "\n" \
+    "        function handleNativeReadableStreamPromiseResult(val) {\n" \
+    "            \"use strict\";\n" \
+    "            var {r, c} = this;\n" \
+    "            this.r = @undefined;\n" \
+    "            this.c = @undefined;\n" \
+    "            r(val, c);\n" \
+    "        }\n" \
+    "        \n" \
+    "        function closeNativeReadableStreamOnNextTick(controller) {\n" \
+    "            \"use strict\";\n" \
+    "            controller.close();\n" \
+    "            controller = @undefined;\n" \
+    "        }        \n" \
+    "\n" \
     "        var handleResult = function handleResult(result, controller) {\n" \
+    "            \"use strict\";\n" \
+    "\n" \
     "            if (result && @isPromise(result)) {\n" \
-    "                result.then((val) => handleResult(val, controller), err => controller.error(err));\n" \
+    "                return result.then(handleNativeReadableStreamPromiseResult.bind({c: controller, r: handleResult}), controller.error);\n" \
     "            } else if (result !== false) {\n" \
     "                controller.enqueue(result);\n" \
     "            }\n" \
     "\n" \
     "            if (closer[0] || result === false) {\n" \
-    "                new @Promise((resolve, reject) => resolve(controller.close())).then(() => {}, () => {});\n" \
+    "                @enqueueJob(closeNativeReadableStreamOnNextTick, controller);\n" \
     "                closer[0] = false;\n" \
     "            }\n" \
     "        }\n" \
@@ -164,7 +180,7 @@ const char* const s_readableStreamCreateNativeReadableStreamCode =
     "                    return controller.error(err);\n" \
     "                }\n" \
     "\n" \
-    "                 handleResult(result, controller);\n" \
+    "                return  handleResult(result, controller);\n" \
     "            }\n" \
     "\n" \
     "            start_(controller) {\n" \
@@ -178,7 +194,7 @@ const char* const s_readableStreamCreateNativeReadableStreamCode =
     "                    return controller.error(err);\n" \
     "                }\n" \
     "\n" \
-    "                 handleResult(result, controller);\n" \
+    "                 return handleResult(result, controller);\n" \
     "            }\n" \
     "\n" \
     "            cancel_(reason) {\n" \

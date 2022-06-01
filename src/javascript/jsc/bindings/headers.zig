@@ -404,6 +404,7 @@ pub extern fn JSC__VM__executionForbidden(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__holdAPILock(arg0: [*c]JSC__VM, arg1: ?*anyopaque, ArgFn2: ?fn (?*anyopaque) callconv(.C) void) void;
 pub extern fn JSC__VM__isEntered(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__isJITEnabled(...) bool;
+pub extern fn JSC__VM__releaseWeakRefs(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__runGC(arg0: [*c]JSC__VM, arg1: bool) JSC__JSValue;
 pub extern fn JSC__VM__setExecutionForbidden(arg0: [*c]JSC__VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionTimeLimit(arg0: [*c]JSC__VM, arg1: f64) void;

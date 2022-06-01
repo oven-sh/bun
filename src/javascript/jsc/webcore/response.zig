@@ -1557,7 +1557,7 @@ pub const Blob = struct {
         is_all_ascii: ?bool = null,
         allocator: std.mem.Allocator,
 
-        // 2 MB ought to be enough
+        // 8 MB ought to be enough
         pub const max_chunk_size = 1024 * 1024 * 2;
 
         pub export fn BlobStore__ref(ptr: *anyopaque) void {
@@ -4993,9 +4993,16 @@ pub const StreamResult = union(enum) {
     owned_and_done: bun.ByteList,
     temporary_and_done: bun.ByteList,
     temporary: bun.ByteList,
+    into_array: IntoArray,
+    into_array_and_done: IntoArray,
     pending: *Pending,
     err: JSC.Node.Syscall.Error,
     done: void,
+
+    pub const IntoArray = struct {
+        value: JSValue,
+        len: usize = std.math.maxInt(usize),
+    };
 
     pub const Pending = struct {
         frame: anyframe,
@@ -5031,10 +5038,10 @@ pub const StreamResult = union(enum) {
     pub fn toJS(this: *const StreamResult, globalThis: *JSGlobalObject) JSValue {
         switch (this.*) {
             .owned => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis.ref(), null);
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJSAutoAllocator(globalThis.ref(), null);
             },
             .owned_and_done => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis.ref(), null);
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJSAutoAllocator(globalThis.ref(), null);
             },
             .temporary => |temp| {
                 var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
@@ -5047,6 +5054,12 @@ pub const StreamResult = union(enum) {
                 var slice = array.asArrayBuffer(globalThis).?.slice();
                 @memcpy(slice.ptr, temp.ptr, temp.len);
                 return array;
+            },
+            .into_array => |array| {
+                return array.value;
+            },
+            .into_array_and_done => |array| {
+                return array.value;
             },
             .pending => |pending| {
                 var promise = JSC.JSPromise.create(globalThis);
@@ -5364,7 +5377,7 @@ pub fn ReadableStreamSource(
                         globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
                         return JSValue.jsUndefined();
                     },
-                    .temporary_and_done, .owned_and_done => {
+                    .temporary_and_done, .owned_and_done, .into_array_and_done => {
                         JSC.C.JSObjectSetPropertyAtIndex(globalThis.ref(), callFrame.argument(1).asObjectRef(), 0, JSValue.jsBoolean(true).asObjectRef(), null);
                         return result.toJS(globalThis);
                     },
@@ -5504,12 +5517,14 @@ pub const ByteBlobLoader = struct {
 
 pub const FileBlobLoader = struct {
     buf: []u8 = &[_]u8{},
+    uint8array: JSC.JSValue = JSC.JSValue.zero,
     fd: JSC.Node.FileDescriptor = 0,
     auto_close: bool = false,
     loop: *JSC.EventLoop = undefined,
     mode: JSC.Node.Mode = 0,
     store: *Blob.Store,
     total_read: Blob.SizeType = 0,
+    finalized: bool = false,
     callback: anyframe = undefined,
     pending: StreamResult.Pending = StreamResult.Pending{
         .frame = undefined,
@@ -5518,8 +5533,13 @@ pub const FileBlobLoader = struct {
     },
     cancelled: bool = false,
     user_chunk_size: Blob.SizeType = 0,
+    scheduled_count: u32 = 0,
+    concurrent: Concurrent = Concurrent{},
 
     const FileReader = @This();
+
+    const run_on_different_thread_size = 1024 * 512;
+
     pub const tag = ReadableStream.Tag.File;
 
     pub fn setup(this: *FileBlobLoader, store: *Blob.Store, chunk_size: Blob.SizeType) void {
@@ -5534,6 +5554,190 @@ pub const FileBlobLoader = struct {
 
     pub fn watch(this: *FileReader) void {
         _ = JSC.VirtualMachine.vm.poller.watch(this.fd, .read, this, callback);
+        this.scheduled_count += 1;
+    }
+
+    const Concurrent = struct {
+        read: Blob.SizeType = 0,
+        task: NetworkThread.Task = .{ .callback = Concurrent.taskCallback },
+        completion: AsyncIO.Completion = undefined,
+        read_frame: anyframe = undefined,
+        chunk_size: Blob.SizeType = 0,
+        main_thread_task: JSC.AnyTask = .{ .callback = onJSThread, .ctx = null },
+
+        pub fn taskCallback(task: *NetworkThread.Task) void {
+            var this = @fieldParentPtr(FileBlobLoader, "concurrent", @fieldParentPtr(Concurrent, "task", task));
+            var frame = HTTPClient.getAllocator().create(@Frame(runAsync)) catch unreachable;
+            _ = @asyncCall(std.mem.asBytes(frame), undefined, runAsync, .{this});
+        }
+
+        pub fn onRead(this: *FileBlobLoader, completion: *HTTPClient.NetworkThread.Completion, result: AsyncIO.ReadError!usize) void {
+            this.concurrent.read = @truncate(Blob.SizeType, result catch |err| {
+                if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
+                    this.pending.result = .{
+                        .err = JSC.Node.Syscall.Error{
+                            .errno = @intCast(JSC.Node.Syscall.Error.Int, -completion.result),
+                            .syscall = .read,
+                        },
+                    };
+                } else {
+                    this.pending.result = .{
+                        .err = JSC.Node.Syscall.Error{
+                            // this is too hacky
+                            .errno = @truncate(JSC.Node.Syscall.Error.Int, @intCast(u16, @maximum(1, @errorToInt(err)))),
+                            .syscall = .read,
+                        },
+                    };
+                }
+                this.concurrent.read = 0;
+                resume this.concurrent.read_frame;
+                return;
+            });
+
+            resume this.concurrent.read_frame;
+        }
+
+        pub fn scheduleRead(this: *FileBlobLoader) void {
+            if (comptime Environment.isMac) {
+                var remaining = this.buf[this.concurrent.read..];
+
+                while (remaining.len > 0) {
+                    const to_read = @minimum(@as(usize, this.concurrent.chunk_size), remaining.len);
+                    switch (JSC.Node.Syscall.read(this.fd, remaining[0..to_read])) {
+                        .err => |err| {
+                            const retry = comptime if (Environment.isLinux)
+                                std.os.E.WOULDBLOCK
+                            else
+                                std.os.E.AGAIN;
+
+                            switch (err.getErrno()) {
+                                retry => break,
+                                else => {},
+                            }
+
+                            this.pending.result = .{ .err = err };
+                            scheduleMainThreadTask(this);
+                            return;
+                        },
+                        .result => |result| {
+                            this.concurrent.read += @intCast(Blob.SizeType, result);
+                            remaining = remaining[result..];
+
+                            if (result == 0) {
+                                remaining.len = 0;
+                                break;
+                            }
+                        },
+                    }
+                }
+
+                if (remaining.len == 0) {
+                    scheduleMainThreadTask(this);
+                    return;
+                }
+
+                AsyncIO.global.read(
+                    *FileBlobLoader,
+                    this,
+                    onRead,
+                    &this.concurrent.completion,
+                    this.fd,
+                    this.buf[this.concurrent.read..],
+                    null,
+                );
+
+                suspend {
+                    var _frame = @frame();
+                    var this_frame = HTTPClient.getAllocator().create(std.meta.Child(@TypeOf(_frame))) catch unreachable;
+                    this_frame.* = _frame.*;
+                    this.concurrent.read_frame = this_frame;
+                }
+            } else {
+                AsyncIO.global.read(
+                    *FileBlobLoader,
+                    this,
+                    onRead,
+                    &this.concurrent.completion,
+                    this.fd,
+                    this.buf[this.concurrent.read..],
+                    null,
+                );
+
+                suspend {
+                    var _frame = @frame();
+                    var this_frame = HTTPClient.getAllocator().create(std.meta.Child(@TypeOf(_frame))) catch unreachable;
+                    this_frame.* = _frame.*;
+                    this.concurrent.read_frame = this_frame;
+                }
+            }
+
+            scheduleMainThreadTask(this);
+        }
+
+        pub fn onJSThread(task_ctx: *anyopaque) void {
+            var this: *FileBlobLoader = bun.cast(*FileBlobLoader, task_ctx);
+
+            if (this.finalized and this.scheduled_count == 0) {
+                if (!this.pending.used) {
+                    resume this.pending.frame;
+                }
+                this.scheduled_count -= 1;
+                this.deinit();
+
+                return;
+            }
+
+            if (!this.pending.used and this.pending.result == .err and this.concurrent.read == 0) {
+                resume this.pending.frame;
+                this.scheduled_count -= 1;
+                this.finalize();
+                return;
+            }
+
+            if (this.concurrent.read == 0) {
+                this.pending.result = .{ .done = {} };
+                resume this.pending.frame;
+                this.scheduled_count -= 1;
+                this.finalize();
+                return;
+            }
+
+            this.pending.result = this.handleReadChunk(this.buf, @as(usize, this.concurrent.read));
+            resume this.pending.frame;
+            this.scheduled_count -= 1;
+        }
+
+        pub fn scheduleMainThreadTask(this: *FileBlobLoader) void {
+            this.concurrent.main_thread_task.ctx = this;
+            this.loop.enqueueTaskConcurrent(JSC.Task.init(&this.concurrent.main_thread_task));
+        }
+
+        fn runAsync(this: *FileBlobLoader) void {
+            this.concurrent.read = 0;
+            this.buf = bun.auto_allocator.alloc(u8, this.concurrent.chunk_size) catch {
+                this.pending.result = .{ .err = JSC.Node.Syscall.Error.oom };
+                this.concurrent.read = 0;
+                scheduleMainThreadTask(this);
+
+                return;
+            };
+            _ = bun.C.posix_madvise(this.buf.ptr, this.buf.len, 2);
+
+            Concurrent.scheduleRead(this);
+
+            suspend {
+                HTTPClient.getAllocator().destroy(@frame());
+            }
+        }
+    };
+
+    pub fn scheduleAsync(this: *FileReader, chunk_size: Blob.SizeType) void {
+        this.scheduled_count += 1;
+        this.loop.virtual_machine.active_tasks +|= 1;
+
+        NetworkThread.init() catch {};
+        this.concurrent.chunk_size = chunk_size;
+        NetworkThread.global.pool.schedule(.{ .head = &this.concurrent.task, .tail = &this.concurrent.task, .len = 1 });
     }
 
     const default_fifo_chunk_size = 1024;
@@ -5548,6 +5752,7 @@ pub const FileBlobLoader = struct {
         else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
             .result => |_fd| _fd,
             .err => |err| {
+                this.deinit();
                 return .{ .err = err.withPath(file.pathlike.path.slice()) };
             },
         };
@@ -5571,6 +5776,7 @@ pub const FileBlobLoader = struct {
                 if (auto_close) {
                     _ = JSC.Node.Syscall.close(fd);
                 }
+                this.deinit();
                 return .{ .err = err.withPath(file.pathlike.path.slice()) };
             },
         };
@@ -5580,6 +5786,7 @@ pub const FileBlobLoader = struct {
             if (auto_close) {
                 _ = JSC.Node.Syscall.close(fd);
             }
+            this.deinit();
             return .{ .err = err };
         }
 
@@ -5589,6 +5796,7 @@ pub const FileBlobLoader = struct {
             if (auto_close) {
                 _ = JSC.Node.Syscall.close(fd);
             }
+            this.deinit();
             return .{ .err = err };
         }
 
@@ -5612,21 +5820,51 @@ pub const FileBlobLoader = struct {
             if (auto_close) {
                 _ = JSC.Node.Syscall.close(fd);
             }
+            this.deinit();
             return .{ .done = {} };
         }
 
         this.fd = fd;
         this.auto_close = auto_close;
 
-        if (this.allocateBuffer(std.math.maxInt(usize))) |err| {
+        const chunk_size = this.calculateChunkSize(std.math.maxInt(usize));
+
+        if (chunk_size >= run_on_different_thread_size) {
+            // should never be reached
+            this.pending.result = .{
+                .err = JSC.Node.Syscall.Error.todo,
+            };
+
+            this.scheduleAsync(@truncate(Blob.SizeType, chunk_size));
+
+            return .{ .pending = &this.pending };
+        }
+
+        if (this.allocateBuffer(chunk_size)) |err| {
+            this.deinit();
             return .{ .err = err };
         }
 
         return this.read(this.buf);
     }
 
-    fn allocateBuffer(this: *FileBlobLoader, available_to_read: usize) ?JSC.Node.Syscall.Error {
-        var file = &this.store.data.file;
+    // Disabled because it's not fully implemented
+    // Maybe we should allocate as an ArrayBuffer instead of a Uint8Array?
+    fn shouldUseJSCHeap(this: *const FileBlobLoader, chunk_size: Blob.SizeType) bool {
+        _ = this;
+        _ = chunk_size;
+        return false;
+        // const file = &this.store.data.file;
+
+        // if (!(file.seekable orelse false))
+        //     return false;
+
+        // return file.max_size - this.total_read >= chunk_size;
+    }
+
+    fn calculateChunkSize(this: *FileBlobLoader, available_to_read: usize) usize {
+        const file = &this.store.data.file;
+
         const chunk_size: usize = if (this.user_chunk_size > 0)
             @as(usize, this.user_chunk_size)
         else if (file.seekable orelse false)
@@ -5634,28 +5872,57 @@ pub const FileBlobLoader = struct {
         else
             @as(usize, default_fifo_chunk_size);
 
-        const this_chunk_size = if (file.max_size > 0)
+        return if (file.max_size > 0)
             if (available_to_read != std.math.maxInt(usize)) @minimum(chunk_size, available_to_read) else @minimum(@maximum(this.total_read, file.max_size) - this.total_read, chunk_size)
         else
             @minimum(available_to_read, chunk_size);
+    }
 
-        var buf = bun.default_allocator.alloc(
-            u8,
-            this_chunk_size,
-        ) catch {
-            this.maybeAutoClose();
-            return JSC.Node.Syscall.Error.oom.withPath(if (file.pathlike.path.slice().len > 0) file.pathlike.path.slice() else "");
-        };
+    fn allocateBuffer(this: *FileBlobLoader, chunk_size: usize) ?JSC.Node.Syscall.Error {
+        var file = &this.store.data.file;
 
-        this.buf = buf;
+        if (this.shouldUseJSCHeap(@intCast(Blob.SizeType, chunk_size))) {
+            this.uint8array = JSValue.createUninitializedUint8Array(this.loop.global, chunk_size);
+            this.uint8array.ensureStillAlive();
+            this.buf = this.uint8array.asArrayBuffer(this.loop.global).?.slice();
+        } else {
+            this.buf = bun.auto_allocator.alloc(
+                u8,
+                chunk_size,
+            ) catch {
+                this.maybeAutoClose();
+                return JSC.Node.Syscall.Error.oom.withPath(if (file.pathlike.path.slice().len > 0) file.pathlike.path.slice() else "");
+            };
+        }
 
         return null;
     }
 
     pub fn onPull(this: *FileBlobLoader) StreamResult {
         if (this.buf.len == 0) {
-            if (this.allocateBuffer(std.math.maxInt(usize))) |err| {
-                return .{ .err = err };
+            const chunk_size = this.calculateChunkSize(std.math.maxInt(usize));
+
+            switch (chunk_size) {
+                0 => {
+                    std.debug.assert(this.store.data.file.seekable orelse false);
+                    this.finalize();
+                    return .{ .done = {} };
+                },
+                run_on_different_thread_size...std.math.maxInt(@TypeOf(chunk_size)) => {
+                    // should never be reached
+                    this.pending.result = .{
+                        .err = JSC.Node.Syscall.Error.todo,
+                    };
+
+                    this.scheduleAsync(@truncate(Blob.SizeType, chunk_size));
+
+                    return .{ .pending = &this.pending };
+                },
+                else => {
+                    if (this.allocateBuffer(chunk_size)) |err| {
+                        return .{ .err = err };
+                    }
+                },
             }
         }
 
@@ -5666,6 +5933,67 @@ pub const FileBlobLoader = struct {
         if (this.auto_close) {
             _ = JSC.Node.Syscall.close(this.fd);
             this.auto_close = false;
+        }
+    }
+
+    fn handleReadChunk(this: *FileBlobLoader, read_buf: []u8, result: usize) StreamResult {
+        this.total_read += @intCast(Blob.SizeType, result);
+        const remaining: Blob.SizeType = if (this.store.data.file.seekable orelse false)
+            this.store.data.file.max_size -| this.total_read
+        else
+            @as(Blob.SizeType, std.math.maxInt(Blob.SizeType));
+
+        // this handles:
+        // - empty file
+        // - stream closed for some reason
+        if ((result == 0 and remaining == 0)) {
+            this.finalize();
+            return .{ .done = {} };
+        }
+
+        const has_more = remaining > 0;
+
+        if (!has_more) {
+            this.uint8array.ensureStillAlive();
+
+            defer {
+                this.uint8array.ensureStillAlive();
+                this.buf = &.{};
+                this.uint8array = JSValue.zero;
+                this.finalize();
+            }
+
+            if (this.uint8array.isEmpty()) {
+                return .{
+                    .owned_and_done = bun.ByteList.init(read_buf[0..result]),
+                };
+            } else {
+                return .{
+                    .into_array_and_done = .{
+                        .value = this.uint8array,
+                        .len = result,
+                    },
+                };
+            }
+        }
+
+        if (this.uint8array.isEmpty()) {
+            defer this.buf = &.{};
+            return .{
+                .owned = bun.ByteList.init(read_buf[0..result]),
+            };
+        } else {
+            defer {
+                this.buf = &.{};
+                this.uint8array = JSValue.zero;
+            }
+
+            return .{
+                .into_array = .{
+                    .value = this.uint8array,
+                    .len = result,
+                },
+            };
         }
     }
 
@@ -5697,44 +6025,19 @@ pub const FileBlobLoader = struct {
                 else
                     err;
 
+                this.finalize();
                 return .{ .err = sys };
             },
             .result => |result| {
-                this.total_read += @intCast(Blob.SizeType, result);
-                const remaining: Blob.SizeType = if (this.store.data.file.seekable orelse false)
-                    this.store.data.file.max_size -| this.total_read
-                else
-                    @as(Blob.SizeType, std.math.maxInt(Blob.SizeType));
-
-                defer this.buf = &.{};
-
-                // this handles:
-                // - empty file
-                // - stream closed for some reason
-                if ((result == 0 and remaining == 0)) {
-                    this.maybeAutoClose();
-                    bun.default_allocator.free(this.buf);
-                    return .{ .done = {} };
-                }
-
-                const has_more = remaining > 0;
-
-                if (!has_more) {
-                    defer this.maybeAutoClose();
-                    return .{
-                        .owned_and_done = bun.ByteList.init(read_buf[0..result]),
-                    };
-                }
-
-                return .{
-                    .owned = bun.ByteList.init(read_buf[0..result]),
-                };
+                return this.handleReadChunk(read_buf, result);
             },
         }
     }
 
     pub fn callback(task: ?*anyopaque, sizeOrOffset: i64, _: u16) void {
         var this: *FileReader = bun.cast(*FileReader, task.?);
+        this.scheduled_count -= 1;
+
         var available_to_read: usize = std.math.maxInt(usize);
         if (comptime Environment.isMac) {
             if (std.os.S.ISREG(this.mode)) {
@@ -5745,6 +6048,17 @@ pub const FileBlobLoader = struct {
             } else if (std.os.S.ISCHR(this.mode) or std.os.S.ISFIFO(this.mode)) {
                 available_to_read = @intCast(usize, @maximum(sizeOrOffset, 0));
             }
+        }
+        if (this.finalized and this.scheduled_count == 0) {
+            if (!this.pending.used) {
+                // should never be reached
+                this.pending.result = .{
+                    .err = JSC.Node.Syscall.Error.todo,
+                };
+                resume this.pending.frame;
+            }
+            this.deinit();
+            return;
         }
         if (this.cancelled)
             return;
@@ -5763,10 +6077,18 @@ pub const FileBlobLoader = struct {
         resume this.pending.frame;
     }
 
-    pub fn deinit(this: *FileBlobLoader) void {
+    pub fn finalize(this: *FileBlobLoader) void {
+        if (this.finalized)
+            return;
+        this.finalized = true;
         if (this.buf.len > 0) {
-            bun.default_allocator.free(this.buf);
-            this.buf = &.{};
+            if (this.uint8array.isEmpty()) {
+                bun.default_allocator.free(this.buf);
+                this.buf = &.{};
+            } else {
+                this.buf = &.{};
+                this.uint8array = JSValue.zero;
+            }
         }
 
         this.maybeAutoClose();
@@ -5776,6 +6098,19 @@ pub const FileBlobLoader = struct {
 
     pub fn onCancel(this: *FileBlobLoader) void {
         this.cancelled = true;
+
+        this.deinit();
+    }
+
+    pub fn deinit(this: *FileBlobLoader) void {
+        this.finalize();
+        if (this.scheduled_count == 0 and !this.pending.used) {
+            this.destroy();
+        }
+    }
+
+    pub fn destroy(this: *FileBlobLoader) void {
+        bun.default_allocator.destroy(this);
     }
 
     pub const Source = ReadableStreamSource(@This(), "FileBlobLoader", onStart, onPull, onCancel, deinit);

@@ -253,10 +253,15 @@ pub export fn Bun__getVM() *JSC.VirtualMachine {
     return JSC.VirtualMachine.vm;
 }
 
+pub export fn Bun__drainMicrotasks() void {
+    JSC.VirtualMachine.vm.eventLoop().tick();
+}
+
 comptime {
     if (!JSC.is_bindgen) {
         _ = Bun__getDefaultGlobal;
         _ = Bun__getVM;
+        _ = Bun__drainMicrotasks;
     }
 }
 
@@ -725,6 +730,15 @@ pub const VirtualMachine = struct {
                         .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, printer.ctx.written) catch unreachable),
                         .specifier = ZigString.init(std.mem.span(main_file_name)),
                         .source_url = ZigString.init(std.mem.span(main_file_name)),
+                        .hash = 0,
+                    };
+                },
+                .@"bun:jsc" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(@embedFile("bun-jsc.exports.js") ++ JSC.Node.fs.constants_string),
+                        .specifier = ZigString.init("bun:jsc"),
+                        .source_url = ZigString.init("bun:jsc"),
                         .hash = 0,
                     };
                 },
@@ -2519,6 +2533,7 @@ pub const HardcodedModule = enum {
     @"node:path",
     @"detect-libc",
     @"bun:sqlite",
+    @"bun:jsc",
     @"node:module",
 
     pub const Map = bun.ComptimeStringMap(
@@ -2537,12 +2552,14 @@ pub const HardcodedModule = enum {
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "node:module", HardcodedModule.@"node:module" },
             .{ "module", HardcodedModule.@"node:module" },
+            .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
         },
     );
     pub const LinkerMap = bun.ComptimeStringMap(
         string,
         .{
             .{ "bun:ffi", "bun:ffi" },
+            .{ "bun:jsc", "bun:jsc" },
             .{ "detect-libc", "detect-libc" },
             .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
             .{ "ffi", "bun:ffi" },

@@ -98,6 +98,50 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
     }
 }
 
+template<typename PromiseType, bool isInternal>
+static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3))
+{
+    JSC::Strong<PromiseType> strongValue = { globalObject->vm(), promise };
+    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
+        globalObject->vm(), globalObject, 1, String(), [&strongValue, ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
+            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
+
+            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
+            arguments.reserveInitialCapacity(argCount);
+            if (argCount) {
+                for (uint16_t i = 0; i < argCount; ++i) {
+                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
+                }
+            }
+
+            ArgFn3(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
+            strongValue.clear();
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        });
+    JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
+        globalObject->vm(), globalObject, 1, String(),
+        [&strongValue, ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
+            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
+            arguments.reserveInitialCapacity(argCount);
+            if (argCount) {
+                for (uint16_t i = 0; i < argCount; ++i) {
+                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
+                }
+            }
+
+            ArgFn4(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
+            strongValue.clear();
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        });
+
+    if constexpr (!isInternal) {
+        promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
+    } else {
+        promise->then(globalObject, resolverFunction, rejecterFunction);
+    }
+}
+
 extern "C" {
 
 void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_ssl, void* arg2)
@@ -508,47 +552,12 @@ JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3))
 {
 
-    globalObject->vm().drainMicrotasks();
     auto* cell = JSC::JSValue::decode(JSValue0).asCell();
-    JSC::Strong<JSC::Unknown> promiseValue = { globalObject->vm(), cell };
-
-    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), [promiseValue, ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
-
-            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
-            arguments.reserveInitialCapacity(argCount);
-            if (argCount) {
-                for (uint16_t i = 0; i < argCount; ++i) {
-                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
-                }
-            }
-
-            ArgFn3(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
-
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        });
-    JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(),
-        [promiseValue, ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
-            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
-            arguments.reserveInitialCapacity(argCount);
-            if (argCount) {
-                for (uint16_t i = 0; i < argCount; ++i) {
-                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
-                }
-            }
-
-            ArgFn4(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
-
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        });
 
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
-        promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
+        handlePromise<JSC::JSPromise, false>(promise, globalObject, ctx, ArgFn3, ArgFn4);
     } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
-        promise->then(globalObject, resolverFunction, rejecterFunction);
+        handlePromise<JSC::JSInternalPromise, true>(promise, globalObject, ctx, ArgFn3, ArgFn4);
     }
 }
 
@@ -2321,7 +2330,12 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
     ref->ref();
 }
 
-static WTF::StringView function_string_view = WTF::StringView("Function");
+void JSC__VM__releaseWeakRefs(JSC__VM* arg0)
+{
+    arg0->finalizeSynchronousJSExecution();
+}
+
+static auto function_string_view = MAKE_STATIC_STRING_IMPL("Function");
 void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
     JSC::JSCell* cell = JSC::JSValue::decode(JSValue0).asCell();
@@ -2331,10 +2345,10 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     }
 
     const char* ptr = cell->className();
-    auto view = WTF::StringView(ptr);
+    auto view = WTF::StringView(ptr, strlen(ptr));
 
     // Fallback to .name if className is empty
-    if (view.length() == 0 || view == function_string_view) {
+    if (view.length() == 0 || StringView(String(function_string_view)) == view) {
         JSC__JSValue__getNameProperty(JSValue0, arg1, arg2);
         return;
     } else {
@@ -2439,11 +2453,15 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
+    vm->finalizeSynchronousJSExecution();
+
     if (sync) {
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     } else {
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
+
+    vm->finalizeSynchronousJSExecution();
 
     return JSC::JSValue::encode(JSC::jsNumber(vm->heap.sizeAfterLastFullCollection()));
 }

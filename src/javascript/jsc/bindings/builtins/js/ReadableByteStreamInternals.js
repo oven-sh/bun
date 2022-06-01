@@ -331,7 +331,7 @@ function readableByteStreamControllerEnqueue(controller, chunk)
     var reader = @getByIdDirectPrivate(stream, "reader");
 
 
-    switch (@readableStreamReaderKind(reader)) {
+    switch (reader ? @readableStreamReaderKind(reader) : 0) {
         /* default reader */
         case 1: {
             if (!@getByIdDirectPrivate(reader, "readRequests").length)

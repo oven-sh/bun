@@ -97,15 +97,31 @@ function createNativeReadableStream(nativePtr, nativeType) {
         var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for("Bun.lazy")](nativeType);
         var closer = [false];
 
+        function handleNativeReadableStreamPromiseResult(val) {
+            "use strict";
+            var {r, c} = this;
+            this.r = @undefined;
+            this.c = @undefined;
+            r(val, c);
+        }
+        
+        function closeNativeReadableStreamOnNextTick(controller) {
+            "use strict";
+            controller.close();
+            controller = @undefined;
+        }        
+
         var handleResult = function handleResult(result, controller) {
+            "use strict";
+
             if (result && @isPromise(result)) {
-                result.then((val) => handleResult(val, controller), err => controller.error(err));
+                return result.then(handleNativeReadableStreamPromiseResult.bind({c: controller, r: handleResult}), controller.error);
             } else if (result !== false) {
                 controller.enqueue(result);
             }
 
             if (closer[0] || result === false) {
-                new @Promise((resolve, reject) => resolve(controller.close())).then(() => {}, () => {});
+                @enqueueJob(closeNativeReadableStreamOnNextTick, controller);
                 closer[0] = false;
             }
         }
@@ -131,7 +147,7 @@ function createNativeReadableStream(nativePtr, nativeType) {
                     return controller.error(err);
                 }
 
-                 handleResult(result, controller);
+                return handleResult(result, controller);
             }
 
             start_(controller) {
@@ -145,7 +161,7 @@ function createNativeReadableStream(nativePtr, nativeType) {
                     return controller.error(err);
                 }
 
-                 handleResult(result, controller);
+                 return handleResult(result, controller);
             }
 
             cancel_(reason) {

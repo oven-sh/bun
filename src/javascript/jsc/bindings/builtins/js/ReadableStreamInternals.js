@@ -728,7 +728,7 @@ function readableStreamDefaultControllerEnqueue(controller, chunk)
 
     const stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
     // this is checked by callers
-    // @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));
+    @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));
 
     if (@isReadableStreamLocked(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").length) {
         @readableStreamFulfillReadRequest(stream, chunk, false);

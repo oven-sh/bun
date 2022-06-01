@@ -18,9 +18,8 @@
 
 #include "BunGCOutputConstraint.h"
 #include "WebCoreTypedArrayController.h"
-#include "JavaScriptCore/AbstractSlotVisitorInlines.h"
-#include "JavaScriptCore/JSCellInlines.h"
-#include "JavaScriptCore/WeakInlines.h"
+#include "JavaScriptCore/JSCInlines.h"
+
 #include "JSDOMWrapper.h"
 
 namespace WebCore {

@@ -402,6 +402,8 @@ pub const EventLoop = struct {
 
             if (this.tickWithCount() == 0) break;
         }
+
+        this.global.vm().releaseWeakRefs();
     }
 
     // TODO: fix this technical debt

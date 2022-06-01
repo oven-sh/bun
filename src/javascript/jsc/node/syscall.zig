@@ -9,7 +9,6 @@ const Environment = @import("../../../global.zig").Environment;
 const default_allocator = @import("../../../global.zig").default_allocator;
 const JSC = @import("../../../jsc.zig");
 const SystemError = JSC.SystemError;
-const darwin = os.darwin;
 const bun = @import("../../../global.zig");
 const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 const fd_t = bun.FileDescriptorType;
@@ -145,7 +144,7 @@ pub fn fstat(fd: JSC.Node.FileDescriptor) Maybe(os.Stat) {
 
 pub fn mkdir(file_path: [:0]const u8, flags: JSC.Node.Mode) Maybe(void) {
     if (comptime Environment.isMac) {
-        return Maybe(void).errnoSysP(darwin.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
+        return Maybe(void).errnoSysP(system.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
     }
 
     if (comptime Environment.isLinux) {
@@ -189,7 +188,7 @@ pub fn open(file_path: [:0]const u8, flags: JSC.Node.Mode, perm: JSC.Node.Mode) 
 pub fn close(fd: std.os.fd_t) ?Syscall.Error {
     if (comptime Environment.isMac) {
         // This avoids the EINTR problem.
-        return switch (darwin.getErrno(darwin.@"close$NOCANCEL"(fd))) {
+        return switch (system.getErrno(system.@"close$NOCANCEL"(fd))) {
             .BADF => Syscall.Error{ .errno = @enumToInt(os.E.BADF), .syscall = .close },
             else => null,
         };
@@ -227,8 +226,10 @@ pub fn write(fd: os.fd_t, bytes: []const u8) Maybe(usize) {
 
 const pread_sym = if (builtin.os.tag == .linux and builtin.link_libc)
     sys.pread64
+else if (builtin.os.tag.isDarwin())
+    system.@"pread$NOCANCEL"
 else
-    sys.pread;
+    system.pread;
 
 pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
@@ -268,13 +269,21 @@ pub fn pwrite(fd: os.fd_t, bytes: []const u8, offset: i64) Maybe(usize) {
 
 pub fn read(fd: os.fd_t, buf: []u8) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);
-    while (true) {
-        const rc = sys.read(fd, buf.ptr, adjusted_len);
+    if (comptime Environment.isMac) {
+        const rc = system.@"read$NOCANCEL"(fd, buf.ptr, adjusted_len);
         if (Maybe(usize).errnoSys(rc, .read)) |err| {
-            if (err.getErrno() == .INTR) continue;
             return err;
         }
         return Maybe(usize){ .result = @intCast(usize, rc) };
+    } else {
+        while (true) {
+            const rc = sys.read(fd, buf.ptr, adjusted_len);
+            if (Maybe(usize).errnoSys(rc, .read)) |err| {
+                if (err.getErrno() == .INTR) continue;
+                return err;
+            }
+            return Maybe(usize){ .result = @intCast(usize, rc) };
+        }
     }
     unreachable;
 }
@@ -397,7 +406,7 @@ pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: u32) Maybe(void
     if (comptime !Environment.isMac) @compileError("macOS only");
 
     while (true) {
-        if (Maybe(void).errnoSys(darwin.fcopyfile(fd_in, fd_out, null, flags), .fcopyfile)) |err| {
+        if (Maybe(void).errnoSys(system.fcopyfile(fd_in, fd_out, null, flags), .fcopyfile)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
@@ -434,7 +443,7 @@ pub fn getFdPath(fd: fd_t, out_buffer: *[MAX_PATH_BYTES]u8) Maybe([]u8) {
             // On macOS, we can use F.GETPATH fcntl command to query the OS for
             // the path to the file descriptor.
             @memset(out_buffer, 0, MAX_PATH_BYTES);
-            if (Maybe([]u8).errnoSys(darwin.fcntl(fd, os.F.GETPATH, out_buffer), .fcntl)) |err| {
+            if (Maybe([]u8).errnoSys(system.fcntl(fd, os.F.GETPATH, out_buffer), .fcntl)) |err| {
                 return err;
             }
             const len = mem.indexOfScalar(u8, out_buffer[0..], @as(u8, 0)) orelse MAX_PATH_BYTES;

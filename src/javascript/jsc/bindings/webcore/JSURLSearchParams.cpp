@@ -155,19 +155,19 @@ template<> void JSURLSearchParamsDOMConstructor::initializeProperties(VM& vm, JS
 /* Hash table for prototype */
 
 static const HashTableValue JSURLSearchParamsPrototypeTableValues[] = {
-    { "constructor", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsURLSearchParamsConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "append", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_append), (intptr_t)(2) } },
-    { "delete", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_delete), (intptr_t)(1) } },
-    { "get", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_get), (intptr_t)(1) } },
-    { "getAll", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_getAll), (intptr_t)(1) } },
-    { "has", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_has), (intptr_t)(1) } },
-    { "set", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_set), (intptr_t)(2) } },
-    { "sort", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_sort), (intptr_t)(0) } },
-    { "entries", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_entries), (intptr_t)(0) } },
-    { "keys", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_keys), (intptr_t)(0) } },
-    { "values", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_values), (intptr_t)(0) } },
-    { "forEach", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_forEach), (intptr_t)(1) } },
-    { "toString", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_toString), (intptr_t)(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsURLSearchParamsConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "append"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_append), (intptr_t)(2) } },
+    { "delete"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_delete), (intptr_t)(1) } },
+    { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_get), (intptr_t)(1) } },
+    { "getAll"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_getAll), (intptr_t)(1) } },
+    { "has"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_has), (intptr_t)(1) } },
+    { "set"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_set), (intptr_t)(2) } },
+    { "sort"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_sort), (intptr_t)(0) } },
+    { "entries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_entries), (intptr_t)(0) } },
+    { "keys"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_keys), (intptr_t)(0) } },
+    { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_values), (intptr_t)(0) } },
+    { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_forEach), (intptr_t)(1) } },
+    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsURLSearchParamsPrototypeFunction_toString), (intptr_t)(0) } },
 };
 
 const ClassInfo JSURLSearchParamsPrototype::s_info = { "URLSearchParams"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSURLSearchParamsPrototype) };

@@ -108,7 +108,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
 }
 
 // --
-// This is faster when the string is found, by about 2x for a 4 MB file.
+// This is faster when the string is found, by about 2x for a 8 MB file.
 // It is slower when the string is NOT found
 // fn indexOfPosN(comptime T: type, buf: []const u8, start_index: usize, delimiter: []const u8, comptime n: comptime_int) ?usize {
 //     const k = delimiter.len;

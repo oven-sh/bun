@@ -151,16 +151,16 @@ template<> void JSFetchHeadersDOMConstructor::initializeProperties(VM& vm, JSDOM
 /* Hash table for prototype */
 
 static const HashTableValue JSFetchHeadersPrototypeTableValues[] = {
-    { "constructor", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsFetchHeadersConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "append", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_append), (intptr_t)(2) } },
-    { "delete", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_delete), (intptr_t)(1) } },
-    { "get", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_get), (intptr_t)(1) } },
-    { "has", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_has), (intptr_t)(1) } },
-    { "set", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_set), (intptr_t)(2) } },
-    { "entries", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_entries), (intptr_t)(0) } },
-    { "keys", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_keys), (intptr_t)(0) } },
-    { "values", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_values), (intptr_t)(0) } },
-    { "forEach", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_forEach), (intptr_t)(1) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsFetchHeadersConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "append"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_append), (intptr_t)(2) } },
+    { "delete"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_delete), (intptr_t)(1) } },
+    { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_get), (intptr_t)(1) } },
+    { "has"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_has), (intptr_t)(1) } },
+    { "set"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_set), (intptr_t)(2) } },
+    { "entries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_entries), (intptr_t)(0) } },
+    { "keys"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_keys), (intptr_t)(0) } },
+    { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_values), (intptr_t)(0) } },
+    { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_forEach), (intptr_t)(1) } },
 };
 
 const ClassInfo JSFetchHeadersPrototype::s_info = { "Headers"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFetchHeadersPrototype) };

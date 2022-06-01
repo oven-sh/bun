@@ -129,8 +129,8 @@ using JSDOMURLDOMConstructor = JSDOMConstructor<JSDOMURL>;
 /* Hash table for constructor */
 
 static const HashTableValue JSDOMURLConstructorTableValues[] = {
-    { "createObjectURL", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsDOMURLConstructorFunction_createObjectURL), (intptr_t)(1) } },
-    { "revokeObjectURL", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsDOMURLConstructorFunction_revokeObjectURL), (intptr_t)(1) } },
+    { "createObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsDOMURLConstructorFunction_createObjectURL), (intptr_t)(1) } },
+    { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsDOMURLConstructorFunction_revokeObjectURL), (intptr_t)(1) } },
 };
 
 static inline EncodedJSValue constructJSDOMURL1(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
@@ -223,21 +223,21 @@ template<> void JSDOMURLDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
 /* Hash table for prototype */
 
 static const HashTableValue JSDOMURLPrototypeTableValues[] = {
-    { "constructor", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURLConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "href", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_href), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_href) } },
-    { "origin", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_origin), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "protocol", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_protocol), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_protocol) } },
-    { "username", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_username), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_username) } },
-    { "password", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_password), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_password) } },
-    { "host", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_host), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_host) } },
-    { "hostname", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_hostname), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_hostname) } },
-    { "port", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_port), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_port) } },
-    { "pathname", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_pathname), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_pathname) } },
-    { "hash", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_hash), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_hash) } },
-    { "search", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_search), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_search) } },
-    { "searchParams", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_searchParams), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "toJSON", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsDOMURLPrototypeFunction_toJSON), (intptr_t)(0) } },
-    { "toString", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsDOMURLPrototypeFunction_toString), (intptr_t)(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURLConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "href"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_href), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_href) } },
+    { "origin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_origin), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "protocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_protocol), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_protocol) } },
+    { "username"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_username), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_username) } },
+    { "password"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_password), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_password) } },
+    { "host"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_host), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_host) } },
+    { "hostname"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_hostname), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_hostname) } },
+    { "port"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_port), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_port) } },
+    { "pathname"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_pathname), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_pathname) } },
+    { "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_hash), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_hash) } },
+    { "search"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_search), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSDOMURL_search) } },
+    { "searchParams"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsDOMURL_searchParams), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsDOMURLPrototypeFunction_toJSON), (intptr_t)(0) } },
+    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsDOMURLPrototypeFunction_toString), (intptr_t)(0) } },
 };
 
 const ClassInfo JSDOMURLPrototype::s_info = { "URL"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMURLPrototype) };

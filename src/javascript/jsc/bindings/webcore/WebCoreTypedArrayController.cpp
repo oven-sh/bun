@@ -35,11 +35,6 @@
 
 #include "JavaScriptCore/JSArrayBuffer.h"
 
-namespace JSC {
-TypedArrayController::TypedArrayController() {}
-TypedArrayController::~TypedArrayController() {}
-}
-
 namespace WebCore {
 
 WebCoreTypedArrayController::WebCoreTypedArrayController(bool allowAtomicsWait)

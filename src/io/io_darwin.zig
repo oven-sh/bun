@@ -270,8 +270,9 @@ pub const darwin = struct {
     pub extern "c" fn @"accept$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) c_int;
     pub extern "c" fn @"accept4$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t, flags: c_uint) c_int;
     pub extern "c" fn @"open$NOCANCEL"(path: [*:0]const u8, oflag: c_uint, ...) c_int;
+    pub extern "c" fn @"read$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize) isize;
+    pub extern "c" fn @"pread$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize, offset: c.off_t) isize;
 };
-
 pub const OpenError = error{
     /// In WASI, this error may occur when the file descriptor does
     /// not hold the required rights to open a new resource relative to it.
@@ -539,6 +540,8 @@ pub fn run_for_ns(self: *IO, nanoseconds: u63) !void {
     }
 }
 
+const default_timespec = std.mem.zeroInit(os.timespec, .{});
+
 fn flush(self: *IO, wait_for_completions: bool) !void {
     var io_pending = self.io_pending.peek();
     var events: [512]os.Kevent = undefined;
@@ -552,7 +555,7 @@ fn flush(self: *IO, wait_for_completions: bool) !void {
     // Only call kevent() if we need to submit io events or if we need to wait for completions.
     if (change_events > 0 or self.completed.peek() == null) {
         // Zero timeouts for kevent() implies a non-blocking poll
-        var ts = std.mem.zeroes(os.timespec);
+        var ts = default_timespec;
 
         // We need to wait (not poll) on kevent if there's nothing to submit or complete.
         // We should never wait indefinitely (timeout_ptr = null for kevent) given:
@@ -602,7 +605,6 @@ fn flush_io(_: *IO, events: []os.Kevent, io_pending_top: *?*Completion) usize {
     for (events) |*kevent, flushed| {
         const completion = io_pending_top.* orelse return flushed;
         io_pending_top.* = completion.next;
-
         const event_info = switch (completion.operation) {
             .accept => |op| [3]c_int{
                 op.socket,

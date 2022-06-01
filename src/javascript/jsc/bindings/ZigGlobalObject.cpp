@@ -98,6 +98,7 @@
 #include "JSZigGlobalObjectBuiltins.h"
 #include "JSSQLStatement.h"
 #include "ReadableStreamBuiltins.h"
+#include "BunJSCModule.h"
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -717,7 +718,7 @@ static JSC_DEFINE_HOST_FUNCTION(functionATOB,
     const WTF::String& encodedString = callFrame->argument(0).toWTFString(globalObject);
 
     if (encodedString.isNull()) {
-        return JSC::JSValue::encode(JSC::jsString(vm, ""));
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
     }
 
     auto decodedData = WTF::base64Decode(encodedString, {
@@ -903,6 +904,7 @@ JSC:
     }
     default: {
         static NeverDestroyed<const String> sqliteString(MAKE_STATIC_STRING_IMPL("sqlite"));
+        static NeverDestroyed<const String> bunJSCString(MAKE_STATIC_STRING_IMPL("bun:jsc"));
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
@@ -939,6 +941,10 @@ JSC:
 
         if (string == sqliteString) {
             return JSC::JSValue::encode(JSSQLStatementConstructor::create(vm, globalObject, JSSQLStatementConstructor::createStructure(vm, globalObject, globalObject->m_functionPrototype.get())));
+        }
+
+        if (string == bunJSCString) {
+            return JSC::JSValue::encode(createJSCModule(globalObject));
         }
 
         if (UNLIKELY(string == noopString)) {
@@ -1599,7 +1605,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     auto moduleKey = key.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
-    if (moduleKey.endsWith(".node")) {
+    if (moduleKey.endsWith(".node"_s)) {
         return rejectWithError(createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 

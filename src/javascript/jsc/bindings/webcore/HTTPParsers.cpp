@@ -400,7 +400,7 @@ StringView extractCharsetFromMediaType(StringView mediaType)
     unsigned length = mediaType.length();
 
     while (pos < length) {
-        pos = mediaType.findIgnoringASCIICase("charset", pos);
+        pos = mediaType.findIgnoringASCIICase("charset"_s, pos);
         if (pos == notFound || pos == 0) {
             charsetLen = 0;
             break;

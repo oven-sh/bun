@@ -109,9 +109,9 @@ using JSAbortSignalDOMConstructor = JSDOMConstructorNotConstructable<JSAbortSign
 /* Hash table for constructor */
 
 static const HashTableValue JSAbortSignalConstructorTableValues[] = {
-    { "whenSignalAborted", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsAbortSignalConstructorFunction_whenSignalAborted), (intptr_t)(2) } },
-    { "abort", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsAbortSignalConstructorFunction_abort), (intptr_t)(0) } },
-    { "timeout", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsAbortSignalConstructorFunction_timeout), (intptr_t)(1) } },
+    { "whenSignalAborted"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsAbortSignalConstructorFunction_whenSignalAborted), (intptr_t)(2) } },
+    { "abort"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsAbortSignalConstructorFunction_abort), (intptr_t)(0) } },
+    { "timeout"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsAbortSignalConstructorFunction_timeout), (intptr_t)(1) } },
 };
 
 template<> const ClassInfo JSAbortSignalDOMConstructor::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignalDOMConstructor) };
@@ -140,11 +140,11 @@ template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMG
 /* Hash table for prototype */
 
 static const HashTableValue JSAbortSignalPrototypeTableValues[] = {
-    { "constructor", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsAbortSignalConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "aborted", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsAbortSignal_aborted), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "reason", static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsAbortSignal_reason), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "onabort", static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsAbortSignal_onabort), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSAbortSignal_onabort) } },
-    { "throwIfAborted", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsAbortSignalPrototypeFunction_throwIfAborted), (intptr_t)(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsAbortSignalConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "aborted"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsAbortSignal_aborted), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "reason"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsAbortSignal_reason), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "onabort"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsAbortSignal_onabort), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(setJSAbortSignal_onabort) } },
+    { "throwIfAborted"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsAbortSignalPrototypeFunction_throwIfAborted), (intptr_t)(0) } },
 };
 
 const ClassInfo JSAbortSignalPrototype::s_info = { "AbortSignal"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSAbortSignalPrototype) };

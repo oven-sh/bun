@@ -2409,14 +2409,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn toInt64(this: JSValue) i64 {
-        // these magic numbers came from zig translate-c on FFI.h
-        // FFI.h came from reading JSCJSValue source code
-        return switch (@bitCast(c_ulonglong, @enumToInt(this)) & @as(c_ulonglong, 18446181123756130304)) {
-            0 => cppFn("toInt64", .{this}),
-            // int32
-            18446181123756130304 => toInt32(this),
-            else => @bitCast(i64, @trunc(this.asDouble())),
-        };
+        return cppFn("toInt64", .{this});
     }
 
     pub inline fn isUndefined(this: JSValue) bool {
@@ -2771,7 +2764,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn asPtr(this: JSValue, comptime Pointer: type) *Pointer {
-        return @intToPtr(*Pointer, @bitCast(usize, @enumToInt(this)));
+        return @intToPtr(*Pointer, @bitCast(usize, this.asDouble()));
     }
 
     pub fn fromPtrAddress(addr: anytype) JSValue {
@@ -2874,6 +2867,7 @@ pub const JSValue = enum(i64) {
     /// It knows not to free it
     /// This mimicks the implementation in JavaScriptCore's C++
     pub inline fn ensureStillAlive(this: JSValue) void {
+        if (this.isEmpty() or this.isNumber() or this.isBoolean() or this.isUndefinedOrNull()) return;
         std.mem.doNotOptimizeAway(@ptrCast(C_API.JSObjectRef, this.asVoid()));
     }
 
@@ -3102,6 +3096,10 @@ pub const VM = extern struct {
         });
     }
 
+    pub fn releaseWeakRefs(vm: *VM) void {
+        return cppFn("releaseWeakRefs", .{vm});
+    }
+
     pub fn drainMicrotasks(
         vm: *VM,
     ) void {
@@ -3117,7 +3115,7 @@ pub const VM = extern struct {
             vm,
         });
     }
-    pub const Extern = [_][]const u8{ "throwError", "doWork", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "releaseWeakRefs", "throwError", "doWork", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {
@@ -3205,6 +3203,10 @@ pub const CallFrame = opaque {
 
     pub fn argumentsPtr(self: *const CallFrame) [*]const JSC.JSValue {
         return @ptrCast([*]const JSC.JSValue, @alignCast(alignment, self)) + arguments_offset;
+    }
+
+    pub fn callee(self: *const CallFrame) JSC.JSValue {
+        return (@ptrCast([*]const JSC.JSValue, @alignCast(alignment, self)) + arguments_offset - 1)[0];
     }
 
     pub fn arguments(self: *const CallFrame) []const JSC.JSValue {

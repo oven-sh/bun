@@ -1,3 +1,4 @@
+import { file, gc } from "bun";
 import { expect, it } from "bun:test";
 
 it("exists globally", () => {
@@ -43,4 +44,25 @@ it("ReadableStream for Blob", async () => {
   expect(chunks.map((a) => a.join("")).join("")).toBe(
     Buffer.from("abdefghijklmnop").join("")
   );
+});
+
+it("ReadableStream for File", async () => {
+  var blob = file(import.meta.dir + "/fetch.js.txt");
+  var stream = blob.stream(24);
+  const chunks = [];
+  var reader = stream.getReader();
+  stream = undefined;
+
+  while (true) {
+    const chunk = await reader.read();
+    gc(true);
+    if (chunk.done) break;
+    chunks.push(chunk.value);
+    gc(true);
+  }
+  reader = undefined;
+  expect(chunks.map((a) => a.join("")).join("")).toBe(
+    new Uint8Array(await blob.arrayBuffer()).join("")
+  );
+  gc(true);
 });

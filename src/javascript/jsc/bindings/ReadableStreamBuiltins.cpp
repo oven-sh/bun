@@ -119,82 +119,73 @@ const char* const s_readableStreamInitializeReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamCreateNativeReadableStreamCodeLength = 2905;
+const int s_readableStreamCreateNativeReadableStreamCodeLength = 3152;
 static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateNativeReadableStreamCode =
-    "(function (nativePtr, nativeType) {\n" \
+    "(function (nativePtr, nativeType, autoAllocateChunkSize) {\n" \
     "    \"use strict\";\n" \
     "    var cached =  globalThis[Symbol.for(\"Bun.nativeReadableStreamPrototype\")] ||= new @Map;\n" \
     "    var Prototype = cached.@get(nativeType);\n" \
     "    if (Prototype === @undefined) {\n" \
     "        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for(\"Bun.lazy\")](nativeType);\n" \
     "        var closer = [false];\n" \
-    "\n" \
+    "var handleResult;\n" \
     "        function handleNativeReadableStreamPromiseResult(val) {\n" \
     "            \"use strict\";\n" \
-    "            var {r, c} = this;\n" \
-    "            this.r = @undefined;\n" \
+    "            var {c, v} = this;\n" \
     "            this.c = @undefined;\n" \
-    "            r(val, c);\n" \
+    "            this.v = @undefined;\n" \
+    "            closer[0] = false;\n" \
+    "            handleResult(val, c, v);\n" \
     "        }\n" \
     "        \n" \
-    "        function closeNativeReadableStreamOnNextTick(controller) {\n" \
-    "            \"use strict\";\n" \
-    "            controller.close();\n" \
-    "            controller = @undefined;\n" \
-    "        }        \n" \
-    "\n" \
-    "        var handleResult = function handleResult(result, controller) {\n" \
+    "     \n" \
+    "        handleResult = function handleResult(result, controller, view) {\n" \
     "            \"use strict\";\n" \
     "\n" \
     "            if (result && @isPromise(result)) {\n" \
-    "                return result.then(handleNativeReadableStreamPromiseResult.bind({c: controller, r: handleResult}), controller.error);\n" \
+    "                return result.then(handleNativeReadableStreamPromiseResult.bind({c: controller, v: view}), (err) => controller.error(err));\n" \
     "            } else if (result !== false) {\n" \
-    "                controller.enqueue(result);\n" \
+    "                if (view && view.byteLength === result) {\n" \
+    "                    controller.byobRequest.respondWithNewView(view);\n" \
+    "                } else {\n" \
+    "                    controller.byobRequest.respond(result);\n" \
+    "                }\n" \
     "            }\n" \
     "\n" \
     "            if (closer[0] || result === false) {\n" \
-    "                @enqueueJob(closeNativeReadableStreamOnNextTick, controller);\n" \
+    "                @enqueueJob(() => controller.close());\n" \
     "                closer[0] = false;\n" \
     "            }\n" \
-    "        }\n" \
+    "        };\n" \
     "\n" \
     "        Prototype = class NativeReadableStreamSource {\n" \
-    "            constructor(tag) {\n" \
+    "            constructor(tag, autoAllocateChunkSize) {\n" \
     "                this.pull = this.pull_.bind(tag);\n" \
-    "                this.start = this.start_.bind(tag);\n" \
     "                this.cancel = this.cancel_.bind(tag);\n" \
+    "                this.autoAllocateChunkSize = autoAllocateChunkSize;\n" \
     "            }\n" \
     "\n" \
     "            pull;\n" \
-    "            start;\n" \
     "            cancel;\n" \
+    "\n" \
+    "            type = \"bytes\";\n" \
+    "            autoAllocateChunkSize = 0;\n" \
+    "\n" \
+    "            static startSync = start;\n" \
     "            \n" \
     "            pull_(controller) {\n" \
     "                closer[0] = false;\n" \
     "                var result;\n" \
     "\n" \
+    "                const view = controller.byobRequest.view;\n" \
     "                try {\n" \
-    "                    result = pull(this, closer);\n" \
+    "                    result = pull(this, view, closer);\n" \
     "                } catch(err) {\n" \
     "                    return controller.error(err);\n" \
     "                }\n" \
     "\n" \
-    "                return  handleResult(result, controller);\n" \
-    "            }\n" \
-    "\n" \
-    "            start_(controller) {\n" \
-    "                setClose(this, controller.close);\n" \
-    "                closer[0] = false;\n" \
-    "                var result;\n" \
-    "\n" \
-    "                try {\n" \
-    "                    result = start(this, closer);\n" \
-    "                } catch(err) {\n" \
-    "                    return controller.error(err);\n" \
-    "                }\n" \
-    "\n" \
-    "                 return handleResult(result, controller);\n" \
+    "                return handleResult(result, controller, view);\n" \
     "            }\n" \
     "\n" \
     "            cancel_(reason) {\n" \
@@ -206,7 +197,29 @@ const char* const s_readableStreamCreateNativeReadableStreamCode =
     "        cached.@set(nativeType, Prototype);\n" \
     "    }\n" \
     "    \n" \
-    "    var instance = new Prototype(nativePtr);\n" \
+    "    //\n" \
+    "    //\n" \
+    "    //\n" \
+    "    const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);\n" \
+    "\n" \
+    "    //\n" \
+    "    if (chunkSize === 0) {\n" \
+    "        return new @ReadableStream({\n" \
+    "            start(controller) {\n" \
+    "                controller.close();\n" \
+    "            },\n" \
+    "\n" \
+    "            pull() {\n" \
+    "\n" \
+    "            },\n" \
+    "\n" \
+    "            cancel() {\n" \
+    "\n" \
+    "            },\n" \
+    "        });\n" \
+    "    }\n" \
+    "\n" \
+    "    var instance = new Prototype(nativePtr, chunkSize);\n" \
     "    Prototype.registry.register(instance, nativePtr);\n" \
     "    var stream = new @ReadableStream(instance);\n" \
     "    @putByIdDirectPrivate(stream, \"bunNativeType\", nativeType);\n" \

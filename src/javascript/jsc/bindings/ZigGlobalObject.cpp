@@ -871,6 +871,22 @@ static JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+JSC_DECLARE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer);
+JSC_DEFINE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    size_t len = static_cast<size_t>(JSC__JSValue__toInt64(JSC::JSValue::encode(callFrame->argument(0))));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(len, 1);
+
+    if (UNLIKELY(!arrayBuffer)) {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTFMove(arrayBuffer))));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionNoop, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1250,7 +1266,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(26);
+    extraStaticGlobals.reserveCapacity(27);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -1336,6 +1352,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     extraStaticGlobals.releaseBuffer();
 
+    putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), streamInternalsCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),

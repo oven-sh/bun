@@ -79,6 +79,10 @@ extern const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCod
 extern const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind;
+extern const char* const s_streamInternalsCreateFIFOCode;
+extern const int s_streamInternalsCreateFIFOCodeLength;
+extern const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility;
+extern const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind;
 extern const char* const s_streamInternalsNewQueueCode;
 extern const int s_streamInternalsNewQueueCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsNewQueueCodeConstructAbility;
@@ -129,6 +133,7 @@ extern const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKi
     macro(promiseInvokeOrNoop, streamInternalsPromiseInvokeOrNoop, 3) \
     macro(promiseInvokeOrFallbackOrNoop, streamInternalsPromiseInvokeOrFallbackOrNoop, 5) \
     macro(validateAndNormalizeQueuingStrategy, streamInternalsValidateAndNormalizeQueuingStrategy, 2) \
+    macro(createFIFO, streamInternalsCreateFIFO, 0) \
     macro(newQueue, streamInternalsNewQueue, 0) \
     macro(dequeueValue, streamInternalsDequeueValue, 1) \
     macro(enqueueValueWithSize, streamInternalsEnqueueValueWithSize, 3) \
@@ -148,6 +153,7 @@ extern const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKi
 #define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORNOOP 1
 #define WEBCORE_BUILTIN_STREAMINTERNALS_PROMISEINVOKEORFALLBACKORNOOP 1
 #define WEBCORE_BUILTIN_STREAMINTERNALS_VALIDATEANDNORMALIZEQUEUINGSTRATEGY 1
+#define WEBCORE_BUILTIN_STREAMINTERNALS_CREATEFIFO 1
 #define WEBCORE_BUILTIN_STREAMINTERNALS_NEWQUEUE 1
 #define WEBCORE_BUILTIN_STREAMINTERNALS_DEQUEUEVALUE 1
 #define WEBCORE_BUILTIN_STREAMINTERNALS_ENQUEUEVALUEWITHSIZE 1
@@ -168,6 +174,7 @@ extern const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKi
     macro(streamInternalsPromiseInvokeOrNoopCode, promiseInvokeOrNoop, ASCIILiteral(), s_streamInternalsPromiseInvokeOrNoopCodeLength) \
     macro(streamInternalsPromiseInvokeOrFallbackOrNoopCode, promiseInvokeOrFallbackOrNoop, ASCIILiteral(), s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength) \
     macro(streamInternalsValidateAndNormalizeQueuingStrategyCode, validateAndNormalizeQueuingStrategy, ASCIILiteral(), s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength) \
+    macro(streamInternalsCreateFIFOCode, createFIFO, ASCIILiteral(), s_streamInternalsCreateFIFOCodeLength) \
     macro(streamInternalsNewQueueCode, newQueue, ASCIILiteral(), s_streamInternalsNewQueueCodeLength) \
     macro(streamInternalsDequeueValueCode, dequeueValue, ASCIILiteral(), s_streamInternalsDequeueValueCodeLength) \
     macro(streamInternalsEnqueueValueWithSizeCode, enqueueValueWithSize, ASCIILiteral(), s_streamInternalsEnqueueValueWithSizeCodeLength) \
@@ -180,6 +187,7 @@ extern const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKi
     macro(streamInternalsToDictionaryCode, toDictionary, ASCIILiteral(), s_streamInternalsToDictionaryCodeLength) \
 
 #define WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
+    macro(createFIFO) \
     macro(createFulfilledPromise) \
     macro(dequeueValue) \
     macro(enqueueValueWithSize) \

@@ -547,15 +547,15 @@ function readableStreamError(stream, error)
 
     if (@isReadableStreamDefaultReader(reader)) {
         const requests = @getByIdDirectPrivate(reader, "readRequests");
-        @putByIdDirectPrivate(reader, "readRequests", []);
-        for (let index = 0, length = requests.length; index < length; ++index)
-            @rejectPromise(requests[index], error);
+        @putByIdDirectPrivate(reader, "readRequests", @createFIFO());
+        for (var request = requests.shift(); request; request = requests.shift())
+            @rejectPromise(request, error);
     } else {
         @assert(@isReadableStreamBYOBReader(reader));
         const requests = @getByIdDirectPrivate(reader, "readIntoRequests");
-        @putByIdDirectPrivate(reader, "readIntoRequests", []);
-        for (let index = 0, length = requests.length; index < length; ++index)
-            @rejectPromise(requests[index], error);
+        @putByIdDirectPrivate(reader, "readIntoRequests", @createFIFO());
+        for (var request = requests.shift(); request; request = requests.shift())
+            @rejectPromise(request, error);
     }
 
     @getByIdDirectPrivate(reader, "closedPromiseCapability").@reject.@call(@undefined, error);
@@ -571,7 +571,7 @@ function readableStreamDefaultControllerShouldCallPull(controller)
         return false;
     if (!@getByIdDirectPrivate(controller, "started"))
         return false;
-    if ((!@isReadableStreamLocked(stream) || !@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").length) && @readableStreamDefaultControllerGetDesiredSize(controller) <= 0)
+    if ((!@isReadableStreamLocked(stream) || !@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty()) && @readableStreamDefaultControllerGetDesiredSize(controller) <= 0)
         return false;
     const desiredSize = @readableStreamDefaultControllerGetDesiredSize(controller);
     @assert(desiredSize !== null);
@@ -589,7 +589,7 @@ function readableStreamDefaultControllerCallPullIfNeeded(controller)
         return;
     if (!@getByIdDirectPrivate(controller, "started"))
         return;
-    if ((!@isReadableStreamLocked(stream) || !@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").length) && @readableStreamDefaultControllerGetDesiredSize(controller) <= 0)
+    if ((!@isReadableStreamLocked(stream) || !@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty()) && @readableStreamDefaultControllerGetDesiredSize(controller) <= 0)
         return;
 
     if (@getByIdDirectPrivate(controller, "pulling")) {
@@ -670,9 +670,10 @@ function readableStreamDefaultControllerPull(controller)
 {
     "use strict";
 
-    if (@getByIdDirectPrivate(controller, "queue").content.length) {
-        const chunk = @dequeueValue(@getByIdDirectPrivate(controller, "queue"));
-        if (@getByIdDirectPrivate(controller, "closeRequested") && @getByIdDirectPrivate(controller, "queue").content.length === 0)
+    var queue  = @getByIdDirectPrivate(controller, "queue");
+    if (queue.isNotEmpty()) {
+        const chunk = @dequeueValue(queue);
+        if (@getByIdDirectPrivate(controller, "closeRequested") && queue.isEmpty())
             @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
         else
             @readableStreamDefaultControllerCallPullIfNeeded(controller);
@@ -690,7 +691,7 @@ function readableStreamDefaultControllerClose(controller)
 
     @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));
     @putByIdDirectPrivate(controller, "closeRequested", true);
-    if (@getByIdDirectPrivate(controller, "queue").content.length === 0)
+    if (!@getByIdDirectPrivate(controller, "queue")?.isNotEmpty())
         @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
 }
 
@@ -707,9 +708,10 @@ function readableStreamClose(stream)
 
     if (@isReadableStreamDefaultReader(reader)) {
         const requests = @getByIdDirectPrivate(reader, "readRequests");
-        @putByIdDirectPrivate(reader, "readRequests", []);
-        for (let index = 0, length = requests.length; index < length; ++index)
-            @fulfillPromise(requests[index], { value: @undefined, done: true });
+        @putByIdDirectPrivate(reader, "readRequests", @createFIFO());
+        
+        for (var request = requests.shift(); request; request = requests.shift())
+            @fulfillPromise(request, { value: @undefined, done: true });
     }
 
     @getByIdDirectPrivate(reader, "closedPromiseCapability").@resolve.@call();
@@ -718,7 +720,7 @@ function readableStreamClose(stream)
 function readableStreamFulfillReadRequest(stream, chunk, done)
 {
     "use strict";
-    const readRequest = @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").@shift();
+    const readRequest = @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").shift();
     @fulfillPromise(readRequest, { value: chunk, done: done });
 }
 
@@ -730,7 +732,7 @@ function readableStreamDefaultControllerEnqueue(controller, chunk)
     // this is checked by callers
     @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));
 
-    if (@isReadableStreamLocked(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").length) {
+    if (@isReadableStreamLocked(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").isNotEmpty) {
         @readableStreamFulfillReadRequest(stream, chunk, false);
         @readableStreamDefaultControllerCallPullIfNeeded(controller);
         return;
@@ -775,7 +777,8 @@ function readableStreamAddReadRequest(stream)
     @assert(@getByIdDirectPrivate(stream, "state") == @streamReadable);
 
     const readRequest = @newPromise();
-    @arrayPush(@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests"), readRequest);
+    
+    @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").push(readRequest);
 
     return readRequest;
 }

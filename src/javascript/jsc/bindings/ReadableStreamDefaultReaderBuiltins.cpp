@@ -49,7 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength = 382;
+const int s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength = 393;
 static const JSC::Intrinsic s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCode =
     "(function (stream)\n" \
@@ -62,7 +62,7 @@ const char* const s_readableStreamDefaultReaderInitializeReadableStreamDefaultRe
     "        @throwTypeError(\"ReadableStream is locked\");\n" \
     "\n" \
     "    @readableStreamReaderGenericInitialize(this, stream);\n" \
-    "    @putByIdDirectPrivate(this, \"readRequests\", []);\n" \
+    "    @putByIdDirectPrivate(this, \"readRequests\", @createFIFO());\n" \
     "\n" \
     "    return this;\n" \
     "})\n" \
@@ -89,7 +89,7 @@ const char* const s_readableStreamDefaultReaderCancelCode =
 
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamDefaultReaderReadManyCodeLength = 3797;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 2136;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderReadManyCode =
     "(function ()\n" \
@@ -111,30 +111,14 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "        throw @getByIdDirectPrivate(stream, \"storedError\");\n" \
     "    }\n" \
     "\n" \
-    "    const controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n" \
+    "    var controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n" \
     "    \n" \
     "    const content = @getByIdDirectPrivate(controller, \"queue\").content;\n" \
     "    var size = @getByIdDirectPrivate(controller, \"queue\").size;\n" \
+    "    var values = content.toArray(false);\n" \
+    "    var length = values.length;\n" \
     "\n" \
-    "    var values = new @Array(content.length);\n" \
-    "\n" \
-    "    if (content.length > 0) {\n" \
-    "        if (\"buffer\" in content[0]) {\n" \
-    "            values[0] = new @Uint8Array(content[0].buffer, content[0].byteOffset, content[0].byteLength);\n" \
-    "            for (var i = 0; i < content.length; ++i) {\n" \
-    "                @putByValDirect(values, i+1, new @Uint8Array(content[i].buffer, content[i].byteOffset, content[i].byteLength));\n" \
-    "            }\n" \
-    "        } else if (typeof content[0] === 'object' && content[0] && \"byteLength\" in content[0]) {\n" \
-    "            size = 0;\n" \
-    "            for (var i = 0; i < content.length; ++i) {\n" \
-    "                @putByValDirect(values, i+1, content[i].value);\n" \
-    "                size += content[i].value.byteLength;\n" \
-    "            }\n" \
-    "        } else {\n" \
-    "            for (var i = 0; i < content.length; ++i) {\n" \
-    "                @putByValDirect(values, i+1, content[i].value);\n" \
-    "            }\n" \
-    "        }\n" \
+    "    if (length > 0) {\n" \
     "        @resetQueue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
     "\n" \
     "        if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n" \
@@ -146,43 +130,22 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "           if (done) {\n" \
     "               return {value: [], size: 0, done: true};\n" \
     "           }\n" \
-    "\n" \
-    "           const content = queue.content;\n" \
-    "           var values = new @Array(content.length + 1);\n" \
-    "           \n" \
+    "            var queue = @getByIdDirectPrivate(controller, \"queue\");\n" \
+    "            const content = [value].concat(queue.content.toArray(false));\n" \
     "            var size = queue.size;\n" \
-    "\n" \
-    "           if (\"buffer\" in content[0]) {\n" \
-    "                values[0] = new @Uint8Array(value.buffer, value.byteOffset, value.byteLength);\n" \
-    "                for (var i = 0; i < content.length; ++i) {\n" \
-    "                    @putByValDirect(values, i+1, new @Uint8Array(content[i].buffer, content[i].byteOffset, content[i].byteLength));\n" \
-    "                }\n" \
-    "                size += value.byteLength;\n" \
-    "            } else if (typeof value === 'object' && value && \"byteLength\" in value) {\n" \
-    "                size += value.byteLength;\n" \
-    "                values[0] = value;\n" \
-    "                for (var i = 0; i < content.length; ++i) {\n" \
-    "                    @putByValDirect(values, i+1, content[i].value);\n" \
-    "                    size += content[i].value.byteLength;\n" \
-    "                }\n" \
-    "\n" \
-    "            } else {\n" \
-    "                values[0] = value;\n" \
-    "                for (var i = 0; i < content.length; ++i) {\n" \
-    "                    @putByValDirect(values, i+1, content[i].value);\n" \
-    "                }\n" \
-    "            }\n" \
-    "\n" \
     "            @resetQueue(queue);\n" \
     "\n" \
     "            if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n" \
     "                @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
     "            else\n" \
     "                @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
+    "            controller = @undefined;\n" \
     "\n" \
     "           return {value: values, size: size, done: false};\n" \
     "        });\n" \
     "    }\n" \
+    "\n" \
+    "    controller = @undefined;\n" \
     "\n" \
     "    return {value: values, size, done: false};\n" \
     "})\n" \
@@ -208,7 +171,7 @@ const char* const s_readableStreamDefaultReaderReadCode =
 
 const JSC::ConstructAbility s_readableStreamDefaultReaderReleaseLockCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReleaseLockCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamDefaultReaderReleaseLockCodeLength = 442;
+const int s_readableStreamDefaultReaderReleaseLockCodeLength = 449;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReleaseLockCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderReleaseLockCode =
     "(function ()\n" \
@@ -221,7 +184,7 @@ const char* const s_readableStreamDefaultReaderReleaseLockCode =
     "    if (!@getByIdDirectPrivate(this, \"ownerReadableStream\"))\n" \
     "        return;\n" \
     "\n" \
-    "    if (@getByIdDirectPrivate(this, \"readRequests\").length)\n" \
+    "    if (@getByIdDirectPrivate(this, \"readRequests\")?.isNotEmpty())\n" \
     "        @throwTypeError(\"There are still pending read requests, cannot release the lock\");\n" \
     "\n" \
     "    @readableStreamReaderGenericRelease(this);\n" \

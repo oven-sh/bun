@@ -131,7 +131,7 @@ const char* const s_readableByteStreamControllerCloseCode =
 
 const JSC::ConstructAbility s_readableByteStreamControllerByobRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerByobRequestCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamControllerByobRequestCodeLength = 759;
+const int s_readableByteStreamControllerByobRequestCodeLength = 817;
 static const JSC::Intrinsic s_readableByteStreamControllerByobRequestCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamControllerByobRequestCode =
     "(function ()\n" \
@@ -141,12 +141,17 @@ const char* const s_readableByteStreamControllerByobRequestCode =
     "    if (!@isReadableByteStreamController(this))\n" \
     "        throw @makeGetterTypeError(\"ReadableByteStreamController\", \"byobRequest\");\n" \
     "\n" \
-    "    if (@getByIdDirectPrivate(this, \"byobRequest\") === @undefined && @getByIdDirectPrivate(this, \"pendingPullIntos\").length) {\n" \
-    "        const firstDescriptor = @getByIdDirectPrivate(this, \"pendingPullIntos\")[0];\n" \
-    "        const view = new @Uint8Array(firstDescriptor.buffer,\n" \
+    "    \n" \
+    "    var request = @getByIdDirectPrivate(this, \"byobRequest\");\n" \
+    "    if (request === @undefined) {\n" \
+    "        var pending = @getByIdDirectPrivate(this, \"pendingPullIntos\");\n" \
+    "        const firstDescriptor = pending.peek();\n" \
+    "        if (firstDescriptor) {\n" \
+    "            const view = new @Uint8Array(firstDescriptor.buffer,\n" \
     "            firstDescriptor.byteOffset + firstDescriptor.bytesFilled,\n" \
     "            firstDescriptor.byteLength - firstDescriptor.bytesFilled);\n" \
-    "        @putByIdDirectPrivate(this, \"byobRequest\", new @ReadableStreamBYOBRequest(this, view, @isReadableStream));\n" \
+    "            @putByIdDirectPrivate(this, \"byobRequest\", new @ReadableStreamBYOBRequest(this, view, @isReadableStream));\n" \
+    "        }\n" \
     "    }\n" \
     "\n" \
     "    return @getByIdDirectPrivate(this, \"byobRequest\");\n" \

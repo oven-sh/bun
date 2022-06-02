@@ -214,7 +214,6 @@ const z_allocator_vtable = Allocator.VTable{
     .resize = ZAllocator.resize,
     .free = ZAllocator.free,
 };
-
 const HugeAllocator = struct {
     fn alloc(
         _: *anyopaque,
@@ -272,6 +271,8 @@ const huge_allocator_vtable = Allocator.VTable{
     .free = HugeAllocator.free,
 };
 
+pub const huge_threshold = 1024 * 256;
+
 const AutoSizeAllocator = struct {
     fn alloc(
         _: *anyopaque,
@@ -280,7 +281,7 @@ const AutoSizeAllocator = struct {
         len_align: u29,
         return_address: usize,
     ) error{OutOfMemory}![]u8 {
-        if (len > 1024 * 1024 * 2) {
+        if (len >= huge_threshold) {
             return huge_allocator.rawAlloc(
                 len,
                 alignment,
@@ -314,7 +315,7 @@ const AutoSizeAllocator = struct {
         a: u29,
         b: usize,
     ) void {
-        if (buf.len > 1024 * 1024 * 2) {
+        if (buf.len >= huge_threshold) {
             return huge_allocator.rawFree(
                 buf,
                 a,

@@ -49,7 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeLength = 574;
+const int s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeLength = 585;
 static const JSC::Intrinsic s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCode =
     "(function (stream)\n" \
@@ -64,7 +64,7 @@ const char* const s_readableStreamBYOBReaderInitializeReadableStreamBYOBReaderCo
     "        @throwTypeError(\"ReadableStream is locked\");\n" \
     "\n" \
     "    @readableStreamReaderGenericInitialize(this, stream);\n" \
-    "    @putByIdDirectPrivate(this, \"readIntoRequests\", []);\n" \
+    "    @putByIdDirectPrivate(this, \"readIntoRequests\", @createFIFO());\n" \
     "\n" \
     "    return this;\n" \
     "})\n" \
@@ -119,7 +119,7 @@ const char* const s_readableStreamBYOBReaderReadCode =
 
 const JSC::ConstructAbility s_readableStreamBYOBReaderReleaseLockCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamBYOBReaderReleaseLockCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamBYOBReaderReleaseLockCodeLength = 440;
+const int s_readableStreamBYOBReaderReleaseLockCodeLength = 447;
 static const JSC::Intrinsic s_readableStreamBYOBReaderReleaseLockCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamBYOBReaderReleaseLockCode =
     "(function ()\n" \
@@ -132,7 +132,7 @@ const char* const s_readableStreamBYOBReaderReleaseLockCode =
     "    if (!@getByIdDirectPrivate(this, \"ownerReadableStream\"))\n" \
     "        return;\n" \
     "\n" \
-    "    if (@getByIdDirectPrivate(this, \"readIntoRequests\").length)\n" \
+    "    if (@getByIdDirectPrivate(this, \"readIntoRequests\")?.isNotEmpty())\n" \
     "        @throwTypeError(\"There are still pending read requests, cannot release the lock\");\n" \
     "\n" \
     "    @readableStreamReaderGenericRelease(this);\n" \

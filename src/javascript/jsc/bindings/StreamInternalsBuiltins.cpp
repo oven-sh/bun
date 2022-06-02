@@ -183,29 +183,135 @@ const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_streamInternalsCreateFIFOCodeLength = 2764;
+static const JSC::Intrinsic s_streamInternalsCreateFIFOCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_streamInternalsCreateFIFOCode =
+    "(function () {\n" \
+    "    \"use strict\";\n" \
+    "    class Denqueue {\n" \
+    "        constructor() {\n" \
+    "          this._head = 0;\n" \
+    "          this._tail = 0;\n" \
+    "          //\n" \
+    "          this._capacityMask = 0x3;\n" \
+    "          this._list = @newArrayWithSize(4);\n" \
+    "        }\n" \
+    "  \n" \
+    "        size() {\n" \
+    "          if (this._head === this._tail) return 0;\n" \
+    "          if (this._head < this._tail) return this._tail - this._head;\n" \
+    "          else return this._capacityMask + 1 - (this._head - this._tail);\n" \
+    "        }\n" \
+    "\n" \
+    "        isEmpty() {\n" \
+    "            return this.size() == 0;\n" \
+    "        }\n" \
+    "\n" \
+    "        isNotEmpty() {\n" \
+    "            return this.size() > 0;\n" \
+    "        }\n" \
+    "  \n" \
+    "        shift() {\n" \
+    "            var head = this._head;\n" \
+    "            if (head === this._tail) return @undefined;\n" \
+    "            var item = this._list[head];\n" \
+    "            @putByValDirect(this._list, head, @undefined);\n" \
+    "            this._head = (head + 1) & this._capacityMask;\n" \
+    "            if (head < 2 && this._tail > 10000 && this._tail <= this._list.length >>> 2) this._shrinkArray();\n" \
+    "            return item;\n" \
+    "        }\n" \
+    "\n" \
+    "        peek() {\n" \
+    "            if (this._head === this._tail) return @undefined;\n" \
+    "            return this._list[this._head];\n" \
+    "        }\n" \
+    "  \n" \
+    "        push(item) {\n" \
+    "          var tail = this._tail;\n" \
+    "          @putByValDirect(this._list, tail, item);\n" \
+    "          this._tail = (tail + 1) & this._capacityMask;\n" \
+    "          if (this._tail === this._head) {\n" \
+    "            this._growArray();\n" \
+    "          }\n" \
+    "          //\n" \
+    "            //\n" \
+    "          //\n" \
+    "        }\n" \
+    "  \n" \
+    "        toArray(fullCopy) {\n" \
+    "          var list = this._list;\n" \
+    "          var len = @toLength(list.length);\n" \
+    "  \n" \
+    "          if (fullCopy || this._head > this._tail) {\n" \
+    "            var _head = @toLength(this._head);\n" \
+    "            var _tail = @toLength(this._tail);\n" \
+    "            var total = @toLength((len - _head) + _tail);\n" \
+    "            var array = @newArrayWithSize(total);\n" \
+    "            var j = 0;\n" \
+    "            for (var i = _head; i < len; i++) @putByValDirect(array, j++, list[i]);\n" \
+    "            for (var i = 0; i < _tail; i++) @putByValDirect(array, j++, list[i]);\n" \
+    "            return array;\n" \
+    "          } else {\n" \
+    "            return @Array.prototype.slice.@call(list, this._head, this._tail);\n" \
+    "          }\n" \
+    "        }\n" \
+    "        \n" \
+    "        clear() {\n" \
+    "            this._head = 0;\n" \
+    "            this._tail = 0;\n" \
+    "            this._list.fill(undefined);\n" \
+    "        }\n" \
+    "\n" \
+    "        _growArray() {\n" \
+    "          if (this._head) {\n" \
+    "            //\n" \
+    "            this._list = this.toArray(true);\n" \
+    "            this._head = 0;\n" \
+    "          }\n" \
+    "  \n" \
+    "          //\n" \
+    "          this._tail = @toLength(this._list.length);\n" \
+    "  \n" \
+    "          this._list.length <<= 1;\n" \
+    "          this._capacityMask = (this._capacityMask << 1) | 1;\n" \
+    "        }\n" \
+    "  \n" \
+    "        shrinkArray() {\n" \
+    "          this._list.length >>>= 1;\n" \
+    "          this._capacityMask >>>= 1;\n" \
+    "        }\n" \
+    "      }\n" \
+    "\n" \
+    "  \n" \
+    "    return new Denqueue();\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_streamInternalsNewQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsNewQueueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_streamInternalsNewQueueCodeLength = 74;
+const int s_streamInternalsNewQueueCodeLength = 85;
 static const JSC::Intrinsic s_streamInternalsNewQueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsNewQueueCode =
     "(function ()\n" \
     "{\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    return { content: [], size: 0 };\n" \
+    "    return { content: @createFIFO(), size: 0 };\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_streamInternalsDequeueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsDequeueValueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_streamInternalsDequeueValueCodeLength = 196;
+const int s_streamInternalsDequeueValueCodeLength = 195;
 static const JSC::Intrinsic s_streamInternalsDequeueValueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsDequeueValueCode =
     "(function (queue)\n" \
     "{\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    const record = queue.content.@shift();\n" \
+    "    const record = queue.content.shift();\n" \
     "    queue.size -= record.size;\n" \
     "    //\n" \
     "    if (queue.size < 0)\n" \
@@ -216,7 +322,7 @@ const char* const s_streamInternalsDequeueValueCode =
 
 const JSC::ConstructAbility s_streamInternalsEnqueueValueWithSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsEnqueueValueWithSizeCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_streamInternalsEnqueueValueWithSizeCodeLength = 250;
+const int s_streamInternalsEnqueueValueWithSizeCodeLength = 248;
 static const JSC::Intrinsic s_streamInternalsEnqueueValueWithSizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsEnqueueValueWithSizeCode =
     "(function (queue, value, size)\n" \
@@ -226,29 +332,30 @@ const char* const s_streamInternalsEnqueueValueWithSizeCode =
     "    size = @toNumber(size);\n" \
     "    if (!@isFinite(size) || size < 0)\n" \
     "        @throwRangeError(\"size has an incorrect value\");\n" \
-    "    @arrayPush(queue.content, { value, size });\n" \
+    "    \n" \
+    "    queue.content.push({ value, size });\n" \
     "    queue.size += size;\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_streamInternalsPeekQueueValueCodeLength = 117;
+const int s_streamInternalsPeekQueueValueCodeLength = 115;
 static const JSC::Intrinsic s_streamInternalsPeekQueueValueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPeekQueueValueCode =
     "(function (queue)\n" \
     "{\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    @assert(queue.content.length > 0);\n" \
+    "    @assert(queue.content.isNotEmpty());\n" \
     "\n" \
-    "    return queue.content[0].value;\n" \
+    "    return queue.peek().value;\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_streamInternalsResetQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsResetQueueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_streamInternalsResetQueueCodeLength = 149;
+const int s_streamInternalsResetQueueCodeLength = 152;
 static const JSC::Intrinsic s_streamInternalsResetQueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsResetQueueCode =
     "(function (queue)\n" \
@@ -257,7 +364,7 @@ const char* const s_streamInternalsResetQueueCode =
     "\n" \
     "    @assert(\"content\" in queue);\n" \
     "    @assert(\"size\" in queue);\n" \
-    "    queue.content = [];\n" \
+    "    queue.content.clear();\n" \
     "    queue.size = 0;\n" \
     "})\n" \
 ;

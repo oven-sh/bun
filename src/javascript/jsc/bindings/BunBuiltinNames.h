@@ -67,8 +67,10 @@ using namespace JSC;
     macro(controlledReadableStream) \
     macro(controller) \
     macro(cork) \
-    macro(createReadableStream) \
+    macro(createFIFO) \
     macro(createNativeReadableStream) \
+    macro(createReadableStream) \
+    macro(createUninitializedArrayBuffer) \
     macro(createWritableStreamFromInternal) \
     macro(cwd) \
     macro(dataView) \

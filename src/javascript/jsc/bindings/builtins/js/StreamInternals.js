@@ -114,18 +114,119 @@ function validateAndNormalizeQueuingStrategy(size, highWaterMark)
     return { size: size, highWaterMark: newHighWaterMark };
 }
 
+@globalPrivate
+function createFIFO() {
+    "use strict";
+    class Denqueue {
+        constructor() {
+          this._head = 0;
+          this._tail = 0;
+          // this._capacity = 0;
+          this._capacityMask = 0x3;
+          this._list = @newArrayWithSize(4);
+        }
+  
+        size() {
+          if (this._head === this._tail) return 0;
+          if (this._head < this._tail) return this._tail - this._head;
+          else return this._capacityMask + 1 - (this._head - this._tail);
+        }
+
+        isEmpty() {
+            return this.size() == 0;
+        }
+
+        isNotEmpty() {
+            return this.size() > 0;
+        }
+  
+        shift() {
+            var head = this._head;
+            if (head === this._tail) return @undefined;
+            var item = this._list[head];
+            @putByValDirect(this._list, head, @undefined);
+            this._head = (head + 1) & this._capacityMask;
+            if (head < 2 && this._tail > 10000 && this._tail <= this._list.length >>> 2) this._shrinkArray();
+            return item;
+        }
+
+        peek() {
+            if (this._head === this._tail) return @undefined;
+            return this._list[this._head];
+        }
+  
+        push(item) {
+          var tail = this._tail;
+          @putByValDirect(this._list, tail, item);
+          this._tail = (tail + 1) & this._capacityMask;
+          if (this._tail === this._head) {
+            this._growArray();
+          }
+          // if (this._capacity && this.size() > this._capacity) {
+            // this.shift();
+          // }
+        }
+  
+        toArray(fullCopy) {
+          var list = this._list;
+          var len = @toLength(list.length);
+  
+          if (fullCopy || this._head > this._tail) {
+            var _head = @toLength(this._head);
+            var _tail = @toLength(this._tail);
+            var total = @toLength((len - _head) + _tail);
+            var array = @newArrayWithSize(total);
+            var j = 0;
+            for (var i = _head; i < len; i++) @putByValDirect(array, j++, list[i]);
+            for (var i = 0; i < _tail; i++) @putByValDirect(array, j++, list[i]);
+            return array;
+          } else {
+            return @Array.prototype.slice.@call(list, this._head, this._tail);
+          }
+        }
+        
+        clear() {
+            this._head = 0;
+            this._tail = 0;
+            this._list.fill(undefined);
+        }
+
+        _growArray() {
+          if (this._head) {
+            // copy existing data, head to end, then beginning to tail.
+            this._list = this.toArray(true);
+            this._head = 0;
+          }
+  
+          // head is at 0 and array is now full, safe to extend
+          this._tail = @toLength(this._list.length);
+  
+          this._list.length <<= 1;
+          this._capacityMask = (this._capacityMask << 1) | 1;
+        }
+  
+        shrinkArray() {
+          this._list.length >>>= 1;
+          this._capacityMask >>>= 1;
+        }
+      }
+
+  
+    return new Denqueue();
+}
+
 function newQueue()
 {
     "use strict";
 
-    return { content: [], size: 0 };
+    return { content: @createFIFO(), size: 0 };
 }
 
 function dequeueValue(queue)
 {
     "use strict";
 
-    const record = queue.content.@shift();
+    const record = queue.content.shift();
     queue.size -= record.size;
     // As described by spec, below case may occur due to rounding errors.
     if (queue.size < 0)
@@ -140,7 +241,8 @@ function enqueueValueWithSize(queue, value, size)
     size = @toNumber(size);
     if (!@isFinite(size) || size < 0)
         @throwRangeError("size has an incorrect value");
-    @arrayPush(queue.content, { value, size });
+    
+    queue.content.push({ value, size });
     queue.size += size;
 }
 
@@ -148,9 +250,9 @@ function peekQueueValue(queue)
 {
     "use strict";
 
-    @assert(queue.content.length > 0);
+    @assert(queue.content.isNotEmpty());
 
-    return queue.content[0].value;
+    return queue.peek().value;
 }
 
 function resetQueue(queue)
@@ -159,7 +261,7 @@ function resetQueue(queue)
 
     @assert("content" in queue);
     @assert("size" in queue);
-    queue.content = [];
+    queue.content.clear();
     queue.size = 0;
 }
 

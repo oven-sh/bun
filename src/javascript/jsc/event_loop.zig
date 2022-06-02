@@ -19,8 +19,8 @@ const napi_async_work = JSC.napi.napi_async_work;
 const FetchTasklet = Fetch.FetchTasklet;
 const JSValue = JSC.JSValue;
 const js = JSC.C;
-const WorkPool = @import("../../work_pool.zig").WorkPool;
-const WorkPoolTask = @import("../../work_pool.zig").Task;
+pub const WorkPool = @import("../../work_pool.zig").WorkPool;
+pub const WorkPoolTask = @import("../../work_pool.zig").Task;
 const NetworkThread = @import("http").NetworkThread;
 
 pub fn ConcurrentPromiseTask(comptime Context: type) type {

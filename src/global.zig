@@ -22,7 +22,7 @@ pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
 else
     @import("./memory_allocator.zig").auto_allocator;
 
-pub const huge_allocator_threshold = 1024 * 1024 * 2;
+pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
 
 pub const C = @import("c.zig");
 

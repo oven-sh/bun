@@ -2306,61 +2306,6 @@ pub const ArrayBuffer = extern struct {
         return this.toJSUnchecked(ctx, exception);
     }
 
-    pub fn toJSAutoAllocator(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
-        if (!this.value.isEmpty()) {
-            return this.value;
-        }
-
-        if (this.byte_len >= bun.huge_allocator_threshold) {
-            if (this.typed_array_type == .ArrayBuffer) {
-                return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
-                    ctx,
-                    this.ptr,
-                    this.byte_len,
-                    MmapArrayBuffer_deallocator,
-                    @intToPtr(*anyopaque, this.byte_len),
-                    exception,
-                ));
-            }
-
-            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
-                ctx,
-                this.typed_array_type.toC(),
-                this.ptr,
-                this.byte_len,
-                MmapArrayBuffer_deallocator,
-                @intToPtr(*anyopaque, this.byte_len),
-                exception,
-            ));
-        }
-
-        // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (!bun.Global.Mimalloc.mi_is_in_heap_region(this.ptr)) {
-            if (this.typed_array_type == .ArrayBuffer) {
-                return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
-                    ctx,
-                    this.ptr,
-                    this.byte_len,
-                    null,
-                    null,
-                    exception,
-                ));
-            }
-
-            return JSC.JSValue.fromRef(JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(
-                ctx,
-                this.typed_array_type.toC(),
-                this.ptr,
-                this.byte_len,
-                null,
-                null,
-                exception,
-            ));
-        }
-
-        return this.toJSUnchecked(ctx, exception);
-    }
-
     pub fn toJSWithContext(
         this: ArrayBuffer,
         ctx: JSC.C.JSContextRef,
@@ -2609,12 +2554,6 @@ pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) v
     mimalloc.mi_free(bytes_);
 }
 
-pub export fn MmapArrayBuffer_deallocator(bytes: *anyopaque, length_as_ptr: *anyopaque) void {
-    const length = @ptrToInt(length_as_ptr);
-    var ptr = @ptrCast([*]u8, bytes);
-
-    bun.auto_allocator.free(ptr[0..length]);
-}
 pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void {
     // zig's memory allocator interface won't work here
     // mimalloc knows the size of things

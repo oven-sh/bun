@@ -2259,6 +2259,16 @@ pub const JSValue = enum(i64) {
         return JSC.GetJSPrivateData(ZigType, value.asObjectRef());
     }
 
+    pub fn protect(this: JSValue) void {
+        if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
+        JSC.C.JSValueProtect(JSC.VirtualMachine.vm.global, this.asObjectRef());
+    }
+
+    pub fn unprotect(this: JSValue) void {
+        if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
+        JSC.C.JSValueUnprotect(JSC.VirtualMachine.vm.global, this.asObjectRef());
+    }
+
     /// Create an object with exactly two properties
     pub fn createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) JSValue {
         return cppFn("createObject2", .{ global, key1, key2, value1, value2 });

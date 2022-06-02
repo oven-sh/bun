@@ -89,12 +89,17 @@ function byobRequest()
     if (!@isReadableByteStreamController(this))
         throw @makeGetterTypeError("ReadableByteStreamController", "byobRequest");
 
-    if (@getByIdDirectPrivate(this, "byobRequest") === @undefined && @getByIdDirectPrivate(this, "pendingPullIntos").length) {
-        const firstDescriptor = @getByIdDirectPrivate(this, "pendingPullIntos")[0];
-        const view = new @Uint8Array(firstDescriptor.buffer,
+    
+    var request = @getByIdDirectPrivate(this, "byobRequest");
+    if (request === @undefined) {
+        var pending = @getByIdDirectPrivate(this, "pendingPullIntos");
+        const firstDescriptor = pending.peek();
+        if (firstDescriptor) {
+            const view = new @Uint8Array(firstDescriptor.buffer,
             firstDescriptor.byteOffset + firstDescriptor.bytesFilled,
             firstDescriptor.byteLength - firstDescriptor.bytesFilled);
-        @putByIdDirectPrivate(this, "byobRequest", new @ReadableStreamBYOBRequest(this, view, @isReadableStream));
+            @putByIdDirectPrivate(this, "byobRequest", new @ReadableStreamBYOBRequest(this, view, @isReadableStream));
+        }
     }
 
     return @getByIdDirectPrivate(this, "byobRequest");

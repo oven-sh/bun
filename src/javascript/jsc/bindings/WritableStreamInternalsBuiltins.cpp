@@ -160,7 +160,7 @@ const char* const s_writableStreamInternalsCreateInternalWritableStreamFromUnder
 
 const JSC::ConstructAbility s_writableStreamInternalsInitializeWritableStreamSlotsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsInitializeWritableStreamSlotsCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsInitializeWritableStreamSlotsCodeLength = 734;
+const int s_writableStreamInternalsInitializeWritableStreamSlotsCodeLength = 745;
 static const JSC::Intrinsic s_writableStreamInternalsInitializeWritableStreamSlotsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsInitializeWritableStreamSlotsCode =
     "(function (stream, underlyingSink)\n" \
@@ -173,7 +173,7 @@ const char* const s_writableStreamInternalsInitializeWritableStreamSlotsCode =
     "    @putByIdDirectPrivate(stream, \"closeRequest\", @undefined);\n" \
     "    @putByIdDirectPrivate(stream, \"inFlightCloseRequest\", @undefined);\n" \
     "    @putByIdDirectPrivate(stream, \"pendingAbortRequest\", @undefined);\n" \
-    "    @putByIdDirectPrivate(stream, \"writeRequests\", []);\n" \
+    "    @putByIdDirectPrivate(stream, \"writeRequests\", @createFIFO());\n" \
     "    @putByIdDirectPrivate(stream, \"backpressure\", false);\n" \
     "    @putByIdDirectPrivate(stream, \"underlyingSink\", underlyingSink);\n" \
     "})\n" \
@@ -320,7 +320,7 @@ const char* const s_writableStreamInternalsWritableStreamCloseCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamAddWriteRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamAddWriteRequestCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamAddWriteRequestCodeLength = 379;
+const int s_writableStreamInternalsWritableStreamAddWriteRequestCodeLength = 372;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamAddWriteRequestCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamAddWriteRequestCode =
     "(function (stream)\n" \
@@ -330,7 +330,7 @@ const char* const s_writableStreamInternalsWritableStreamAddWriteRequestCode =
     "\n" \
     "    const writePromiseCapability = @newPromiseCapability(@Promise);\n" \
     "    const writeRequests = @getByIdDirectPrivate(stream, \"writeRequests\");\n" \
-    "    @arrayPush(writeRequests, writePromiseCapability);\n" \
+    "    writeRequests.push(writePromiseCapability);\n" \
     "    return writePromiseCapability.@promise;\n" \
     "})\n" \
 ;
@@ -366,7 +366,7 @@ const char* const s_writableStreamInternalsWritableStreamDealWithRejectionCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishErroringCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishErroringCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamFinishErroringCodeLength = 1543;
+const int s_writableStreamInternalsWritableStreamFinishErroringCodeLength = 1556;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishErroringCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamFinishErroringCode =
     "(function (stream)\n" \
@@ -381,10 +381,11 @@ const char* const s_writableStreamInternalsWritableStreamFinishErroringCode =
     "\n" \
     "    const storedError = @getByIdDirectPrivate(stream, \"storedError\");\n" \
     "    const requests = @getByIdDirectPrivate(stream, \"writeRequests\");\n" \
-    "    for (let index = 0, length = requests.length; index < length; ++index)\n" \
-    "        requests[index].@reject.@call(@undefined, storedError);\n" \
+    "    for (var request = requests.shift(); request; request = requests.shift())\n" \
+    "        request.@reject.@call(@undefined, storedError);\n" \
     "\n" \
-    "    @putByIdDirectPrivate(stream, \"writeRequests\", []);\n" \
+    "    //\n" \
+    "    @putByIdDirectPrivate(stream, \"writeRequests\", @createFIFO());\n" \
     "\n" \
     "    const abortRequest = @getByIdDirectPrivate(stream, \"pendingAbortRequest\");\n" \
     "    if (abortRequest === @undefined) {\n" \
@@ -534,16 +535,16 @@ const char* const s_writableStreamInternalsWritableStreamMarkCloseRequestInFligh
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeLength = 343;
+const int s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeLength = 344;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCode =
     "(function (stream)\n" \
     "{\n" \
     "    const writeRequests = @getByIdDirectPrivate(stream, \"writeRequests\");\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"inFlightWriteRequest\") === @undefined);\n" \
-    "    @assert(writeRequests.length > 0);\n" \
+    "    @assert(writeRequests.isNotEmpty());\n" \
     "\n" \
-    "    const writeRequest = writeRequests.@shift();\n" \
+    "    const writeRequest = writeRequests.shift();\n" \
     "    @putByIdDirectPrivate(stream, \"inFlightWriteRequest\", writeRequest);\n" \
     "})\n" \
 ;
@@ -869,7 +870,7 @@ const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerF
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeLength = 865;
+const int s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeLength = 872;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCode =
     "(function (controller)\n" \
@@ -890,7 +891,7 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerAdvanc
     "        return;\n" \
     "    }\n" \
     "\n" \
-    "    if (@getByIdDirectPrivate(controller, \"queue\").content.length === 0)\n" \
+    "    if (@getByIdDirectPrivate(controller, \"queue\").content?.isEmpty() ?? false)\n" \
     "        return;\n" \
     "\n" \
     "    const value = @peekQueueValue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
@@ -1007,7 +1008,7 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetDes
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeLength = 630;
+const int s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeLength = 628;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCode =
     "(function (controller)\n" \
@@ -1017,7 +1018,7 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerProces
     "    @writableStreamMarkCloseRequestInFlight(stream);\n" \
     "    @dequeueValue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
     "\n" \
-    "    @assert(@getByIdDirectPrivate(controller, \"queue\").content.length === 0);\n" \
+    "    @assert(@getByIdDirectPrivate(controller, \"queue\").content?.isEmpty());\n" \
     "\n" \
     "    const sinkClosePromise = @getByIdDirectPrivate(controller, \"closeAlgorithm\").@call();\n" \
     "    @writableStreamDefaultControllerClearAlgorithms(controller);\n" \

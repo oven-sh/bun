@@ -33,7 +33,7 @@ function initializeReadableStreamDefaultReader(stream)
         @throwTypeError("ReadableStream is locked");
 
     @readableStreamReaderGenericInitialize(this, stream);
-    @putByIdDirectPrivate(this, "readRequests", []);
+    @putByIdDirectPrivate(this, "readRequests", @createFIFO());
 
     return this;
 }
@@ -70,30 +70,14 @@ function readMany()
         throw @getByIdDirectPrivate(stream, "storedError");
     }
 
-    const controller = @getByIdDirectPrivate(stream, "readableStreamController");
+    var controller = @getByIdDirectPrivate(stream, "readableStreamController");
     
     const content = @getByIdDirectPrivate(controller, "queue").content;
     var size = @getByIdDirectPrivate(controller, "queue").size;
+    var values = content.toArray(false);
+    var length = values.length;
 
-    var values = new @Array(content.length);
-
-    if (content.length > 0) {
-        if ("buffer" in content[0]) {
-            values[0] = new @Uint8Array(content[0].buffer, content[0].byteOffset, content[0].byteLength);
-            for (var i = 0; i < content.length; ++i) {
-                @putByValDirect(values, i+1, new @Uint8Array(content[i].buffer, content[i].byteOffset, content[i].byteLength));
-            }
-        } else if (typeof content[0] === 'object' && content[0] && "byteLength" in content[0]) {
-            size = 0;
-            for (var i = 0; i < content.length; ++i) {
-                @putByValDirect(values, i+1, content[i].value);
-                size += content[i].value.byteLength;
-            }
-        } else {
-            for (var i = 0; i < content.length; ++i) {
-                @putByValDirect(values, i+1, content[i].value);
-            }
-        }
+    if (length > 0) {
         @resetQueue(@getByIdDirectPrivate(controller, "queue"));
 
         if (@getByIdDirectPrivate(controller, "closeRequested"))
@@ -105,43 +89,22 @@ function readMany()
            if (done) {
                return {value: [], size: 0, done: true};
            }
-
-           const content = queue.content;
-           var values = new @Array(content.length + 1);
-           
+            var queue = @getByIdDirectPrivate(controller, "queue");
+            const content = [value].concat(queue.content.toArray(false));
             var size = queue.size;
-
-           if ("buffer" in content[0]) {
-                values[0] = new @Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-                for (var i = 0; i < content.length; ++i) {
-                    @putByValDirect(values, i+1, new @Uint8Array(content[i].buffer, content[i].byteOffset, content[i].byteLength));
-                }
-                size += value.byteLength;
-            } else if (typeof value === 'object' && value && "byteLength" in value) {
-                size += value.byteLength;
-                values[0] = value;
-                for (var i = 0; i < content.length; ++i) {
-                    @putByValDirect(values, i+1, content[i].value);
-                    size += content[i].value.byteLength;
-                }
-
-            } else {
-                values[0] = value;
-                for (var i = 0; i < content.length; ++i) {
-                    @putByValDirect(values, i+1, content[i].value);
-                }
-            }
-
             @resetQueue(queue);
 
             if (@getByIdDirectPrivate(controller, "closeRequested"))
                 @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
             else
                 @readableStreamDefaultControllerCallPullIfNeeded(controller);
+            controller = @undefined;
 
            return {value: values, size: size, done: false};
         });
     }
+
+    controller = @undefined;
 
     return {value: values, size, done: false};
 }
@@ -168,7 +131,7 @@ function releaseLock()
     if (!@getByIdDirectPrivate(this, "ownerReadableStream"))
         return;
 
-    if (@getByIdDirectPrivate(this, "readRequests").length)
+    if (@getByIdDirectPrivate(this, "readRequests")?.isNotEmpty())
         @throwTypeError("There are still pending read requests, cannot release the lock");
 
     @readableStreamReaderGenericRelease(this);

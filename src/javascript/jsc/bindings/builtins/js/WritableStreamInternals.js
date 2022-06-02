@@ -118,7 +118,7 @@ function initializeWritableStreamSlots(stream, underlyingSink)
     @putByIdDirectPrivate(stream, "closeRequest", @undefined);
     @putByIdDirectPrivate(stream, "inFlightCloseRequest", @undefined);
     @putByIdDirectPrivate(stream, "pendingAbortRequest", @undefined);
-    @putByIdDirectPrivate(stream, "writeRequests", []);
+    @putByIdDirectPrivate(stream, "writeRequests", @createFIFO());
     @putByIdDirectPrivate(stream, "backpressure", false);
     @putByIdDirectPrivate(stream, "underlyingSink", underlyingSink);
 }
@@ -233,7 +233,7 @@ function writableStreamAddWriteRequest(stream)
 
     const writePromiseCapability = @newPromiseCapability(@Promise);
     const writeRequests = @getByIdDirectPrivate(stream, "writeRequests");
-    @arrayPush(writeRequests, writePromiseCapability);
+    writeRequests.push(writePromiseCapability);
     return writePromiseCapability.@promise;
 }
 
@@ -266,10 +266,11 @@ function writableStreamFinishErroring(stream)
 
     const storedError = @getByIdDirectPrivate(stream, "storedError");
     const requests = @getByIdDirectPrivate(stream, "writeRequests");
-    for (let index = 0, length = requests.length; index < length; ++index)
-        requests[index].@reject.@call(@undefined, storedError);
+    for (var request = requests.shift(); request; request = requests.shift())
+        request.@reject.@call(@undefined, storedError);
 
-    @putByIdDirectPrivate(stream, "writeRequests", []);
+    // TODO: is this still necessary?
+    @putByIdDirectPrivate(stream, "writeRequests", @createFIFO());
 
     const abortRequest = @getByIdDirectPrivate(stream, "pendingAbortRequest");
     if (abortRequest === @undefined) {
@@ -384,9 +385,9 @@ function writableStreamMarkFirstWriteRequestInFlight(stream)
 {
     const writeRequests = @getByIdDirectPrivate(stream, "writeRequests");
     @assert(@getByIdDirectPrivate(stream, "inFlightWriteRequest") === @undefined);
-    @assert(writeRequests.length > 0);
+    @assert(writeRequests.isNotEmpty());
 
-    const writeRequest = writeRequests.@shift();
+    const writeRequest = writeRequests.shift();
     @putByIdDirectPrivate(stream, "inFlightWriteRequest", writeRequest);
 }
 
@@ -649,7 +650,7 @@ function writableStreamDefaultControllerAdvanceQueueIfNeeded(controller)
         return;
     }
 
-    if (@getByIdDirectPrivate(controller, "queue").content.length === 0)
+    if (@getByIdDirectPrivate(controller, "queue").content?.isEmpty() ?? false)
         return;
 
     const value = @peekQueueValue(@getByIdDirectPrivate(controller, "queue"));
@@ -722,7 +723,7 @@ function writableStreamDefaultControllerProcessClose(controller)
     @writableStreamMarkCloseRequestInFlight(stream);
     @dequeueValue(@getByIdDirectPrivate(controller, "queue"));
 
-    @assert(@getByIdDirectPrivate(controller, "queue").content.length === 0);
+    @assert(@getByIdDirectPrivate(controller, "queue").content?.isEmpty());
 
     const sinkClosePromise = @getByIdDirectPrivate(controller, "closeAlgorithm").@call();
     @writableStreamDefaultControllerClearAlgorithms(controller);

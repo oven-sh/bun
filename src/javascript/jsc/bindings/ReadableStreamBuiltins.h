@@ -82,7 +82,7 @@ extern const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind;
 
 #define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_DATA(macro) \
     macro(initializeReadableStream, readableStreamInitializeReadableStream, 2) \
-    macro(createNativeReadableStream, readableStreamCreateNativeReadableStream, 2) \
+    macro(createNativeReadableStream, readableStreamCreateNativeReadableStream, 3) \
     macro(cancel, readableStreamCancel, 1) \
     macro(getReader, readableStreamGetReader, 1) \
     macro(pipeThrough, readableStreamPipeThrough, 2) \

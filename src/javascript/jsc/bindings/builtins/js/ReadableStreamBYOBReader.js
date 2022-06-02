@@ -34,7 +34,7 @@ function initializeReadableStreamBYOBReader(stream)
         @throwTypeError("ReadableStream is locked");
 
     @readableStreamReaderGenericInitialize(this, stream);
-    @putByIdDirectPrivate(this, "readIntoRequests", []);
+    @putByIdDirectPrivate(this, "readIntoRequests", @createFIFO());
 
     return this;
 }
@@ -84,7 +84,7 @@ function releaseLock()
     if (!@getByIdDirectPrivate(this, "ownerReadableStream"))
         return;
 
-    if (@getByIdDirectPrivate(this, "readIntoRequests").length)
+    if (@getByIdDirectPrivate(this, "readIntoRequests")?.isNotEmpty())
         @throwTypeError("There are still pending read requests, cannot release the lock");
 
     @readableStreamReaderGenericRelease(this);

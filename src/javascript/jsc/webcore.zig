@@ -1,5 +1,7 @@
 pub usingnamespace @import("./webcore/response.zig");
 pub usingnamespace @import("./webcore/encoding.zig");
+pub usingnamespace @import("./webcore/streams.zig");
+
 const JSC = @import("../../jsc.zig");
 const std = @import("std");
 

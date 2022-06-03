@@ -1359,7 +1359,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        pub fn onRequestData(this: *RequestContext) void {
+        pub fn onPull(this: *RequestContext) void {
             if (this.req.header("content-length")) |content_length| {
                 const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
                 if (len == 0) {
@@ -1396,8 +1396,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.resp.onData(*RequestContext, onBodyChunk, this);
         }
 
-        pub fn onRequestDataCallback(this: *anyopaque) void {
-            onRequestData(bun.cast(*RequestContext, this));
+        pub fn onPullCallback(this: *anyopaque) void {
+            onPull(bun.cast(*RequestContext, this));
         }
     };
 }
@@ -1700,7 +1700,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     .Locked = .{
                         .task = ctx,
                         .global = this.globalThis,
-                        .onRequestData = RequestContext.onRequestDataCallback,
+                        .onPull = RequestContext.onPullCallback,
                     },
                 },
             };

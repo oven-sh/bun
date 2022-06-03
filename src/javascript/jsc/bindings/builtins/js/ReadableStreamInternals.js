@@ -732,7 +732,7 @@ function readableStreamDefaultControllerEnqueue(controller, chunk)
     // this is checked by callers
     @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));
 
-    if (@isReadableStreamLocked(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests").isNotEmpty) {
+    if (@isReadableStreamLocked(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty()) {
         @readableStreamFulfillReadRequest(stream, chunk, false);
         @readableStreamDefaultControllerCallPullIfNeeded(controller);
         return;

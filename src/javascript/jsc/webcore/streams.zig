@@ -52,7 +52,7 @@ pub const ReadableStream = struct {
         Blob = 1,
         File = 2,
         HTTPRequest = 3,
-        HTTPSRequest = 3,
+        HTTPSRequest = 4,
     };
 
     extern fn ZigGlobalObject__createNativeReadableStream(*JSGlobalObject, nativePtr: JSValue, nativeType: JSValue) JSValue;

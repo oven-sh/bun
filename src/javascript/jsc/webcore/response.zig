@@ -4051,10 +4051,10 @@ pub const Body = struct {
             } else |_| {}
         }
 
-        if (value.as(JSC.WebCore.ReadableStream)) |readable| {
-            body.value = Body.Value.fromReadableStream(ctx, readable);
-            return body;
-        }
+        // if (value.as(JSC.WebCore.ReadableStream)) |readable| {
+        //     body.value = Body.Value.fromReadableStream(ctx, readable);
+        //     return body;
+        // }
 
         body.value = .{
             .Blob = Blob.fromJS(ctx.ptr(), value, true, false) catch |err| {
@@ -4752,15 +4752,4 @@ pub const FetchEvent = struct {
     ) js.JSValueRef {
         return js.JSValueMakeUndefined(ctx);
     }
-};
-
-pub const StreamSource = struct {
-    ptr: ?*anyopaque = null,
-    vtable: VTable,
-
-    pub const VTable = struct {
-        onStart: fn (this: StreamSource) JSC.WebCore.StreamStart,
-        onPull: fn (this: StreamSource) JSC.WebCore.StreamResult,
-        onError: fn (this: StreamSource) void,
-    };
 };

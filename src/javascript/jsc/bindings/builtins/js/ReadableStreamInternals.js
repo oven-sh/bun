@@ -691,7 +691,7 @@ function readableStreamDefaultControllerClose(controller)
 
     @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));
     @putByIdDirectPrivate(controller, "closeRequested", true);
-    if (!@getByIdDirectPrivate(controller, "queue")?.isNotEmpty())
+    if (@getByIdDirectPrivate(controller, "queue")?.isEmpty())
         @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
 }
 

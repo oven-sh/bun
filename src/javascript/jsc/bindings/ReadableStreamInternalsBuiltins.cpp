@@ -895,7 +895,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerPullCo
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeLength = 346;
+const int s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeLength = 342;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerCloseCode =
     "(function (controller)\n" \
@@ -904,7 +904,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCloseC
     "\n" \
     "    @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));\n" \
     "    @putByIdDirectPrivate(controller, \"closeRequested\", true);\n" \
-    "    if (!@getByIdDirectPrivate(controller, \"queue\")?.isNotEmpty())\n" \
+    "    if (@getByIdDirectPrivate(controller, \"queue\")?.isEmpty())\n" \
     "        @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
     "})\n" \
 ;

@@ -117,9 +117,25 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_readableStreamCreateEmptyReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamCreateEmptyReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamCreateEmptyReadableStreamCodeLength = 178;
+static const JSC::Intrinsic s_readableStreamCreateEmptyReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamCreateEmptyReadableStreamCode =
+    "(function () {\n" \
+    "    var stream = new @ReadableStream({\n" \
+    "        pull() {},\n" \
+    "        start() {},\n" \
+    "        cancel() {},\n" \
+    "    });\n" \
+    "    @readableStreamClose(stream);\n" \
+    "    return stream;\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamCreateNativeReadableStreamCodeLength = 3152;
+const int s_readableStreamCreateNativeReadableStreamCodeLength = 2956;
 static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateNativeReadableStreamCode =
     "(function (nativePtr, nativeType, autoAllocateChunkSize) {\n" \
@@ -135,7 +151,6 @@ const char* const s_readableStreamCreateNativeReadableStreamCode =
     "            var {c, v} = this;\n" \
     "            this.c = @undefined;\n" \
     "            this.v = @undefined;\n" \
-    "            closer[0] = false;\n" \
     "            handleResult(val, c, v);\n" \
     "        }\n" \
     "        \n" \
@@ -204,19 +219,7 @@ const char* const s_readableStreamCreateNativeReadableStreamCode =
     "\n" \
     "    //\n" \
     "    if (chunkSize === 0) {\n" \
-    "        return new @ReadableStream({\n" \
-    "            start(controller) {\n" \
-    "                controller.close();\n" \
-    "            },\n" \
-    "\n" \
-    "            pull() {\n" \
-    "\n" \
-    "            },\n" \
-    "\n" \
-    "            cancel() {\n" \
-    "\n" \
-    "            },\n" \
-    "        });\n" \
+    "        return @createEmptyReadableStream();\n" \
     "    }\n" \
     "\n" \
     "    var instance = new Prototype(nativePtr, chunkSize);\n" \

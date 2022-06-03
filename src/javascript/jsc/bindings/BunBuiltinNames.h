@@ -69,6 +69,7 @@ using namespace JSC;
     macro(cork) \
     macro(createFIFO) \
     macro(createNativeReadableStream) \
+    macro(createEmptyReadableStream) \
     macro(createReadableStream) \
     macro(createUninitializedArrayBuffer) \
     macro(createWritableStreamFromInternal) \

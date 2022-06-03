@@ -889,6 +889,14 @@ static JSC::JSValue doLink(JSC__JSGlobalObject* globalObject, JSC::JSValue modul
     return JSC::linkAndEvaluateModule(globalObject, moduleKey, JSC::JSValue());
 }
 
+JSC__JSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
+    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
+}
+
 JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
     JSC__JSGlobalObject* globalObject)
 {

@@ -89,6 +89,17 @@ function initializeReadableStream(underlyingSource, strategy)
 }
 
 @globalPrivate
+function createEmptyReadableStream() {
+    var stream = new @ReadableStream({
+        pull() {},
+        start() {},
+        cancel() {},
+    });
+    @readableStreamClose(stream);
+    return stream;
+}
+
+@globalPrivate
 function createNativeReadableStream(nativePtr, nativeType, autoAllocateChunkSize) {
     "use strict";
     var cached =  globalThis[Symbol.for("Bun.nativeReadableStreamPrototype")] ||= new @Map;
@@ -96,7 +107,7 @@ function createNativeReadableStream(nativePtr, nativeType, autoAllocateChunkSize
     if (Prototype === @undefined) {
         var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for("Bun.lazy")](nativeType);
         var closer = [false];
-var handleResult;
+        var handleResult;
         function handleNativeReadableStreamPromiseResult(val) {
             "use strict";
             var {c, v} = this;
@@ -104,7 +115,6 @@ var handleResult;
             this.v = @undefined;
             handleResult(val, c, v);
         }
-        
      
         handleResult = function handleResult(result, controller, view) {
             "use strict";
@@ -170,19 +180,7 @@ var handleResult;
 
     // empty file, no need for native back-and-forth on this
     if (chunkSize === 0) {
-        return new @ReadableStream({
-            start(controller) {
-                controller.close();
-            },
-
-            pull() {
-
-            },
-
-            cancel() {
-
-            },
-        });
+        return @createEmptyReadableStream();
     }
 
     var instance = new Prototype(nativePtr, chunkSize);

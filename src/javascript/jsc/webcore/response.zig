@@ -5384,7 +5384,8 @@ pub fn ReadableStreamSource(
                     .empty => return JSValue.jsNumber(0),
                     .chunk_size => |size| return JSValue.jsNumber(size),
                     .err => |err| {
-                        return err.toJSC(globalThis);
+                        globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                        return JSC.JSValue.jsUndefined();
                     },
                 }
             }
@@ -5396,7 +5397,7 @@ pub fn ReadableStreamSource(
                         return JSValue.jsUndefined();
                     },
                     .temporary_and_done, .owned_and_done, .into_array_and_done => {
-                        JSC.C.JSObjectSetPropertyAtIndex(globalThis.ref(), callFrame.argument(1).asObjectRef(), 0, JSValue.jsBoolean(true).asObjectRef(), null);
+                        JSC.C.JSObjectSetPropertyAtIndex(globalThis.ref(), callFrame.argument(2).asObjectRef(), 0, JSValue.jsBoolean(true).asObjectRef(), null);
                         return result.toJS(globalThis);
                     },
                     else => return result.toJS(globalThis),
@@ -5498,6 +5499,8 @@ pub const ByteBlobLoader = struct {
     }
 
     pub fn onPull(this: *ByteBlobLoader, buffer: []u8, array: JSC.JSValue) StreamResult {
+        array.ensureStillAlive();
+        defer array.ensureStillAlive();
         if (this.done) {
             return .{ .done = {} };
         }
@@ -5516,7 +5519,7 @@ pub const ByteBlobLoader = struct {
 
         this.remain -|= copied;
         this.offset +|= copied;
-        @memcpy(temporary.ptr, buffer.ptr, temporary.len);
+        @memcpy(buffer.ptr, temporary.ptr, temporary.len);
         if (this.remain == 0) {
             return .{ .into_array_and_done = .{ .value = array, .len = copied } };
         }

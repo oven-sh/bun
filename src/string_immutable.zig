@@ -1316,6 +1316,230 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
     return count;
 }
 
+pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) ![]const u8 {
+    switch (latin1.len) {
+        0 => return "",
+        1 => return switch (latin1[0]) {
+            '"' => "&quot;",
+            '&' => "&amp;",
+            '\'' => "&#x27;",
+            '<' => "&lt;",
+            '>' => "&gt;",
+            else => latin1,
+        },
+        else => {
+            var remaining = latin1;
+
+            const vec_chars = "\"&'<>";
+            const vecs: [vec_chars.len]AsciiVector = comptime brk: {
+                var _vecs: [vec_chars.len]AsciiVector = undefined;
+                for (vec_chars) |c, i| {
+                    _vecs[i] = @splat(ascii_vector_size, c);
+                }
+                break :brk _vecs;
+            };
+
+            var buf: std.ArrayList(u8) = undefined;
+            var any_needs_escape = false;
+
+            if (comptime Environment.isAarch64 or Environment.isX64) {
+
+                // pass #1: scan for any characters that need escaping
+                // assume most strings won't need any escaping, so don't actually allocate the buffer
+                scan_and_allocate_lazily: while (remaining.len >= ascii_vector_size) {
+                    if (comptime Environment.allow_assert) {
+                        std.debug.assert(!any_needs_escape);
+                    }
+
+                    const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+                    if (@reduce(
+                        .Or,
+                        @bitCast(AsciiVectorU1, (vec == vecs[0])) |
+                            @bitCast(AsciiVectorU1, (vec == vecs[1])) |
+                            @bitCast(AsciiVectorU1, (vec == vecs[2])) |
+                            @bitCast(AsciiVectorU1, (vec == vecs[3])) |
+                            @bitCast(AsciiVectorU1, (vec == vecs[4])),
+                    ) == 1) {
+                        buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
+                        const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
+                        @memcpy(buf.items.ptr, latin1.ptr, copy_len);
+                        buf.items.len = copy_len;
+                        any_needs_escape = true;
+                        comptime var i: usize = 0;
+                        inline while (i < ascii_vector_size) : (i += 1) {
+                            switch (vec[i]) {
+                                '"' => {
+                                    buf.appendSlice("&quot;") catch unreachable;
+                                },
+                                '&' => {
+                                    buf.appendSlice("&amp;") catch unreachable;
+                                },
+                                '\'' => {
+                                    buf.appendSlice("&#x27;") catch unreachable; // modified from escape-html; used to be '&#39'
+                                },
+                                '<' => {
+                                    buf.appendSlice("&lt;") catch unreachable;
+                                },
+                                '>' => {
+                                    buf.appendSlice("&gt;") catch unreachable;
+                                },
+                                else => |c| {
+                                    buf.appendAssumeCapacity(c);
+                                },
+                            }
+                        }
+                        remaining = remaining[ascii_vector_size..];
+                        break :scan_and_allocate_lazily;
+                    }
+
+                    remaining = remaining[ascii_vector_size..];
+                }
+
+                if (any_needs_escape) {
+                    // pass #2: we found something that needed an escape
+                    // so we'll go ahead and copy the buffer into a new buffer
+                    while (remaining.len >= ascii_vector_size) {
+                        const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+                        if (@reduce(
+                            .Or,
+                            @bitCast(AsciiVectorU1, (vec == vecs[0])) |
+                                @bitCast(AsciiVectorU1, (vec == vecs[1])) |
+                                @bitCast(AsciiVectorU1, (vec == vecs[2])) |
+                                @bitCast(AsciiVectorU1, (vec == vecs[3])) |
+                                @bitCast(AsciiVectorU1, (vec == vecs[4])),
+                        ) == 1) {
+                            buf.ensureUnusedCapacity(ascii_vector_size) catch unreachable;
+                            comptime var i: usize = 0;
+                            inline while (i < ascii_vector_size) : (i += 1) {
+                                switch (vec[i]) {
+                                    '"' => {
+                                        buf.appendSlice("&quot;") catch unreachable;
+                                    },
+                                    '&' => {
+                                        buf.appendSlice("&amp;") catch unreachable;
+                                    },
+                                    '\'' => {
+                                        buf.appendSlice("&#x27;") catch unreachable; // modified from escape-html; used to be '&#39'
+                                    },
+                                    '<' => {
+                                        buf.appendSlice("&lt;") catch unreachable;
+                                    },
+                                    '>' => {
+                                        buf.appendSlice("&gt;") catch unreachable;
+                                    },
+                                    else => |c| {
+                                        buf.append(c) catch unreachable;
+                                    },
+                                }
+                            }
+
+                            remaining = remaining[ascii_vector_size..];
+                            continue;
+                        }
+
+                        try buf.ensureUnusedCapacity(ascii_vector_size);
+                        buf.items.ptr[buf.items.len .. buf.items.len + ascii_vector_size][0..ascii_vector_size].* = remaining[0..ascii_vector_size].*;
+                        buf.items.len += ascii_vector_size;
+                        remaining = remaining[ascii_vector_size..];
+                    }
+                }
+            }
+
+            if (!any_needs_escape) {
+                scan_and_allocate_lazily: while (remaining.len > 0) {
+                    switch (remaining[0]) {
+                        '"' => {
+                            const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
+                            buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
+                            @memcpy(buf.items.ptr, latin1.ptr, copy_len);
+                            buf.items.len = copy_len;
+                            buf.appendSlice("&quot;") catch unreachable;
+                            remaining = remaining[1..];
+                            any_needs_escape = true;
+                            break :scan_and_allocate_lazily;
+                        },
+                        '&' => {
+                            const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
+                            buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
+                            @memcpy(buf.items.ptr, latin1.ptr, copy_len);
+                            buf.items.len = copy_len;
+                            buf.appendSlice("&amp;") catch unreachable;
+                            remaining = remaining[1..];
+                            any_needs_escape = true;
+                            break :scan_and_allocate_lazily;
+                        },
+                        '\'' => {
+                            const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
+                            buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
+                            @memcpy(buf.items.ptr, latin1.ptr, copy_len);
+                            buf.items.len = copy_len;
+                            buf.appendSlice("&#x27;") catch unreachable; // modified from escape-html; used to be '&#39'
+                            remaining = remaining[1..];
+                            any_needs_escape = true;
+                            break :scan_and_allocate_lazily;
+                        },
+                        '<' => {
+                            const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
+                            buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
+                            @memcpy(buf.items.ptr, latin1.ptr, copy_len);
+                            buf.items.len = copy_len;
+                            buf.appendSlice("&lt;") catch unreachable;
+                            remaining = remaining[1..];
+                            any_needs_escape = true;
+                            break :scan_and_allocate_lazily;
+                        },
+                        '>' => {
+                            const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
+                            buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
+                            @memcpy(buf.items.ptr, latin1.ptr, copy_len);
+                            buf.items.len = copy_len;
+                            buf.appendSlice("&gt;") catch unreachable;
+                            remaining = remaining[1..];
+                            any_needs_escape = true;
+                            break :scan_and_allocate_lazily;
+                        },
+                        else => {
+                            remaining = remaining[1..];
+                        },
+                    }
+                }
+            }
+
+            if (remaining.len > 0) {
+                std.debug.assert(any_needs_escape);
+                for (remaining) |c| {
+                    switch (c) {
+                        '"' => {
+                            buf.appendSlice("&quot;") catch unreachable;
+                        },
+                        '&' => {
+                            buf.appendSlice("&amp;") catch unreachable;
+                        },
+                        '\'' => {
+                            buf.appendSlice("&#x27;") catch unreachable; // modified from escape-html; used to be '&#39'
+                        },
+                        '<' => {
+                            buf.appendSlice("&lt;") catch unreachable;
+                        },
+                        '>' => {
+                            buf.appendSlice("&gt;") catch unreachable;
+                        },
+                        else => {
+                            buf.append(c) catch unreachable;
+                        },
+                    }
+                }
+            }
+
+            if (any_needs_escape) {
+                return buf.toOwnedSlice();
+            } else {
+                return latin1;
+            }
+        },
+    }
+}
+
 test "copyLatin1IntoUTF8" {
     var input: string = "hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!hello world!";
     var output = std.mem.zeroes([500]u8);

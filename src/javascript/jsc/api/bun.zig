@@ -1150,6 +1150,9 @@ pub const Class = NewClass(
         .inflateSync = .{
             .rfn = JSC.wrapWithHasContainer(JSZlib, "inflateSync", false, false, true),
         },
+        .escapeHTML = .{
+            .rfn = Bun.escapeHTML,
+        },
     },
     .{
         .main = .{
@@ -1610,6 +1613,42 @@ pub fn serve(
     }
 
     unreachable;
+}
+
+pub fn escapeHTML(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    arguments: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    if (arguments.len < 1) {
+        return ZigString.init("").toValue(ctx).asObjectRef();
+    }
+
+    const input_value = arguments[0].?.value();
+    const zig_str = input_value.getZigString(ctx);
+    if (zig_str.is16Bit()) {
+        return input_value.asObjectRef();
+    } else {
+        var input_slice = zig_str.slice();
+        var escaped_html = strings.escapeHTMLForLatin1Input(ctx.bunVM().allocator, input_slice) catch {
+            JSC.JSError(undefined, "Out of memory", .{}, ctx, exception);
+            return null;
+        };
+
+        if (escaped_html.ptr == input_slice.ptr and escaped_html.len == input_slice.len) {
+            return input_value.asObjectRef();
+        }
+
+        if (input_slice.len == 1) {
+            // single character escaped strings are statically allocated
+            return ZigString.init(escaped_html).toValue(ctx).asObjectRef();
+        }
+
+        return ZigString.init(escaped_html).toExternalValue(ctx).asObjectRef();
+    }
 }
 
 pub fn allocUnsafe(

@@ -1,27 +1,10 @@
 import { group } from "mitata";
 import { bench, run } from "mitata";
+import { encode as htmlEntityEncode } from "html-entities";
+import { escape as heEscape } from "he";
 
 var bunEscapeHTML_ = globalThis.escapeHTML || Bun.escapeHTML;
-var bunEscapeHTML = function (str) {
-  if (str.length === 1) {
-    switch (str.charCodeAt(0)) {
-      case 34: // "
-        return "&quot;";
-      case 38: // &
-        return "&amp;";
-      case 39: // '
-        return "&#x27;"; // modified from escape-html; used to be '&#39'
-      case 60: // <
-        return "&lt;";
-      case 62: // >
-        return "&gt;";
-      default:
-        return str;
-    }
-  }
-
-  return bunEscapeHTML_(str);
-};
+var bunEscapeHTML = bunEscapeHTML_;
 
 const matchHtmlRegExp = /["'&<>]/;
 
@@ -43,6 +26,11 @@ const FIXTURE = require("fs")
     return a;
   })
   .join("");
+
+const FIXTURE_WITH_UNICODE = require("fs").readFileSync(
+  import.meta.dir + "/_fixture.txt",
+  "utf8"
+);
 
 function reactEscapeHtml(string) {
   const str = "" + string;
@@ -90,25 +78,29 @@ function reactEscapeHtml(string) {
 }
 
 for (let input of [
-  // " ",
-  // "<script>alert('xss')</script>",
-  // "hello world",
-  // "hello world<script>alert('xss')</script>",
-  // "<",
-  // ">",
-  // `short value`,
-  `nothing to escape `.repeat(99999),
+  "<script>alert('xss')</script>",
+  `long string, nothing to escape... `.repeat(9999),
+  `long utf16 string, no esc 🤔🤔🤔🤔🤔` + "tex".repeat(4000),
+  `smol`,
+  // `medium string with <script>alert('xss')</script>`,
+
   FIXTURE,
+  // "[unicode]" + FIXTURE_WITH_UNICODE,
 ]) {
   group(
     {
       summary: true,
-      name: `"` + input.substring(0, Math.min(input.length, 32)) + `"`,
+      name:
+        `"` +
+        input.substring(0, Math.min(input.length, 32)) +
+        `"` +
+        ` (${input.length} chars)`,
     },
     () => {
-      bench(`react's escapeHTML`, () => reactEscapeHtml(input));
-
-      bench(`bun's escapeHTML`, () => bunEscapeHTML(input));
+      bench(`ReactDOM.escapeHTML`, () => reactEscapeHtml(input));
+      bench(`html-entities.encode`, () => htmlEntityEncode(input));
+      bench(`he.escape`, () => heEscape(input));
+      bench(`Bun.escapeHTML`, () => bunEscapeHTML(input));
     }
   );
 }

@@ -367,7 +367,16 @@ pub const Expect = struct {
         this.scope.tests.items[this.test_id].counter.actual += 1;
         const left = JSValue.fromRef(arguments[0]);
         const right = JSValue.fromRef(this.value);
+
         if (!left.isSameValue(right, ctx.ptr())) {
+            if (left.isString() and right.isString()) {
+                var left_slice = left.toSlice(ctx, getAllocator(ctx));
+                defer left_slice.deinit();
+                var right_slice = right.toSlice(ctx, getAllocator(ctx));
+                defer right_slice.deinit();
+                std.debug.assert(!strings.eqlLong(left_slice.slice(), right_slice.slice(), false));
+            }
+
             var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
             var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
 
@@ -381,8 +390,10 @@ pub const Expect = struct {
                 ctx,
                 exception,
             );
+
             return null;
         }
+
         return thisObject;
     }
 
@@ -563,6 +574,7 @@ pub const ExpectPrototype = struct {
             .scope = DescribeScope.active,
             .test_id = DescribeScope.active.current_test_id,
         };
+        expect_.value.?.value().ensureStillAlive();
         return Expect.Class.make(ctx, expect_);
     }
 };

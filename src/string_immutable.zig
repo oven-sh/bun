@@ -1207,8 +1207,7 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
                 break;
             }
 
-            buf[0..8].* = @bitCast([ascii_vector_size]u8, vec)[0..8].*;
-            buf[8..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[8..ascii_vector_size].*;
+            buf[0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[0..ascii_vector_size].*;
             latin1 = latin1[ascii_vector_size..];
             buf = buf[ascii_vector_size..];
         }
@@ -1317,6 +1316,74 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
 }
 
 pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) ![]const u8 {
+    const Pusher = struct {
+        const lengths: [std.math.maxInt(u8)]u4 = brk: {
+            var values: [std.math.maxInt(u8)]u4 = undefined;
+            for (values) |_, i| {
+                switch (i) {
+                    '"' => {
+                        values[i] = "&quot;".len;
+                    },
+                    '&' => {
+                        values[i] = "&amp;".len;
+                    },
+                    '\'' => {
+                        values[i] = "&#x27;".len;
+                    },
+                    '<' => {
+                        values[i] = "&lt;".len;
+                    },
+                    '>' => {
+                        values[i] = "&gt;".len;
+                    },
+                    else => {
+                        values[i] = 1;
+                    },
+                }
+            }
+
+            break :brk values;
+        };
+
+        inline fn appendString(buf: [*]u8, comptime str: []const u8) usize {
+            buf[0..str.len].* = str[0..str.len].*;
+            return str.len;
+        }
+
+        pub inline fn append(buf: [*]u8, char: u8) usize {
+            if (lengths[char] == 1) {
+                buf[0] = char;
+                return 1;
+            }
+
+            return switch (char) {
+                '"' => appendString(buf, "&quot;"),
+                '&' => appendString(buf, "&amp;"),
+                '\'' => appendString(buf, "&#x27;"),
+                '<' => appendString(buf, "&lt;"),
+                '>' => appendString(buf, "&gt;"),
+                else => unreachable,
+            };
+        }
+        pub inline fn push(comptime c: anytype, chars: []const u8, allo: std.mem.Allocator) []const u8 {
+            var total: usize = 0;
+            inline for (comptime bun.range(0, c)) |i| {
+                total += @as(usize, lengths[chars[i]]);
+            }
+
+            if (total == c) {
+                return chars;
+            }
+
+            var output = allo.alloc(u8, total) catch unreachable;
+            var head = output.ptr;
+            inline for (comptime bun.range(0, c)) |i| {
+                head += @This().append(head, chars[i]);
+            }
+
+            return output;
+        }
+    };
     switch (latin1.len) {
         0 => return "",
         1 => return switch (latin1[0]) {
@@ -1327,6 +1394,43 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             '>' => "&gt;",
             else => latin1,
         },
+        2 => {
+            const first: []const u8 = switch (latin1[0]) {
+                '"' => "&quot;",
+                '&' => "&amp;",
+                '\'' => "&#x27;",
+                '<' => "&lt;",
+                '>' => "&gt;",
+                else => latin1[0..1],
+            };
+            const second: []const u8 = switch (latin1[1]) {
+                '"' => "&quot;",
+                '&' => "&amp;",
+                '\'' => "&#x27;",
+                '<' => "&lt;",
+                '>' => "&gt;",
+                else => latin1[1..2],
+            };
+            if (first.len == 1 and second.len == 1) {
+                return latin1;
+            }
+
+            return strings.append(allocator, first, second);
+        },
+        3 => return Pusher.push(3, latin1, allocator),
+        4 => return Pusher.push(4, latin1, allocator),
+        5 => return Pusher.push(5, latin1, allocator),
+        6 => return Pusher.push(6, latin1, allocator),
+        7 => return Pusher.push(7, latin1, allocator),
+        8 => return Pusher.push(8, latin1, allocator),
+        9 => return Pusher.push(9, latin1, allocator),
+        10 => return Pusher.push(10, latin1, allocator),
+        11 => return Pusher.push(11, latin1, allocator),
+        12 => return Pusher.push(12, latin1, allocator),
+        13 => return Pusher.push(13, latin1, allocator),
+        14 => return Pusher.push(14, latin1, allocator),
+        15 => return Pusher.push(15, latin1, allocator),
+
         else => {
             var remaining = latin1;
 
@@ -1339,34 +1443,72 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 break :brk _vecs;
             };
 
-            var buf: std.ArrayList(u8) = undefined;
             var any_needs_escape = false;
+            var buf: std.ArrayList(u8) = undefined;
 
             if (comptime Environment.isAarch64 or Environment.isX64) {
-
                 // pass #1: scan for any characters that need escaping
                 // assume most strings won't need any escaping, so don't actually allocate the buffer
                 scan_and_allocate_lazily: while (remaining.len >= ascii_vector_size) {
                     if (comptime Environment.allow_assert) {
                         std.debug.assert(!any_needs_escape);
                     }
-
                     const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-                    if (@reduce(
-                        .Or,
-                        @bitCast(AsciiVectorU1, (vec == vecs[0])) |
-                            @bitCast(AsciiVectorU1, (vec == vecs[1])) |
-                            @bitCast(AsciiVectorU1, (vec == vecs[2])) |
-                            @bitCast(AsciiVectorU1, (vec == vecs[3])) |
-                            @bitCast(AsciiVectorU1, (vec == vecs[4])),
-                    ) == 1) {
+                    if (@reduce(.Min, (vec ^ vecs[0]) &
+                        (vec ^ vecs[1]) &
+                        (vec ^ vecs[2]) &
+                        (vec ^ vecs[3]) &
+                        (vec ^ vecs[4])) == 0)
+                    {
                         buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
                         const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
                         @memcpy(buf.items.ptr, latin1.ptr, copy_len);
                         buf.items.len = copy_len;
                         any_needs_escape = true;
-                        comptime var i: usize = 0;
-                        inline while (i < ascii_vector_size) : (i += 1) {
+                        var i: usize = 0;
+                        while (i < ascii_vector_size) : (i += 1) {
+                            switch (vec[i]) {
+                                '"', '&', '\'', '<', '>' => |c| {
+                                    const result = switch (c) {
+                                        '"' => "&quot;",
+                                        '&' => "&amp;",
+                                        '\'' => "&#x27;",
+                                        '<' => "&lt;",
+                                        '>' => "&gt;",
+                                        else => unreachable,
+                                    };
+
+                                    buf.appendSlice(result) catch unreachable;
+                                    remaining = remaining[1..];
+                                },
+                                else => |c| {
+                                    buf.append(c) catch unreachable;
+                                    remaining = remaining[1..];
+                                },
+                            }
+                        }
+
+                        break :scan_and_allocate_lazily;
+                    }
+
+                    remaining = remaining[ascii_vector_size..];
+                }
+            }
+
+            if (any_needs_escape) {
+                // pass #2: we found something that needed an escape
+                // so we'll go ahead and copy the buffer into a new buffer
+                while (remaining.len >= ascii_vector_size) {
+                    const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+                    if (@reduce(.Min, (vec ^ vecs[0]) &
+                        (vec ^ vecs[1]) &
+                        (vec ^ vecs[2]) &
+                        (vec ^ vecs[3]) &
+                        (vec ^ vecs[4])) == 0)
+                    {
+                        buf.ensureUnusedCapacity(ascii_vector_size) catch unreachable;
+                        var i: usize = 0;
+                        while (i < ascii_vector_size) : (i += 1) {
                             switch (vec[i]) {
                                 '"' => {
                                     buf.appendSlice("&quot;") catch unreachable;
@@ -1384,64 +1526,19 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                                     buf.appendSlice("&gt;") catch unreachable;
                                 },
                                 else => |c| {
-                                    buf.appendAssumeCapacity(c);
+                                    buf.append(c) catch unreachable;
                                 },
                             }
                         }
+
                         remaining = remaining[ascii_vector_size..];
-                        break :scan_and_allocate_lazily;
+                        continue;
                     }
 
+                    try buf.ensureUnusedCapacity(ascii_vector_size);
+                    buf.items.ptr[buf.items.len .. buf.items.len + ascii_vector_size][0..ascii_vector_size].* = remaining[0..ascii_vector_size].*;
+                    buf.items.len += ascii_vector_size;
                     remaining = remaining[ascii_vector_size..];
-                }
-
-                if (any_needs_escape) {
-                    // pass #2: we found something that needed an escape
-                    // so we'll go ahead and copy the buffer into a new buffer
-                    while (remaining.len >= ascii_vector_size) {
-                        const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-                        if (@reduce(
-                            .Or,
-                            @bitCast(AsciiVectorU1, (vec == vecs[0])) |
-                                @bitCast(AsciiVectorU1, (vec == vecs[1])) |
-                                @bitCast(AsciiVectorU1, (vec == vecs[2])) |
-                                @bitCast(AsciiVectorU1, (vec == vecs[3])) |
-                                @bitCast(AsciiVectorU1, (vec == vecs[4])),
-                        ) == 1) {
-                            buf.ensureUnusedCapacity(ascii_vector_size) catch unreachable;
-                            comptime var i: usize = 0;
-                            inline while (i < ascii_vector_size) : (i += 1) {
-                                switch (vec[i]) {
-                                    '"' => {
-                                        buf.appendSlice("&quot;") catch unreachable;
-                                    },
-                                    '&' => {
-                                        buf.appendSlice("&amp;") catch unreachable;
-                                    },
-                                    '\'' => {
-                                        buf.appendSlice("&#x27;") catch unreachable; // modified from escape-html; used to be '&#39'
-                                    },
-                                    '<' => {
-                                        buf.appendSlice("&lt;") catch unreachable;
-                                    },
-                                    '>' => {
-                                        buf.appendSlice("&gt;") catch unreachable;
-                                    },
-                                    else => |c| {
-                                        buf.append(c) catch unreachable;
-                                    },
-                                }
-                            }
-
-                            remaining = remaining[ascii_vector_size..];
-                            continue;
-                        }
-
-                        try buf.ensureUnusedCapacity(ascii_vector_size);
-                        buf.items.ptr[buf.items.len .. buf.items.len + ascii_vector_size][0..ascii_vector_size].* = remaining[0..ascii_vector_size].*;
-                        buf.items.len += ascii_vector_size;
-                        remaining = remaining[ascii_vector_size..];
-                    }
                 }
             }
 
@@ -1531,11 +1628,11 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 }
             }
 
-            if (any_needs_escape) {
-                return buf.toOwnedSlice();
-            } else {
+            if (!any_needs_escape) {
                 return latin1;
             }
+
+            return buf.toOwnedSlice();
         },
     }
 }
@@ -1811,7 +1908,9 @@ pub const min_16_ascii = @splat(ascii_vector_size, @as(u8, 0x20));
 pub const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
 pub const min_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 0x20));
 pub const AsciiVector = std.meta.Vector(ascii_vector_size, u8);
+pub const AsciiVectorSmall = std.meta.Vector(8, u8);
 pub const AsciiVectorU1 = std.meta.Vector(ascii_vector_size, u1);
+pub const AsciiVectorU1Small = std.meta.Vector(8, u1);
 pub const AsciiVectorU16U1 = std.meta.Vector(ascii_u16_vector_size, u1);
 pub const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii = @splat(4, @as(u8, 127));

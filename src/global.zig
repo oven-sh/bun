@@ -189,3 +189,15 @@ pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.isDebug) @TypeOf(
 
     return {};
 }
+
+pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usize {
+    return comptime brk: {
+        var slice: [max - min]usize = undefined;
+        var i: usize = min;
+        while (i < max) {
+            slice[i - min] = i;
+            i += 1;
+        }
+        break :brk slice;
+    };
+}

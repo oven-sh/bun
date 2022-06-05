@@ -1248,6 +1248,119 @@ extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalO
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
+// static inline EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalObject* globalObject, JSValue arrayValue)
+// {
+//     auto& vm = globalObject->vm();
+
+//     auto clientData = WebCore::clientData(vm);
+//     if (arrayValue.isUndefinedOrNull() || !arrayValue) {
+//         return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, 0));
+//     }
+
+//     auto scope = DECLARE_THROW_SCOPE(vm);
+
+//     auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
+//     if (!array) {
+//         throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
+//         return JSValue::encode(jsUndefined());
+//     }
+
+//     size_t arrayLength = array->length();
+//     if (arrayLength < 1) {
+//         RELEASE_AND_RETURN(throwScope, JSC::JSArrayBuffer::create(lexicalGlobalObject, 0));
+//     }
+
+//     size_t byteLength = 0;
+
+//     for (size_t i = 0; i < arrayLength; i++) {
+//         auto element = array->getIndex(lexicalGlobalObject, i);
+//         RETURN_IF_EXCEPTION(throwScope, {});
+
+//         auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element);
+//         if (UNLIKELY(!typedArray)) {
+//             throwTypeError(lexicalGlobalObject, throwScope, "Expected TypedArray"_s);
+//             return JSValue::encode(jsUndefined());
+//         }
+//         byteLength += typedArray->byteLength();
+//     }
+
+//     if (byteLength == 0) {
+//         RELEASE_AND_RETURN(throwScope, JSC::JSArrayBuffer::create(lexicalGlobalObject, 0));
+//     }
+
+//     auto& buffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
+//     if (UNLIKELY(!buffer)) {
+//         throwTypeError(lexicalGlobalObject, throwScope, "Failed to allocate ArrayBuffer"_s);
+//         return JSValue::encode(jsUndefined());
+//     }
+
+//     size_t remain = byteLength;
+//     auto* head = outBuffer->data();
+
+//     for (size_t i = 0; i < arrayLength && remain > 0; i++) {
+//         auto element = array->getIndex(lexicalGlobalObject, i);
+//         RETURN_IF_EXCEPTION(throwScope, {});
+//         auto* typedArray = JSC::jsCast<JSC::JSArrayBufferView*>(element);
+//         size_t length = std::min(remain, typedArray->byteLength());
+//         memcpy(head, typedArray->vector(), length);
+//         remain -= length;
+//         head += length;
+//     }
+
+//     return JSValue::encode(JSC::JSArrayBuffer::create(lexicalGlobalObject, WTFMove(buffer)));
+// }
+
+// static EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer_resolve(JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+// {
+//     auto& vm = globalObject->vm();
+
+//     if (callFrame->argumentCount() < 1) {
+//         auto scope = DECLARE_THROW_SCOPE(vm);
+//         throwTypeError(lexicalGlobalObject, throwScope, "Expected at least one argument"_s);
+//         return JSValue::encode(jsUndefined());
+//     }
+
+//     auto arrayValue = callFrame->uncheckedArgument(0);
+
+//     return flattenArrayOfBuffersIntoArrayBuffer(globalObject, arrayValue);
+// }
+
+// extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
+// extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+// {
+//     auto& vm = globalObject->vm();
+
+//     auto clientData = WebCore::clientData(vm);
+//     auto& builtinNames = WebCore::builtinNames(vm);
+
+//     auto function = globalObject->getDirect(vm, builtinNames.readableStreamToArrayPrivateName()).getObject();
+//     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+//     arguments.append(JSValue::decode(readableStreamValue));
+
+//     auto callData = JSC::getCallData(function);
+//     JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+//     if (UNLIKELY(result.isError()))
+//         return JSValue::encode(result);
+// }
+
+// extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
+// extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+// {
+//     auto& vm = globalObject->vm();
+//     auto scope = DECLARE_THROW_SCOPE(vm);
+
+//     auto clientData = WebCore::clientData(vm);
+//     auto& builtinNames = WebCore::builtinNames(vm);
+
+//     auto function = globalObject->getDirect(vm, builtinNames.createNativeReadableStreamPrivateName()).getObject();
+//     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+//     arguments.append(JSValue::decode(nativeType));
+//     arguments.append(JSValue::decode(nativePtr));
+
+//     auto callData = JSC::getCallData(function);
+//     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+// }
+
 void GlobalObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -1258,6 +1371,8 @@ void GlobalObject::finishCreation(VM& vm)
     RELEASE_ASSERT(classInfo());
 }
 
+extern "C" EncodedJSValue Bun__escapeHTML(JSGlobalObject* globalObject, CallFrame* callFrame);
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     m_builtinInternalFunctions.initialize(*this);
@@ -1266,7 +1381,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(27);
+    extraStaticGlobals.reserveCapacity(28);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -1301,6 +1416,13 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo { clearIntervalIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
                 "clearInterval"_s, functionClearInterval),
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
+
+    JSC::Identifier escapeHTMLIdentifier = JSC::Identifier::fromString(vm, "escapeHTML"_s);
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { escapeHTMLIdentifier,
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+                "escapeHTML"_s, Bun__escapeHTML),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier atobIdentifier = JSC::Identifier::fromString(vm, "atob"_s);
@@ -1355,6 +1477,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), streamInternalsCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // putDirectBuiltinFunction(vm, this, builtinNames.readableStreamToArrayPrivateName(), readableStreamReadableStreamToArrayCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
 

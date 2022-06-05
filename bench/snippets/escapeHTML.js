@@ -1,7 +1,27 @@
 import { group } from "mitata";
 import { bench, run } from "mitata";
 
-var bunEscapeHTML = Bun.escapeHTML;
+var bunEscapeHTML_ = globalThis.escapeHTML || Bun.escapeHTML;
+var bunEscapeHTML = function (str) {
+  if (str.length === 1) {
+    switch (str.charCodeAt(0)) {
+      case 34: // "
+        return "&quot;";
+      case 38: // &
+        return "&amp;";
+      case 39: // '
+        return "&#x27;"; // modified from escape-html; used to be '&#39'
+      case 60: // <
+        return "&lt;";
+      case 62: // >
+        return "&gt;";
+      default:
+        return str;
+    }
+  }
+
+  return bunEscapeHTML_(str);
+};
 
 const matchHtmlRegExp = /["'&<>]/;
 
@@ -12,6 +32,17 @@ const matchHtmlRegExp = /["'&<>]/;
  * @return {string}
  * @public
  */
+
+const FIXTURE = require("fs")
+  .readFileSync(import.meta.dir + "/_fixture.txt", "utf8")
+  .split("")
+  .map((a) => {
+    if (a.charCodeAt(0) > 127) {
+      return "a";
+    }
+    return a;
+  })
+  .join("");
 
 function reactEscapeHtml(string) {
   const str = "" + string;
@@ -58,29 +89,28 @@ function reactEscapeHtml(string) {
   return lastIndex !== index ? html + str.substring(lastIndex, index) : html;
 }
 
-const long = ("lalala" + "<script>alert(1)</script>" + "lalala").repeat(9000);
-const short = "lalala" + "<script>alert(1)</script>" + "lalala";
-const middle =
-  "lalala".repeat(2000) + "<script>alert(1)</script>" + "lalala".repeat(2000);
-const nothing = "lalala".repeat(9999);
-group(`long (${long.length})`, () => {
-  bench("react's escapeHTML", () => reactEscapeHtml(long));
-  bench("bun's escapeHTML", () => bunEscapeHTML(long));
-});
+for (let input of [
+  // " ",
+  // "<script>alert('xss')</script>",
+  // "hello world",
+  // "hello world<script>alert('xss')</script>",
+  // "<",
+  // ">",
+  // `short value`,
+  `nothing to escape `.repeat(99999),
+  FIXTURE,
+]) {
+  group(
+    {
+      summary: true,
+      name: `"` + input.substring(0, Math.min(input.length, 32)) + `"`,
+    },
+    () => {
+      bench(`react's escapeHTML`, () => reactEscapeHtml(input));
 
-group(`short (${short.length})`, () => {
-  bench("react's escapeHTML", () => reactEscapeHtml(short));
-  bench("bun's escapeHTML", () => bunEscapeHTML(short));
-});
-
-group(`middle (${middle.length})`, () => {
-  bench("react's escapeHTML", () => reactEscapeHtml(middle));
-  bench("bun's escapeHTML", () => bunEscapeHTML(middle));
-});
-
-group(`nothing (${nothing.length})`, () => {
-  bench("react's escapeHTML", () => reactEscapeHtml(nothing));
-  bench("bun's escapeHTML", () => bunEscapeHTML(nothing));
-});
+      bench(`bun's escapeHTML`, () => bunEscapeHTML(input));
+    }
+  );
+}
 
 await run();

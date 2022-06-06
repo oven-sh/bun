@@ -96,10 +96,11 @@ pub const GlobalConstructors = [_]type{
 };
 
 pub const GlobalClasses = [_]type{
+    Bun.Class,
     EventListenerMixin.addEventListener(VirtualMachine),
     BuildError.Class,
     ResolveError.Class,
-    Bun.Class,
+
     Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
     WebCore.Performance.Class,

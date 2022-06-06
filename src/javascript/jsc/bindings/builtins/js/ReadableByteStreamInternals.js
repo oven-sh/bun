@@ -221,7 +221,6 @@ function readableByteStreamControllerPull(controller)
     @assert(@readableStreamHasDefaultReader(stream));
 
     if (@getByIdDirectPrivate(controller, "queue").size > 0) {
-        @assert(@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests")?.isEmpty());
         const entry = @getByIdDirectPrivate(controller, "queue").content.shift();
         @getByIdDirectPrivate(controller, "queue").size -= entry.byteLength;
         @readableByteStreamControllerHandleQueueDrain(controller);
@@ -270,7 +269,9 @@ function readableByteStreamControllerShouldCallPull(controller)
         return false;
     if (!@getByIdDirectPrivate(controller, "started"))
         return false;
-    if (@readableStreamHasDefaultReader(stream) && (@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty() || !!@getByIdDirectPrivate(reader, "bunNativePtr")))
+    const reader = @getByIdDirectPrivate(stream, "reader");
+    
+    if (reader && (@getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty() || !!@getByIdDirectPrivate(reader, "bunNativePtr")))
         return true;
     if (@readableStreamHasBYOBReader(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readIntoRequests")?.isNotEmpty())
         return true;
@@ -335,13 +336,12 @@ function readableByteStreamControllerEnqueue(controller, chunk)
     const stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
     @assert(!@getByIdDirectPrivate(controller, "closeRequested"));
     @assert(@getByIdDirectPrivate(stream, "state") === @streamReadable);
-    var reader = @getByIdDirectPrivate(stream, "reader");
 
 
-    switch (reader ? @readableStreamReaderKind(reader) : 0) {
+    switch (@getByIdDirectPrivate(stream, "reader") ? @readableStreamReaderKind(@getByIdDirectPrivate(stream, "reader")) : 0) {
         /* default reader */
         case 1: {
-            if (!@getByIdDirectPrivate(reader, "readRequests")?.isNotEmpty())
+            if (!@getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests")?.isNotEmpty())
                 @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);
             else {
                 @assert(!@getByIdDirectPrivate(controller, "queue").content.size());

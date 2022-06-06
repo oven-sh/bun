@@ -117,6 +117,222 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_readableStreamReadableStreamToArrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamReadableStreamToArrayCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamReadableStreamToArrayCodeLength = 884;
+static const JSC::Intrinsic s_readableStreamReadableStreamToArrayCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamReadableStreamToArrayCode =
+    "(function (stream) {\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    "    if (!stream || @getByIdDirectPrivate(stream, \"state\") === @streamClosed) {\n" \
+    "        return null;\n" \
+    "    }\n" \
+    "    var reader = stream.getReader();\n" \
+    "\n" \
+    "    var manyResult = reader.readMany();\n" \
+    "    \n" \
+    "    async function processManyResult(result) {\n" \
+    "        \n" \
+    "        if (result.done) {\n" \
+    "            return null;\n" \
+    "        }\n" \
+    "\n" \
+    "        var chunks = result.value || [];\n" \
+    "        \n" \
+    "        while (true) {\n" \
+    "            var thisResult = await reader.read();\n" \
+    "            \n" \
+    "            if (thisResult.done) {\n" \
+    "                return chunks;\n" \
+    "            }\n" \
+    "            \n" \
+    "            chunks.push(thisResult.value);\n" \
+    "        }\n" \
+    "\n" \
+    "        return chunks;\n" \
+    "    };\n" \
+    "\n" \
+    "\n" \
+    "    if (manyResult && @isPromise(manyResult)) {\n" \
+    "        return manyResult.@then(processManyResult);\n" \
+    "    }\n" \
+    "\n" \
+    "    if (manyResult && manyResult.done) {\n" \
+    "        return null;\n" \
+    "    }\n" \
+    "\n" \
+    "    return processManyResult(manyResult);\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_readableStreamReadableStreamToArrayPublicCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamReadableStreamToArrayPublicCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamReadableStreamToArrayPublicCodeLength = 841;
+static const JSC::Intrinsic s_readableStreamReadableStreamToArrayPublicCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamReadableStreamToArrayPublicCode =
+    "(function (stream) {\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    "    if (@getByIdDirectPrivate(stream, \"state\") === @streamClosed) {\n" \
+    "        return [];\n" \
+    "    }\n" \
+    "    var reader = stream.getReader();\n" \
+    "\n" \
+    "    var manyResult = reader.readMany();\n" \
+    "\n" \
+    "    var processManyResult = (0, (async function(result) {\n" \
+    "        if (result.done) {\n" \
+    "            return [];\n" \
+    "        }\n" \
+    "\n" \
+    "        var chunks = result.value || [];\n" \
+    "        \n" \
+    "        while (true) {\n" \
+    "            var thisResult = await reader.read();\n" \
+    "            if (thisResult.done) {\n" \
+    "                return chunks;\n" \
+    "            }\n" \
+    "\n" \
+    "            chunks.push(thisResult.value);\n" \
+    "        }\n" \
+    "\n" \
+    "        return chunks;\n" \
+    "    }));\n" \
+    "\n" \
+    "\n" \
+    "    if (manyResult && @isPromise(manyResult)) {\n" \
+    "        return manyResult.then(processManyResult);\n" \
+    "    }\n" \
+    "\n" \
+    "    if (manyResult && manyResult.done) {\n" \
+    "        return [];\n" \
+    "    }\n" \
+    "\n" \
+    "    return processManyResult(manyResult);\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamConsumeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamConsumeReadableStreamCodeLength = 3683;
+static const JSC::Intrinsic s_readableStreamConsumeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamConsumeReadableStreamCode =
+    "(function (nativePtr, nativeType, inputStream) {\n" \
+    "    \"use strict\";\n" \
+    "    const symbol = Symbol.for(\"Bun.consumeReadableStreamPrototype\");\n" \
+    "    var cached =  globalThis[symbol];\n" \
+    "    if (!cached) {\n" \
+    "        cached = globalThis[symbol] = [];\n" \
+    "    }\n" \
+    "    var Prototype = cached[nativeType];\n" \
+    "    if (Prototype === @undefined) {\n" \
+    "        var [doRead, doError, doReadMany, doClose, onClose, deinit] = globalThis[Symbol.for(\"Bun.lazy\")](nativeType);\n" \
+    "\n" \
+    "        Prototype = class NativeReadableStreamSink {\n" \
+    "            constructor(reader, ptr) {\n" \
+    "                this.#ptr = ptr;\n" \
+    "                this.#reader = reader;\n" \
+    "                this.#didClose = false;\n" \
+    "\n" \
+    "                this.handleError = this._handleError.bind(this);\n" \
+    "                this.handleClosed = this._handleClosed.bind(this);\n" \
+    "                this.processResult = this._processResult.bind(this);\n" \
+    "\n" \
+    "                reader.closed.then(this.handleClosed, this.handleError);\n" \
+    "            }\n" \
+    "\n" \
+    "            handleError;\n" \
+    "            handleClosed;\n" \
+    "            _handleClosed() {\n" \
+    "                if (this.#didClose) return;\n" \
+    "                this.#didClose = true;\n" \
+    "                var ptr = this.#ptr;\n" \
+    "                this.#ptr = 0;\n" \
+    "                doClose(ptr);\n" \
+    "                deinit(ptr);\n" \
+    "            }\n" \
+    "\n" \
+    "            _handleError(error) {\n" \
+    "                if (this.#didClose) return;\n" \
+    "                this.#didClose = true;\n" \
+    "                var ptr = this.#ptr;\n" \
+    "                this.#ptr = 0;\n" \
+    "                doError(ptr, error);\n" \
+    "                deinit(ptr);\n" \
+    "            }\n" \
+    "\n" \
+    "            #ptr;\n" \
+    "            #didClose = false;\n" \
+    "            #reader;\n" \
+    "\n" \
+    "            _handleReadMany({value, done, size}) {\n" \
+    "                if (done) {\n" \
+    "                    this.handleClosed();\n" \
+    "                    return;\n" \
+    "                }\n" \
+    "\n" \
+    "                if (this.#didClose) return;\n" \
+    "               \n" \
+    "\n" \
+    "                doReadMany(this.#ptr, value, done, size);\n" \
+    "            }\n" \
+    "        \n" \
+    "\n" \
+    "            read() {\n" \
+    "                if (!this.#ptr) return @throwTypeError(\"ReadableStreamSink is already closed\");\n" \
+    "                \n" \
+    "                return this.processResult(this.#reader.read());\n" \
+    "                \n" \
+    "            }\n" \
+    "\n" \
+    "            _processResult(result) {\n" \
+    "                if (result && @isPromise(result)) {\n" \
+    "                    const flags = @getPromiseInternalField(result, @promiseFieldFlags);\n" \
+    "                    if (flags & @promiseStateFulfilled) {\n" \
+    "                        const fulfilledValue = @getPromiseInternalField(result, @promiseFieldReactionsOrResult);\n" \
+    "                        if (fulfilledValue) {\n" \
+    "                            result = fulfilledValue;\n" \
+    "                        }\n" \
+    "                    }\n" \
+    "                }\n" \
+    "\n" \
+    "                if (result && @isPromise(result)) {\n" \
+    "                    result.then(this.processResult, this.handleError);\n" \
+    "                    return null;\n" \
+    "                }\n" \
+    "\n" \
+    "                if (result.done) {\n" \
+    "                    this.handleClosed();\n" \
+    "                    return 0;\n" \
+    "                } else if (result.value) {\n" \
+    "                    return result.value;\n" \
+    "                }  else {\n" \
+    "                    return -1;\n" \
+    "                }\n" \
+    "            }\n" \
+    "\n" \
+    "            readMany() {\n" \
+    "                if (!this.#ptr) return @throwTypeError(\"ReadableStreamSink is already closed\");\n" \
+    "                return this.processResult(this.#reader.readMany());\n" \
+    "            }\n" \
+    "        };\n" \
+    "\n" \
+    "        const minlength = nativeType + 1;\n" \
+    "        if (cached.length < minlength) {\n" \
+    "            cached.length = minlength;\n" \
+    "        }\n" \
+    "        @putByValDirect(cached, nativeType, Prototype);\n" \
+    "    }\n" \
+    "\n" \
+    "    if (@isReadableStreamLocked(inputStream)) {\n" \
+    "        @throwTypeError(\"Cannot start reading from a locked stream\");\n" \
+    "    }\n" \
+    "\n" \
+    "    return new Prototype(inputStream.getReader(), nativePtr);\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_readableStreamCreateEmptyReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateEmptyReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const int s_readableStreamCreateEmptyReadableStreamCodeLength = 178;
@@ -135,7 +351,7 @@ const char* const s_readableStreamCreateEmptyReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamCreateNativeReadableStreamCodeLength = 2956;
+const int s_readableStreamCreateNativeReadableStreamCodeLength = 2955;
 static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateNativeReadableStreamCode =
     "(function (nativePtr, nativeType, autoAllocateChunkSize) {\n" \
@@ -145,7 +361,7 @@ const char* const s_readableStreamCreateNativeReadableStreamCode =
     "    if (Prototype === @undefined) {\n" \
     "        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for(\"Bun.lazy\")](nativeType);\n" \
     "        var closer = [false];\n" \
-    "var handleResult;\n" \
+    "        var handleResult;\n" \
     "        function handleNativeReadableStreamPromiseResult(val) {\n" \
     "            \"use strict\";\n" \
     "            var {c, v} = this;\n" \
@@ -153,7 +369,6 @@ const char* const s_readableStreamCreateNativeReadableStreamCode =
     "            this.v = @undefined;\n" \
     "            handleResult(val, c, v);\n" \
     "        }\n" \
-    "        \n" \
     "     \n" \
     "        handleResult = function handleResult(result, controller, view) {\n" \
     "            \"use strict\";\n" \

@@ -183,6 +183,80 @@ declare module "bun" {
   }
 
   /**
+   * Concatenate an array of typed arrays into a single `ArrayBuffer`.
+   *
+   * You can do this manually if you'd like, but this function will generally
+   * be a little faster.
+   *
+   * If you want a `Uint8Array` instead, consider `Buffer.concat`.
+   *
+   * @param buffers An array of typed arrays to concatenate.
+   * @returns An `ArrayBuffer` with the data from all the buffers.
+   *
+   * Here is the equivalent code to do it manually:
+   * ```js
+   *   var chunks = [...];
+   *   var size = 0;
+   *   for (const chunk of chunks) {
+   *     size += chunk.byteLength;
+   *   }
+   *   var buffer = new ArrayBuffer(size);
+   *   var view = new Uint8Array(buffer);
+   *   var offset = 0;
+   *   for (const chunk of chunks) {
+   *     view.set(chunk, offset);
+   *     offset += chunk.byteLength;
+   *   }
+   *   return buffer;
+   * ```
+   */
+  export function concatArrayBuffers(
+    buffers: Array<ArrayBufferView | ArrayBufferLike>
+  ): ArrayBuffer;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single {@link ArrayBuffer}.
+   *
+   * Each chunk must be a TypedArray or an ArrayBuffer.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
+   */
+  export function readableStreamToArrayBuffer<T>(
+    stream: ReadableStream
+  ): Promise<ArrayBuffer> | ArrayBuffer;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * @param stream The stream to consume
+   * @returns A promise that resolves with the chunks as an array
+   *
+   */
+  export function readableStreamToArray<T>(
+    stream: ReadableStream
+  ): Promise<T[]> | T[];
+
+  /**
+   * Escape the following characters in a string:
+   *
+   * - `"` becomes `"&quot;"`
+   * - `&` becomes `"&amp;"`
+   * - `'` becomes `"&#x27;"`
+   * - `<` becomes `"&lt;"`
+   * - `>` becomes `"&gt;"`
+   *
+   * This function is optimized for large input. On an M1X, it processes 480 MB/s -
+   * 20 GB/s, depending on how much data is being escaped and whether there is non-ascii
+   * text.
+   *
+   * Non-string types will be converted to a string before escaping.
+   */
+  export function escapeHTML(input: string | object | number | boolean): string;
+
+  /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
    * This Blob is lazy. That means it won't do any work until you read from it.

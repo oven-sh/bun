@@ -152,6 +152,9 @@ public:
     void* bunVM() { return m_bunVM; }
     bool isThreadLocalDefaultGlobalObject = false;
 
+    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
+    mutable WriteBarrier<JSFunction> m_readableStreamToTextResolve;
+
 private:
     void addBuiltinGlobals(JSC::VM&);
     void finishCreation(JSC::VM&);
@@ -166,6 +169,7 @@ private:
     Ref<WebCore::DOMWrapperWorld> m_world;
     LazyClassStructure m_JSFFIFunctionStructure;
     LazyClassStructure m_NapiClassStructure;
+
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;
 };

@@ -135,6 +135,7 @@ using JSBuffer = WebCore::JSBuffer;
 #include "JSTextEncoder.h"
 #include "StructuredClone.h"
 
+#include "ReadableStream.h"
 // #include <iostream>
 
 static bool has_loaded_jsc = false;
@@ -1230,6 +1231,73 @@ JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
     return JSValue::encode(jsBoolean(callFrame->uncheckedArgument(0).inherits<JSAbortSignal>()));
 }
 
+extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
+extern "C" bool ReadableStream__isDisturbed(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    ASSERT(globalObject);
+    return ReadableStream::isDisturbed(globalObject, jsDynamicCast<WebCore::JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream)));
+}
+
+extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
+extern "C" bool ReadableStream__isLocked(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    ASSERT(globalObject);
+    WebCore::JSReadableStream* stream = jsDynamicCast<WebCore::JSReadableStream*>(JSValue::decode(possibleReadableStream));
+    return stream != nullptr && ReadableStream::isLocked(globalObject, stream);
+}
+
+extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr);
+extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC__JSValue possibleReadableStream, JSValue* ptr)
+{
+    ASSERT(globalObject);
+    JSC::JSObject* object = JSValue::decode(possibleReadableStream).getObject();
+    if (!object || !object->inherits<JSReadableStream>()) {
+        *ptr = JSC::JSValue();
+        return -1;
+    }
+
+    auto* readableStream = jsCast<JSReadableStream*>(object);
+    auto& vm = globalObject->vm();
+    auto& builtinNames = WebCore::clientData(vm)->builtinNames();
+
+    JSValue numberValue = readableStream->getDirect(vm, builtinNames.bunNativeTypePrivateName());
+    int32_t num = numberValue.toInt32(globalObject);
+    if (numberValue.isUndefined() || num == 0) {
+        *ptr = JSC::JSValue();
+        return 0;
+    }
+
+    // If this type is outside the expected range, it means something is wrong.
+    if (UNLIKELY(!(num > 0 && num < 5))) {
+        *ptr = JSC::JSValue();
+        return 0;
+    }
+
+    *ptr = readableStream->getDirect(vm, builtinNames.bunNativePtrPrivateName());
+    return num;
+}
+
+extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject, JSC__JSValue stream, JSC__JSValue nativeType, JSC__JSValue nativePtr);
+extern "C" JSC__JSValue ReadableStream__consume(Zig::GlobalObject* globalObject, JSC__JSValue stream, JSC__JSValue nativeType, JSC__JSValue nativePtr)
+{
+    ASSERT(globalObject);
+
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    auto clientData = WebCore::clientData(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    auto function = globalObject->getDirect(vm, builtinNames.consumeReadableStreamPrivateName()).getObject();
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(nativePtr));
+    arguments.append(JSValue::decode(nativeType));
+    arguments.append(JSValue::decode(stream));
+
+    auto callData = JSC::getCallData(function);
+    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
 extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeType, JSC__JSValue nativePtr);
 extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC__JSValue nativeType, JSC__JSValue nativePtr)
 {
@@ -1248,118 +1316,223 @@ extern "C" JSC__JSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalO
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-// static inline EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalObject* globalObject, JSValue arrayValue)
-// {
-//     auto& vm = globalObject->vm();
+static inline EncodedJSValue flattenArrayOfBuffersIntoArrayBuffer(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue)
+{
+    auto& vm = lexicalGlobalObject->vm();
 
-//     auto clientData = WebCore::clientData(vm);
-//     if (arrayValue.isUndefinedOrNull() || !arrayValue) {
-//         return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, 0));
-//     }
+    auto clientData = WebCore::clientData(vm);
+    if (arrayValue.isUndefinedOrNull() || !arrayValue) {
+        return JSC::JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1)));
+    }
 
-//     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-//     auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
-//     if (!array) {
-//         throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
-//         return JSValue::encode(jsUndefined());
-//     }
+    auto array = JSC::jsDynamicCast<JSC::JSArray*>(arrayValue);
+    if (UNLIKELY(!array)) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Argument must be an array"_s);
+        return JSValue::encode(jsUndefined());
+    }
 
-//     size_t arrayLength = array->length();
-//     if (arrayLength < 1) {
-//         RELEASE_AND_RETURN(throwScope, JSC::JSArrayBuffer::create(lexicalGlobalObject, 0));
-//     }
+    size_t arrayLength = array->length();
+    if (arrayLength < 1) {
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
+    }
 
-//     size_t byteLength = 0;
+    size_t byteLength = 0;
+    bool any_buffer = false;
+    bool any_typed = false;
 
-//     for (size_t i = 0; i < arrayLength; i++) {
-//         auto element = array->getIndex(lexicalGlobalObject, i);
-//         RETURN_IF_EXCEPTION(throwScope, {});
+    for (size_t i = 0; i < arrayLength; i++) {
+        auto element = array->getIndex(lexicalGlobalObject, i);
+        RETURN_IF_EXCEPTION(throwScope, {});
 
-//         auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element);
-//         if (UNLIKELY(!typedArray)) {
-//             throwTypeError(lexicalGlobalObject, throwScope, "Expected TypedArray"_s);
-//             return JSValue::encode(jsUndefined());
-//         }
-//         byteLength += typedArray->byteLength();
-//     }
+        if (auto* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(element)) {
+            if (UNLIKELY(typedArray->isDetached())) {
+                throwTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
+                return JSValue::encode(jsUndefined());
+            }
+            byteLength += typedArray->byteLength();
+            any_typed = true;
+        } else if (auto* arrayBuffer = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
+            auto* impl = arrayBuffer->impl();
+            if (UNLIKELY(!impl)) {
+                throwTypeError(lexicalGlobalObject, throwScope, "ArrayBuffer is detached"_s);
+                return JSValue::encode(jsUndefined());
+            }
 
-//     if (byteLength == 0) {
-//         RELEASE_AND_RETURN(throwScope, JSC::JSArrayBuffer::create(lexicalGlobalObject, 0));
-//     }
+            byteLength += impl->byteLength();
+            any_buffer = true;
+        } else {
+            throwTypeError(lexicalGlobalObject, throwScope, "Expected TypedArray"_s);
+            return JSValue::encode(jsUndefined());
+        }
+    }
 
-//     auto& buffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
-//     if (UNLIKELY(!buffer)) {
-//         throwTypeError(lexicalGlobalObject, throwScope, "Failed to allocate ArrayBuffer"_s);
-//         return JSValue::encode(jsUndefined());
-//     }
+    if (byteLength == 0) {
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), JSC::ArrayBuffer::create(static_cast<size_t>(0), 1))));
+    }
 
-//     size_t remain = byteLength;
-//     auto* head = outBuffer->data();
+    auto buffer = JSC::ArrayBuffer::tryCreateUninitialized(byteLength, 1);
+    if (UNLIKELY(!buffer)) {
+        throwTypeError(lexicalGlobalObject, throwScope, "Failed to allocate ArrayBuffer"_s);
+        return JSValue::encode(jsUndefined());
+    }
 
-//     for (size_t i = 0; i < arrayLength && remain > 0; i++) {
-//         auto element = array->getIndex(lexicalGlobalObject, i);
-//         RETURN_IF_EXCEPTION(throwScope, {});
-//         auto* typedArray = JSC::jsCast<JSC::JSArrayBufferView*>(element);
-//         size_t length = std::min(remain, typedArray->byteLength());
-//         memcpy(head, typedArray->vector(), length);
-//         remain -= length;
-//         head += length;
-//     }
+    size_t remain = byteLength;
+    auto* head = reinterpret_cast<char*>(buffer->data());
 
-//     return JSValue::encode(JSC::JSArrayBuffer::create(lexicalGlobalObject, WTFMove(buffer)));
-// }
+    if (!any_buffer) {
+        for (size_t i = 0; i < arrayLength && remain > 0; i++) {
+            auto element = array->getIndex(lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            auto* view = JSC::jsCast<JSC::JSArrayBufferView*>(element);
+            size_t length = std::min(remain, view->byteLength());
+            memcpy(head, view->vector(), length);
+            remain -= length;
+            head += length;
+        }
+    } else if (!any_typed) {
+        for (size_t i = 0; i < arrayLength && remain > 0; i++) {
+            auto element = array->getIndex(lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            auto* view = JSC::jsCast<JSC::JSArrayBuffer*>(element);
+            size_t length = std::min(remain, view->impl()->byteLength());
+            memcpy(head, view->impl()->data(), length);
+            remain -= length;
+            head += length;
+        }
+    } else {
+        for (size_t i = 0; i < arrayLength && remain > 0; i++) {
+            auto element = array->getIndex(lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            size_t length = 0;
+            if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBuffer*>(element)) {
+                length = std::min(remain, view->impl()->byteLength());
+                memcpy(head, view->impl()->data(), length);
+            } else {
+                auto* typedArray = JSC::jsCast<JSC::JSArrayBufferView*>(element);
+                length = std::min(remain, typedArray->byteLength());
+                memcpy(head, typedArray->vector(), length);
+            }
 
-// static EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer_resolve(JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-// {
-//     auto& vm = globalObject->vm();
+            remain -= length;
+            head += length;
+        }
+    }
 
-//     if (callFrame->argumentCount() < 1) {
-//         auto scope = DECLARE_THROW_SCOPE(vm);
-//         throwTypeError(lexicalGlobalObject, throwScope, "Expected at least one argument"_s);
-//         return JSValue::encode(jsUndefined());
-//     }
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSArrayBuffer::create(vm, lexicalGlobalObject->arrayBufferStructure(), WTFMove(buffer))));
+}
 
-//     auto arrayValue = callFrame->uncheckedArgument(0);
+JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArrays);
 
-//     return flattenArrayOfBuffersIntoArrayBuffer(globalObject, arrayValue);
-// }
+JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
 
-// extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
-// extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
-// {
-//     auto& vm = globalObject->vm();
+    if (UNLIKELY(callFrame->argumentCount() < 1)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
+        return JSValue::encode(jsUndefined());
+    }
 
-//     auto clientData = WebCore::clientData(vm);
-//     auto& builtinNames = WebCore::builtinNames(vm);
+    auto arrayValue = callFrame->uncheckedArgument(0);
 
-//     auto function = globalObject->getDirect(vm, builtinNames.readableStreamToArrayPrivateName()).getObject();
-//     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-//     arguments.append(JSValue::decode(readableStreamValue));
+    return flattenArrayOfBuffersIntoArrayBuffer(globalObject, arrayValue);
+}
 
-//     auto callData = JSC::getCallData(function);
-//     JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
-//     if (UNLIKELY(result.isError()))
-//         return JSValue::encode(result);
-// }
+JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArraysFromIterator);
 
-// extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
-// extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
-// {
-//     auto& vm = globalObject->vm();
-//     auto scope = DECLARE_THROW_SCOPE(vm);
+JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArraysFromIterator, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
 
-//     auto clientData = WebCore::clientData(vm);
-//     auto& builtinNames = WebCore::builtinNames(vm);
+    if (UNLIKELY(callFrame->argumentCount() < 1)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
+        return JSValue::encode(jsUndefined());
+    }
 
-//     auto function = globalObject->getDirect(vm, builtinNames.createNativeReadableStreamPrivateName()).getObject();
-//     JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
-//     arguments.append(JSValue::decode(nativeType));
-//     arguments.append(JSValue::decode(nativePtr));
+    auto arrayValue = callFrame->uncheckedArgument(0);
+    if (UNLIKELY(!arrayValue.isObject())) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected an object"_s);
+        return JSValue::encode(jsUndefined());
+    }
 
-//     auto callData = JSC::getCallData(function);
-//     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
-// }
+    auto* iter = JSC::jsCast<JSC::JSObject*>(arrayValue);
+
+    return flattenArrayOfBuffersIntoArrayBuffer(globalObject, iter->getDirect(vm, vm.propertyNames->value));
+}
+
+static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
+static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+{
+    auto& vm = globalObject->vm();
+
+    auto clientData = WebCore::clientData(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto function = globalObject->getDirect(vm, builtinNames.readableStreamToArrayPrivateName()).getObject();
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(readableStreamValue));
+
+    auto callData = JSC::getCallData(function);
+    JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+
+    JSC::JSObject* object = result.getObject();
+
+    if (UNLIKELY(!result || result.isUndefinedOrNull()))
+        return JSValue::encode(result);
+
+    if (UNLIKELY(!object)) {
+
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected object"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(object);
+    if (UNLIKELY(!promise)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected promise"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto afterOngoingPromiseCapability = JSC::JSPromise::createNewPromiseCapability(globalObject, globalObject->promiseConstructor());
+    auto data = JSC::JSPromise::convertCapabilityToDeferredData(globalObject, afterOngoingPromiseCapability);
+
+    if (auto resolve = globalObject->m_readableStreamToArrayBufferResolve.get()) {
+        promise->performPromiseThen(globalObject, resolve, data.reject, afterOngoingPromiseCapability);
+    } else {
+        JSFunction* resolveFunction = JSFunction::create(vm, globalObject, 1, String(), functionConcatTypedArrays, NoIntrinsic);
+        globalObject->m_readableStreamToArrayBufferResolve.set(vm, globalObject, resolveFunction);
+        promise->performPromiseThen(globalObject, resolveFunction, data.reject, afterOngoingPromiseCapability);
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(data.promise));
+}
+
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+{
+    return ZigGlobalObject__readableStreamToArrayBufferBody(reinterpret_cast<Zig::GlobalObject*>(globalObject), readableStreamValue);
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToArrayBuffer);
+JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToArrayBuffer, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+
+    if (UNLIKELY(callFrame->argumentCount() < 1)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwTypeError(globalObject, throwScope, "Expected at least one argument"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    auto readableStreamValue = callFrame->uncheckedArgument(0);
+    return ZigGlobalObject__readableStreamToArrayBufferBody(reinterpret_cast<Zig::GlobalObject*>(globalObject), JSValue::encode(readableStreamValue));
+}
 
 void GlobalObject::finishCreation(VM& vm)
 {
@@ -1418,13 +1591,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
                 "clearInterval"_s, functionClearInterval),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
-    JSC::Identifier escapeHTMLIdentifier = JSC::Identifier::fromString(vm, "escapeHTML"_s);
-    extraStaticGlobals.uncheckedAppend(
-        GlobalPropertyInfo { escapeHTMLIdentifier,
-            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                "escapeHTML"_s, Bun__escapeHTML),
-            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
-
     JSC::Identifier atobIdentifier = JSC::Identifier::fromString(vm, "atob"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { atobIdentifier,
@@ -1477,7 +1643,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), streamInternalsCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    // putDirectBuiltinFunction(vm, this, builtinNames.readableStreamToArrayPrivateName(), readableStreamReadableStreamToArrayCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectBuiltinFunction(vm, this, builtinNames.consumeReadableStreamPrivateName(), readableStreamConsumeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectBuiltinFunction(vm, this, builtinNames.readableStreamToArrayPrivateName(), readableStreamReadableStreamToArrayCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
 
@@ -1556,6 +1723,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 {
     auto clientData = WebCore::clientData(vm);
     size_t constructor_count = 0;
+    auto& builtinNames = clientData->builtinNames();
     JSC__JSValue const* constructors = Zig__getAPIConstructors(&constructor_count, this);
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
     extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 1);
@@ -1568,7 +1736,44 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
                 JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
     }
     int j = 0;
-    for (; j < count - 1; j++) {
+    {
+        // first one is Bun object
+        auto jsClass = globals[j];
+
+        JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
+            jsClass, nullptr);
+        if (JSObject* prototype = object->classRef()->prototype(this))
+            object->setPrototypeDirect(vm, prototype);
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "escapeHTML"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 1, Bun__escapeHTML, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToArrayBuffer"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionReadableStreamToArrayBuffer, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "concatArrayBuffers"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionConcatTypedArrays, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToArray"_s);
+            object->putDirectBuiltinFunction(vm, this, builtinNames.readableStreamToArrayPublicName(), readableStreamReadableStreamToArrayCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+        }
+
+        extraStaticGlobals.uncheckedAppend(
+            GlobalPropertyInfo { JSC::Identifier::fromString(vm, jsClass->className()),
+                JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
+    }
+
+    for (j = 1; j < count - 1; j++) {
         auto jsClass = globals[j];
 
         JSC::JSCallbackObject<JSNonFinalObject>* object = JSC::JSCallbackObject<JSNonFinalObject>::create(this, this->callbackObjectStructure(),
@@ -1646,6 +1851,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_builtinInternalFunctions.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
+    visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
+    visitor.append(thisObject->m_readableStreamToTextResolve);
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
 }

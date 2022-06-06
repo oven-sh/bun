@@ -2398,9 +2398,10 @@ pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = vec == @splat(ascii_vector_size, char);
-            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-            const first = @ctz(AsciiVectorInt, bitmask);
-            if (first < 16) {
+
+            if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
+                const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+                const first = @ctz(AsciiVectorInt, bitmask);
                 return @intCast(u32, @as(u32, first) + @intCast(u32, slice.len - remaining.len));
             }
             remaining = remaining[ascii_vector_size..];

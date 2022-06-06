@@ -92,19 +92,63 @@ function initializeReadableStream(underlyingSource, strategy)
 function readableStreamToArray(stream) {
     "use strict";
 
-    if (@getByIdDirectPrivate(stream, "state") === @streamClosed) {
+    if (!stream || @getByIdDirectPrivate(stream, "state") === @streamClosed) {
         return null;
     }
     var reader = stream.getReader();
 
     var manyResult = reader.readMany();
-
-    var processManyResult = (0, (async function(manyResult) {
+    
+    async function processManyResult(result) {
+        
         if (result.done) {
             return null;
         }
 
-        var chunks = result.value;
+        var chunks = result.value || [];
+        
+        while (true) {
+            var thisResult = await reader.read();
+            
+            if (thisResult.done) {
+                return chunks;
+            }
+            
+            chunks.push(thisResult.value);
+        }
+
+        return chunks;
+    };
+
+
+    if (manyResult && @isPromise(manyResult)) {
+        return manyResult.@then(processManyResult);
+    }
+
+    if (manyResult && manyResult.done) {
+        return null;
+    }
+
+    return processManyResult(manyResult);
+}
+
+@globalPrivate
+function readableStreamToArrayPublic(stream) {
+    "use strict";
+
+    if (@getByIdDirectPrivate(stream, "state") === @streamClosed) {
+        return [];
+    }
+    var reader = stream.getReader();
+
+    var manyResult = reader.readMany();
+
+    var processManyResult = (0, (async function(result) {
+        if (result.done) {
+            return [];
+        }
+
+        var chunks = result.value || [];
         
         while (true) {
             var thisResult = await reader.read();
@@ -124,7 +168,7 @@ function readableStreamToArray(stream) {
     }
 
     if (manyResult && manyResult.done) {
-        return null;
+        return [];
     }
 
     return processManyResult(manyResult);

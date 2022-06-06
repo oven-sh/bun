@@ -200,17 +200,21 @@ bool ReadableStream::isLocked() const
     return checkReadableStream(*globalObject(), readableStream(), globalObject()->builtinInternalFunctions().readableStreamInternals().m_isReadableStreamLockedFunction.get());
 }
 
+bool ReadableStream::isLocked(JSGlobalObject* globalObject, JSReadableStream* readableStream)
+{
+    auto* dom = reinterpret_cast<JSDOMGlobalObject*>(globalObject);
+    return checkReadableStream(*dom, readableStream, dom->builtinInternalFunctions().readableStreamInternals().m_isReadableStreamLockedFunction.get());
+}
+
+bool ReadableStream::isDisturbed(JSGlobalObject* globalObject, JSReadableStream* readableStream)
+{
+    auto* dom = reinterpret_cast<JSDOMGlobalObject*>(globalObject);
+    return checkReadableStream(*dom, readableStream, dom->builtinInternalFunctions().readableStreamInternals().m_isReadableStreamDisturbedFunction.get());
+}
+
 bool ReadableStream::isDisturbed() const
 {
     return checkReadableStream(*globalObject(), readableStream(), globalObject()->builtinInternalFunctions().readableStreamInternals().m_isReadableStreamDisturbedFunction.get());
-}
-
-bool ReadableStream::isDisturbed(JSGlobalObject& lexicalGlobalObject, JSValue value)
-{
-    auto& globalObject = *jsDynamicCast<JSDOMGlobalObject*>(&lexicalGlobalObject);
-    auto* readableStream = jsDynamicCast<JSReadableStream*>(value);
-
-    return checkReadableStream(globalObject, readableStream, globalObject.builtinInternalFunctions().readableStreamInternals().m_isReadableStreamDisturbedFunction.get());
 }
 
 }

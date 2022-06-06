@@ -43,7 +43,8 @@ public:
     static ExceptionOr<Ref<ReadableStream>> create(JSC::JSGlobalObject&, RefPtr<ReadableStreamSource>&&);
     static ExceptionOr<Ref<ReadableStream>> create(JSC::JSGlobalObject& lexicalGlobalObject, RefPtr<ReadableStreamSource>&& source, JSC::JSValue nativePtr);
 
-    WEBCORE_EXPORT static bool isDisturbed(JSC::JSGlobalObject&, JSC::JSValue);
+    WEBCORE_EXPORT static bool isDisturbed(JSC::JSGlobalObject*, JSReadableStream*);
+    WEBCORE_EXPORT static bool isLocked(JSC::JSGlobalObject*, JSReadableStream*);
 
     std::optional<std::pair<Ref<ReadableStream>, Ref<ReadableStream>>> tee();
 
@@ -53,7 +54,10 @@ public:
     bool isLocked() const;
     bool isDisturbed() const;
 
-    JSReadableStream* readableStream() const { return guarded(); }
+    JSReadableStream* readableStream() const
+    {
+        return guarded();
+    }
 
 private:
     ReadableStream(JSDOMGlobalObject& globalObject, JSReadableStream& readableStream)

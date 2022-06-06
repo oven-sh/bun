@@ -89,7 +89,7 @@ const char* const s_readableStreamDefaultReaderCancelCode =
 
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamDefaultReaderReadManyCodeLength = 2136;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 2683;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderReadManyCode =
     "(function ()\n" \
@@ -111,43 +111,59 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "        throw @getByIdDirectPrivate(stream, \"storedError\");\n" \
     "    }\n" \
     "\n" \
-    "    var controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n" \
     "    \n" \
+    "    var controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n" \
+    "\n" \
     "    const content = @getByIdDirectPrivate(controller, \"queue\").content;\n" \
     "    var size = @getByIdDirectPrivate(controller, \"queue\").size;\n" \
     "    var values = content.toArray(false);\n" \
     "    var length = values.length;\n" \
+    "    \n" \
     "\n" \
     "    if (length > 0) {\n" \
+    "        \n" \
     "        @resetQueue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
+    "\n" \
+    "        \n" \
+    "        if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n" \
+    "            @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
+    "        else if (@isReadableStreamDefaultController(controller)) \n" \
+    "            @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
+    "        else if (@isReadableByteStreamController(controller))\n" \
+    "            @readableByteStreamControllerCallPullIfNeeded(controller);\n" \
+    "\n" \
+    "        return {value: values, size, done: false};\n" \
+    "    }\n" \
+    "\n" \
+    "    var onPullMany = (result) => {\n" \
+    "        if (result.done) {\n" \
+    "            return {value: [], size: 0, done: true};\n" \
+    "        }\n" \
+    "        var controller = @getByIdDirectPrivate(stream, \"readableStreamController\");\n" \
+    "        \n" \
+    "        var queue = @getByIdDirectPrivate(controller, \"queue\");\n" \
+    "        var value = [result.value].concat(queue.content.toArray(false));\n" \
+    "        var size = queue.size;\n" \
+    "        @resetQueue(queue);\n" \
     "\n" \
     "        if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n" \
     "            @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
-    "        else\n" \
+    "        else if (@isReadableStreamDefaultController(controller)) \n" \
     "            @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
-    "    } else {\n" \
-    "        return controller.@pull(controller).@then(({value, done}) => {\n" \
-    "           if (done) {\n" \
-    "               return {value: [], size: 0, done: true};\n" \
-    "           }\n" \
-    "            var queue = @getByIdDirectPrivate(controller, \"queue\");\n" \
-    "            const content = [value].concat(queue.content.toArray(false));\n" \
-    "            var size = queue.size;\n" \
-    "            @resetQueue(queue);\n" \
+    "        else if (@isReadableByteStreamController(controller))\n" \
+    "            @readableByteStreamControllerCallPullIfNeeded(controller);\n" \
+    "        \n" \
     "\n" \
-    "            if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n" \
-    "                @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
-    "            else\n" \
-    "                @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
-    "            controller = @undefined;\n" \
-    "\n" \
-    "           return {value: values, size: size, done: false};\n" \
-    "        });\n" \
+    "        \n" \
+    "        return {value: value, size: size, done: false};\n" \
+    "    };\n" \
+    "    \n" \
+    "    var pullResult = controller.@pull(controller);\n" \
+    "    if (pullResult && @isPromise(pullResult)) {\n" \
+    "        return pullResult.@then(onPullMany);\n" \
     "    }\n" \
     "\n" \
-    "    controller = @undefined;\n" \
-    "\n" \
-    "    return {value: values, size, done: false};\n" \
+    "    return onPullMany(pullResult);\n" \
     "})\n" \
 ;
 

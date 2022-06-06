@@ -70,43 +70,59 @@ function readMany()
         throw @getByIdDirectPrivate(stream, "storedError");
     }
 
-    var controller = @getByIdDirectPrivate(stream, "readableStreamController");
     
+    var controller = @getByIdDirectPrivate(stream, "readableStreamController");
+
     const content = @getByIdDirectPrivate(controller, "queue").content;
     var size = @getByIdDirectPrivate(controller, "queue").size;
     var values = content.toArray(false);
     var length = values.length;
+    
 
     if (length > 0) {
+        
         @resetQueue(@getByIdDirectPrivate(controller, "queue"));
+
+        
+        if (@getByIdDirectPrivate(controller, "closeRequested"))
+            @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
+        else if (@isReadableStreamDefaultController(controller)) 
+            @readableStreamDefaultControllerCallPullIfNeeded(controller);
+        else if (@isReadableByteStreamController(controller))
+            @readableByteStreamControllerCallPullIfNeeded(controller);
+
+        return {value: values, size, done: false};
+    }
+
+    var onPullMany = (result) => {
+        if (result.done) {
+            return {value: [], size: 0, done: true};
+        }
+        var controller = @getByIdDirectPrivate(stream, "readableStreamController");
+        
+        var queue = @getByIdDirectPrivate(controller, "queue");
+        var value = [result.value].concat(queue.content.toArray(false));
+        var size = queue.size;
+        @resetQueue(queue);
 
         if (@getByIdDirectPrivate(controller, "closeRequested"))
             @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
-        else
+        else if (@isReadableStreamDefaultController(controller)) 
             @readableStreamDefaultControllerCallPullIfNeeded(controller);
-    } else {
-        return controller.@pull(controller).@then(({value, done}) => {
-           if (done) {
-               return {value: [], size: 0, done: true};
-           }
-            var queue = @getByIdDirectPrivate(controller, "queue");
-            const content = [value].concat(queue.content.toArray(false));
-            var size = queue.size;
-            @resetQueue(queue);
+        else if (@isReadableByteStreamController(controller))
+            @readableByteStreamControllerCallPullIfNeeded(controller);
+        
 
-            if (@getByIdDirectPrivate(controller, "closeRequested"))
-                @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
-            else
-                @readableStreamDefaultControllerCallPullIfNeeded(controller);
-            controller = @undefined;
-
-           return {value: values, size: size, done: false};
-        });
+        
+        return {value: value, size: size, done: false};
+    };
+    
+    var pullResult = controller.@pull(controller);
+    if (pullResult && @isPromise(pullResult)) {
+        return pullResult.@then(onPullMany);
     }
 
-    controller = @undefined;
-
-    return {value: values, size, done: false};
+    return onPullMany(pullResult);
 }
 
 function read()

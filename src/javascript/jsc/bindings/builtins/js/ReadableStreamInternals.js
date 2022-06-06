@@ -69,6 +69,7 @@ function privateInitializeReadableStreamDefaultController(stream, underlyingSour
     return this;
 }
 
+
 // https://streams.spec.whatwg.org/#set-up-readable-stream-default-controller, starting from step 6.
 // The other part is implemented in privateInitializeReadableStreamDefaultController.
 function setupReadableStreamDefaultController(stream, underlyingSource, size, highWaterMark, startMethod, pullMethod, cancelMethod)
@@ -540,12 +541,12 @@ function readableStreamError(stream, error)
     @putByIdDirectPrivate(stream, "state", @streamErrored);
     @putByIdDirectPrivate(stream, "storedError", error);
 
-    if (!@getByIdDirectPrivate(stream, "reader"))
-        return;
-
     const reader = @getByIdDirectPrivate(stream, "reader");
 
-    if (@isReadableStreamDefaultReader(reader)) {
+    if (!reader)
+        return;
+
+        if (@isReadableStreamDefaultReader(reader)) {
         const requests = @getByIdDirectPrivate(reader, "readRequests");
         @putByIdDirectPrivate(reader, "readRequests", @createFIFO());
         for (var request = requests.shift(); request; request = requests.shift())
@@ -671,9 +672,9 @@ function readableStreamDefaultControllerPull(controller)
     "use strict";
 
     var queue  = @getByIdDirectPrivate(controller, "queue");
-    if (queue.isNotEmpty()) {
+    if (queue.content.isNotEmpty()) {
         const chunk = @dequeueValue(queue);
-        if (@getByIdDirectPrivate(controller, "closeRequested") && queue.isEmpty())
+        if (@getByIdDirectPrivate(controller, "closeRequested") && queue.content.isEmpty())
             @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
         else
             @readableStreamDefaultControllerCallPullIfNeeded(controller);
@@ -691,7 +692,7 @@ function readableStreamDefaultControllerClose(controller)
 
     @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));
     @putByIdDirectPrivate(controller, "closeRequested", true);
-    if (@getByIdDirectPrivate(controller, "queue")?.isEmpty())
+    if (@getByIdDirectPrivate(controller, "queue")?.content?.isEmpty())
         @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
 }
 
@@ -701,20 +702,20 @@ function readableStreamClose(stream)
 
     @assert(@getByIdDirectPrivate(stream, "state") === @streamReadable);
     @putByIdDirectPrivate(stream, "state", @streamClosed);
-    const reader = @getByIdDirectPrivate(stream, "reader");
-
-    if (!reader)
+    if (!@getByIdDirectPrivate(stream, "reader"))
         return;
 
-    if (@isReadableStreamDefaultReader(reader)) {
-        const requests = @getByIdDirectPrivate(reader, "readRequests");
-        @putByIdDirectPrivate(reader, "readRequests", @createFIFO());
+    if (@isReadableStreamDefaultReader(@getByIdDirectPrivate(stream, "reader"))) {
+        const requests = @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests");
+        if (requests.isNotEmpty()) {
+            @putByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "readRequests", @createFIFO());
         
-        for (var request = requests.shift(); request; request = requests.shift())
-            @fulfillPromise(request, { value: @undefined, done: true });
+            for (var request = requests.shift(); request; request = requests.shift())
+                @fulfillPromise(request, { value: @undefined, done: true });
+        }
     }
 
-    @getByIdDirectPrivate(reader, "closedPromiseCapability").@resolve.@call();
+    @getByIdDirectPrivate(@getByIdDirectPrivate(stream, "reader"), "closedPromiseCapability").@resolve.@call();
 }
 
 function readableStreamFulfillReadRequest(stream, chunk, done)

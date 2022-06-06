@@ -73,18 +73,6 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 
-template<typename WebCoreType, typename OutType>
-OutType* WebCoreCast(JSC__JSValue JSValue0, JSC::VM* vm)
-{
-    // we must use jsDynamicCast here so that we check that the type is correct
-    WebCoreType* jsdomURL = JSC::jsDynamicCast<WebCoreType*>(JSC::JSValue::decode(JSValue0));
-    if (jsdomURL == nullptr) {
-        return nullptr;
-    }
-
-    return reinterpret_cast<OutType*>(&jsdomURL->wrapped());
-}
-
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
@@ -164,7 +152,7 @@ void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigStri
 }
 WebCore__FetchHeaders* WebCore__FetchHeaders__cast_(JSC__JSValue JSValue0, JSC__VM* vm)
 {
-    return WebCoreCast<WebCore::JSFetchHeaders, WebCore__FetchHeaders>(JSValue0, vm);
+    return WebCoreCast<WebCore::JSFetchHeaders, WebCore__FetchHeaders>(JSValue0);
 }
 
 using namespace WebCore;
@@ -318,7 +306,7 @@ void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigStri
 
 WebCore__DOMURL* WebCore__DOMURL__cast_(JSC__JSValue JSValue0, JSC::VM* vm)
 {
-    return WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(JSValue0, vm);
+    return WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(JSValue0);
 }
 
 void WebCore__DOMURL__href_(WebCore__DOMURL* domURL, ZigString* arg1)

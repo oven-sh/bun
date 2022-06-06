@@ -1619,6 +1619,13 @@ pub const JSGlobalObject = extern struct {
         return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));
     }
 
+    extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
+
+    pub fn readableStreamToArrayBuffer(this: *JSGlobalObject, value: JSValue) JSValue {
+        if (comptime is_bindgen) unreachable;
+        return ZigGlobalObject__readableStreamToArrayBuffer(this, value);
+    }
+
     pub const Extern = [_][]const u8{
         "bunVM",
         "putCachedObject",

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { gcTick } from "./gc";
+import { escapeHTML } from "bun";
 
 describe("escapeHTML", () => {
   // The matrix of cases we need to test for:

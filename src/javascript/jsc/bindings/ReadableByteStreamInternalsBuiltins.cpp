@@ -316,7 +316,7 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerHandl
 
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerPullCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsReadableByteStreamControllerPullCodeLength = 1706;
+const int s_readableByteStreamInternalsReadableByteStreamControllerPullCodeLength = 1598;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerPullCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullCode =
     "(function (controller)\n" \
@@ -327,7 +327,6 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullC
     "    @assert(@readableStreamHasDefaultReader(stream));\n" \
     "\n" \
     "    if (@getByIdDirectPrivate(controller, \"queue\").size > 0) {\n" \
-    "        @assert(@getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\")?.isEmpty());\n" \
     "        const entry = @getByIdDirectPrivate(controller, \"queue\").content.shift();\n" \
     "        @getByIdDirectPrivate(controller, \"queue\").size -= entry.byteLength;\n" \
     "        @readableByteStreamControllerHandleQueueDrain(controller);\n" \
@@ -367,7 +366,7 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullC
 
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength = 874;
+const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength = 872;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode =
     "(function (controller)\n" \
@@ -382,7 +381,8 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerShoul
     "        return false;\n" \
     "    if (!@getByIdDirectPrivate(controller, \"started\"))\n" \
     "        return false;\n" \
-    "    if (@readableStreamHasDefaultReader(stream) && (@getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\")?.isNotEmpty() || !!@getByIdDirectPrivate(reader, \"bunNativePtr\")))\n" \
+    "        const reader = @getByIdDirectPrivate(stream, \"reader\");\n" \
+    "    if (reader && (@getByIdDirectPrivate(reader, \"readRequests\")?.isNotEmpty() || !!@getByIdDirectPrivate(reader, \"bunNativePtr\")))\n" \
     "        return true;\n" \
     "    if (@readableStreamHasBYOBReader(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readIntoRequests\")?.isNotEmpty())\n" \
     "        return true;\n" \
@@ -462,7 +462,7 @@ const char* const s_readableByteStreamInternalsReadableStreamReaderKindCode =
 
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1649;
+const int s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeLength = 1690;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnqueueCode =
     "(function (controller, chunk)\n" \
@@ -472,13 +472,12 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerEnque
     "    const stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n" \
     "    @assert(!@getByIdDirectPrivate(controller, \"closeRequested\"));\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === @streamReadable);\n" \
-    "    var reader = @getByIdDirectPrivate(stream, \"reader\");\n" \
     "\n" \
     "\n" \
-    "    switch (reader ? @readableStreamReaderKind(reader) : 0) {\n" \
+    "    switch (@getByIdDirectPrivate(stream, \"reader\") ? @readableStreamReaderKind(@getByIdDirectPrivate(stream, \"reader\")) : 0) {\n" \
     "        \n" \
     "        case 1: {\n" \
-    "            if (!@getByIdDirectPrivate(reader, \"readRequests\")?.isNotEmpty())\n" \
+    "            if (!@getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\")?.isNotEmpty())\n" \
     "                @readableByteStreamControllerEnqueueChunk(controller, @transferBufferToCurrentRealm(chunk.buffer), chunk.byteOffset, chunk.byteLength);\n" \
     "            else {\n" \
     "                @assert(!@getByIdDirectPrivate(controller, \"queue\").content.size());\n" \

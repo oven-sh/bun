@@ -688,7 +688,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamErrorCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadableStreamErrorCodeLength = 1295;
+const int s_readableStreamInternalsReadableStreamErrorCodeLength = 1266;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamErrorCode =
     "(function (stream, error)\n" \
@@ -700,12 +700,12 @@ const char* const s_readableStreamInternalsReadableStreamErrorCode =
     "    @putByIdDirectPrivate(stream, \"state\", @streamErrored);\n" \
     "    @putByIdDirectPrivate(stream, \"storedError\", error);\n" \
     "\n" \
-    "    if (!@getByIdDirectPrivate(stream, \"reader\"))\n" \
-    "        return;\n" \
-    "\n" \
     "    const reader = @getByIdDirectPrivate(stream, \"reader\");\n" \
     "\n" \
-    "    if (@isReadableStreamDefaultReader(reader)) {\n" \
+    "    if (!reader)\n" \
+    "        return;\n" \
+    "\n" \
+    "        if (@isReadableStreamDefaultReader(reader)) {\n" \
     "        const requests = @getByIdDirectPrivate(reader, \"readRequests\");\n" \
     "        @putByIdDirectPrivate(reader, \"readRequests\", @createFIFO());\n" \
     "        for (var request = requests.shift(); request; request = requests.shift())\n" \
@@ -870,7 +870,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCancel
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerPullCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadableStreamDefaultControllerPullCodeLength = 742;
+const int s_readableStreamInternalsReadableStreamDefaultControllerPullCodeLength = 758;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerPullCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerPullCode =
     "(function (controller)\n" \
@@ -878,9 +878,9 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerPullCo
     "    \"use strict\";\n" \
     "\n" \
     "    var queue  = @getByIdDirectPrivate(controller, \"queue\");\n" \
-    "    if (queue.isNotEmpty()) {\n" \
+    "    if (queue.content.isNotEmpty()) {\n" \
     "        const chunk = @dequeueValue(queue);\n" \
-    "        if (@getByIdDirectPrivate(controller, \"closeRequested\") && queue.isEmpty())\n" \
+    "        if (@getByIdDirectPrivate(controller, \"closeRequested\") && queue.content.isEmpty())\n" \
     "            @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
     "        else\n" \
     "            @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
@@ -895,7 +895,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerPullCo
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeLength = 342;
+const int s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeLength = 351;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerCloseCode =
     "(function (controller)\n" \
@@ -904,14 +904,14 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCloseC
     "\n" \
     "    @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));\n" \
     "    @putByIdDirectPrivate(controller, \"closeRequested\", true);\n" \
-    "    if (@getByIdDirectPrivate(controller, \"queue\")?.isEmpty())\n" \
+    "    if (@getByIdDirectPrivate(controller, \"queue\")?.content?.isEmpty())\n" \
     "        @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadableStreamCloseCodeLength = 712;
+const int s_readableStreamInternalsReadableStreamCloseCodeLength = 875;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamCloseCode =
     "(function (stream)\n" \
@@ -920,20 +920,20 @@ const char* const s_readableStreamInternalsReadableStreamCloseCode =
     "\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === @streamReadable);\n" \
     "    @putByIdDirectPrivate(stream, \"state\", @streamClosed);\n" \
-    "    const reader = @getByIdDirectPrivate(stream, \"reader\");\n" \
-    "\n" \
-    "    if (!reader)\n" \
+    "    if (!@getByIdDirectPrivate(stream, \"reader\"))\n" \
     "        return;\n" \
     "\n" \
-    "    if (@isReadableStreamDefaultReader(reader)) {\n" \
-    "        const requests = @getByIdDirectPrivate(reader, \"readRequests\");\n" \
-    "        @putByIdDirectPrivate(reader, \"readRequests\", @createFIFO());\n" \
+    "    if (@isReadableStreamDefaultReader(@getByIdDirectPrivate(stream, \"reader\"))) {\n" \
+    "        const requests = @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\");\n" \
+    "        if (requests.isNotEmpty()) {\n" \
+    "            @putByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\", @createFIFO());\n" \
     "        \n" \
-    "        for (var request = requests.shift(); request; request = requests.shift())\n" \
-    "            @fulfillPromise(request, { value: @undefined, done: true });\n" \
+    "            for (var request = requests.shift(); request; request = requests.shift())\n" \
+    "                @fulfillPromise(request, { value: @undefined, done: true });\n" \
+    "        }\n" \
     "    }\n" \
     "\n" \
-    "    @getByIdDirectPrivate(reader, \"closedPromiseCapability\").@resolve.@call();\n" \
+    "    @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"closedPromiseCapability\").@resolve.@call();\n" \
     "})\n" \
 ;
 
@@ -952,7 +952,7 @@ const char* const s_readableStreamInternalsReadableStreamFulfillReadRequestCode 
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeLength = 990;
+const int s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeLength = 993;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCode =
     "(function (controller, chunk)\n" \
@@ -963,7 +963,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerEnqueu
     "    //\n" \
     "    @assert(@readableStreamDefaultControllerCanCloseOrEnqueue(controller));\n" \
     "\n" \
-    "    if (@isReadableStreamLocked(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\").isNotEmpty) {\n" \
+    "    if (@isReadableStreamLocked(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readRequests\")?.isNotEmpty()) {\n" \
     "        @readableStreamFulfillReadRequest(stream, chunk, false);\n" \
     "        @readableStreamDefaultControllerCallPullIfNeeded(controller);\n" \
     "        return;\n" \

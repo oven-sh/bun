@@ -374,7 +374,7 @@ pub const Expect = struct {
                 defer left_slice.deinit();
                 var right_slice = right.toSlice(ctx, getAllocator(ctx));
                 defer right_slice.deinit();
-                std.debug.assert(!strings.eqlLong(left_slice.slice(), right_slice.slice(), false));
+                std.debug.assert(!strings.eqlLong(left_slice.slice(), right_slice.slice(), true));
             }
 
             var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };

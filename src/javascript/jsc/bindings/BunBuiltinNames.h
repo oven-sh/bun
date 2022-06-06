@@ -66,6 +66,7 @@ using namespace JSC;
     macro(connect) \
     macro(controlledReadableStream) \
     macro(controller) \
+    macro(consumeReadableStream) \
     macro(cork) \
     macro(createFIFO) \
     macro(createNativeReadableStream) \
@@ -163,6 +164,7 @@ using namespace JSC;
     macro(readRequests) \
     macro(readable) \
     macro(readableStreamController) \
+    macro(readableStreamToArray) \
     macro(reader) \
     macro(readyPromise) \
     macro(readyPromiseCapability) \

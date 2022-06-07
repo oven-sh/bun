@@ -247,6 +247,8 @@ pub const Flags = struct {
     pub const JSXElement = enum {
         is_key_before_rest,
         has_any_dynamic,
+        can_be_inlined,
+        can_be_hoisted,
         pub const Bitset = std.enums.EnumSet(JSXElement);
     };
 
@@ -1210,12 +1212,14 @@ pub const E = struct {
             __self, // old react transform used this as a prop
             __source,
             key,
+            ref,
             any,
 
             pub const Map = ComptimeStringMap(SpecialProp, .{
                 .{ "__self", .__self },
                 .{ "__source", .__source },
                 .{ "key", .key },
+                .{ "ref", .ref },
             });
         };
     };
@@ -1279,8 +1283,10 @@ pub const E = struct {
         is_single_line: bool = false,
         is_parenthesized: bool = false,
         was_originally_macro: bool = false,
+
         close_brace_loc: logger.Loc = logger.Loc.Empty,
 
+        // used in TOML parser to merge properties
         pub const Rope = struct {
             head: Expr,
             next: ?*Rope = null,

@@ -547,6 +547,19 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
         transpiler.runtime.allow_runtime = flag.toBoolean();
     }
 
+    if (object.get(globalThis, "jsxOptimizationInline")) |flag| {
+        transpiler.runtime.jsx_optimization_inline = flag.toBoolean();
+    }
+
+    if (object.get(globalThis, "jsxOptimizationHoist")) |flag| {
+        transpiler.runtime.jsx_optimization_hoist = flag.toBoolean();
+
+        if (!transpiler.runtime.jsx_optimization_inline and transpiler.runtime.jsx_optimization_hoist) {
+            JSC.throwInvalidArguments("jsxOptimizationHoist requires jsxOptimizationInline", .{}, ctx, exception);
+            return transpiler;
+        }
+    }
+
     if (object.get(globalThis, "sourcemap")) |flag| {
         if (flag.isBoolean() or flag.isUndefinedOrNull()) {
             if (flag.toBoolean()) {

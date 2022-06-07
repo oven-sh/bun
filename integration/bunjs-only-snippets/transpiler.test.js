@@ -291,6 +291,39 @@ describe("Bun.Transpiler", () => {
     );
   });
 
+  describe("inline JSX", () => {
+    const inliner = new Bun.Transpiler({
+      loader: "tsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("production"),
+        user_undefined: "undefined",
+      },
+      platform: "bun",
+      jsxOptimizationInline: true,
+      treeShaking: false,
+    });
+
+    it("inlines static JSX into object literals", () => {
+      expect(
+        inliner.transformSync("export var hi = <div>{123}</div>").trim()
+      ).toBe(
+        `
+var $$typeof = Symbol.for("react.element");
+export var hi = {
+  $$typeof,
+  type: "div",
+  key: null,
+  ref: null,
+  props: {
+    children: 123
+  },
+  _owner: null
+};
+`.trim()
+      );
+    });
+  });
+
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe(

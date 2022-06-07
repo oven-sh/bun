@@ -430,6 +430,16 @@ declare module "bun" {
      *    ```
      */
     macros?: MacroMap;
+
+    autoImportJSX?: boolean;
+    allowBunRuntime?: boolean;
+    exports?: {
+      eliminate?: string[];
+      replace?: Record<string, string>;
+    };
+    treeShaking?: boolean;
+    trimUnusedImports?: boolean;
+    jsxOptimizationInline?: boolean;
   }
 
   /**

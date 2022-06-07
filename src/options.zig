@@ -1187,6 +1187,9 @@ pub const BundleOptions = struct {
 
     append_package_version_in_query_string: bool = false,
 
+    jsx_optimization_inline: ?bool = null,
+    jsx_optimization_hoist: ?bool = null,
+
     resolve_mode: api.Api.ResolveMode,
     tsconfig_override: ?string = null,
     platform: Platform = Platform.browser,

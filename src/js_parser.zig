@@ -995,6 +995,8 @@ const StaticSymbolName = struct {
         pub const ImportSource = NewStaticSymbol("JSX");
         pub const ClassicImportSource = NewStaticSymbol("JSXClassic");
         pub const jsxFilename = NewStaticSymbolWithBackup("fileName", "jsxFileName");
+        pub const REACT_ELEMENT_TYPE = NewStaticSymbolWithBackup("$$typeof", "$$reactEl");
+        pub const Symbol = NewStaticSymbolWithBackup("Symbol", "Symbol");
         pub const Factory = NewStaticSymbol("jsxEl");
         pub const Refresher = NewStaticSymbol("FastRefresh");
         pub const Fragment = NewStaticSymbol("JSXFrag");
@@ -2585,6 +2587,9 @@ pub const Parser = struct {
                 if (p.options.features.auto_import_jsx) {
                     const jsx_classic_symbol = p.symbols.items[p.jsx_classic.ref.innerIndex()];
                     const jsx_automatic_symbol = p.symbols.items[p.jsx_automatic.ref.innerIndex()];
+                    const react_element_symbol = if (p.options.features.jsx_optimization_inline) p.symbols.items[p.react_element_type.ref.innerIndex()] else Symbol{
+                        .original_name = "IF_YOU_SEE_THIS_ITS_A_BUG_IN_BUN_WHERE_REACT_ELEMENT_SYMBOL_IS_BEING_ADDED_WHEN_IT_SHOULDNT_BE_PLEASE_REPORT_IT",
+                    };
 
                     // JSX auto-imports
                     // The classic runtime is a different import than the main import
@@ -2592,7 +2597,7 @@ pub const Parser = struct {
                     // 1. If you use a spread operator like this: <div foo bar key="foo" {...props} baz />
                     // 2. If you use a React.Fragment
                     // So we have to support both.
-                    if (jsx_classic_symbol.use_count_estimate > 0 or jsx_automatic_symbol.use_count_estimate > 0) {
+                    if (jsx_classic_symbol.use_count_estimate > 0 or jsx_automatic_symbol.use_count_estimate > 0 or react_element_symbol.use_count_estimate > 0) {
                         // These must unfortunately be copied
                         // p.symbols may grow during this scope
                         // if it grows, the previous pointers are invalidated
@@ -2605,6 +2610,11 @@ pub const Parser = struct {
                         const automatic_namespace_ref = p.jsx_automatic.ref;
 
                         const decls_count: u32 =
+                            // "REACT_ELEMENT_TYPE"
+                            // "Symbol.for('react.element')"
+                            @intCast(u32, @boolToInt(react_element_symbol.use_count_estimate > 0)) * 2 +
+
+                            // "JSX"
                             @intCast(u32, @boolToInt(jsx_symbol.use_count_estimate > 0)) * 2 +
                             @intCast(u32, @boolToInt(jsx_static_symbol.use_count_estimate > 0)) * 2 +
                             @intCast(u32, @boolToInt(jsx_factory_symbol.use_count_estimate > 0)) +
@@ -2634,6 +2644,50 @@ pub const Parser = struct {
                         var import_record_i: usize = 0;
                         var require_call_args_i: usize = 0;
                         var stmt_i: usize = 0;
+
+                        if (react_element_symbol.use_count_estimate > 0) {
+                            declared_symbols[declared_symbols_i] = .{ .ref = p.react_element_type.ref, .is_top_level = true };
+                            declared_symbols_i += 1;
+                            p.recordUsage(p.es6_symbol_global.ref);
+                            var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
+                            call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
+
+                            decls[decl_i] = G.Decl{
+                                .binding = p.b(
+                                    B.Identifier{
+                                        .ref = p.react_element_type.ref,
+                                    },
+                                    loc,
+                                ),
+                                .value = p.e(
+                                    E.Call{
+                                        // Symbol.for
+                                        .target = p.e(
+                                            E.Dot{
+                                                .name = "for",
+                                                .name_loc = logger.Loc.Empty,
+                                                .target = p.e(
+                                                    E.Identifier{
+                                                        .ref = p.es6_symbol_global.ref,
+                                                        .can_be_removed_if_unused = true,
+                                                        .call_can_be_unwrapped_if_unused = true,
+                                                    },
+                                                    logger.Loc.Empty,
+                                                ),
+                                                .can_be_removed_if_unused = true,
+                                                .call_can_be_unwrapped_if_unused = true,
+                                            },
+                                            logger.Loc.Empty,
+                                        ),
+                                        .args = ExprNodeList.init(call_args),
+                                        .close_paren_loc = logger.Loc.Empty,
+                                        .can_be_unwrapped_if_unused = true,
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                            };
+                            decl_i += 1;
+                        }
 
                         if (jsx_symbol.use_count_estimate > 0 or jsx_static_symbol.use_count_estimate > 0) {
                             declared_symbols[declared_symbols_i] = .{ .ref = automatic_namespace_ref, .is_top_level = true };
@@ -2872,6 +2926,60 @@ pub const Parser = struct {
                             .stmts = jsx_part_stmts[0..stmt_i],
                             .declared_symbols = declared_symbols,
                             .import_record_indices = import_records,
+                            .tag = .jsx_import,
+                        }) catch unreachable;
+                    }
+                } else if (p.options.features.jsx_optimization_inline) {
+                    const react_element_symbol = p.symbols.items[p.react_element_type.ref.innerIndex()];
+
+                    if (react_element_symbol.use_count_estimate > 0) {
+                        var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
+                        var decls = try p.allocator.alloc(G.Decl, 1);
+                        var part_stmts = try p.allocator.alloc(Stmt, 1);
+
+                        declared_symbols[0] = .{ .ref = p.react_element_type.ref, .is_top_level = true };
+                        p.recordUsage(p.es6_symbol_global.ref);
+                        var call_args = p.allocator.alloc(Expr, 1) catch unreachable;
+                        call_args[0] = Expr{ .data = Prefill.Data.REACT_ELEMENT_TYPE, .loc = logger.Loc.Empty };
+
+                        decls[0] = G.Decl{
+                            .binding = p.b(
+                                B.Identifier{
+                                    .ref = p.react_element_type.ref,
+                                },
+                                logger.Loc.Empty,
+                            ),
+                            .value = p.e(
+                                E.Call{
+                                    // Symbol.for
+                                    .target = p.e(
+                                        E.Dot{
+                                            .name = "for",
+                                            .name_loc = logger.Loc.Empty,
+                                            .target = p.e(
+                                                E.Identifier{
+                                                    .ref = p.es6_symbol_global.ref,
+                                                    .can_be_removed_if_unused = true,
+                                                    .call_can_be_unwrapped_if_unused = true,
+                                                },
+                                                logger.Loc.Empty,
+                                            ),
+                                            .can_be_removed_if_unused = true,
+                                            .call_can_be_unwrapped_if_unused = true,
+                                        },
+                                        logger.Loc.Empty,
+                                    ),
+                                    .args = ExprNodeList.init(call_args),
+                                    .close_paren_loc = logger.Loc.Empty,
+                                    .can_be_unwrapped_if_unused = true,
+                                },
+                                logger.Loc.Empty,
+                            ),
+                        };
+                        part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls }, logger.Loc.Empty);
+                        before.append(js_ast.Part{
+                            .stmts = part_stmts,
+                            .declared_symbols = declared_symbols,
                             .tag = .jsx_import,
                         }) catch unreachable;
                     }
@@ -3264,11 +3372,11 @@ pub const Prefill = struct {
         };
     };
     pub const StringLiteral = struct {
-        pub var Key = [3]u8{ 'k', 'e', 'y' };
-        pub var Children = [_]u8{ 'c', 'h', 'i', 'l', 'd', 'r', 'e', 'n' };
-        pub var Filename = [_]u8{ 'f', 'i', 'l', 'e', 'N', 'a', 'm', 'e' };
-        pub var LineNumber = [_]u8{ 'l', 'i', 'n', 'e', 'N', 'u', 'm', 'b', 'e', 'r' };
-        pub var ColumnNumber = [_]u8{ 'c', 'o', 'l', 'u', 'm', 'n', 'N', 'u', 'm', 'b', 'e', 'r' };
+        pub const Key = [3]u8{ 'k', 'e', 'y' };
+        pub const Children = [_]u8{ 'c', 'h', 'i', 'l', 'd', 'r', 'e', 'n' };
+        pub const Filename = [_]u8{ 'f', 'i', 'l', 'e', 'N', 'a', 'm', 'e' };
+        pub const LineNumber = [_]u8{ 'l', 'i', 'n', 'e', 'N', 'u', 'm', 'b', 'e', 'r' };
+        pub const ColumnNumber = [_]u8{ 'c', 'o', 'l', 'u', 'm', 'n', 'N', 'u', 'm', 'b', 'e', 'r' };
     };
     pub const Value = struct {
         pub const EThis = E.This{};
@@ -3280,6 +3388,13 @@ pub const Prefill = struct {
         pub var Filename = E.String{ .data = &Prefill.StringLiteral.Filename };
         pub var LineNumber = E.String{ .data = &Prefill.StringLiteral.LineNumber };
         pub var ColumnNumber = E.String{ .data = &Prefill.StringLiteral.ColumnNumber };
+
+        pub var @"$$typeof" = E.String{ .data = "$$typeof" };
+        pub var @"type" = E.String{ .data = "type" };
+        pub var @"ref" = E.String{ .data = "ref" };
+        pub var @"props" = E.String{ .data = "props" };
+        pub var @"_owner" = E.String{ .data = "_owner" };
+        pub var @"REACT_ELEMENT_TYPE" = E.String{ .data = "react.element" };
     };
     pub const Data = struct {
         pub var BMissing = B{ .b_missing = BMissing_ };
@@ -3294,6 +3409,13 @@ pub const Prefill = struct {
         pub var Filename = Expr.Data{ .e_string = &Prefill.String.Filename };
         pub var LineNumber = Expr.Data{ .e_string = &Prefill.String.LineNumber };
         pub var ColumnNumber = Expr.Data{ .e_string = &Prefill.String.ColumnNumber };
+        pub var @"$$typeof" = Expr.Data{ .e_string = &Prefill.String.@"$$typeof" };
+        pub var @"key" = Expr.Data{ .e_string = &Prefill.String.@"Key" };
+        pub var @"type" = Expr.Data{ .e_string = &Prefill.String.@"type" };
+        pub var @"ref" = Expr.Data{ .e_string = &Prefill.String.@"ref" };
+        pub var @"props" = Expr.Data{ .e_string = &Prefill.String.@"props" };
+        pub var @"_owner" = Expr.Data{ .e_string = &Prefill.String.@"_owner" };
+        pub var @"REACT_ELEMENT_TYPE" = Expr.Data{ .e_string = &Prefill.String.@"REACT_ELEMENT_TYPE" };
         pub const This = Expr.Data{ .e_this = E.This{} };
         pub const Zero = Expr.Data{ .e_number = Value.Zero };
     };
@@ -3305,6 +3427,10 @@ pub const Prefill = struct {
         pub var ToModule = "__toModule";
         const JSXShortname = "jsx";
     };
+};
+
+const ReactJSX = struct {
+    hoisted_elements: std.ArrayHashMapUnmanaged(Ref, G.Decl, bun.ArrayIdentityContext, false) = .{},
 };
 
 var keyExprData = Expr.Data{ .e_string = &Prefill.String.Key };
@@ -3856,6 +3982,9 @@ fn NewParser_(
         // "visit" pass.
         enclosing_namespace_arg_ref: ?Ref = null,
 
+        react_element_type: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
+        /// Symbol object
+        es6_symbol_global: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_filename: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_runtime: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
         jsx_factory: GeneratedSymbol = GeneratedSymbol{ .ref = Ref.None, .primary = Ref.None, .backup = Ref.None },
@@ -4879,6 +5008,11 @@ fn NewParser_(
                     if (p.options.jsx.development) {
                         p.jsx_filename = p.declareGeneratedSymbol(.other, "jsxFilename") catch unreachable;
                     }
+
+                    if (p.options.features.jsx_optimization_inline) {
+                        p.react_element_type = p.declareGeneratedSymbol(.other, "REACT_ELEMENT_TYPE") catch unreachable;
+                        p.es6_symbol_global = p.declareGeneratedSymbol(.unbound, "Symbol") catch unreachable;
+                    }
                     p.jsx_fragment = p.declareGeneratedSymbol(.other, "Fragment") catch unreachable;
                     p.jsx_runtime = p.declareGeneratedSymbol(.other, "jsx") catch unreachable;
                     p.jsxs_runtime = p.declareGeneratedSymbol(.other, "jsxs") catch unreachable;
@@ -4965,6 +5099,10 @@ fn NewParser_(
         }
 
         pub fn resolveStaticJSXSymbols(p: *P) void {
+            if (p.options.features.jsx_optimization_inline) {
+                p.resolveGeneratedSymbol(&p.react_element_type);
+                p.resolveGeneratedSymbol(&p.es6_symbol_global);
+            }
             p.resolveGeneratedSymbol(&p.jsx_runtime);
             p.resolveGeneratedSymbol(&p.jsxs_runtime);
             p.resolveGeneratedSymbol(&p.jsx_factory);
@@ -11972,11 +12110,14 @@ fn NewParser_(
             var key_prop: ?ExprNodeIndex = null;
             var flags = Flags.JSXElement.Bitset{};
             var start_tag: ?ExprNodeIndex = null;
+            var can_be_inlined = false;
 
             // Fragments don't have props
             // Fragments of the form "React.Fragment" are not parsed as fragments.
             if (@as(JSXTag.TagType, tag.data) == .tag) {
                 start_tag = tag.data.tag;
+                can_be_inlined = p.options.features.jsx_optimization_inline;
+
                 var spread_loc: logger.Loc = logger.Loc.Empty;
                 var props = ListManaged(G.Property).init(p.allocator);
                 var key_prop_i: i32 = -1;
@@ -11993,7 +12134,6 @@ fn NewParser_(
                             try p.lexer.nextInsideJSXElement();
 
                             if (special_prop == .key) {
-
                                 // <ListItem key>
                                 if (p.lexer.token != .t_equals) {
                                     // Unlike Babel, we're going to just warn here and move on.
@@ -12005,6 +12145,8 @@ fn NewParser_(
                                 key_prop = try p.parseJSXPropValueIdentifier(&previous_string_with_backslash_loc);
                                 continue;
                             }
+
+                            can_be_inlined = can_be_inlined and special_prop != .ref;
 
                             const prop_name = p.e(E.String{ .data = prop_name_literal }, key_range.loc);
 
@@ -12037,6 +12179,7 @@ fn NewParser_(
                             switch (p.lexer.token) {
                                 .t_dot_dot_dot => {
                                     try p.lexer.next();
+                                    can_be_inlined = false;
 
                                     spread_prop_i = i;
                                     spread_loc = p.lexer.loc();
@@ -12147,6 +12290,10 @@ fn NewParser_(
 
                 if (p.lexer.token != .t_greater_than) {
                     try p.lexer.expected(.t_greater_than);
+                }
+
+                if (can_be_inlined) {
+                    flags.insert(.can_be_inlined);
                 }
 
                 return p.e(E.JSXElement{
@@ -12264,6 +12411,10 @@ fn NewParser_(
 
                         if (p.lexer.token != .t_greater_than) {
                             try p.lexer.expected(.t_greater_than);
+                        }
+
+                        if (can_be_inlined) {
+                            flags.insert(.can_be_inlined);
                         }
 
                         return p.e(E.JSXElement{
@@ -13433,12 +13584,7 @@ fn NewParser_(
                                 },
                                 // function jsxDEV(type, config, maybeKey, source, self) {
                                 .automatic => {
-                                    // Either:
-                                    // jsxDEV(type, arguments, key, isStaticChildren, source, self)
-                                    // jsx(type, arguments, key)
-                                    const include_filename = FeatureFlags.include_filename_in_jsx and p.options.jsx.development;
-                                    const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @boolToInt(e_.key != null))) catch unreachable;
-                                    args[0] = tag;
+                                    // --- These must be done in all cases --
                                     const allocator = p.allocator;
                                     var props = e_.properties.list();
                                     // arguments needs to be like
@@ -13460,9 +13606,6 @@ fn NewParser_(
 
                                     const children_key = Expr{ .data = jsxChildrenKeyData, .loc = expr.loc };
 
-                                    // Babel defines static jsx as children.len > 1
-                                    const is_static_jsx = e_.children.len > 1;
-
                                     // Optimization: if the only non-child prop is a spread object
                                     // we can just pass the object as the first argument
                                     // this goes as deep as there are spreads
@@ -13473,6 +13616,9 @@ fn NewParser_(
                                     while (props.items.len == 1 and props.items[0].kind == .spread and props.items[0].value.?.data == .e_object) {
                                         props = props.items[0].value.?.data.e_object.properties.list();
                                     }
+
+                                    // Babel defines static jsx as children.len > 1
+                                    const is_static_jsx = e_.children.len > 1;
 
                                     // if (p.options.jsx.development) {
                                     switch (e_.children.len) {
@@ -13493,84 +13639,194 @@ fn NewParser_(
                                             }) catch unreachable;
                                         },
                                     }
+                                    // --- These must be done in all cases --
 
-                                    args[1] = p.e(E.Object{
-                                        .properties = G.Property.List.fromList(props),
-                                    }, expr.loc);
-
-                                    if (e_.key) |key| {
-                                        args[2] = key;
-                                    } else if (p.options.jsx.development) {
-                                        // if (maybeKey !== undefined)
-                                        args[2] = Expr{
-                                            .loc = expr.loc,
-                                            .data = .{
-                                                .e_undefined = E.Undefined{},
+                                    // Trivial elements can be inlined, removing the call to createElement or jsx()
+                                    if (p.options.features.jsx_optimization_inline and e_.flags.contains(.can_be_inlined)) {
+                                        // The output object should look like this:
+                                        // https://babeljs.io/repl/#?browsers=defaults%2C%20not%20ie%2011%2C%20not%20ie_mob%2011&build=&builtIns=false&corejs=false&spec=false&loose=false&code_lz=FAMwrgdgxgLglgewgAgLIE8DCCC2AHJAUwhgAoBvAIwEMAvAXwEplzhl3kAnQmMTlADwAxBAmQA-AIwAmAMxsOAFgCsANgEB6EQnEBuYPWBA&debug=false&forceAllTransforms=false&shippedProposals=true&circleciRepo=&evaluate=false&fileSize=true&timeTravel=false&sourceType=module&lineWrap=true&presets=react%2Ctypescript&prettier=true&targets=&version=7.18.4&externalPlugins=%40babel%2Fplugin-transform-flow-strip-types%407.16.7%2C%40babel%2Fplugin-transform-react-inline-elements%407.16.7&assumptions=%7B%22arrayLikeIsIterable%22%3Atrue%2C%22constantReexports%22%3Atrue%2C%22constantSuper%22%3Atrue%2C%22enumerableModuleMeta%22%3Atrue%2C%22ignoreFunctionLength%22%3Atrue%2C%22ignoreToPrimitiveHint%22%3Atrue%2C%22mutableTemplateObject%22%3Atrue%2C%22iterableIsArray%22%3Atrue%2C%22noClassCalls%22%3Atrue%2C%22noNewArrows%22%3Atrue%2C%22noDocumentAll%22%3Atrue%2C%22objectRestNoSymbols%22%3Atrue%2C%22privateFieldsAsProperties%22%3Atrue%2C%22pureGetters%22%3Atrue%2C%22setComputedProperties%22%3Atrue%2C%22setClassMethods%22%3Atrue%2C%22setSpreadProperties%22%3Atrue%2C%22setPublicClassFields%22%3Atrue%2C%22skipForOfIteratorClosing%22%3Atrue%2C%22superIsCallableConstructor%22%3Atrue%7D
+                                        // return {
+                                        //     $$typeof: REACT_ELEMENT_TYPE,
+                                        //     type: type,
+                                        //     key: void 0 === key ? null : "" + key,
+                                        //     ref: null,
+                                        //     props: props,
+                                        //     _owner: null
+                                        // };
+                                        //
+                                        p.recordUsage(p.react_element_type.ref);
+                                        const key = if (e_.key) |key_| brk: {
+                                            // key: void 0 === key ? null : "" + key,
+                                            break :brk switch (key_.data) {
+                                                .e_string => break :brk key_,
+                                                .e_undefined, .e_null => p.e(E.Null{}, key_.loc),
+                                                else => p.e(E.If{
+                                                    .test_ = p.e(E.Binary{
+                                                        .left = p.e(E.Undefined{}, key_.loc),
+                                                        .op = Op.Code.bin_strict_eq,
+                                                        .right = key_,
+                                                    }, key_.loc),
+                                                    .yes = p.e(E.Null{}, key_.loc),
+                                                    .no = p.e(
+                                                        E.Binary{
+                                                            .op = Op.Code.bin_add,
+                                                            .left = p.e(&E.String.empty, key_.loc),
+                                                            .right = key_,
+                                                        },
+                                                        key_.loc,
+                                                    ),
+                                                }, key_.loc),
+                                            };
+                                        } else p.e(E.Null{}, expr.loc);
+                                        var jsx_element = p.allocator.alloc(G.Property, 6) catch unreachable;
+                                        const props_object = p.e(
+                                            E.Object{
+                                                .properties = G.Property.List.fromList(props),
+                                                .close_brace_loc = e_.close_tag_loc,
+                                            },
+                                            expr.loc,
+                                        );
+                                        jsx_element[0..6].* =
+                                            [_]G.Property{
+                                            G.Property{
+                                                .key = Expr{ .data = Prefill.Data.@"$$typeof", .loc = tag.loc },
+                                                .value = p.e(
+                                                    E.Identifier{
+                                                        .ref = p.react_element_type.ref,
+                                                        .can_be_removed_if_unused = true,
+                                                    },
+                                                    tag.loc,
+                                                ),
+                                            },
+                                            G.Property{
+                                                .key = Expr{ .data = Prefill.Data.@"type", .loc = tag.loc },
+                                                .value = tag,
+                                            },
+                                            G.Property{
+                                                .key = Expr{ .data = Prefill.Data.@"key", .loc = key.loc },
+                                                .value = key,
+                                            },
+                                            // this is a de-opt
+                                            // any usage of ref should make it impossible for this code to be reached
+                                            G.Property{
+                                                .key = Expr{ .data = Prefill.Data.@"ref", .loc = expr.loc },
+                                                .value = p.e(E.Null{}, expr.loc),
+                                            },
+                                            G.Property{
+                                                .key = Expr{ .data = Prefill.Data.@"props", .loc = expr.loc },
+                                                .value = props_object,
+                                            },
+                                            G.Property{
+                                                .key = Expr{ .data = Prefill.Data.@"_owner", .loc = key.loc },
+                                                .value = p.e(
+                                                    E.Null{},
+                                                    expr.loc,
+                                                ),
                                             },
                                         };
-                                    }
 
-                                    if (p.options.jsx.development) {
-                                        // is the return type of the first child an array?
-                                        // It's dynamic
-                                        // Else, it's static
-                                        args[3] = Expr{
-                                            .loc = expr.loc,
-                                            .data = .{
-                                                .e_boolean = .{
-                                                    .value = is_static_jsx,
-                                                },
+                                        const output = p.e(
+                                            E.Object{
+                                                .properties = G.Property.List.init(jsx_element),
+                                                .close_brace_loc = e_.close_tag_loc,
                                             },
-                                        };
+                                            expr.loc,
+                                        );
 
-                                        if (include_filename) {
-                                            var source = p.allocator.alloc(G.Property, 2) catch unreachable;
-                                            p.recordUsage(p.jsx_filename.ref);
-                                            source[0] = G.Property{
-                                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
-                                                .value = p.e(E.Identifier{
-                                                    .ref = p.jsx_filename.ref,
-                                                    .can_be_removed_if_unused = true,
-                                                }, expr.loc),
-                                            };
-
-                                            source[1] = G.Property{
-                                                .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
-                                                .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                            };
-
-                                            // Officially, they ask for columnNumber. But I don't see any usages of it in the code!
-                                            // source[2] = G.Property{
-                                            //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
-                                            //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
-                                            // };
-                                            args[4] = p.e(E.Object{
-                                                .properties = G.Property.List.init(source),
-                                            }, expr.loc);
-
-                                            // When disabled, this must specifically be undefined
-                                            // Not an empty object
-                                            // See this code from react:
-                                            // >  if (source !== undefined) {
-                                            // >     var fileName = source.fileName.replace(/^.*[\\\/]/, "");
-                                            // >     var lineNumber = source.lineNumber;
-                                            // >     return "\n\nCheck your code at " + fileName + ":" + lineNumber + ".";
-                                            // > }
-                                        } else {
-                                            args[4] = p.e(E.Undefined{}, expr.loc);
+                                        if (p.options.features.jsx_optimization_hoist) {
+                                            // if the expression is free of side effects
+                                            if (p.exprCanBeRemovedIfUnused(&props_object)) {}
                                         }
 
-                                        args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
-                                    }
+                                        return output;
+                                    } else {
+                                        // -- The typical jsx automatic transform happens here --
 
-                                    return p.e(E.Call{
-                                        .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc, is_static_jsx),
-                                        .args = ExprNodeList.init(args),
-                                        // Enable tree shaking
-                                        .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
-                                        .was_jsx_element = true,
-                                        .close_paren_loc = e_.close_tag_loc,
-                                    }, expr.loc);
+                                        // Either:
+                                        // jsxDEV(type, arguments, key, isStaticChildren, source, self)
+                                        // jsx(type, arguments, key)
+                                        const include_filename = FeatureFlags.include_filename_in_jsx and p.options.jsx.development;
+                                        const args = p.allocator.alloc(Expr, if (p.options.jsx.development) @as(usize, 6) else @as(usize, 2) + @as(usize, @boolToInt(e_.key != null))) catch unreachable;
+                                        args[0] = tag;
+
+                                        args[1] = p.e(E.Object{
+                                            .properties = G.Property.List.fromList(props),
+                                        }, expr.loc);
+
+                                        if (e_.key) |key| {
+                                            args[2] = key;
+                                        } else if (p.options.jsx.development) {
+                                            // if (maybeKey !== undefined)
+                                            args[2] = Expr{
+                                                .loc = expr.loc,
+                                                .data = .{
+                                                    .e_undefined = E.Undefined{},
+                                                },
+                                            };
+                                        }
+
+                                        if (p.options.jsx.development) {
+                                            // is the return type of the first child an array?
+                                            // It's dynamic
+                                            // Else, it's static
+                                            args[3] = Expr{
+                                                .loc = expr.loc,
+                                                .data = .{
+                                                    .e_boolean = .{
+                                                        .value = is_static_jsx,
+                                                    },
+                                                },
+                                            };
+
+                                            if (include_filename) {
+                                                var source = p.allocator.alloc(G.Property, 2) catch unreachable;
+                                                p.recordUsage(p.jsx_filename.ref);
+                                                source[0] = G.Property{
+                                                    .key = Expr{ .loc = expr.loc, .data = Prefill.Data.Filename },
+                                                    .value = p.e(E.Identifier{
+                                                        .ref = p.jsx_filename.ref,
+                                                        .can_be_removed_if_unused = true,
+                                                    }, expr.loc),
+                                                };
+
+                                                source[1] = G.Property{
+                                                    .key = Expr{ .loc = expr.loc, .data = Prefill.Data.LineNumber },
+                                                    .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                                                };
+
+                                                // Officially, they ask for columnNumber. But I don't see any usages of it in the code!
+                                                // source[2] = G.Property{
+                                                //     .key = Expr{ .loc = expr.loc, .data = Prefill.Data.ColumnNumber },
+                                                //     .value = p.e(E.Number{ .value = @intToFloat(f64, expr.loc.start) }, expr.loc),
+                                                // };
+                                                args[4] = p.e(E.Object{
+                                                    .properties = G.Property.List.init(source),
+                                                }, expr.loc);
+
+                                                // When disabled, this must specifically be undefined
+                                                // Not an empty object
+                                                // See this code from react:
+                                                // >  if (source !== undefined) {
+                                                // >     var fileName = source.fileName.replace(/^.*[\\\/]/, "");
+                                                // >     var lineNumber = source.lineNumber;
+                                                // >     return "\n\nCheck your code at " + fileName + ":" + lineNumber + ".";
+                                                // > }
+                                            } else {
+                                                args[4] = p.e(E.Undefined{}, expr.loc);
+                                            }
+
+                                            args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
+                                        }
+
+                                        return p.e(E.Call{
+                                            .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc, is_static_jsx),
+                                            .args = ExprNodeList.init(args),
+                                            // Enable tree shaking
+                                            .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
+                                            .was_jsx_element = true,
+                                            .close_paren_loc = e_.close_tag_loc,
+                                        }, expr.loc);
+                                    }
                                 },
                                 else => unreachable,
                             }

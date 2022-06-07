@@ -1674,30 +1674,31 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
             else => utf16,
         },
         2 => {
-            const first = std.mem.sliceAsBytes(switch (utf16[0]) {
+            const first_16 = switch (utf16[0]) {
                 '"' => toUTF16Literal("&quot;"),
                 '&' => toUTF16Literal("&amp;"),
                 '\'' => toUTF16Literal("&#x27;"),
                 '<' => toUTF16Literal("&lt;"),
                 '>' => toUTF16Literal("&gt;"),
                 else => @as([]const u16, utf16[0..1]),
-            });
-            const second = std.mem.sliceAsBytes(switch (utf16[1]) {
+            };
+
+            const second_16 = switch (utf16[1]) {
                 '"' => toUTF16Literal("&quot;"),
                 '&' => toUTF16Literal("&amp;"),
                 '\'' => toUTF16Literal("&#x27;"),
                 '<' => toUTF16Literal("&lt;"),
                 '>' => toUTF16Literal("&gt;"),
                 else => @as([]const u16, utf16[1..2]),
-            });
-            if (first.len == 1 and second.len == 1) {
+            };
+
+            if (first_16.ptr == utf16.ptr and second_16.ptr == utf16.ptr + 1) {
                 return utf16;
             }
-            const outlen = first.len + second.len;
-            var buf = allocator.alloc(u16, outlen / 2) catch unreachable;
-            var buf_ = std.mem.sliceAsBytes(buf);
-            @memcpy(buf_.ptr, first.ptr, first.len);
-            @memcpy(buf_.ptr + first.len, second.ptr, second.len);
+
+            var buf = allocator.alloc(u16, first_16.len + second_16.len) catch unreachable;
+            std.mem.copy(u16, buf, first_16);
+            std.mem.copy(u16, buf[first_16.len..], second_16);
             return buf;
         },
 
@@ -1883,7 +1884,6 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
                         128...std.math.maxInt(u16) => {
                             const cp = utf16Codepoint([]const u16, ptr[0..2]);
 
-                            buf.appendSlice(ptr[0..@as(usize, cp.len)]) catch unreachable;
                             ptr += @as(u16, cp.len);
                         },
                         else => {

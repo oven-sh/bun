@@ -44,7 +44,7 @@ function _bun_env_completion() {
     _envs=(
         #${(f)"$(export | sed -r "/^\w+=(true|false|null|[0-9]+)$/! s/='?(.*?)('|$)/=\"\1\"/")"}
         # Don't use PERL regExp because is not supported by MacOS and BSD
-        ${(f)"$(export | sed "/^\w\+=\(true\|false\|null\|[0-9]\+\)$/! s/='\?\(.*\)\('\|$\)/=\"\1\"/")"}
+        ${(f)"$(export | sed -E "/^[[:alnum:]_]+=(true|false|null|[0-9])$/! s/='(.*)'$|=(.*)$/=\"\1\2\"/")"}
     )
     compadd -Q -J envs -a -- _envs
 }
@@ -53,8 +53,9 @@ function _bun_add_package_completion() {
     local -a _recent _popular
     #_recent=($(history -n | grep -oP '(?<=^bun add ).+'))
     # Don't use PERL regExp because is not supported by MacOS and BSD
-    _recent=($(history -n | sed -n 's/^\(bun[[:space:]]\+add[[:space:]]\+\)\(.\+\)/\2/p'))
-
+    _recent=(
+        ${(f)"$(history -n | sed -nE 's/^(bun[[:space:]]+add[[:space:]]+)(.+)$/\2/p' | xargs printf '%q\n' | grep -vE '^-{1,2}[[:alnum:]]')"}
+    )
     _popular=($(SHELL=zsh bun getcompletes a))
 
     if [ ${#_recent[@]} -gt 0 ]; then
@@ -169,7 +170,7 @@ function _bun_loader_completion() {
         'ts   -- Define loader as ts'
         'css  -- Define loader as css'
     )
-    if ! [[ "$cur" =~ ^\..+: ]]; then
+    if [[ ! "$cur" =~ ^\..+: ]]; then
         compadd -P '.' -S ':' -a _popular_extensions
     else
         compadd -l -P "${cur%%:*}:" -d _loaders_describe -a _loaders
@@ -196,7 +197,7 @@ function _bun_command_add() {
     _arguments -S \
         $_bun_generic_options \
         '*: :_bun_add_package_completion' \
-        {-c,--config}'[Load config (bunfig.toml)]:config:_files' \
+        {-c,--config}'[Load config (bunfig.toml)]:config:_files -g "*.toml"' \
         {-y,--yarn}'[Write a yarn.lock file (yarn v1)]' \
         {-p,--production}'[Don'"'"'t install devDependencies]' \
         '(--lockfile)--no-save[Don'"'"'t save a lockfile]' \
@@ -276,7 +277,7 @@ function _bun_command_help() {
 function _bun_command_install() {
     _arguments -S \
         $_bun_generic_options \
-        {-c,--config}'[Load config (bunfig.toml)]:config:_files' \
+        {-c,--config}'[Load config (bunfig.toml)]:config:_files -g "*.toml"' \
         {-y,--yarn}'[Write a yarn.lock file (yarn v1)]' \
         {-p,--production}'[Don'"'"'t install devDependencies]' \
         '(--lockfile)--no-save[Don'"'"'t save a lockfile]' \
@@ -299,7 +300,7 @@ function _bun_command_remove() {
     _arguments -S \
         $_bun_generic_options \
         '*: :_bun_remove_package_completion' \
-        {-c,--config}'[Load config (bunfig.toml)]:config:_files' \
+        {-c,--config}'[Load config (bunfig.toml)]:config:_files -g "*.toml"' \
         {-y,--yarn}'[Write a yarn.lock file (yarn v1)]' \
         {-p,--production}'[Don'"'"'t install devDependencies]' \
         '(--lockfile)--no-save[Don'"'"'t save a lockfile]' \
@@ -322,7 +323,6 @@ function _bun_command_run() {
     _arguments -S \
         $_bun_generic_options \
         '1: :_bun_run_completion' \
-        '*:file:_files' \
         '--cwd[Change directory]:cwd:_dir_list' \
         '--silent[Don'"'"'t echo the command]'
 }

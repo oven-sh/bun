@@ -355,7 +355,7 @@ pub const Bundler = struct {
                     this.options.jsx.import_source = options.JSX.Pragma.Defaults.ImportSource;
                 }
 
-                if (options.JSX.Pragma.Defaults.ImportSource.ptr == this.options.jsx.import_source.ptr or
+                if (options.JSX.Pragma.Defaults.ImportSource == this.options.jsx.import_source.ptr or
                     strings.eqlComptime(this.options.jsx.import_source, comptime options.JSX.Pragma.Defaults.ImportSource) or strings.eqlComptime(this.options.jsx.package_name, "react"))
                 {
                     if (this.options.jsx_optimization_inline == null) {

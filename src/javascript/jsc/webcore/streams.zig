@@ -48,12 +48,70 @@ const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
 
 pub const ReadableStream = struct {
+    value: JSValue,
+    ptr: Handle,
+
     pub const Tag = enum(i32) {
+        Invalid = -1,
+
+        JavaScript = 0,
         Blob = 1,
         File = 2,
         HTTPRequest = 3,
         HTTPSRequest = 4,
     };
+    pub const Handle = union(Tag) {
+        Invalid: void,
+        JavaScript: void,
+        Blob: *ByteBlobLoader,
+        File: *FileBlobLoader,
+        HTTPRequest: void,
+        HTTPSRequest: void,
+    };
+
+    extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: JSValue, ptr: *JSValue) Tag;
+    extern fn ReadableStream__isDisturbed(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
+    extern fn ReadableStream__isLocked(possibleReadableStream: JSValue, globalObject: *JSGlobalObject) bool;
+    extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
+    extern fn ReadableStream__fromBlob(
+        *JSGlobalObject,
+        store: *anyopaque,
+        offset: usize,
+        length: usize,
+    ) JSC.JSValue;
+
+    pub fn isDisturbed(this: *const ReadableStream, globalObject: *JSGlobalObject) bool {
+        return ReadableStream__isDisturbed(this.value, globalObject);
+    }
+
+    pub fn isLocked(this: *const ReadableStream, globalObject: *JSGlobalObject) bool {
+        return ReadableStream__isLocked(this.value, globalObject);
+    }
+
+    pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
+        var ptr = JSValue.zero;
+        return switch (ReadableStreamTag__tagged(globalThis, value, &ptr)) {
+            .JavaScript => ReadableStream{
+                .value = value,
+                .ptr = .{
+                    .JavaScript = {},
+                },
+            },
+            .Blob => ReadableStream{
+                .value = value,
+                .ptr = .{
+                    .Blob = ptr.asPtr(ByteBlobLoader),
+                },
+            },
+            .File => ReadableStream{
+                .value = value,
+                .ptr = .{
+                    .File = ptr.asPtr(FileBlobLoader),
+                },
+            },
+            else => null,
+        };
+    }
 
     extern fn ZigGlobalObject__createNativeReadableStream(*JSGlobalObject, nativePtr: JSValue, nativeType: JSValue) JSValue;
 
@@ -93,13 +151,6 @@ pub const ReadableStream = struct {
         return ReadableStream__empty(globalThis);
     }
 
-    extern fn ReadableStream__empty(*JSGlobalObject) JSC.JSValue;
-    extern fn ReadableStream__fromBlob(
-        *JSGlobalObject,
-        store: *anyopaque,
-        offset: usize,
-        length: usize,
-    ) JSC.JSValue;
     const Base = @import("../../../ast/base.zig");
     pub const StreamTag = enum(usize) {
         invalid = 0,

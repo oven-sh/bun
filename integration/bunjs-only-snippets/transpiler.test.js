@@ -305,10 +305,22 @@ describe("Bun.Transpiler", () => {
 
     it("inlines static JSX into object literals", () => {
       expect(
-        inliner.transformSync("export var hi = <div>{123}</div>").trim()
+        inliner
+          .transformSync(
+            `
+export var hi = <div>{123}</div>
+export var hiWithKey = <div key="hey">{123}</div>
+export var hiWithRef = <div ref={foo}>{123}</div>
+
+export var ComponentThatChecksDefaultProps = <Hello></Hello>
+export var ComponentThatChecksDefaultPropsAndHasChildren = <Hello>my child</Hello>
+export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
+
+`.trim()
+          )
+          .trim()
       ).toBe(
-        `
-var $$typeof = Symbol.for("react.element");
+        `var $$typeof = Symbol.for("react.element");
 export var hi = {
   $$typeof,
   type: "div",
@@ -319,6 +331,44 @@ export var hi = {
   },
   _owner: null
 };
+export var hiWithKey = {
+  $$typeof,
+  type: "div",
+  key: "hey",
+  ref: null,
+  props: {
+    children: 123
+  },
+  _owner: null
+};
+export var hiWithRef = jsx("div", {
+  ref: foo,
+  children: 123
+});
+export var ComponentThatChecksDefaultProps = {
+  $$typeof,
+  type: Hello,
+  key: null,
+  ref: null,
+  props: Hello.defaultProps || {},
+  _owner: null
+};
+export var ComponentThatChecksDefaultPropsAndHasChildren = {
+  $$typeof,
+  type: Hello,
+  key: null,
+  ref: null,
+  props: !Hello.defaultProps ? {
+    children: "my child"
+  } : {
+    ...Hello.defaultProps,
+    children: "my child"
+  },
+  _owner: null
+};
+export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
+  ...spread
+});
 `.trim()
       );
     });

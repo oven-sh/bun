@@ -465,7 +465,8 @@ pub const Poller = struct {
 
     pub fn watch(this: *Poller, fd: JSC.Node.FileDescriptor, flag: Flag, ctx: ?*anyopaque, completion: Completion) JSC.Maybe(void) {
         if (comptime Environment.isLinux) {
-            std.debug.assert(this.watch_fd != 0);
+            // std.debug.assert(this.watch_fd != 0);
+            // TODO:
         } else if (comptime Environment.isMac) {
             if (this.watch_fd == 0) {
                 this.watch_fd = std.c.kqueue();

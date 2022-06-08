@@ -137,7 +137,6 @@ using JSBuffer = WebCore::JSBuffer;
 
 #include "ReadableStream.h"
 // #include <iostream>
-
 static bool has_loaded_jsc = false;
 
 extern "C" void JSCInitialize()
@@ -785,6 +784,21 @@ static JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         return Bun__resolve(globalObject, JSC::JSValue::encode(moduleName), from);
     }
     }
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionHashCode);
+
+static JSC_DEFINE_HOST_FUNCTION(functionHashCode,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::JSValue stringToHash = callFrame->argument(0);
+    JSC::JSString* str = stringToHash.toStringOrNull(globalObject);
+    if (!str) {
+        return JSC::JSValue::encode(jsNumber(0));
+    }
+
+    auto view = str->value(globalObject);
+    return JSC::JSValue::encode(jsNumber(view.hash()));
 }
 
 static JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
@@ -1764,8 +1778,13 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
-            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToArray"_s);
             object->putDirectBuiltinFunction(vm, this, builtinNames.readableStreamToArrayPublicName(), readableStreamReadableStreamToArrayCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "hashCode"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionHashCode, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 
         extraStaticGlobals.uncheckedAppend(

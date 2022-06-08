@@ -58,9 +58,6 @@ template<class To, class From> To ccast(From v)
     return *static_cast<const To*>(static_cast<const void*>(v));
 }
 
-typedef JSC__JSValue (*NativeCallbackFunction)(void* arg0, JSC__JSGlobalObject* arg1,
-    JSC__CallFrame* arg2);
-
 static const JSC::ArgList makeArgs(JSC__JSValue* v, size_t count)
 {
     JSC::MarkedArgumentBuffer args = JSC::MarkedArgumentBuffer();
@@ -295,3 +292,15 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* 
 }
 
 }; // namespace Zig
+
+template<typename WebCoreType, typename OutType>
+OutType* WebCoreCast(JSC__JSValue JSValue0)
+{
+    // we must use jsDynamicCast here so that we check that the type is correct
+    WebCoreType* jsdomURL = JSC::jsDynamicCast<WebCoreType*>(JSC::JSValue::decode(JSValue0));
+    if (jsdomURL == nullptr) {
+        return nullptr;
+    }
+
+    return reinterpret_cast<OutType*>(&jsdomURL->wrapped());
+}

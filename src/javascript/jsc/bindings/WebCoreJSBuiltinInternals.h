@@ -1,7 +1,12 @@
 //clang-format off
 namespace Zig { class GlobalObject; }
 /*
- * Copyright (c) 2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2015 Igalia
+ * Copyright (c) 2015 Igalia S.L.
+ * Copyright (c) 2015 Igalia.
+ * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
+ * Copyright (c) 2015, 2016, 2017 Canon Inc.
+ * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
@@ -32,6 +37,11 @@ namespace Zig { class GlobalObject; }
 
 #pragma once
 
+#include "ReadableByteStreamInternalsBuiltins.h"
+#include "ReadableStreamInternalsBuiltins.h"
+#include "StreamInternalsBuiltins.h"
+#include "TransformStreamInternalsBuiltins.h"
+#include "WritableStreamInternalsBuiltins.h"
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/WeakInlines.h>
 
@@ -46,9 +56,19 @@ public:
     template<typename Visitor> void visit(Visitor&);
     void initialize(JSDOMGlobalObject&);
 
+    ReadableByteStreamInternalsBuiltinFunctions& readableByteStreamInternals() { return m_readableByteStreamInternals; }
+    ReadableStreamInternalsBuiltinFunctions& readableStreamInternals() { return m_readableStreamInternals; }
+    StreamInternalsBuiltinFunctions& streamInternals() { return m_streamInternals; }
+    TransformStreamInternalsBuiltinFunctions& transformStreamInternals() { return m_transformStreamInternals; }
+    WritableStreamInternalsBuiltinFunctions& writableStreamInternals() { return m_writableStreamInternals; }
 
 private:
     JSC::VM& m_vm;
+    ReadableByteStreamInternalsBuiltinFunctions m_readableByteStreamInternals;
+    ReadableStreamInternalsBuiltinFunctions m_readableStreamInternals;
+    StreamInternalsBuiltinFunctions m_streamInternals;
+    TransformStreamInternalsBuiltinFunctions m_transformStreamInternals;
+    WritableStreamInternalsBuiltinFunctions m_writableStreamInternals;
 };
 
 } // namespace WebCore

@@ -345,6 +345,29 @@ pub const Bundler = struct {
         } else {
             try this.options.loadDefines(this.allocator, this.env, &this.options.env);
         }
+
+        if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
+            if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
+                this.options.production = true;
+                this.options.jsx.development = false;
+
+                if (this.options.jsx.import_source.ptr == options.JSX.Pragma.Defaults.ImportSourceDev) {
+                    this.options.jsx.import_source = options.JSX.Pragma.Defaults.ImportSource;
+                }
+
+                if (options.JSX.Pragma.Defaults.ImportSource.ptr == this.options.jsx.import_source.ptr or
+                    strings.eqlComptime(this.options.jsx.import_source, comptime options.JSX.Pragma.Defaults.ImportSource) or strings.eqlComptime(this.options.jsx.package_name, "react"))
+                {
+                    if (this.options.jsx_optimization_inline == null) {
+                        this.options.jsx_optimization_inline = true;
+                    }
+
+                    if (this.options.jsx_optimization_hoist == null and (this.options.jsx_optimization_inline orelse false)) {
+                        this.options.jsx_optimization_hoist = true;
+                    }
+                }
+            }
+        }
     }
 
     pub fn configureFramework(
@@ -1096,6 +1119,7 @@ pub const Bundler = struct {
 
                 var jsx = this_parse.jsx;
                 jsx.parse = loader.isJSX();
+
                 var opts = js_parser.Parser.Options.init(jsx, loader);
                 opts.enable_bundling = false;
                 opts.transform_require_to_import = bundler.options.allow_runtime;
@@ -1122,6 +1146,11 @@ pub const Bundler = struct {
                 opts.filepath_hash_for_hmr = file_hash orelse 0;
                 opts.features.auto_import_jsx = bundler.options.auto_import_jsx;
                 opts.warn_about_unbundled_modules = platform.isNotBun();
+                opts.features.jsx_optimization_inline = (bundler.options.jsx_optimization_inline orelse (platform.isBun() and jsx.parse and
+                    !jsx.development)) and
+                    (jsx.runtime == .automatic or jsx.runtime == .classic);
+
+                opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
 
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);

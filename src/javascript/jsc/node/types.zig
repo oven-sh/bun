@@ -73,6 +73,10 @@ pub fn Maybe(comptime ResultType: type) type {
         err: Syscall.Error,
         result: ReturnType,
 
+        pub const retry: @This() = .{
+            .err = Syscall.Error.retry,
+        };
+
         pub const Tag = enum { err, result };
 
         pub const success: @This() = @This(){
@@ -452,6 +456,7 @@ pub const Valid = struct {
 
 pub const ArgumentsSlice = struct {
     remaining: []const JSC.JSValue,
+    vm: *JSC.VirtualMachine,
     arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(bun.default_allocator),
     all: []const JSC.JSValue,
     threw: bool = false,
@@ -459,7 +464,7 @@ pub const ArgumentsSlice = struct {
 
     pub fn unprotect(this: *ArgumentsSlice) void {
         var iter = this.protected.iterator(.{});
-        var ctx = JSC.VirtualMachine.vm.global.ref();
+        var ctx = this.vm.global.ref();
         while (iter.next()) |i| {
             JSC.C.JSValueUnprotect(ctx, this.all[i].asObjectRef());
         }
@@ -475,24 +480,22 @@ pub const ArgumentsSlice = struct {
         if (this.remaining.len == 0) return;
         const index = this.all.len - this.remaining.len;
         this.protected.set(index);
-        JSC.C.JSValueProtect(JSC.VirtualMachine.vm.global.ref(), this.all[index].asObjectRef());
+        JSC.C.JSValueProtect(this.vm.global.ref(), this.all[index].asObjectRef());
         this.eat();
     }
 
     pub fn protectEatNext(this: *ArgumentsSlice) ?JSC.JSValue {
         if (this.remaining.len == 0) return null;
-        const index = this.all.len - this.remaining.len;
-        this.protected.set(index);
-        JSC.C.JSValueProtect(JSC.VirtualMachine.vm.global.ref(), this.all[index].asObjectRef());
         return this.nextEat();
     }
 
-    pub fn from(arguments: []const JSC.JSValueRef) ArgumentsSlice {
-        return init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+    pub fn from(vm: *JSC.VirtualMachine, arguments: []const JSC.JSValueRef) ArgumentsSlice {
+        return init(vm, @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     }
-    pub fn init(arguments: []const JSC.JSValue) ArgumentsSlice {
+    pub fn init(vm: *JSC.VirtualMachine, arguments: []const JSC.JSValue) ArgumentsSlice {
         return ArgumentsSlice{
             .remaining = arguments,
+            .vm = vm,
             .all = arguments,
         };
     }
@@ -2530,7 +2533,8 @@ pub const Path = struct {
 
 pub const Process = struct {
     pub fn getArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        if (JSC.VirtualMachine.vm.argv.len == 0)
+        var vm = globalObject.bunVM();
+        if (vm.argv.len == 0)
             return JSC.JSValue.createStringArray(globalObject, null, 0, false);
 
         // Allocate up to 32 strings in stack
@@ -2542,12 +2546,12 @@ pub const Process = struct {
 
         // If it was launched with bun run or bun test, skip it
         const skip: usize = @as(usize, @boolToInt(
-            JSC.VirtualMachine.vm.argv.len > 1 and (strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "run") or strings.eqlComptime(JSC.VirtualMachine.vm.argv[0], "wiptest")),
+            vm.argv.len > 1 and (strings.eqlComptime(vm.argv[0], "run") or strings.eqlComptime(vm.argv[0], "wiptest")),
         ));
 
         var args = allocator.alloc(
             JSC.ZigString,
-            JSC.VirtualMachine.vm.argv.len + 1,
+            vm.argv.len + 1,
         ) catch unreachable;
         var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
         args_list.items.len = 0;
@@ -2563,8 +2567,8 @@ pub const Process = struct {
             }
         }
 
-        if (JSC.VirtualMachine.vm.argv.len > skip) {
-            for (JSC.VirtualMachine.vm.argv[skip..]) |arg| {
+        if (vm.argv.len > skip) {
+            for (vm.argv[skip..]) |arg| {
                 var str = JSC.ZigString.init(arg);
                 str.setOutputEncoding();
                 args_list.appendAssumeCapacity(str);

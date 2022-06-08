@@ -629,6 +629,7 @@ pub const LineOffsetTable = struct {
         var stack_fallback = std.heap.stackFallback(@sizeOf(i32) * 256, allocator);
         var columns_for_non_ascii = std.ArrayList(i32).initCapacity(stack_fallback.get(), 120) catch unreachable;
         const reset_end_index = stack_fallback.fixed_buffer_allocator.end_index;
+        const initial_columns_for_non_ascii = columns_for_non_ascii;
 
         var remaining = contents;
         while (remaining.len > 0) {
@@ -712,8 +713,11 @@ pub const LineOffsetTable = struct {
                     byte_offset_to_first_non_ascii = 0;
                     column_byte_offset = 0;
                     line_byte_offset = 0;
+
+                    // reset the list to use the stack-allocated memory
                     stack_fallback.fixed_buffer_allocator.reset();
                     stack_fallback.fixed_buffer_allocator.end_index = reset_end_index;
+                    columns_for_non_ascii = initial_columns_for_non_ascii;
                 },
                 else => {
                     // Mozilla's "source-map" library counts columns using UTF-16 code units

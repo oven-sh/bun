@@ -408,6 +408,124 @@ pub const HTMLRewriter = struct {
             this.context.deinit(bun.default_allocator);
         }
     };
+
+    // pub const StreamOutputSink = struct {
+    //     global: *JSGlobalObject,
+    //     rewriter: *LOLHTML.HTMLRewriter,
+    //     context: LOLHTMLContext,
+    //     response: *Response,
+    //     input: JSC.WebCore.Blob = undefined,
+    //     pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
+    //         var result = bun.default_allocator.create(Response) catch unreachable;
+    //         var sink = bun.default_allocator.create(StreamOutputSink) catch unreachable;
+    //         sink.* = StreamOutputSink{
+    //             .global = global,
+    //             .rewriter = undefined,
+    //             .context = context,
+    //             .response = result,
+    //         };
+
+    //         for (sink.context.document_handlers.items) |doc| {
+    //             doc.ctx = sink;
+    //         }
+    //         for (sink.context.element_handlers.items) |doc| {
+    //             doc.ctx = sink;
+    //         }
+
+    //         sink.rewriter = builder.build(
+    //             .UTF8,
+    //             .{
+    //                 .preallocated_parsing_buffer_size = @maximum(original.body.len(), 1024),
+    //                 .max_allowed_memory_usage = std.math.maxInt(u32),
+    //             },
+    //             false,
+    //             StreamOutputSink,
+    //             sink,
+    //             StreamOutputSink.write,
+    //             StreamOutputSink.done,
+    //         ) catch {
+    //             sink.deinit();
+    //             bun.default_allocator.destroy(result);
+
+    //             return throwLOLHTMLError(global);
+    //         };
+
+    //         result.* = Response{
+    //             .allocator = bun.default_allocator,
+    //             .body = .{
+    //                 .init = .{
+    //                     .status_code = 200,
+    //                 },
+    //                 .value = .{
+    //                     .Locked = .{
+    //                         .global = global,
+    //                         .task = sink,
+    //                     },
+    //                 },
+    //             },
+    //         };
+
+    //         result.body.init.headers = original.body.init.headers;
+    //         result.body.init.method = original.body.init.method;
+    //         result.body.init.status_code = original.body.init.status_code;
+
+    //         result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
+    //         result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
+
+    //         var input: JSC.WebCore.Blob = original.body.value.use();
+
+    //         const is_pending = input.needsToReadFile();
+    //         defer if (!is_pending) input.detach();
+
+    //         if (is_pending) {
+    //             input.doReadFileInternal(*StreamOutputSink, sink, onFinishedLoading, global);
+    //         } else if (sink.runOutputSink(input.sharedView(), false, false)) |error_value| {
+    //             return error_value;
+    //         }
+
+    //         // Hold off on cloning until we're actually done.
+
+    //         return JSC.JSValue.fromRef(
+    //             Response.makeMaybePooled(sink.global.ref(), sink.response),
+    //         );
+    //     }
+
+    //     pub fn runOutputSink(
+    //         sink: *StreamOutputSink,
+    //         bytes: []const u8,
+    //         is_async: bool,
+    //         free_bytes_on_end: bool,
+    //     ) ?JSValue {
+    //         defer if (free_bytes_on_end)
+    //             bun.default_allocator.free(bun.constStrToU8(bytes));
+
+    //         return null;
+    //     }
+
+    //     pub const Sync = enum { suspended, pending, done };
+
+    //     pub fn done(this: *StreamOutputSink) void {
+    //         var prev_value = this.response.body.value;
+    //         var bytes = this.bytes.toOwnedSliceLeaky();
+    //         this.response.body.value = .{
+    //             .Blob = JSC.WebCore.Blob.init(bytes, this.bytes.allocator, this.global),
+    //         };
+    //         prev_value.resolve(
+    //             &this.response.body.value,
+    //             this.global,
+    //         );
+    //     }
+
+    //     pub fn write(this: *StreamOutputSink, bytes: []const u8) void {
+    //         this.bytes.append(bytes) catch unreachable;
+    //     }
+
+    //     pub fn deinit(this: *StreamOutputSink) void {
+    //         this.bytes.deinit();
+
+    //         this.context.deinit(bun.default_allocator);
+    //     }
+    // };
 };
 
 const DocumentHandler = struct {

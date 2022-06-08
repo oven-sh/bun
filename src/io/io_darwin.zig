@@ -270,8 +270,9 @@ pub const darwin = struct {
     pub extern "c" fn @"accept$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) c_int;
     pub extern "c" fn @"accept4$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t, flags: c_uint) c_int;
     pub extern "c" fn @"open$NOCANCEL"(path: [*:0]const u8, oflag: c_uint, ...) c_int;
+    pub extern "c" fn @"read$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize) isize;
+    pub extern "c" fn @"pread$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize, offset: c.off_t) isize;
 };
-
 pub const OpenError = error{
     /// In WASI, this error may occur when the file descriptor does
     /// not hold the required rights to open a new resource relative to it.
@@ -539,9 +540,11 @@ pub fn run_for_ns(self: *IO, nanoseconds: u63) !void {
     }
 }
 
+const default_timespec = std.mem.zeroInit(os.timespec, .{});
+
 fn flush(self: *IO, wait_for_completions: bool) !void {
     var io_pending = self.io_pending.peek();
-    var events: [256]os.Kevent = undefined;
+    var events: [512]os.Kevent = undefined;
 
     // Check timeouts and fill events with completions in io_pending
     // (they will be submitted through kevent).
@@ -552,7 +555,7 @@ fn flush(self: *IO, wait_for_completions: bool) !void {
     // Only call kevent() if we need to submit io events or if we need to wait for completions.
     if (change_events > 0 or self.completed.peek() == null) {
         // Zero timeouts for kevent() implies a non-blocking poll
-        var ts = std.mem.zeroes(os.timespec);
+        var ts = default_timespec;
 
         // We need to wait (not poll) on kevent if there's nothing to submit or complete.
         // We should never wait indefinitely (timeout_ptr = null for kevent) given:
@@ -602,7 +605,6 @@ fn flush_io(_: *IO, events: []os.Kevent, io_pending_top: *?*Completion) usize {
     for (events) |*kevent, flushed| {
         const completion = io_pending_top.* orelse return flushed;
         io_pending_top.* = completion.next;
-
         const event_info = switch (completion.operation) {
             .accept => |op| [3]c_int{
                 op.socket,
@@ -711,6 +713,7 @@ const Operation = union(enum) {
         buf: [*]u8,
         len: u32,
         offset: u64,
+        positional: bool = true,
     },
     recv: struct {
         socket: os.socket_t,
@@ -774,9 +777,13 @@ fn submitWithIncrementPending(
         self.pending_count += 1;
     const Context = @TypeOf(context);
     const onCompleteFn = struct {
-        fn onComplete(io: *IO, _completion: *Completion) void {
+        fn onComplete(
+            io: *IO,
+            _completion: *Completion,
+        ) void {
             // Perform the actual operaton
             const op_data = &@field(_completion.operation, @tagName(operation_tag));
+
             const result = OperationImpl.doOperation(op_data);
 
             // Requeue onto io_pending if error.WouldBlock
@@ -1161,8 +1168,9 @@ pub fn read(
     completion: *Completion,
     fd: os.fd_t,
     buffer: []u8,
-    offset: u64,
+    offset: ?u64,
 ) void {
+    const offset_ = offset orelse @as(u64, 0);
     self.submit(
         context,
         callback,
@@ -1172,16 +1180,21 @@ pub fn read(
             .fd = fd,
             .buf = buffer.ptr,
             .len = @intCast(u32, buffer_limit(buffer.len)),
-            .offset = offset,
+            .offset = offset_,
+            .positional = offset != null,
         },
         struct {
             fn doOperation(op: anytype) ReadError!usize {
                 while (true) {
-                    const rc = os.system.pread(
+                    const rc = if (op.positional) os.system.pread(
                         op.fd,
                         op.buf,
                         op.len,
                         @bitCast(isize, op.offset),
+                    ) else os.system.read(
+                        op.fd,
+                        op.buf,
+                        op.len,
                     );
                     return switch (@enumToInt(os.errno(rc))) {
                         0 => @intCast(usize, rc),

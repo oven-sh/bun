@@ -1,5 +1,10 @@
 /*
- * Copyright (c) 2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2015 Igalia
+ * Copyright (c) 2015 Igalia S.L.
+ * Copyright (c) 2015 Igalia.
+ * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
+ * Copyright (c) 2015, 2016, 2017 Canon Inc.
+ * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
@@ -42,6 +47,11 @@ namespace WebCore {
 
 JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm)
     : m_vm(vm)
+    , m_readableByteStreamInternals(m_vm)
+    , m_readableStreamInternals(m_vm)
+    , m_streamInternals(m_vm)
+    , m_transformStreamInternals(m_vm)
+    , m_writableStreamInternals(m_vm)
 {
     UNUSED_PARAM(vm);
 }
@@ -49,6 +59,11 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm)
 template<typename Visitor>
 void JSBuiltinInternalFunctions::visit(Visitor& visitor)
 {
+    m_readableByteStreamInternals.visit(visitor);
+    m_readableStreamInternals.visit(visitor);
+    m_streamInternals.visit(visitor);
+    m_transformStreamInternals.visit(visitor);
+    m_writableStreamInternals.visit(visitor);
     UNUSED_PARAM(visitor);
 }
 
@@ -58,11 +73,41 @@ template void JSBuiltinInternalFunctions::visit(SlotVisitor&);
 SUPPRESS_ASAN void JSBuiltinInternalFunctions::initialize(JSDOMGlobalObject& globalObject)
 {
     UNUSED_PARAM(globalObject);
+    m_readableByteStreamInternals.init(globalObject);
+    m_readableStreamInternals.init(globalObject);
+    m_streamInternals.init(globalObject);
+    m_transformStreamInternals.init(globalObject);
+    m_writableStreamInternals.init(globalObject);
 
     JSVMClientData& clientData = *static_cast<JSVMClientData*>(m_vm.clientData);
     JSDOMGlobalObject::GlobalPropertyInfo staticGlobals[] = {
+#define DECLARE_GLOBAL_STATIC(name) \
+    JSDOMGlobalObject::GlobalPropertyInfo( \
+        clientData.builtinFunctions().readableByteStreamInternalsBuiltins().name##PrivateName(), readableByteStreamInternals().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+    WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
+#undef DECLARE_GLOBAL_STATIC
+#define DECLARE_GLOBAL_STATIC(name) \
+    JSDOMGlobalObject::GlobalPropertyInfo( \
+        clientData.builtinFunctions().readableStreamInternalsBuiltins().name##PrivateName(), readableStreamInternals().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+    WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
+#undef DECLARE_GLOBAL_STATIC
+#define DECLARE_GLOBAL_STATIC(name) \
+    JSDOMGlobalObject::GlobalPropertyInfo( \
+        clientData.builtinFunctions().streamInternalsBuiltins().name##PrivateName(), streamInternals().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+    WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
+#undef DECLARE_GLOBAL_STATIC
+#define DECLARE_GLOBAL_STATIC(name) \
+    JSDOMGlobalObject::GlobalPropertyInfo( \
+        clientData.builtinFunctions().transformStreamInternalsBuiltins().name##PrivateName(), transformStreamInternals().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+    WEBCORE_FOREACH_TRANSFORMSTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
+#undef DECLARE_GLOBAL_STATIC
+#define DECLARE_GLOBAL_STATIC(name) \
+    JSDOMGlobalObject::GlobalPropertyInfo( \
+        clientData.builtinFunctions().writableStreamInternalsBuiltins().name##PrivateName(), writableStreamInternals().m_##name##Function.get() , JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly),
+    WEBCORE_FOREACH_WRITABLESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(DECLARE_GLOBAL_STATIC)
+#undef DECLARE_GLOBAL_STATIC
     };
-    //globalObject.addStaticGlobals(staticGlobals, WTF_ARRAY_LENGTH(staticGlobals));
+    globalObject.addStaticGlobals(staticGlobals, WTF_ARRAY_LENGTH(staticGlobals));
     UNUSED_PARAM(clientData);
 }
 

@@ -126,7 +126,6 @@ pub const Bunfig = struct {
                     if (prop.value.?.data != .e_string) continue;
                     valid_count += 1;
                 }
-
                 var buffer = allocator.alloc([]const u8, valid_count * 2) catch unreachable;
                 var keys = buffer[0..valid_count];
                 var values = buffer[valid_count..];
@@ -442,19 +441,19 @@ pub const Bunfig = struct {
 
             if (json.get("jsxImportSource")) |expr| {
                 if (expr.asString(allocator)) |value| {
-                    jsx_import_source = value;
+                    jsx_import_source = try allocator.dupe(u8, value);
                 }
             }
 
             if (json.get("jsxFragment")) |expr| {
                 if (expr.asString(allocator)) |value| {
-                    jsx_fragment = value;
+                    jsx_fragment = try allocator.dupe(u8, value);
                 }
             }
 
             if (json.get("jsxFactory")) |expr| {
                 if (expr.asString(allocator)) |value| {
-                    jsx_factory = value;
+                    jsx_factory = try allocator.dupe(u8, value);
                 }
             }
 

@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "mitata": "^0.0.10",
+    "mitata": "^0.1.3",
     "peechy": "0.4.32",
     "react": "^17.0.2"
   },
@@ -9,6 +9,8 @@
     "build-fallback": "esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js"
   },
   "devDependencies": {
+    "he": "^1.2.0",
+    "html-entities": "^2.3.3",
     "prettier": "^2.4.1",
     "typescript": "4.6.3"
   },

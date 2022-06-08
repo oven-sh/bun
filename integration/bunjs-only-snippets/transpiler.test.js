@@ -291,6 +291,89 @@ describe("Bun.Transpiler", () => {
     );
   });
 
+  describe("inline JSX", () => {
+    const inliner = new Bun.Transpiler({
+      loader: "tsx",
+      define: {
+        "process.env.NODE_ENV": JSON.stringify("production"),
+        user_undefined: "undefined",
+      },
+      platform: "bun",
+      jsxOptimizationInline: true,
+      treeShaking: false,
+    });
+
+    it("inlines static JSX into object literals", () => {
+      expect(
+        inliner
+          .transformSync(
+            `
+export var hi = <div>{123}</div>
+export var hiWithKey = <div key="hey">{123}</div>
+export var hiWithRef = <div ref={foo}>{123}</div>
+
+export var ComponentThatChecksDefaultProps = <Hello></Hello>
+export var ComponentThatChecksDefaultPropsAndHasChildren = <Hello>my child</Hello>
+export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
+
+`.trim()
+          )
+          .trim()
+      ).toBe(
+        `var $$typeof = Symbol.for("react.element");
+export var hi = {
+  $$typeof,
+  type: "div",
+  key: null,
+  ref: null,
+  props: {
+    children: 123
+  },
+  _owner: null
+};
+export var hiWithKey = {
+  $$typeof,
+  type: "div",
+  key: "hey",
+  ref: null,
+  props: {
+    children: 123
+  },
+  _owner: null
+};
+export var hiWithRef = jsx("div", {
+  ref: foo,
+  children: 123
+});
+export var ComponentThatChecksDefaultProps = {
+  $$typeof,
+  type: Hello,
+  key: null,
+  ref: null,
+  props: Hello.defaultProps || {},
+  _owner: null
+};
+export var ComponentThatChecksDefaultPropsAndHasChildren = {
+  $$typeof,
+  type: Hello,
+  key: null,
+  ref: null,
+  props: !Hello.defaultProps ? {
+    children: "my child"
+  } : {
+    ...Hello.defaultProps,
+    children: "my child"
+  },
+  _owner: null
+};
+export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
+  ...spread
+});
+`.trim()
+      );
+    });
+  });
+
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe(
@@ -1355,21 +1438,22 @@ class Foo {
       expectPrinted("'a' != '\\x62'", "true");
       expectPrinted("'a' != 'abc'", "true");
 
-      // TODO: string simplification
-      // expectPrinted("'a' + 'b'", '"ab"');
-      // expectPrinted("'a' + 'bc'", '"abc"');
-      // expectPrinted("'ab' + 'c'", '"abc"');
-      // expectPrinted("x + 'a' + 'b'", 'x + "ab"');
-      // expectPrinted("x + 'a' + 'bc'", 'x + "abc"');
-      // expectPrinted("x + 'ab' + 'c'", 'x + "abc"');
-      // expectPrinted("'a' + 1", '"a" + 1;');
-      // expectPrinted("x * 'a' + 'b'", 'x * "a" + "b"');
+      expectPrinted("'a' + 'b'", '"ab"');
+      expectPrinted("'a' + 'bc'", '"abc"');
+      expectPrinted("'ab' + 'c'", '"abc"');
+      expectPrinted("x + 'a' + 'b'", 'x + "ab"');
+      expectPrinted("x + 'a' + 'bc'", 'x + "abc"');
+      expectPrinted("x + 'ab' + 'c'", 'x + "abc"');
+      expectPrinted("'a' + 1", '"a" + 1');
+      expectPrinted("x * 'a' + 'b'", 'x * "a" + "b"');
 
-      // TODO: string simplification
-      // expectPrinted("'string' + `template`", "`stringtemplate`");
+      expectPrinted("'string' + `template`", `"stringtemplate"`);
+
+      expectPrinted("`template` + 'string'", "`templatestring`");
+
+      // TODO: string template simplification
       // expectPrinted("'string' + `a${foo}b`", "`stringa${foo}b`");
       // expectPrinted("'string' + tag`template`", '"string" + tag`template`;');
-      // expectPrinted("`template` + 'string'", "`templatestring`");
       // expectPrinted("`a${foo}b` + 'string'", "`a${foo}bstring`");
       // expectPrinted("tag`template` + 'string'", 'tag`template` + "string"');
       // expectPrinted("`template` + `a${foo}b`", "`templatea${foo}b`");

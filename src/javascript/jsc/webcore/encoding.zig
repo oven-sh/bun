@@ -42,116 +42,128 @@ const picohttp = @import("picohttp");
 
 pub const TextEncoder = struct {
     filler: u32 = 0,
-    var text_encoder: TextEncoder = TextEncoder{};
-
-    pub const Constructor = JSC.NewConstructor(
-        TextEncoder,
-        .{
-            .constructor = .{ .rfn = constructor },
-        },
-        .{},
-    );
-
-    pub const Class = NewClass(
-        TextEncoder,
-        .{
-            .name = "TextEncoder",
-        },
-        .{
-            .encode = .{
-                .rfn = encode,
-            },
-            .encodeInto = .{
-                .rfn = encodeInto,
-            },
-        },
-        .{
-            .encoding = .{
-                .get = getEncoding,
-                .readOnly = true,
-            },
-        },
-    );
 
     const utf8_string: string = "utf-8";
-    pub fn getEncoding(
-        _: *TextEncoder,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(utf8_string).toValue(ctx.ptr()).asObjectRef();
-    }
 
-    pub fn encode(
-        _: *TextEncoder,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        args: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        var arguments: []const JSC.JSValue = @ptrCast([*]const JSC.JSValue, args.ptr)[0..args.len];
-
-        if (arguments.len < 1) {
-            return JSC.C.JSObjectMakeTypedArray(ctx, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, 0, exception);
-        }
-
-        const value = arguments[0];
-
-        var zig_str = value.getZigString(ctx.ptr());
-
-        var array_buffer: ArrayBuffer = undefined;
+    pub export fn TextEncoder__encode(
+        globalThis: *JSGlobalObject,
+        zig_str: *const ZigString,
+    ) JSValue {
+        var ctx = globalThis.ref();
         if (zig_str.is16Bit()) {
             var bytes = strings.toUTF8AllocWithType(
                 default_allocator,
                 @TypeOf(zig_str.utf16Slice()),
                 zig_str.utf16Slice(),
             ) catch {
-                JSC.throwInvalidArguments("Out of memory", .{}, ctx, exception);
-                return null;
+                return JSC.toInvalidArguments("Out of memory", .{}, ctx);
             };
-            array_buffer = ArrayBuffer.fromBytes(bytes, .Uint8Array);
+            return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJS(ctx, null);
         } else {
-            var bytes = strings.allocateLatin1IntoUTF8(default_allocator, []const u8, zig_str.slice()) catch {
-                JSC.throwInvalidArguments("Out of memory", .{}, ctx, exception);
-                return null;
-            };
-
-            array_buffer = ArrayBuffer.fromBytes(bytes, .Uint8Array);
+            // latin1 always has the same length as utf-8
+            // so we can use the Gigacage to allocate the buffer
+            var array = JSC.JSValue.createUninitializedUint8Array(ctx.ptr(), zig_str.len);
+            var buffer = array.asArrayBuffer(ctx.ptr()) orelse
+                return JSC.toInvalidArguments("Out of memory", .{}, ctx);
+            const result = strings.copyLatin1IntoUTF8(buffer.slice(), []const u8, zig_str.slice());
+            std.debug.assert(result.written == zig_str.len);
+            return array;
         }
 
-        return array_buffer.toJS(ctx, exception).asObjectRef();
+        unreachable;
+    }
+
+    // This is a fast path for copying a Rope string into a Uint8Array.
+    // This keeps us from an extra string temporary allocation
+    const RopeStringEncoder = struct {
+        globalThis: *JSGlobalObject,
+        allocator: std.mem.Allocator,
+        buffer_value: JSC.JSValue,
+        slice: []u8,
+        tail: usize = 0,
+        any_utf16: bool = false,
+
+        pub fn append8(it: *JSC.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.C) void {
+            var this = bun.cast(*RopeStringEncoder, it.data.?);
+            // we use memcpy here instead of encoding
+            // SIMD only has an impact for long strings
+            // so in a case like this, the fastest path is to memcpy
+            // and then later, we can use the SIMD version
+            @memcpy(this.slice.ptr + this.tail, ptr, len);
+            this.tail += len;
+        }
+        pub fn append16(it: *JSC.JSString.Iterator, _: [*]const u16, _: u32) callconv(.C) void {
+            var this = bun.cast(*RopeStringEncoder, it.data.?);
+            this.any_utf16 = true;
+            it.stop = 1;
+            return;
+        }
+        pub fn write8(it: *JSC.JSString.Iterator, ptr: [*]const u8, len: u32, offset: u32) callconv(.C) void {
+            var this = bun.cast(*RopeStringEncoder, it.data.?);
+            // we use memcpy here instead of encoding
+            // SIMD only has an impact for long strings
+            // so in a case like this, the fastest path is to memcpy
+            // and then later, we can use the SIMD version
+            @memcpy(this.slice.ptr + offset, ptr, len);
+        }
+        pub fn write16(it: *JSC.JSString.Iterator, _: [*]const u16, _: u32, _: u32) callconv(.C) void {
+            var this = bun.cast(*RopeStringEncoder, it.data.?);
+            this.any_utf16 = true;
+            it.stop = 1;
+            return;
+        }
+
+        pub fn iter(this: *RopeStringEncoder) JSC.JSString.Iterator {
+            return .{
+                .data = this,
+                .stop = 0,
+                .append8 = append8,
+                .append16 = append16,
+                .write8 = write8,
+                .write16 = write16,
+            };
+        }
+    };
+
+    // This fast path is only suitable for Latin-1 strings.
+    // It's not suitable for UTF-16 strings, because getting the byteLength is unpredictable
+    pub export fn TextEncoder__encodeRopeString(
+        globalThis: *JSGlobalObject,
+        rope_str: *JSC.JSString,
+    ) JSValue {
+        var ctx = globalThis.ref();
+        if (comptime Environment.allow_assert) std.debug.assert(rope_str.is8Bit());
+        var array = JSC.JSValue.createUninitializedUint8Array(ctx.ptr(), rope_str.length());
+        var encoder = RopeStringEncoder{
+            .globalThis = globalThis,
+            .allocator = bun.default_allocator,
+            .buffer_value = array,
+            .slice = (array.asArrayBuffer(globalThis) orelse return JSC.JSValue.jsUndefined()).slice(),
+        };
+        var iter = encoder.iter();
+        rope_str.iterator(globalThis, &iter);
+
+        if (encoder.any_utf16) {
+            return JSC.JSValue.jsUndefined();
+        }
+
+        if (comptime !bun.FeatureFlags.latin1_is_now_ascii) {
+            strings.replaceLatin1WithUTF8(encoder.slice);
+        }
+
+        return array;
     }
 
     const read_key = ZigString.init("read");
     const written_key = ZigString.init("written");
 
-    pub fn encodeInto(
-        _: *TextEncoder,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        args: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSValueRef {
-        var arguments: []const JSC.JSValue = @ptrCast([*]const JSC.JSValue, args.ptr)[0..args.len];
-
-        if (arguments.len < 2) {
-            JSC.throwInvalidArguments("TextEncoder.encodeInto expects (string, Uint8Array)", .{}, ctx, exception);
-            return null;
-        }
-
-        const value = arguments[0];
-
-        const array_buffer = arguments[1].asArrayBuffer(ctx.ptr()) orelse {
-            JSC.throwInvalidArguments("TextEncoder.encodeInto expects a Uint8Array", .{}, ctx, exception);
-            return null;
-        };
-
-        var output = array_buffer.slice();
-        const input = value.getZigString(ctx.ptr());
+    pub export fn TextEncoder__encodeInto(
+        globalThis: *JSC.JSGlobalObject,
+        input: *const ZigString,
+        buf_ptr: [*]u8,
+        buf_len: usize,
+    ) JSC.JSValue {
+        var output = buf_ptr[0..buf_len];
         var result: strings.EncodeIntoResult = strings.EncodeIntoResult{ .read = 0, .written = 0 };
         if (input.is16Bit()) {
             const utf16_slice = input.utf16Slice();
@@ -159,18 +171,17 @@ pub const TextEncoder = struct {
         } else {
             result = strings.copyLatin1IntoUTF8(output, @TypeOf(input.slice()), input.slice());
         }
-        return JSC.JSValue.createObject2(ctx.ptr(), &read_key, &written_key, JSValue.jsNumber(result.read), JSValue.jsNumber(result.written)).asObjectRef();
-    }
-
-    pub fn constructor(
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSObjectRef {
-        return TextEncoder.Class.make(ctx, &text_encoder);
+        return JSC.JSValue.createObject2(globalThis, &read_key, &written_key, JSValue.jsNumber(result.read), JSValue.jsNumber(result.written));
     }
 };
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = TextEncoder.TextEncoder__encode;
+        _ = TextEncoder.TextEncoder__encodeInto;
+        _ = TextEncoder.TextEncoder__encodeRopeString;
+    }
+}
 
 /// https://encoding.spec.whatwg.org/encodings.json
 pub const EncodingLabel = enum {
@@ -731,51 +742,51 @@ pub const Encoder = struct {
 
     export fn Bun__encoding__constructFromLatin1AsHex(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .hex);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsASCII(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .ascii);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsURLSafeBase64(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .base64url);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsUTF16(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .utf16le);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsUTF8(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, JSC.Node.Encoding.utf8);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromLatin1AsBase64(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
         var slice = constructFromU8(input, len, .base64);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsBase64(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .base64);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsHex(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .hex);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsURLSafeBase64(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .base64url);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, JSC.Node.Encoding.utf16le);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsUTF8(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .utf8);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
     export fn Bun__encoding__constructFromUTF16AsASCII(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
         var slice = constructFromU16(input, len, .utf8);
-        return JSC.JSValue.createBuffer(globalObject, slice, VirtualMachine.vm.allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
 
     export fn Bun__encoding__toStringUTF16(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {

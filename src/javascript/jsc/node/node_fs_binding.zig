@@ -3,7 +3,7 @@ const std = @import("std");
 const Flavor = JSC.Node.Flavor;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
 const system = std.os.system;
-const Maybe = JSC.Node.Maybe;
+const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
 const FeatureFlags = @import("../../../global.zig").FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
@@ -30,7 +30,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     comptime if (function.args.len != 3) @compileError("Expected 3 arguments");
     const Arguments = comptime function.args[1].arg_type.?;
     const FormattedName = comptime [1]u8{std.ascii.toUpper(@tagName(FunctionEnum)[0])} ++ @tagName(FunctionEnum)[1..];
-    const Result = comptime JSC.Node.Maybe(@field(JSC.Node.NodeFS.ReturnType, FormattedName));
+    const Result = comptime JSC.Maybe(@field(JSC.Node.NodeFS.ReturnType, FormattedName));
 
     const NodeBindingClosure = struct {
         pub fn bind(
@@ -41,7 +41,7 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             arguments: []const JSC.C.JSValueRef,
             exception: JSC.C.ExceptionRef,
         ) JSC.C.JSValueRef {
-            var slice = ArgumentsSlice.init(@ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
+            var slice = ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
             defer slice.deinit();
 
             const args = if (comptime Arguments != void)

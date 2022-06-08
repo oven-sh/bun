@@ -249,3 +249,59 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
         else => @compileError("getSelfExeSharedLibPaths unimplemented for this target"),
     }
 }
+
+///     The madvise() system call allows a process that has knowledge of its mem-ory memory
+///     ory behavior to describe it to the system.  The advice passed in may be
+///     used by the system to alter its virtual memory paging strategy.  This
+///     advice may improve application and system performance.  The behavior
+///     specified in advice can only be one of the following values:
+///
+///     MADV_NORMAL      Indicates that the application has no advice to give on
+///                      its behavior in the specified address range.  This is
+///                      the system default behavior.  This is used with
+///                      madvise() system call.
+///
+///     POSIX_MADV_NORMAL
+///                      Same as MADV_NORMAL but used with posix_madvise() system
+///                      call.
+///
+///     MADV_SEQUENTIAL  Indicates that the application expects to access this
+///                      address range in a sequential manner.  This is used with
+///                      madvise() system call.
+///
+///     POSIX_MADV_SEQUENTIAL
+///                      Same as MADV_SEQUENTIAL but used with posix_madvise()
+///                      system call.
+///
+///     MADV_RANDOM      Indicates that the application expects to access this
+///                      address range in a random manner.  This is used with
+///                      madvise() system call.
+///
+///     POSIX_MADV_RANDOM
+///                      Same as MADV_RANDOM but used with posix_madvise() system
+///                      call.
+///
+///     MADV_WILLNEED    Indicates that the application expects to access this
+///                      address range soon.  This is used with madvise() system
+///                      call.
+///
+///     POSIX_MADV_WILLNEED
+///                      Same as MADV_WILLNEED but used with posix_madvise() sys-tem system
+///                      tem call.
+///
+///     MADV_DONTNEED    Indicates that the application is not expecting to
+///                      access this address range soon.  This is used with
+///                      madvise() system call.
+///
+///     POSIX_MADV_DONTNEED
+///                      Same as MADV_DONTNEED but used with posix_madvise() sys-tem system
+///                      tem call.
+///
+///     MADV_FREE        Indicates that the application will not need the infor-mation information
+///                      mation contained in this address range, so the pages may
+///                      be reused right away.  The address range will remain
+///                      valid.  This is used with madvise() system call.
+///
+///     The posix_madvise() behaves same as madvise() except that it uses values
+///     with POSIX_ prefix for the advice system call argument.
+pub extern "c" fn posix_madvise(ptr: *anyopaque, len: usize, advice: i32) c_int;

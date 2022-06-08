@@ -15,6 +15,10 @@ pub inline fn contains(self: string, str: string) bool {
     return std.mem.indexOf(u8, self, str) != null;
 }
 
+pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
+    return comptime std.unicode.utf8ToUtf16LeStringLiteral(str);
+}
+
 const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
 pub fn indexOfAny(self: string, comptime str: anytype) ?OptionalUsize {
     for (self) |c, i| {
@@ -108,7 +112,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
 }
 
 // --
-// This is faster when the string is found, by about 2x for a 4 MB file.
+// This is faster when the string is found, by about 2x for a 8 MB file.
 // It is slower when the string is NOT found
 // fn indexOfPosN(comptime T: type, buf: []const u8, start_index: usize, delimiter: []const u8, comptime n: comptime_int) ?usize {
 //     const k = delimiter.len;
@@ -324,7 +328,7 @@ test "eqlComptimeCheckLen" {
 }
 
 test "eqlComptimeUTF16" {
-    try std.testing.expectEqual(eqlComptimeUTF16(std.unicode.utf8ToUtf16LeStringLiteral("bun-darwin-aarch64.zip"), "bun-darwin-aarch64.zip"), true);
+    try std.testing.expectEqual(eqlComptimeUTF16(toUTF16Literal("bun-darwin-aarch64.zip"), "bun-darwin-aarch64.zip"), true);
     const sizes = [_]u16{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 23, 22, 24 };
     inline for (sizes) |size| {
         var buf: [size]u16 = undefined;
@@ -542,7 +546,7 @@ pub fn eqlComptime(self: string, comptime alt: anytype) bool {
 }
 
 pub fn eqlComptimeUTF16(self: []const u16, comptime alt: []const u8) bool {
-    return eqlComptimeCheckLenWithType(u16, self, comptime std.unicode.utf8ToUtf16LeStringLiteral(alt), true);
+    return eqlComptimeCheckLenWithType(u16, self, comptime toUTF16Literal(alt), true);
 }
 
 pub fn eqlComptimeIgnoreLen(self: string, comptime alt: anytype) bool {
@@ -703,7 +707,7 @@ pub fn index(self: string, str: string) i32 {
 }
 
 pub fn eqlUtf16(comptime self: string, other: []const u16) bool {
-    return std.mem.eql(u16, std.unicode.utf8ToUtf16LeStringLiteral(self), other);
+    return std.mem.eql(u16, toUTF16Literal(self), other);
 }
 
 pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
@@ -974,7 +978,7 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
         utf16_remaining = utf16_remaining[replacement.len..];
 
         const count: usize = replacement.utf8Width();
-        try list.ensureUnusedCapacity(i + count);
+        try list.ensureTotalCapacityPrecise(i + count + list.items.len + @floatToInt(usize, (@intToFloat(f64, @truncate(u52, utf16_remaining.len)) * 1.2)));
         list.items.len += i;
 
         copyU16IntoU8(
@@ -992,12 +996,13 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
         );
     }
 
-    try list.ensureUnusedCapacity(utf16_remaining.len);
+    try list.ensureTotalCapacityPrecise(utf16_remaining.len + list.items.len);
     const old_len = list.items.len;
     list.items.len += utf16_remaining.len;
     copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
 
-    return list.toOwnedSlice();
+    // don't call toOwnedSlice() because our
+    return list.items;
 }
 
 pub const EncodeIntoResult = struct {
@@ -1005,6 +1010,12 @@ pub const EncodeIntoResult = struct {
     written: u32 = 0,
 };
 pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type, latin1_: Type) ![]u8 {
+    if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
+        var out = try allocator.alloc(u8, latin1_.len);
+        @memcpy(out.ptr, latin1_.ptr, latin1_.len);
+        return out;
+    }
+
     var list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len);
     var latin1 = latin1_;
     while (latin1.len > 0) {
@@ -1027,6 +1038,56 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
     }
 
     return list.toOwnedSlice();
+}
+
+pub fn allocateLatin1IntoUTF8ForArrayBuffer(allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject, comptime Type: type, latin1_: Type) !JSC.JSValue {
+    if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
+        var out = try allocator.alloc(u8, latin1_.len);
+        @memcpy(out.ptr, latin1_.ptr, latin1_.len);
+        return out;
+    }
+
+    var latin1 = latin1_;
+
+    if (firstNonASCII(latin1)) |start_i| {
+        var list = try std.ArrayList(u8).initCapacity(allocator, latin1_.len + 2);
+        list.items.len = start_i;
+        @memcpy(list.items.ptr, latin1.ptr, start_i);
+        {
+            var buf = list.items.ptr[list.items.len .. list.items.len + 2][0..2];
+            list.items.len += 2;
+            buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
+            latin1 = latin1[1..];
+        }
+
+        while (latin1.len > 0) {
+            const read = @as(usize, firstNonASCII(latin1) orelse @intCast(u32, latin1.len));
+            try list.ensureTotalCapacityPrecise(
+                list.items.len + read + if (read != latin1.len) @as(usize, 2) else @as(usize, 0),
+            );
+            const before = list.items.len;
+            list.items.len += read;
+            @memcpy(list.items[before..].ptr, latin1.ptr, read);
+            latin1 = latin1[read..];
+
+            if (latin1.len > 0) {
+                try list.ensureUnusedCapacity(2);
+                var buf = list.items.ptr[list.items.len .. list.items.len + 2][0..2];
+                list.items.len += 2;
+                buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
+                latin1 = latin1[1..];
+            }
+        }
+
+        return JSC.ArrayBuffer.fromBytes(list.toOwnedSlice(), .Uint8Array).toJS(globalThis, null);
+    }
+
+    {
+        const array_buffer = JSC.JSValue.createUninitializedUint8Array(globalThis, latin1.len);
+        var bytes = array_buffer.asArrayBuffer(globalThis).?.slice();
+        @memcpy(bytes.ptr, latin1.ptr, latin1.len);
+        return array_buffer;
+    }
 }
 
 pub const UTF16Replacement = struct {
@@ -1132,6 +1193,12 @@ pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
 }
 
 pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) EncodeIntoResult {
+    if (comptime bun.FeatureFlags.latin1_is_now_ascii) {
+        const to_copy = @truncate(u32, @minimum(buf_.len, latin1_.len));
+        @memcpy(buf_.ptr, latin1_.ptr, to_copy);
+        return .{ .written = to_copy, .read = to_copy };
+    }
+
     var buf = buf_;
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
@@ -1144,19 +1211,18 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
                 break;
             }
 
-            buf[0..8].* = @bitCast([ascii_vector_size]u8, vec)[0..8].*;
-            buf[8..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[8..ascii_vector_size].*;
+            buf[0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[0..ascii_vector_size].*;
             latin1 = latin1[ascii_vector_size..];
             buf = buf[ascii_vector_size..];
         }
 
         while (read < latin1.len and latin1[read] < 0x80) : (read += 1) {}
 
-        const written = @minimum(read, buf.len);
-        if (written == 0) break;
-        @memcpy(buf.ptr, latin1.ptr, written);
-        latin1 = latin1[written..];
-        buf = buf[written..];
+        const to_copy = @minimum(read, buf.len);
+        @memcpy(buf.ptr, latin1.ptr, to_copy);
+        latin1 = latin1[to_copy..];
+        buf = buf[to_copy..];
+
         if (latin1.len > 0 and buf.len >= 2) {
             buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
             latin1 = latin1[1..];
@@ -1165,9 +1231,17 @@ pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) Encode
     }
 
     return .{
-        .read = @truncate(u32, buf_.len - buf.len),
-        .written = @truncate(u32, latin1_.len - latin1.len),
+        .written = @truncate(u32, buf_.len - buf.len),
+        .read = @truncate(u32, latin1_.len - latin1.len),
     };
+}
+
+pub fn replaceLatin1WithUTF8(buf_: []u8) void {
+    var latin1 = buf_;
+    while (strings.firstNonASCII(latin1)) |i| {
+        latin1[i..][0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[i]);
+        latin1 = latin1[i + 2 ..];
+    }
 }
 
 pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
@@ -1243,6 +1317,625 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
     }
 
     return count;
+}
+
+pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) ![]const u8 {
+    const Scalar = struct {
+        pub const lengths: [std.math.maxInt(u8)]u4 = brk: {
+            var values: [std.math.maxInt(u8)]u4 = undefined;
+            for (values) |_, i| {
+                switch (i) {
+                    '"' => {
+                        values[i] = "&quot;".len;
+                    },
+                    '&' => {
+                        values[i] = "&amp;".len;
+                    },
+                    '\'' => {
+                        values[i] = "&#x27;".len;
+                    },
+                    '<' => {
+                        values[i] = "&lt;".len;
+                    },
+                    '>' => {
+                        values[i] = "&gt;".len;
+                    },
+                    else => {
+                        values[i] = 1;
+                    },
+                }
+            }
+
+            break :brk values;
+        };
+
+        inline fn appendString(buf: [*]u8, comptime str: []const u8) usize {
+            buf[0..str.len].* = str[0..str.len].*;
+            return str.len;
+        }
+
+        pub inline fn append(buf: [*]u8, char: u8) usize {
+            if (lengths[char] == 1) {
+                buf[0] = char;
+                return 1;
+            }
+
+            return switch (char) {
+                '"' => appendString(buf, "&quot;"),
+                '&' => appendString(buf, "&amp;"),
+                '\'' => appendString(buf, "&#x27;"),
+                '<' => appendString(buf, "&lt;"),
+                '>' => appendString(buf, "&gt;"),
+                else => unreachable,
+            };
+        }
+
+        pub inline fn push(comptime len: anytype, chars_: *const [len]u8, allo: std.mem.Allocator) []const u8 {
+            const chars = chars_.*;
+            var total: usize = 0;
+
+            comptime var remain_to_comp = len;
+            comptime var comp_i = 0;
+
+            inline while (remain_to_comp > 0) : (remain_to_comp -= 1) {
+                total += lengths[chars[comp_i]];
+                comp_i += 1;
+            }
+
+            if (total == len) {
+                return chars_;
+            }
+
+            var output = allo.alloc(u8, total) catch unreachable;
+            var head = output.ptr;
+            inline for (comptime bun.range(0, len)) |i| {
+                head += @This().append(head, chars[i]);
+            }
+
+            return output;
+        }
+    };
+    switch (latin1.len) {
+        0 => return "",
+        1 => return switch (latin1[0]) {
+            '"' => "&quot;",
+            '&' => "&amp;",
+            '\'' => "&#x27;",
+            '<' => "&lt;",
+            '>' => "&gt;",
+            else => latin1,
+        },
+        2 => {
+            const first: []const u8 = switch (latin1[0]) {
+                '"' => "&quot;",
+                '&' => "&amp;",
+                '\'' => "&#x27;",
+                '<' => "&lt;",
+                '>' => "&gt;",
+                else => latin1[0..1],
+            };
+            const second: []const u8 = switch (latin1[1]) {
+                '"' => "&quot;",
+                '&' => "&amp;",
+                '\'' => "&#x27;",
+                '<' => "&lt;",
+                '>' => "&gt;",
+                else => latin1[1..2],
+            };
+            if (first.len == 1 and second.len == 1) {
+                return latin1;
+            }
+
+            return strings.append(allocator, first, second);
+        },
+
+        // The simd implementation is slower for inputs less than 32 bytes.
+        3 => return Scalar.push(3, latin1[0..3], allocator),
+        4 => return Scalar.push(4, latin1[0..4], allocator),
+        5 => return Scalar.push(5, latin1[0..5], allocator),
+        6 => return Scalar.push(6, latin1[0..6], allocator),
+        7 => return Scalar.push(7, latin1[0..7], allocator),
+        8 => return Scalar.push(8, latin1[0..8], allocator),
+        9 => return Scalar.push(9, latin1[0..9], allocator),
+        10 => return Scalar.push(10, latin1[0..10], allocator),
+        11 => return Scalar.push(11, latin1[0..11], allocator),
+        12 => return Scalar.push(12, latin1[0..12], allocator),
+        13 => return Scalar.push(13, latin1[0..13], allocator),
+        14 => return Scalar.push(14, latin1[0..14], allocator),
+        15 => return Scalar.push(15, latin1[0..15], allocator),
+        16 => return Scalar.push(16, latin1[0..16], allocator),
+        17 => return Scalar.push(17, latin1[0..17], allocator),
+        18 => return Scalar.push(18, latin1[0..18], allocator),
+        19 => return Scalar.push(19, latin1[0..19], allocator),
+        20 => return Scalar.push(20, latin1[0..20], allocator),
+        21 => return Scalar.push(21, latin1[0..21], allocator),
+        22 => return Scalar.push(22, latin1[0..22], allocator),
+        23 => return Scalar.push(23, latin1[0..23], allocator),
+        24 => return Scalar.push(24, latin1[0..24], allocator),
+        25 => return Scalar.push(25, latin1[0..25], allocator),
+        26 => return Scalar.push(26, latin1[0..26], allocator),
+        27 => return Scalar.push(27, latin1[0..27], allocator),
+        28 => return Scalar.push(28, latin1[0..28], allocator),
+        29 => return Scalar.push(29, latin1[0..29], allocator),
+        30 => return Scalar.push(30, latin1[0..30], allocator),
+        31 => return Scalar.push(31, latin1[0..31], allocator),
+        32 => return Scalar.push(32, latin1[0..32], allocator),
+
+        else => {
+            var remaining = latin1;
+
+            const vec_chars = "\"&'<>";
+            const vecs: [vec_chars.len]AsciiVector = comptime brk: {
+                var _vecs: [vec_chars.len]AsciiVector = undefined;
+                for (vec_chars) |c, i| {
+                    _vecs[i] = @splat(ascii_vector_size, c);
+                }
+                break :brk _vecs;
+            };
+
+            var any_needs_escape = false;
+            var buf: std.ArrayList(u8) = undefined;
+
+            if (comptime Environment.isAarch64 or Environment.isX64) {
+                // pass #1: scan for any characters that need escaping
+                // assume most strings won't need any escaping, so don't actually allocate the buffer
+                scan_and_allocate_lazily: while (remaining.len >= ascii_vector_size) {
+                    if (comptime Environment.allow_assert) {
+                        std.debug.assert(!any_needs_escape);
+                    }
+                    const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+                    if (@reduce(.Max, @bitCast(AsciiVectorU1, (vec == vecs[0])) |
+                        @bitCast(AsciiVectorU1, (vec == vecs[1])) |
+                        @bitCast(AsciiVectorU1, (vec == vecs[2])) |
+                        @bitCast(AsciiVectorU1, (vec == vecs[3])) |
+                        @bitCast(AsciiVectorU1, (vec == vecs[4]))) == 1)
+                    {
+                        buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
+                        const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
+                        @memcpy(buf.items.ptr, latin1.ptr, copy_len);
+                        buf.items.len = copy_len;
+                        any_needs_escape = true;
+                        comptime var i: usize = 0;
+                        inline while (i < ascii_vector_size) : (i += 1) {
+                            switch (vec[i]) {
+                                '"' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&quot;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&quot;".len][0.."&quot;".len].* = "&quot;".*;
+                                    buf.items.len += "&quot;".len;
+                                },
+                                '&' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&amp;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&amp;".len][0.."&amp;".len].* = "&amp;".*;
+                                    buf.items.len += "&amp;".len;
+                                },
+                                '\'' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&#x27;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&#x27;".len][0.."&#x27;".len].* = "&#x27;".*;
+                                    buf.items.len += "&#x27;".len;
+                                },
+                                '<' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&lt;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&lt;".len][0.."&lt;".len].* = "&lt;".*;
+                                    buf.items.len += "&lt;".len;
+                                },
+                                '>' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&gt;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&gt;".len][0.."&gt;".len].* = "&gt;".*;
+                                    buf.items.len += "&gt;".len;
+                                },
+                                else => |c| {
+                                    buf.appendAssumeCapacity(c);
+                                },
+                            }
+                        }
+
+                        remaining = remaining[ascii_vector_size..];
+                        break :scan_and_allocate_lazily;
+                    }
+
+                    remaining = remaining[ascii_vector_size..];
+                }
+            }
+
+            if (any_needs_escape) {
+                // pass #2: we found something that needed an escape
+                // so we'll go ahead and copy the buffer into a new buffer
+                while (remaining.len >= ascii_vector_size) {
+                    const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+                    if (@reduce(.Max, @bitCast(AsciiVectorU1, (vec == vecs[0])) |
+                        @bitCast(AsciiVectorU1, (vec == vecs[1])) |
+                        @bitCast(AsciiVectorU1, (vec == vecs[2])) |
+                        @bitCast(AsciiVectorU1, (vec == vecs[3])) |
+                        @bitCast(AsciiVectorU1, (vec == vecs[4]))) == 1)
+                    {
+                        buf.ensureUnusedCapacity(ascii_vector_size + 6) catch unreachable;
+                        comptime var i: usize = 0;
+                        inline while (i < ascii_vector_size) : (i += 1) {
+                            switch (vec[i]) {
+                                '"' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&quot;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&quot;".len][0.."&quot;".len].* = "&quot;".*;
+                                    buf.items.len += "&quot;".len;
+                                },
+                                '&' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&amp;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&amp;".len][0.."&amp;".len].* = "&amp;".*;
+                                    buf.items.len += "&amp;".len;
+                                },
+                                '\'' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&#x27;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&#x27;".len][0.."&#x27;".len].* = "&#x27;".*;
+                                    buf.items.len += "&#x27;".len;
+                                },
+                                '<' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&lt;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&lt;".len][0.."&lt;".len].* = "&lt;".*;
+                                    buf.items.len += "&lt;".len;
+                                },
+                                '>' => {
+                                    buf.ensureUnusedCapacity((ascii_vector_size - i) + "&gt;".len) catch unreachable;
+                                    buf.items.ptr[buf.items.len .. buf.items.len + "&gt;".len][0.."&gt;".len].* = "&gt;".*;
+                                    buf.items.len += "&gt;".len;
+                                },
+                                else => |c| {
+                                    buf.appendAssumeCapacity(c);
+                                },
+                            }
+                        }
+
+                        remaining = remaining[ascii_vector_size..];
+                        continue;
+                    }
+
+                    try buf.ensureUnusedCapacity(ascii_vector_size);
+                    buf.items.ptr[buf.items.len .. buf.items.len + ascii_vector_size][0..ascii_vector_size].* = remaining[0..ascii_vector_size].*;
+                    buf.items.len += ascii_vector_size;
+                    remaining = remaining[ascii_vector_size..];
+                }
+            }
+
+            var ptr = remaining.ptr;
+            const end = remaining.ptr + remaining.len;
+
+            if (!any_needs_escape) {
+                scan_and_allocate_lazily: while (ptr != end) : (ptr += 1) {
+                    switch (ptr[0]) {
+                        '"', '&', '\'', '<', '>' => |c| {
+                            buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + @as(usize, Scalar.lengths[c]));
+                            const copy_len = @ptrToInt(ptr) - @ptrToInt(latin1.ptr);
+                            @memcpy(buf.items.ptr, latin1.ptr, copy_len - 1);
+                            buf.items.len = copy_len;
+                            any_needs_escape = true;
+                            break :scan_and_allocate_lazily;
+                        },
+                        else => {},
+                    }
+                }
+            }
+
+            while (ptr != end) : (ptr += 1) {
+                switch (ptr[0]) {
+                    '"' => {
+                        buf.appendSlice("&quot;") catch unreachable;
+                    },
+                    '&' => {
+                        buf.appendSlice("&amp;") catch unreachable;
+                    },
+                    '\'' => {
+                        buf.appendSlice("&#x27;") catch unreachable; // modified from escape-html; used to be '&#39'
+                    },
+                    '<' => {
+                        buf.appendSlice("&lt;") catch unreachable;
+                    },
+                    '>' => {
+                        buf.appendSlice("&gt;") catch unreachable;
+                    },
+                    else => |c| {
+                        buf.append(c) catch unreachable;
+                    },
+                }
+            }
+
+            if (!any_needs_escape) {
+                return latin1;
+            }
+
+            return buf.toOwnedSlice();
+        },
+    }
+}
+
+pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16) ![]const u16 {
+    const Scalar = struct {
+        pub const lengths: [std.math.maxInt(u8)]u4 = brk: {
+            var values: [std.math.maxInt(u8)]u4 = undefined;
+            for (values) |_, i| {
+                values[i] = switch (i) {
+                    '"' => "&quot;".len,
+                    '&' => "&amp;".len,
+                    '\'' => "&#x27;".len,
+                    '<' => "&lt;".len,
+                    '>' => "&gt;".len,
+                    else => 1,
+                };
+            }
+
+            break :brk values;
+        };
+    };
+    switch (utf16.len) {
+        0 => return &[_]u16{},
+        1 => return switch (utf16[0]) {
+            '"' => toUTF16Literal("&quot;"),
+            '&' => toUTF16Literal("&amp;"),
+            '\'' => toUTF16Literal("&#x27;"),
+            '<' => toUTF16Literal("&lt;"),
+            '>' => toUTF16Literal("&gt;"),
+            else => utf16,
+        },
+        2 => {
+            const first_16 = switch (utf16[0]) {
+                '"' => toUTF16Literal("&quot;"),
+                '&' => toUTF16Literal("&amp;"),
+                '\'' => toUTF16Literal("&#x27;"),
+                '<' => toUTF16Literal("&lt;"),
+                '>' => toUTF16Literal("&gt;"),
+                else => @as([]const u16, utf16[0..1]),
+            };
+
+            const second_16 = switch (utf16[1]) {
+                '"' => toUTF16Literal("&quot;"),
+                '&' => toUTF16Literal("&amp;"),
+                '\'' => toUTF16Literal("&#x27;"),
+                '<' => toUTF16Literal("&lt;"),
+                '>' => toUTF16Literal("&gt;"),
+                else => @as([]const u16, utf16[1..2]),
+            };
+
+            if (first_16.ptr == utf16.ptr and second_16.ptr == utf16.ptr + 1) {
+                return utf16;
+            }
+
+            var buf = allocator.alloc(u16, first_16.len + second_16.len) catch unreachable;
+            std.mem.copy(u16, buf, first_16);
+            std.mem.copy(u16, buf[first_16.len..], second_16);
+            return buf;
+        },
+
+        else => {
+            var remaining = utf16;
+
+            var any_needs_escape = false;
+            var buf: std.ArrayList(u16) = undefined;
+
+            if (comptime Environment.isAarch64 or Environment.isX64) {
+                const vec_chars = "\"&'<>";
+                const vecs: [vec_chars.len]AsciiU16Vector = brk: {
+                    var _vecs: [vec_chars.len]AsciiU16Vector = undefined;
+                    for (vec_chars) |c, i| {
+                        _vecs[i] = @splat(ascii_u16_vector_size, @as(u16, c));
+                    }
+                    break :brk _vecs;
+                };
+                // pass #1: scan for any characters that need escaping
+                // assume most strings won't need any escaping, so don't actually allocate the buffer
+                scan_and_allocate_lazily: while (remaining.len >= ascii_u16_vector_size) {
+                    if (comptime Environment.allow_assert) {
+                        std.debug.assert(!any_needs_escape);
+                    }
+                    const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
+                    if (@reduce(.Max, @bitCast(AsciiVectorU16U1, vec > @splat(ascii_u16_vector_size, @as(u16, 127))) |
+                        @bitCast(AsciiVectorU16U1, (vec == vecs[0])) |
+                        @bitCast(AsciiVectorU16U1, (vec == vecs[1])) |
+                        @bitCast(AsciiVectorU16U1, (vec == vecs[2])) |
+                        @bitCast(AsciiVectorU16U1, (vec == vecs[3])) |
+                        @bitCast(AsciiVectorU16U1, (vec == vecs[4]))) == 1)
+                    {
+                        var i: u16 = 0;
+                        lazy: {
+                            while (i < ascii_u16_vector_size) {
+                                switch (remaining[i]) {
+                                    '"', '&', '\'', '<', '>' => {
+                                        any_needs_escape = true;
+                                        break :lazy;
+                                    },
+                                    128...std.math.maxInt(u16) => {
+                                        const cp = utf16Codepoint([]const u16, remaining[i..]);
+                                        i += @as(u16, cp.len);
+                                    },
+                                    else => {
+                                        i += 1;
+                                    },
+                                }
+                            }
+                        }
+
+                        if (!any_needs_escape) {
+                            remaining = remaining[i..];
+                            continue :scan_and_allocate_lazily;
+                        }
+
+                        buf = try std.ArrayList(u16).initCapacity(allocator, utf16.len + 6);
+                        std.debug.assert(@ptrToInt(remaining.ptr + i) >= @ptrToInt(utf16.ptr));
+                        const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @ptrToInt(remaining.ptr + i) - @ptrToInt(utf16.ptr)];
+                        @memcpy(@ptrCast([*]align(2) u8, buf.items.ptr), to_copy.ptr, to_copy.len);
+                        buf.items.len = std.mem.bytesAsSlice(u16, to_copy).len;
+
+                        while (i < ascii_u16_vector_size) {
+                            switch (remaining[i]) {
+                                '"', '&', '\'', '<', '>' => |c| {
+                                    const result = switch (c) {
+                                        '"' => toUTF16Literal("&quot;"),
+                                        '&' => toUTF16Literal("&amp;"),
+                                        '\'' => toUTF16Literal("&#x27;"),
+                                        '<' => toUTF16Literal("&lt;"),
+                                        '>' => toUTF16Literal("&gt;"),
+                                        else => unreachable,
+                                    };
+
+                                    buf.appendSlice(result) catch unreachable;
+                                    i += 1;
+                                },
+                                128...std.math.maxInt(u16) => {
+                                    const cp = utf16Codepoint([]const u16, remaining[i..]);
+
+                                    buf.appendSlice(remaining[i..][0..@as(usize, cp.len)]) catch unreachable;
+                                    i += @as(u16, cp.len);
+                                },
+                                else => |c| {
+                                    i += 1;
+                                    buf.append(c) catch unreachable;
+                                },
+                            }
+                        }
+
+                        // edgecase: code point width could exceed asdcii_u16_vector_size
+                        remaining = remaining[i..];
+                        break :scan_and_allocate_lazily;
+                    }
+
+                    remaining = remaining[ascii_u16_vector_size..];
+                }
+
+                if (any_needs_escape) {
+                    // pass #2: we found something that needed an escape
+                    // but there's still some more text to
+                    // so we'll go ahead and copy the buffer into a new buffer
+                    while (remaining.len >= ascii_u16_vector_size) {
+                        const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
+                        if (@reduce(.Max, @bitCast(AsciiVectorU16U1, vec > @splat(ascii_u16_vector_size, @as(u16, 127))) |
+                            @bitCast(AsciiVectorU16U1, (vec == vecs[0])) |
+                            @bitCast(AsciiVectorU16U1, (vec == vecs[1])) |
+                            @bitCast(AsciiVectorU16U1, (vec == vecs[2])) |
+                            @bitCast(AsciiVectorU16U1, (vec == vecs[3])) |
+                            @bitCast(AsciiVectorU16U1, (vec == vecs[4]))) == 1)
+                        {
+                            buf.ensureUnusedCapacity(ascii_u16_vector_size) catch unreachable;
+                            var i: u16 = 0;
+                            while (i < ascii_u16_vector_size) {
+                                switch (remaining[i]) {
+                                    '"' => {
+                                        buf.appendSlice(toUTF16Literal("&quot;")) catch unreachable;
+                                        i += 1;
+                                    },
+                                    '&' => {
+                                        buf.appendSlice(toUTF16Literal("&amp;")) catch unreachable;
+                                        i += 1;
+                                    },
+                                    '\'' => {
+                                        buf.appendSlice(toUTF16Literal("&#x27;")) catch unreachable; // modified from escape-html; used to be '&#39'
+                                        i += 1;
+                                    },
+                                    '<' => {
+                                        buf.appendSlice(toUTF16Literal("&lt;")) catch unreachable;
+                                        i += 1;
+                                    },
+                                    '>' => {
+                                        buf.appendSlice(toUTF16Literal("&gt;")) catch unreachable;
+                                        i += 1;
+                                    },
+                                    128...std.math.maxInt(u16) => {
+                                        const cp = utf16Codepoint([]const u16, remaining[i..]);
+
+                                        buf.appendSlice(remaining[i..][0..@as(usize, cp.len)]) catch unreachable;
+                                        i += @as(u16, cp.len);
+                                    },
+                                    else => |c| {
+                                        buf.append(c) catch unreachable;
+                                        i += 1;
+                                    },
+                                }
+                            }
+
+                            remaining = remaining[i..];
+                            continue;
+                        }
+
+                        try buf.ensureUnusedCapacity(ascii_u16_vector_size);
+                        buf.items.ptr[buf.items.len .. buf.items.len + ascii_u16_vector_size][0..ascii_u16_vector_size].* = remaining[0..ascii_u16_vector_size].*;
+                        buf.items.len += ascii_u16_vector_size;
+                        remaining = remaining[ascii_u16_vector_size..];
+                    }
+                }
+            }
+
+            var ptr = remaining.ptr;
+            const end = remaining.ptr + remaining.len;
+
+            if (!any_needs_escape) {
+                scan_and_allocate_lazily: while (ptr != end) {
+                    switch (ptr[0]) {
+                        '"', '&', '\'', '<', '>' => |c| {
+                            buf = try std.ArrayList(u16).initCapacity(allocator, utf16.len + @as(usize, Scalar.lengths[c]));
+                            std.debug.assert(@ptrToInt(ptr) >= @ptrToInt(utf16.ptr));
+
+                            const to_copy = std.mem.sliceAsBytes(utf16)[0 .. @ptrToInt(ptr) - @ptrToInt(utf16.ptr)];
+
+                            @memcpy(
+                                @ptrCast([*]align(2) u8, buf.items.ptr),
+                                to_copy.ptr,
+                                to_copy.len,
+                            );
+
+                            buf.items.len = std.mem.bytesAsSlice(u16, to_copy).len;
+                            any_needs_escape = true;
+                            break :scan_and_allocate_lazily;
+                        },
+                        128...std.math.maxInt(u16) => {
+                            const cp = utf16Codepoint([]const u16, ptr[0..2]);
+
+                            ptr += @as(u16, cp.len);
+                        },
+                        else => {
+                            ptr += 1;
+                        },
+                    }
+                }
+            }
+
+            while (ptr != end) {
+                switch (ptr[0]) {
+                    '"' => {
+                        buf.appendSlice(toUTF16Literal("&quot;")) catch unreachable;
+                        ptr += 1;
+                    },
+                    '&' => {
+                        buf.appendSlice(toUTF16Literal("&amp;")) catch unreachable;
+                        ptr += 1;
+                    },
+                    '\'' => {
+                        buf.appendSlice(toUTF16Literal("&#x27;")) catch unreachable; // modified from escape-html; used to be '&#39'
+                        ptr += 1;
+                    },
+                    '<' => {
+                        buf.appendSlice(toUTF16Literal("&lt;")) catch unreachable;
+                        ptr += 1;
+                    },
+                    '>' => {
+                        buf.appendSlice(toUTF16Literal("&gt;")) catch unreachable;
+                        ptr += 1;
+                    },
+                    128...std.math.maxInt(u16) => {
+                        const cp = utf16Codepoint([]const u16, ptr[0..2]);
+
+                        buf.appendSlice(ptr[0..@as(usize, cp.len)]) catch unreachable;
+                        ptr += @as(u16, cp.len);
+                    },
+
+                    else => |c| {
+                        buf.append(c) catch unreachable;
+                        ptr += 1;
+                    },
+                }
+            }
+
+            if (!any_needs_escape) {
+                return utf16;
+            }
+
+            return buf.toOwnedSlice();
+        },
+    }
 }
 
 test "copyLatin1IntoUTF8" {
@@ -1516,7 +2209,9 @@ pub const min_16_ascii = @splat(ascii_vector_size, @as(u8, 0x20));
 pub const max_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 127));
 pub const min_u16_ascii = @splat(ascii_u16_vector_size, @as(u16, 0x20));
 pub const AsciiVector = std.meta.Vector(ascii_vector_size, u8);
+pub const AsciiVectorSmall = std.meta.Vector(8, u8);
 pub const AsciiVectorU1 = std.meta.Vector(ascii_vector_size, u1);
+pub const AsciiVectorU1Small = std.meta.Vector(8, u1);
 pub const AsciiVectorU16U1 = std.meta.Vector(ascii_u16_vector_size, u1);
 pub const AsciiU16Vector = std.meta.Vector(ascii_u16_vector_size, u16);
 pub const max_4_ascii = @splat(4, @as(u8, 127));
@@ -1703,9 +2398,10 @@ pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = vec == @splat(ascii_vector_size, char);
-            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-            const first = @ctz(AsciiVectorInt, bitmask);
-            if (first < 16) {
+
+            if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
+                const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+                const first = @ctz(AsciiVectorInt, bitmask);
                 return @intCast(u32, @as(u32, first) + @intCast(u32, slice.len - remaining.len));
             }
             remaining = remaining[ascii_vector_size..];
@@ -2089,27 +2785,27 @@ test "firstNonASCII" {
 
 test "firstNonASCII16" {
     @setEvalBranchQuota(99999);
-    const yes = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+    const yes = std.mem.span(toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
     try std.testing.expectEqual(true, firstNonASCII16(@TypeOf(yes), yes) == null);
 
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        const no = std.mem.span(toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
         try std.testing.expectEqual(@as(u32, 50), firstNonASCII16(@TypeOf(no), no).?);
     }
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        const no = std.mem.span(toUTF16Literal("🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
         try std.testing.expectEqual(@as(u32, 0), firstNonASCII16(@TypeOf(no), no).?);
     }
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("a🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        const no = std.mem.span(toUTF16Literal("a🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
         try std.testing.expectEqual(@as(u32, 1), firstNonASCII16(@TypeOf(no), no).?);
     }
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.span(std.unicode.utf8ToUtf16LeStringLiteral("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
+        const no = std.mem.span(toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
         try std.testing.expectEqual(@as(u32, 366), firstNonASCII16(@TypeOf(no), no).?);
     }
 }
@@ -2147,7 +2843,7 @@ pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
 
 test "print UTF16" {
     var err = std.io.getStdErr();
-    const utf16 = comptime std.unicode.utf8ToUtf16LeStringLiteral("❌ ✅ opkay ");
+    const utf16 = comptime toUTF16Literal("❌ ✅ opkay ");
     try formatUTF16(utf16, err.writer());
     // std.unicode.fmtUtf16le(utf16le: []const u16)
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 typedef uint16_t ZigErrorCode;
+typedef struct VirtualMachine VirtualMachine;
 
 typedef struct ZigString {
     const unsigned char* ptr;
@@ -190,6 +191,7 @@ extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
 extern "C" void Microtask__run(void* ptr, void* global);
+extern "C" void Microtask__run_default(void* ptr, void* global);
 
 // Used in process.version
 extern "C" const char* Bun__version;

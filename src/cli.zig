@@ -512,7 +512,7 @@ pub const Arguments = struct {
         var jsx_fragment = args.option("--jsx-fragment");
         var jsx_import_source = args.option("--jsx-import-source");
         var jsx_runtime = args.option("--jsx-runtime");
-        var jsx_production = args.flag("--jsx-production") or production;
+        var jsx_production = args.flag("--jsx-production");
         const react_fast_refresh = switch (comptime cmd) {
             .BunCommand, .DevCommand => !(args.flag("--disable-react-fast-refresh") or jsx_production),
             else => true,
@@ -611,7 +611,7 @@ pub const Arguments = struct {
                     .fragment = constStrToU8(jsx_fragment orelse opts.jsx.?.fragment),
                     .import_source = constStrToU8(jsx_import_source orelse opts.jsx.?.import_source),
                     .runtime = if (jsx_runtime != null) try resolve_jsx_runtime(jsx_runtime.?) else opts.jsx.?.runtime,
-                    .development = jsx_production,
+                    .development = !jsx_production,
                     .react_fast_refresh = react_fast_refresh,
                 };
             }

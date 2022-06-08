@@ -148,10 +148,10 @@ template<> void JSEventTargetDOMConstructor::initializeProperties(VM& vm, JSDOMG
 /* Hash table for prototype */
 
 static const HashTableValue JSEventTargetPrototypeTableValues[] = {
-    { "constructor", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsEventTargetConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "addEventListener", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventTargetPrototypeFunction_addEventListener), (intptr_t)(2) } },
-    { "removeEventListener", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventTargetPrototypeFunction_removeEventListener), (intptr_t)(2) } },
-    { "dispatchEvent", static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventTargetPrototypeFunction_dispatchEvent), (intptr_t)(1) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsEventTargetConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "addEventListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventTargetPrototypeFunction_addEventListener), (intptr_t)(2) } },
+    { "removeEventListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventTargetPrototypeFunction_removeEventListener), (intptr_t)(2) } },
+    { "dispatchEvent"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventTargetPrototypeFunction_dispatchEvent), (intptr_t)(1) } },
 };
 
 const ClassInfo JSEventTargetPrototype::s_info = { "EventTarget"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventTargetPrototype) };

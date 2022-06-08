@@ -8,6 +8,18 @@ pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
 else
     @import("./memory_allocator.zig").c_allocator;
 
+pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
+    std.heap.c_allocator
+else
+    @import("./memory_allocator.zig").huge_allocator;
+
+pub const auto_allocator: std.mem.Allocator = if (!use_mimalloc)
+    std.heap.c_allocator
+else
+    @import("./memory_allocator.zig").auto_allocator;
+
+pub const huge_allocator_threshold: comptime_int = @import("./memory_allocator.zig").huge_threshold;
+
 pub const C = @import("c.zig");
 
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -159,3 +171,33 @@ pub fn span(ptr: anytype) std.mem.Span(@TypeOf(ptr)) {
 
 pub const IdentityContext = @import("./identity_context.zig").IdentityContext;
 pub const ArrayIdentityContext = @import("./identity_context.zig").ArrayIdentityContext;
+pub const BabyList = @import("./baby_list.zig").BabyList;
+pub const ByteList = BabyList(u8);
+
+pub fn DebugOnly(comptime Type: type) type {
+    if (comptime Environment.isDebug) {
+        return Type;
+    }
+
+    return void;
+}
+
+pub fn DebugOnlyDefault(comptime val: anytype) if (Environment.isDebug) @TypeOf(val) else void {
+    if (comptime Environment.isDebug) {
+        return val;
+    }
+
+    return {};
+}
+
+pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usize {
+    return comptime brk: {
+        var slice: [max - min]usize = undefined;
+        var i: usize = min;
+        while (i < max) {
+            slice[i - min] = i;
+            i += 1;
+        }
+        break :brk slice;
+    };
+}

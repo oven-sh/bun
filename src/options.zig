@@ -914,10 +914,14 @@ pub const JSX = struct {
                 pragma.package_name = parsePackageName(pragma.import_source);
             } else if (jsx.development) {
                 pragma.import_source = Defaults.ImportSourceDev;
-                pragma.jsx = Defaults.JSXFunctionDev;
                 pragma.package_name = "react";
             } else {
                 pragma.import_source = Defaults.ImportSource;
+            }
+
+            if (jsx.development) {
+                pragma.jsx = Defaults.JSXFunctionDev;
+            } else {
                 pragma.jsx = Defaults.JSXFunction;
             }
 
@@ -1182,6 +1186,9 @@ pub const BundleOptions = struct {
     serve: bool = false,
 
     append_package_version_in_query_string: bool = false,
+
+    jsx_optimization_inline: ?bool = null,
+    jsx_optimization_hoist: ?bool = null,
 
     resolve_mode: api.Api.ResolveMode,
     tsconfig_override: ?string = null,

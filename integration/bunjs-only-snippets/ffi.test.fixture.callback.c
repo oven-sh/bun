@@ -258,6 +258,9 @@ void* JSFunctionCall(void* globalObject, void* callFrame);
 bool my_callback_function(void* arg0);
 
 bool my_callback_function(void* arg0) {
+#ifdef INJECT_BEFORE
+INJECT_BEFORE;
+#endif
   EncodedJSValue arguments[1] = {
     PTR_TO_JSVALUE(arg0)
   };

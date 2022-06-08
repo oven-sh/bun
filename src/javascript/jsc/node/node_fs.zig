@@ -12,7 +12,7 @@ const Environment = bun.Environment;
 const C = bun.C;
 const Flavor = JSC.Node.Flavor;
 const system = std.os.system;
-const Maybe = JSC.Node.Maybe;
+const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
 const Syscall = @import("./syscall.zig");
 const Constants = @import("./node_fs_constant.zig").Constants;
@@ -3219,12 +3219,11 @@ pub const NodeFS = struct {
 
                 const size = @intCast(u64, @maximum(stat_.size, 0));
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
-                buf.ensureTotalCapacity(size + 16) catch unreachable;
+                buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
                 buf.expandToCapacity();
                 var total: usize = 0;
-
                 while (total < size) {
-                    switch (Syscall.read(fd, buf.items[total..])) {
+                    switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
                         .err => |err| return .{
                             .err = err,
                         },
@@ -3232,7 +3231,7 @@ pub const NodeFS = struct {
                             total += amt;
                             // There are cases where stat()'s size is wrong or out of date
                             if (total > size and amt != 0) {
-                                buf.ensureUnusedCapacity(512384) catch unreachable;
+                                buf.ensureUnusedCapacity(8096) catch unreachable;
                                 buf.expandToCapacity();
                                 continue;
                             }

@@ -24,8 +24,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatementConstructor;
     /* --- bun --- */
 
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGlobalObject;
-
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMException;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormData;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
@@ -217,22 +215,22 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSpeechSynthesisUtterance;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSpeechSynthesisVoice;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStorageManager;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForByteLengthQueuingStrategy;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCountQueuingStrategy;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableByteStreamController;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStream;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamBYOBReader;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamBYOBRequest;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamDefaultController;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamDefaultReader;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamSink;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamSource;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStream;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStreamDefaultController;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStream;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultController;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultWriter;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamSink;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForByteLengthQueuingStrategy;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCountQueuingStrategy;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableByteStreamController;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamBYOBReader;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamBYOBRequest;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamDefaultController;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamDefaultReader;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamSink;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamSource;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransformStreamDefaultController;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultController;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamDefaultWriter;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWritableStreamSink;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebLock;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebLockManager;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAnalyserNode;
@@ -452,7 +450,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoder;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStream;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStreamDecoder;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoder;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoder;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStream;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStreamEncoder;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEvent;
@@ -843,7 +841,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebXRTest;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDedicatedWorkerGlobalScope;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorker;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerGlobalScope;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerGlobalScope;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWorkerLocation;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExtendableEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExtendableMessageEvent;

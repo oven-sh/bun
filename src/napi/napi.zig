@@ -186,7 +186,7 @@ pub export fn napi_create_array_with_length(env: napi_env, length: usize, result
         return .ok;
     }
 
-    const allocator = JSC.VirtualMachine.vm.allocator;
+    const allocator = env.bunVM().allocator;
     var undefined_args = allocator.alloc(JSC.C.JSValueRef, length) catch return .generic_failure;
     defer allocator.free(undefined_args);
     for (undefined_args) |_, i| {
@@ -748,7 +748,7 @@ pub export fn napi_create_external_arraybuffer(env: napi_env, external_data: ?*a
         @ptrCast([*]u8, external_data.?)[0..byte_length],
         env,
         finalize_cb,
-        JSC.VirtualMachine.vm.allocator,
+        env.bunVM().allocator,
     ) catch {
         return .generic_failure;
     };
@@ -924,7 +924,7 @@ const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const napi_async_work = struct {
     task: WorkPoolTask = .{ .callback = runFromThreadPool },
     completion_task: ?*anyopaque = null,
-    event_loop: *JSC.VirtualMachine.EventLoop,
+    event_loop: *JSC.EventLoop,
     global: napi_env,
     execute: napi_async_execute_callback = null,
     complete: napi_async_complete_callback = null,
@@ -945,7 +945,7 @@ pub const napi_async_work = struct {
         work.* = .{
             .global = global,
             .execute = execute,
-            .event_loop = JSC.VirtualMachine.vm.eventLoop(),
+            .event_loop = global.bunVM().eventLoop(),
             .complete = complete,
             .ctx = ctx,
         };
@@ -1054,8 +1054,8 @@ fn napiSpan(ptr: anytype, len: usize) []const u8 {
 // C++
 // pub export fn napi_module_register(mod: *napi_module) void {
 //     const register = mod.nm_register_func orelse return;
-//     var ref = JSC.C.JSObjectMake(JSC.VirtualMachine.vm.global, null, null);
-//     register(JSC.VirtualMachine.vm.global, JSC.JSValue.c(ref));
+//     var ref = JSC.C.JSObjectMake(env.bunVM().global, null, null);
+//     register(env.bunVM().global, JSC.JSValue.c(ref));
 // }
 pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize, message_ptr: ?[*:0]const u8, message_len_: usize) noreturn {
     var message = napiSpan(message_ptr, message_len_);
@@ -1083,7 +1083,7 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 //     // JSC.C.JSObjectCallAsFunction(env.ref(), func.asObjectRef(), recv.asObjectRef(), argc, @ptrCast([*]const JSC.C.JSValueRef), exception: ExceptionRef)
 // }
 pub export fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaque, result: *napi_value) napi_status {
-    var buf = JSC.ExternalBuffer.create(null, @ptrCast([*]u8, data)[0..length], env, null, JSC.VirtualMachine.vm.allocator) catch {
+    var buf = JSC.ExternalBuffer.create(null, @ptrCast([*]u8, data)[0..length], env, null, env.bunVM().allocator) catch {
         return .generic_failure;
     };
 
@@ -1091,7 +1091,7 @@ pub export fn napi_create_buffer(env: napi_env, length: usize, data: [*]*anyopaq
     return .ok;
 }
 pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_value) napi_status {
-    var buf = JSC.ExternalBuffer.create(finalize_hint, @ptrCast([*]u8, data.?)[0..length], env, finalize_cb, JSC.VirtualMachine.vm.allocator) catch {
+    var buf = JSC.ExternalBuffer.create(finalize_hint, @ptrCast([*]u8, data.?)[0..length], env, finalize_cb, env.bunVM().allocator) catch {
         return .generic_failure;
     };
 
@@ -1099,7 +1099,7 @@ pub export fn napi_create_external_buffer(env: napi_env, length: usize, data: ?*
     return .ok;
 }
 pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8, result_data: ?*?*anyopaque, result: *napi_value) napi_status {
-    var duped = JSC.VirtualMachine.vm.allocator.alloc(u8, length) catch {
+    var duped = env.bunVM().allocator.alloc(u8, length) catch {
         return .generic_failure;
     };
     @memcpy(duped.ptr, data, length);
@@ -1107,7 +1107,7 @@ pub export fn napi_create_buffer_copy(env: napi_env, length: usize, data: [*]u8,
         res.* = duped.ptr;
     }
 
-    result.* = JSC.JSValue.createBuffer(env, duped, JSC.VirtualMachine.vm.allocator);
+    result.* = JSC.JSValue.createBuffer(env, duped, env.bunVM().allocator);
 
     return .ok;
 }
@@ -1161,9 +1161,9 @@ pub export fn napi_get_node_version(_: napi_env, version: **const napi_node_vers
     version.* = &napi_node_version.global;
     return .ok;
 }
-pub export fn napi_get_uv_event_loop(_: napi_env, loop: **JSC.VirtualMachine.EventLoop) napi_status {
+pub export fn napi_get_uv_event_loop(env: napi_env, loop: **JSC.EventLoop) napi_status {
     // lol
-    loop.* = JSC.VirtualMachine.vm.eventLoop();
+    loop.* = env.bunVM().eventLoop();
     return .ok;
 }
 pub extern fn napi_fatal_exception(env: napi_env, err: napi_value) napi_status;
@@ -1174,18 +1174,18 @@ pub export fn napi_add_env_cleanup_hook(env: napi_env, fun: ?fn (?*anyopaque) ca
     if (fun == null)
         return .ok;
 
-    JSC.VirtualMachine.vm.rareData().pushCleanupHook(env, arg, fun.?);
+    env.bunVM().rareData().pushCleanupHook(env, arg, fun.?);
     return .ok;
 }
 pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?fn (?*anyopaque) callconv(.C) void, arg: ?*anyopaque) napi_status {
-    if (JSC.VirtualMachine.vm.rare_data == null or fun == null)
+    if (env.bunVM().rare_data == null or fun == null)
         return .ok;
 
-    var rare_data = JSC.VirtualMachine.vm.rare_data.?;
+    var rare_data = env.bunVM().rare_data.?;
     var hook = rare_data.cleanup_hook orelse return .ok;
     const cmp = JSC.RareData.CleanupHook.from(env, arg, fun.?);
     if (hook.eql(cmp)) {
-        JSC.VirtualMachine.vm.allocator.destroy(hook);
+        env.bunVM().allocator.destroy(hook);
         rare_data.cleanup_hook = null;
         rare_data.tail_cleanup_hook = null;
     }
@@ -1196,7 +1196,7 @@ pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?fn (?*anyopaque)
             } else {
                 hook.next = null;
             }
-            JSC.VirtualMachine.vm.allocator.destroy(current);
+            env.bunVM().allocator.destroy(current);
             return .ok;
         }
         hook = current;
@@ -1226,7 +1226,7 @@ pub const ThreadSafeFunction = struct {
 
     owning_threads: std.AutoArrayHashMapUnmanaged(u64, void) = .{},
     owning_thread_lock: Lock = Lock.init(),
-    event_loop: *JSC.VirtualMachine.EventLoop,
+    event_loop: *JSC.EventLoop,
 
     javascript_function: JSValue,
     finalizer_task: JSC.AnyTask = undefined,
@@ -1398,7 +1398,7 @@ pub export fn napi_create_threadsafe_function(
     JSC.C.JSValueProtect(env.ref(), func.asObjectRef());
     var function = bun.default_allocator.create(ThreadSafeFunction) catch return .generic_failure;
     function.* = .{
-        .event_loop = JSC.VirtualMachine.vm.eventLoop(),
+        .event_loop = env.bunVM().eventLoop(),
         .javascript_function = func,
         .call_js = call_js_cb,
         .ctx = context,

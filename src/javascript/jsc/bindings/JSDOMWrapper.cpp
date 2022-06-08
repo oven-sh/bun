@@ -56,6 +56,7 @@ JSC::JSValue cloneAcrossWorlds(JSC::JSGlobalObject& lexicalGlobalObject, const J
     // FIXME: Why is owner->globalObject() better than lexicalGlobalObject.lexicalGlobalObject() here?
     // Unlike this, isWorldCompatible uses lexicalGlobalObject.lexicalGlobalObject(); should the two match?
     // return serializedValue->deserialize(lexicalGlobalObject, owner.globalObject());
+    return JSC::jsNull();
 }
 
 } // namespace WebCore

@@ -120,8 +120,7 @@ pub const Run = struct {
             Global.exit(1);
         }
 
-        const result = promise.result(this.vm.global.vm());
-        JSC.C.JSValueProtect(this.vm.global.ref(), result.asObjectRef());
+        _ = promise.result(this.vm.global.vm());
 
         if (this.vm.log.msgs.items.len > 0) {
             if (Output.enable_ansi_colors) {
@@ -133,6 +132,8 @@ pub const Run = struct {
             Output.flush();
         }
 
+        this.vm.global.vm().releaseWeakRefs();
+        _ = this.vm.global.vm().runGC(false);
         this.vm.tick();
 
         {

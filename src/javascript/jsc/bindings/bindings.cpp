@@ -73,18 +73,6 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 
-template<typename WebCoreType, typename OutType>
-OutType* WebCoreCast(JSC__JSValue JSValue0, JSC::VM* vm)
-{
-    // we must use jsDynamicCast here so that we check that the type is correct
-    WebCoreType* jsdomURL = JSC::jsDynamicCast<WebCoreType*>(JSC::JSValue::decode(JSValue0));
-    if (jsdomURL == nullptr) {
-        return nullptr;
-    }
-
-    return reinterpret_cast<OutType*>(&jsdomURL->wrapped());
-}
-
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
@@ -95,6 +83,50 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
         auto name = pair->key;
         auto value = pair->value;
         res->writeHeader(std::string_view(reinterpret_cast<const char*>(name.characters8()), name.length()), std::string_view(reinterpret_cast<const char*>(value.characters8()), value.length()));
+    }
+}
+
+template<typename PromiseType, bool isInternal>
+static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3))
+{
+    JSC::Strong<PromiseType> strongValue = { globalObject->vm(), promise };
+    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
+        globalObject->vm(), globalObject, 1, String(), [&strongValue, ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
+            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
+
+            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
+            arguments.reserveInitialCapacity(argCount);
+            if (argCount) {
+                for (uint16_t i = 0; i < argCount; ++i) {
+                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
+                }
+            }
+
+            ArgFn3(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
+            strongValue.clear();
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        });
+    JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
+        globalObject->vm(), globalObject, 1, String(),
+        [&strongValue, ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
+            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
+            arguments.reserveInitialCapacity(argCount);
+            if (argCount) {
+                for (uint16_t i = 0; i < argCount; ++i) {
+                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
+                }
+            }
+
+            ArgFn4(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
+            strongValue.clear();
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        });
+
+    if constexpr (!isInternal) {
+        promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
+    } else {
+        promise->then(globalObject, resolverFunction, rejecterFunction);
     }
 }
 
@@ -120,7 +152,7 @@ void WebCore__FetchHeaders__append(WebCore__FetchHeaders* headers, const ZigStri
 }
 WebCore__FetchHeaders* WebCore__FetchHeaders__cast_(JSC__JSValue JSValue0, JSC__VM* vm)
 {
-    return WebCoreCast<WebCore::JSFetchHeaders, WebCore__FetchHeaders>(JSValue0, vm);
+    return WebCoreCast<WebCore::JSFetchHeaders, WebCore__FetchHeaders>(JSValue0);
 }
 
 using namespace WebCore;
@@ -274,7 +306,7 @@ void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigStri
 
 WebCore__DOMURL* WebCore__DOMURL__cast_(JSC__JSValue JSValue0, JSC::VM* vm)
 {
-    return WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(JSValue0, vm);
+    return WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(JSValue0);
 }
 
 void WebCore__DOMURL__href_(WebCore__DOMURL* domURL, ZigString* arg1)
@@ -306,10 +338,8 @@ JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
 
     JSC::JSValue options = JSC::jsUndefined();
 
-    Structure* errorStructure = JSC_GET_DERIVED_STRUCTURE(vm, errorStructure, globalObject->errorPrototype(), globalObject->errorPrototype());
-
     JSC::JSObject* result
-        = JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
+        = JSC::ErrorInstance::create(globalObject, JSC::ErrorInstance::createStructure(vm, globalObject, globalObject->errorPrototype()), message, options);
 
     auto clientData = WebCore::clientData(vm);
 
@@ -507,50 +537,15 @@ JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 }
 
 // TODO: prevent this from allocating so much memory
-void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, JSC__JSValue arg2, size_t arg3))
+void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3))
 {
 
-    globalObject->vm().drainMicrotasks();
     auto* cell = JSC::JSValue::decode(JSValue0).asCell();
-    JSC::Strong<JSC::Unknown> promiseValue = { globalObject->vm(), cell };
-
-    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), [&promiseValue, ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
-
-            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
-            arguments.reserveInitialCapacity(argCount);
-            if (argCount) {
-                for (uint16_t i = 0; i < argCount; ++i) {
-                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
-                }
-            }
-
-            ArgFn3(globalObject, ctx, reinterpret_cast<JSC__JSValue>(arguments.data()), argCount);
-
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        });
-    JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(),
-        [&promiseValue, ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
-            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
-            arguments.reserveInitialCapacity(argCount);
-            if (argCount) {
-                for (uint16_t i = 0; i < argCount; ++i) {
-                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
-                }
-            }
-
-            ArgFn4(globalObject, ctx, reinterpret_cast<JSC__JSValue>(arguments.data()), argCount);
-
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        });
 
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
-        promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
+        handlePromise<JSC::JSPromise, false>(promise, globalObject, ctx, ArgFn3, ArgFn4);
     } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
-        promise->then(globalObject, resolverFunction, rejecterFunction);
+        handlePromise<JSC::JSInternalPromise, true>(promise, globalObject, ctx, ArgFn3, ArgFn4);
     }
 }
 
@@ -808,6 +803,11 @@ void Microtask__run(void* microtask, void* global)
     reinterpret_cast<Zig::JSMicrotaskCallback*>(microtask)->call();
 }
 
+void Microtask__run_default(void* microtask, void* global)
+{
+    reinterpret_cast<Zig::JSMicrotaskCallbackDefaultGlobal*>(microtask)->call(reinterpret_cast<Zig::GlobalObject*>(global));
+}
+
 bool JSC__JSModuleLoader__checkSyntax(JSC__JSGlobalObject* arg0, const JSC__SourceCode* arg1,
     bool arg2)
 {
@@ -875,6 +875,14 @@ static JSC::JSValue doLink(JSC__JSGlobalObject* globalObject, JSC::JSValue modul
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::linkAndEvaluateModule(globalObject, moduleKey, JSC::JSValue());
+}
+
+JSC__JSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    auto clientData = WebCore::clientData(vm);
+    auto* function = globalObject->getDirect(vm, clientData->builtinNames().createEmptyReadableStreamPrivateName()).getObject();
+    return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "ReadableStream.create"_s));
 }
 
 JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1,
@@ -967,15 +975,12 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
     JSC::JSObject* object = value.getObject();
 
     if (JSC::JSArrayBufferView* typedArray = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(object)) {
-        if (JSC::ArrayBuffer* buffer = typedArray->possiblySharedBuffer()) {
-            buffer->pinAndLock();
-            arg2->ptr = reinterpret_cast<char*>(buffer->data());
-            arg2->len = typedArray->length();
-            arg2->byte_len = buffer->byteLength();
-            arg2->offset = typedArray->byteOffset();
-            arg2->cell_type = typedArray->type();
-            return true;
-        }
+        arg2->ptr = reinterpret_cast<char*>(typedArray->vector());
+        arg2->len = typedArray->length();
+        arg2->byte_len = typedArray->byteLength();
+        arg2->offset = typedArray->byteOffset();
+        arg2->cell_type = typedArray->type();
+        return true;
     }
 
     if (JSC::ArrayBuffer* buffer = JSC::toPossiblySharedArrayBuffer(vm, value)) {
@@ -1084,23 +1089,31 @@ static void free_global_string(void* str, void* ptr, unsigned len)
 
 JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSGlobalObject* global)
 {
-    return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
-        global->vm(),
-        ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, nullptr, free_global_string))));
+    auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, nullptr, free_global_string));
+
+    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
+        global->vm(), WTFMove(ref))));
 }
 // This must be a globally allocated string
 JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {
     ZigString str = *arg0;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
-            arg1->vm(),
-            ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, nullptr, free_global_string))));
-    }
+        auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, nullptr, free_global_string));
 
-    return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
-        arg1->vm(),
-        ExternalStringImpl::create(Zig::untag(str.ptr), str.len, nullptr, free_global_string))));
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
+            arg1->vm(), WTFMove(ref))));
+    } else {
+        auto ref = String(ExternalStringImpl::create(Zig::untag(str.ptr), str.len, nullptr, free_global_string));
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
+            arg1->vm(),
+            WTFMove(ref))));
+    }
+}
+
+VirtualMachine* JSC__JSGlobalObject__bunVM(JSC__JSGlobalObject* arg0)
+{
+    return reinterpret_cast<VirtualMachine*>(reinterpret_cast<Zig::GlobalObject*>(arg0)->bunVM());
 }
 
 JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1)
@@ -1431,116 +1444,6 @@ bJSC__SourceOrigin JSC__SourceOrigin__fromURL(const WTF__URL* arg0)
 void JSC__SourceCode__fromString(JSC__SourceCode* arg0, const WTF__String* arg1,
     const JSC__SourceOrigin* arg2, WTF__String* arg3,
     unsigned char SourceType4) {}
-
-#pragma mark - JSC::JSFunction
-
-// JSC__JSValue JSC__JSFunction__callWithArguments(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
-//     JSC__JSValue* arg2, size_t arg3,
-//     JSC__Exception** arg4, const unsigned char* arg5)
-// {
-//     auto args = makeArgs(arg2, arg3);
-//     return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
-//         JSC::JSValue::decode(JSValue0), args, (const char*)arg5));
-// }
-// JSC__JSValue JSC__JSFunction__callWithArgumentsAndThis(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
-//     JSC__JSGlobalObject* arg2,
-//     JSC__JSValue* arg3, size_t arg4,
-//     JSC__Exception** arg5,
-//     const unsigned char* arg6)
-// {
-//     auto args = makeArgs(arg3, arg4);
-//     return JSC::JSValue::encode(JSC::call(arg2, JSC::JSValue::decode(JSValue0),
-//         JSC::JSValue::decode(JSValue1), args, (const char*)arg6));
-// }
-// JSC__JSValue JSC__JSFunction__callWithoutAnyArgumentsOrThis(JSC__JSValue JSValue0,
-//     JSC__JSGlobalObject* arg1,
-//     JSC__Exception** arg2,
-//     const unsigned char* arg3)
-// {
-//     return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
-//         JSC::JSValue::decode(JSValue0), JSC::ArgList(),
-//         (const char*)arg3));
-// }
-// JSC__JSValue JSC__JSFunction__callWithThis(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
-//     JSC__JSValue JSValue2, JSC__Exception** arg3,
-//     const unsigned char* arg4)
-// {
-//     return JSC::JSValue::encode(JSC::call(arg1, JSC::JSValue::decode(JSValue0),
-//         JSC::JSValue::decode(JSValue2), JSC::ArgList(),
-//         (const char*)arg4));
-// }
-// JSC__JSValue JSC__JSFunction__constructWithArguments(JSC__JSValue JSValue0,
-//     JSC__JSGlobalObject* arg1, JSC__JSValue* arg2,
-//     size_t arg3, JSC__Exception** arg4,
-//     const unsigned char* arg5)
-// {
-//     auto args = makeArgs(arg2, arg3);
-//     return JSC::JSValue::encode(
-//         JSC::construct(arg1, JSC::JSValue::decode(JSValue0), args, (const char*)arg5));
-// }
-
-// JSC__JSValue JSC__JSFunction__constructWithArgumentsAndNewTarget(
-//     JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* arg2, JSC__JSValue* arg3,
-//     size_t arg4, JSC__Exception** arg5, const unsigned char* arg6)
-// {
-//     auto args = makeArgs(arg3, arg4);
-//     return JSC::JSValue::encode(JSC::construct(arg2, JSC::JSValue::decode(JSValue0),
-//         JSC::JSValue::decode(JSValue0), args,
-//         (const char*)arg6));
-// }
-// JSC__JSValue JSC__JSFunction__constructWithNewTarget(JSC__JSValue JSValue0,
-//     JSC__JSGlobalObject* arg1,
-//     JSC__JSValue JSValue2, JSC__Exception** arg3,
-//     const unsigned char* arg4)
-// {
-//     return JSC::JSValue::encode(JSC::construct(arg1, JSC::JSValue::decode(JSValue0),
-//         JSC::JSValue::decode(JSValue2), JSC::ArgList(),
-//         (const char*)arg4));
-// }
-// JSC__JSValue JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSC__JSValue JSValue0,
-//     JSC__JSGlobalObject* arg1,
-//     JSC__Exception** arg2,
-//     const unsigned char* arg3)
-// {
-//     return JSC::JSValue::encode(
-//         JSC::construct(arg1, JSC::JSValue::decode(JSValue0), JSC::ArgList(), (const char*)arg3));
-// }
-
-JSC__JSFunction* JSC__JSFunction__createFromNative(JSC__JSGlobalObject* arg0, uint16_t arg1,
-    const WTF__String* arg2, void* ctx,
-    NativeCallbackFunction callback)
-{
-    return JSC::JSNativeStdFunction::create(
-        reinterpret_cast<JSC::VM&>(arg0->vm()), arg0, arg1, arg2 != nullptr ? *arg2 : WTF::String(),
-        [ctx, callback](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-            -> JSC::EncodedJSValue { return callback(ctx, globalObject, callFrame); });
-}
-// JSC__JSFunction* JSC__JSFunction__createFromSourceCode(
-//     JSC__JSGlobalObject* arg0,
-//     const unsigned char* arg1,
-//     uint16_t arg2,
-//     JSC__JSValue arg3,
-//     uint16_t arg4,
-//     const JSC__SourceCode* source,
-//     JSC__SourceOrigin* origin,
-//     JSC__JSObject** exception
-// ) {
-//     JSC::VM& vm = reinterpret_cast<JSC::VM&>(arg0->vm());
-//     JSC::Identifier functionName = JSC::Identifier::fromString(vm, arg2 &&
-//     arg1 != nullptr ? WTF::StringImpl(static_cast<const LChar*>(arg1), arg2)
-//     : vm->propertyNames->anonymous.impl());
-
-//     JSC::FunctionExecutable* function =
-//     JSC::FunctionExecutable::fromGlobalCode(
-//         functionName,
-//         arg0,
-//         source,
-//         exception,
-//         0,
-//         nullptr,
-//     );
-
-// }
 
 bWTF__String JSC__JSFunction__displayName(JSC__JSFunction* arg0, JSC__VM* arg1)
 {
@@ -2426,7 +2329,12 @@ void exceptionFromString(ZigException* except, JSC::JSValue value, JSC::JSGlobal
     ref->ref();
 }
 
-static WTF::StringView function_string_view = WTF::StringView("Function");
+void JSC__VM__releaseWeakRefs(JSC__VM* arg0)
+{
+    arg0->finalizeSynchronousJSExecution();
+}
+
+static auto function_string_view = MAKE_STATIC_STRING_IMPL("Function");
 void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
     JSC::JSCell* cell = JSC::JSValue::decode(JSValue0).asCell();
@@ -2436,10 +2344,10 @@ void JSC__JSValue__getClassName(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1
     }
 
     const char* ptr = cell->className();
-    auto view = WTF::StringView(ptr);
+    auto view = WTF::StringView(ptr, strlen(ptr));
 
     // Fallback to .name if className is empty
-    if (view.length() == 0 || view == function_string_view) {
+    if (view.length() == 0 || StringView(String(function_string_view)) == view) {
         JSC__JSValue__getNameProperty(JSValue0, arg1, arg2);
         return;
     } else {
@@ -2544,11 +2452,15 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
+    vm->finalizeSynchronousJSExecution();
+
     if (sync) {
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     } else {
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
+
+    vm->finalizeSynchronousJSExecution();
 
     return JSC::JSValue::encode(JSC::jsNumber(vm->heap.sizeAfterLastFullCollection()));
 }
@@ -2587,6 +2499,11 @@ void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0)
     callback(ctx);
 }
 
+void JSC__JSString__iterator(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, void* arg2)
+{
+    jsstring_iterator* iter = (jsstring_iterator*)arg2;
+    arg0->value(iter);
+}
 void JSC__VM__deferGC(JSC__VM* vm, void* ctx, void (*callback)(void* arg0))
 {
     JSC::GCDeferralContext deferralContext(reinterpret_cast<JSC__VM&>(vm));
@@ -2623,13 +2540,14 @@ bool JSC__VM__isEntered(JSC__VM* arg0) { return (*arg0).isEntered(); }
 
 void JSC__VM__setExecutionForbidden(JSC__VM* arg0, bool arg1) { (*arg0).setExecutionForbidden(); }
 
-bool JSC__VM__throwError(JSC__VM* arg0, JSC__JSGlobalObject* arg1, JSC__ThrowScope* arg2,
-    const unsigned char* arg3, size_t arg4)
+void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue value)
 {
-    auto scope = arg2;
-    auto global = arg1;
-    const String& message = WTF::String(arg3, arg4);
-    return JSC::throwException(global, (*scope), createError(global, message));
+    JSC::VM& vm = *reinterpret_cast<JSC::VM*>(vm_);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* error = JSC::JSValue::decode(value).getObject();
+    JSC::Exception* exception = JSC::Exception::create(vm, error);
+    scope.throwException(arg1, exception);
 }
 
 #pragma mark - JSC::ThrowScope
@@ -2661,27 +2579,6 @@ bJSC__CatchScope JSC__CatchScope__declare(JSC__VM* arg0, unsigned char* arg1, un
     return cast<bJSC__CatchScope>(&scope);
 }
 JSC__Exception* JSC__CatchScope__exception(JSC__CatchScope* arg0) { return arg0->exception(); }
-
-#pragma mark - JSC::CallFrame
-
-JSC__JSValue JSC__CallFrame__argument(const JSC__CallFrame* arg0, uint16_t arg1)
-{
-    return JSC::JSValue::encode(arg0->argument(arg1));
-};
-size_t JSC__CallFrame__argumentsCount(const JSC__CallFrame* arg0) { return arg0->argumentCount(); }
-JSC__JSObject* JSC__CallFrame__jsCallee(const JSC__CallFrame* arg0) { return arg0->jsCallee(); }
-JSC__JSValue JSC__CallFrame__newTarget(const JSC__CallFrame* arg0)
-{
-    return JSC::JSValue::encode(arg0->newTarget());
-};
-JSC__JSValue JSC__CallFrame__thisValue(const JSC__CallFrame* arg0)
-{
-    return JSC::JSValue::encode(arg0->thisValue());
-}
-JSC__JSValue JSC__CallFrame__uncheckedArgument(const JSC__CallFrame* arg0, uint16_t arg1)
-{
-    return JSC::JSValue::encode(arg0->uncheckedArgument(arg1));
-}
 
 #pragma mark - JSC::Identifier
 
@@ -2997,4 +2894,10 @@ JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* arg0,
     return JSC::JSValue::encode(
         JSC::JSPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1)));
 }
+}
+
+JSC__JSValue JSC__JSValue__createUninitializedUint8Array(JSC__JSGlobalObject* arg0, size_t arg1)
+{
+    JSC::JSValue value = JSC::JSUint8Array::createUninitialized(arg0, arg0->m_typedArrayUint8.get(arg0), arg1);
+    return JSC::JSValue::encode(value);
 }

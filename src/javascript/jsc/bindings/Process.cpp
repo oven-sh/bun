@@ -205,7 +205,7 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::CustomGetterSetter::create(vm, Process_getPPID, nullptr),
         static_cast<unsigned>(JSC::PropertyAttribute::CustomValue));
 
-    putDirectCustomAccessor(vm, clientData->builtinNames().titlePublicName(),
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "dlopen"_s),
         JSC::CustomGetterSetter::create(vm, Process_getTitle, Process_setTitle),
         static_cast<unsigned>(JSC::PropertyAttribute::CustomValue));
 
@@ -249,7 +249,7 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::JSValue(JSC::jsNumber(0)));
 
     this->putDirect(this->vm(), clientData->builtinNames().versionPublicName(),
-        JSC::jsString(this->vm(), Bun__version));
+        JSC::jsString(this->vm(), makeAtomString(Bun__version)));
 
     // this gives some way of identifying at runtime whether the SSR is happening in node or not.
     // this should probably be renamed to what the name of the bundler is, instead of "notNodeJS"

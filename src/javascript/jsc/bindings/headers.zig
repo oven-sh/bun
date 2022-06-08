@@ -62,6 +62,7 @@ pub const Bun__ArrayBuffer = bindings.ArrayBuffer;
 pub const struct_WebCore__DOMURL = bindings.DOMURL;
 pub const struct_WebCore__FetchHeaders = bindings.FetchHeaders;
 pub const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
+pub const struct_VirtualMachine = bindings.VirtualMachine;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;
@@ -75,6 +76,8 @@ pub const __mbstate_t = extern union {
     __mbstate8: [128]u8,
     _mbstateL: c_longlong,
 };
+
+pub const VirtualMachine = struct_VirtualMachine;
 
 pub const JSC__GeneratorPrototype = struct_JSC__GeneratorPrototype;
 
@@ -108,10 +111,9 @@ pub const WTF__URL = bWTF__URL;
 pub const JSC__IteratorPrototype = struct_JSC__IteratorPrototype;
 pub const JSC__JSInternalPromise = bJSC__JSInternalPromise;
 
-pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
-
 pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
-pub const JSC__CallFrame = bJSC__CallFrame;
+
+pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
 
 pub const WebCore__FetchHeaders = struct_WebCore__FetchHeaders;
 pub const WTF__StringView = bWTF__StringView;
@@ -180,6 +182,7 @@ pub extern fn JSC__JSString__createFromOwnedString(arg0: [*c]JSC__VM, arg1: [*c]
 pub extern fn JSC__JSString__createFromString(arg0: [*c]JSC__VM, arg1: [*c]const WTF__String) [*c]JSC__JSString;
 pub extern fn JSC__JSString__eql(arg0: [*c]const JSC__JSString, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__JSString) bool;
 pub extern fn JSC__JSString__is8Bit(arg0: [*c]const JSC__JSString) bool;
+pub extern fn JSC__JSString__iterator(arg0: [*c]JSC__JSString, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque) void;
 pub extern fn JSC__JSString__length(arg0: [*c]const JSC__JSString) usize;
 pub extern fn JSC__JSString__toObject(arg0: [*c]JSC__JSString, arg1: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSString__value(arg0: [*c]JSC__JSString, arg1: [*c]JSC__JSGlobalObject) bWTF__String;
@@ -223,15 +226,6 @@ pub extern fn JSC__JSInternalPromise__status(arg0: [*c]const JSC__JSInternalProm
 pub extern fn JSC__SourceOrigin__fromURL(arg0: [*c]const WTF__URL) bJSC__SourceOrigin;
 pub extern fn JSC__SourceCode__fromString(arg0: [*c]JSC__SourceCode, arg1: [*c]const WTF__String, arg2: [*c]const JSC__SourceOrigin, arg3: [*c]WTF__String, SourceType4: u8) void;
 pub extern fn JSC__JSFunction__calculatedDisplayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
-pub extern fn JSC__JSFunction__callWithArguments(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__JSValue, arg3: usize, arg4: *?*JSC__Exception, arg5: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__callWithArgumentsAndThis(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: [*c]JSC__JSGlobalObject, arg3: [*c]JSC__JSValue, arg4: usize, arg5: *?*JSC__Exception, arg6: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__callWithoutAnyArgumentsOrThis(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: *?*JSC__Exception, arg3: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__callWithThis(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue, arg3: *?*JSC__Exception, arg4: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__constructWithArguments(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__JSValue, arg3: usize, arg4: *?*JSC__Exception, arg5: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__constructWithArgumentsAndNewTarget(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue, arg2: [*c]JSC__JSGlobalObject, arg3: [*c]JSC__JSValue, arg4: usize, arg5: *?*JSC__Exception, arg6: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__constructWithNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue, arg3: *?*JSC__Exception, arg4: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__constructWithoutAnyArgumentsOrNewTarget(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: *?*JSC__Exception, arg3: [*c]const u8) JSC__JSValue;
-pub extern fn JSC__JSFunction__createFromNative(arg0: [*c]JSC__JSGlobalObject, arg1: u16, arg2: [*c]const WTF__String, arg3: ?*anyopaque, ArgFn4: ?fn (?*anyopaque, [*c]JSC__JSGlobalObject, [*c]JSC__CallFrame) callconv(.C) JSC__JSValue) [*c]JSC__JSFunction;
 pub extern fn JSC__JSFunction__displayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSFunction__getName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSGlobalObject__arrayIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__ArrayIteratorPrototype;
@@ -242,6 +236,7 @@ pub extern fn JSC__JSGlobalObject__asyncGeneratorPrototype(arg0: [*c]JSC__JSGlob
 pub extern fn JSC__JSGlobalObject__asyncIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__AsyncIteratorPrototype;
 pub extern fn JSC__JSGlobalObject__bigIntPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__BigIntPrototype;
 pub extern fn JSC__JSGlobalObject__booleanPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
+pub extern fn JSC__JSGlobalObject__bunVM(arg0: [*c]JSC__JSGlobalObject) ?*VirtualMachine;
 pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]*anyopaque, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString) void;
@@ -306,7 +301,7 @@ pub extern fn WTF__String__isEmpty(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isExternal(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isStatic(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__length(arg0: [*c]WTF__String) usize;
-pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue, usize) callconv(.C) void, ArgFn4: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue, usize) callconv(.C) void) void;
+pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, [*c]*anyopaque, usize) callconv(.C) void, ArgFn4: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, [*c]*anyopaque, usize) callconv(.C) void) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]JSC__JSCell;
 pub extern fn JSC__JSValue__asInternalPromise(JSValue0: JSC__JSValue) [*c]JSC__JSInternalPromise;
@@ -320,6 +315,7 @@ pub extern fn JSC__JSValue__createObject2(arg0: [*c]JSC__JSGlobalObject, arg1: [
 pub extern fn JSC__JSValue__createRangeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__createStringArray(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: usize, arg3: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c]const ZigString, arg2: [*c]JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn JSC__JSValue__createUninitializedUint8Array(arg0: [*c]JSC__JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__VM, [*c]JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
@@ -408,11 +404,12 @@ pub extern fn JSC__VM__executionForbidden(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__holdAPILock(arg0: [*c]JSC__VM, arg1: ?*anyopaque, ArgFn2: ?fn (?*anyopaque) callconv(.C) void) void;
 pub extern fn JSC__VM__isEntered(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__isJITEnabled(...) bool;
+pub extern fn JSC__VM__releaseWeakRefs(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__runGC(arg0: [*c]JSC__VM, arg1: bool) JSC__JSValue;
 pub extern fn JSC__VM__setExecutionForbidden(arg0: [*c]JSC__VM, arg1: bool) void;
 pub extern fn JSC__VM__setExecutionTimeLimit(arg0: [*c]JSC__VM, arg1: f64) void;
 pub extern fn JSC__VM__shrinkFootprint(arg0: [*c]JSC__VM) void;
-pub extern fn JSC__VM__throwError(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]JSC__ThrowScope, arg3: [*c]const u8, arg4: usize) bool;
+pub extern fn JSC__VM__throwError(arg0: [*c]JSC__VM, arg1: [*c]JSC__JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__VM__whenIdle(arg0: [*c]JSC__VM, ArgFn1: ?fn (...) callconv(.C) void) void;
 pub extern fn JSC__ThrowScope__clearException(arg0: [*c]JSC__ThrowScope) void;
 pub extern fn JSC__ThrowScope__declare(arg0: [*c]JSC__VM, arg1: [*c]u8, arg2: [*c]u8, arg3: usize) bJSC__ThrowScope;
@@ -421,14 +418,6 @@ pub extern fn JSC__ThrowScope__release(arg0: [*c]JSC__ThrowScope) void;
 pub extern fn JSC__CatchScope__clearException(arg0: [*c]JSC__CatchScope) void;
 pub extern fn JSC__CatchScope__declare(arg0: [*c]JSC__VM, arg1: [*c]u8, arg2: [*c]u8, arg3: usize) bJSC__CatchScope;
 pub extern fn JSC__CatchScope__exception(arg0: [*c]JSC__CatchScope) [*c]JSC__Exception;
-pub extern fn JSC__CallFrame__argument(arg0: [*c]const JSC__CallFrame, arg1: u16) JSC__JSValue;
-pub extern fn JSC__CallFrame__argumentsCount(arg0: [*c]const JSC__CallFrame) usize;
-pub extern fn JSC__CallFrame__jsCallee(arg0: [*c]const JSC__CallFrame) [*c]JSC__JSObject;
-pub extern fn JSC__CallFrame__newTarget(arg0: [*c]const JSC__CallFrame) JSC__JSValue;
-pub extern fn JSC__CallFrame__setNewTarget(arg0: [*c]JSC__CallFrame, JSValue1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__CallFrame__setThisValue(arg0: [*c]JSC__CallFrame, JSValue1: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__CallFrame__thisValue(arg0: [*c]const JSC__CallFrame) JSC__JSValue;
-pub extern fn JSC__CallFrame__uncheckedArgument(arg0: [*c]const JSC__CallFrame, arg1: u16) JSC__JSValue;
 pub extern fn JSC__Identifier__deinit(arg0: [*c]const JSC__Identifier) void;
 pub extern fn JSC__Identifier__eqlIdent(arg0: [*c]const JSC__Identifier, arg1: [*c]const JSC__Identifier) bool;
 pub extern fn JSC__Identifier__eqlStringImpl(arg0: [*c]const JSC__Identifier, arg1: [*c]const WTF__StringImpl) bool;

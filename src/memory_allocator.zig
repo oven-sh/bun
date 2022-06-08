@@ -214,3 +214,129 @@ const z_allocator_vtable = Allocator.VTable{
     .resize = ZAllocator.resize,
     .free = ZAllocator.free,
 };
+const HugeAllocator = struct {
+    fn alloc(
+        _: *anyopaque,
+        len: usize,
+        alignment: u29,
+        len_align: u29,
+        return_address: usize,
+    ) error{OutOfMemory}![]u8 {
+        _ = return_address;
+        assert(len > 0);
+        assert(std.math.isPowerOfTwo(alignment));
+
+        var slice = std.os.mmap(
+            null,
+            len,
+            std.os.PROT.READ | std.os.PROT.WRITE,
+            std.os.MAP.ANONYMOUS | std.os.MAP.PRIVATE,
+            -1,
+            0,
+        ) catch
+            return error.OutOfMemory;
+
+        _ = len_align;
+        return slice;
+    }
+
+    fn resize(
+        _: *anyopaque,
+        _: []u8,
+        _: u29,
+        _: usize,
+        _: u29,
+        _: usize,
+    ) ?usize {
+        return null;
+    }
+
+    fn free(
+        _: *anyopaque,
+        buf: []u8,
+        _: u29,
+        _: usize,
+    ) void {
+        std.os.munmap(@alignCast(std.meta.alignment([]align(std.mem.page_size) u8), buf));
+    }
+};
+
+pub const huge_allocator = Allocator{
+    .ptr = undefined,
+    .vtable = &huge_allocator_vtable,
+};
+const huge_allocator_vtable = Allocator.VTable{
+    .alloc = HugeAllocator.alloc,
+    .resize = HugeAllocator.resize,
+    .free = HugeAllocator.free,
+};
+
+pub const huge_threshold = 1024 * 256;
+
+const AutoSizeAllocator = struct {
+    fn alloc(
+        _: *anyopaque,
+        len: usize,
+        alignment: u29,
+        len_align: u29,
+        return_address: usize,
+    ) error{OutOfMemory}![]u8 {
+        if (len >= huge_threshold) {
+            return huge_allocator.rawAlloc(
+                len,
+                alignment,
+                len_align,
+                return_address,
+            );
+        }
+
+        return c_allocator.rawAlloc(
+            len,
+            alignment,
+            len_align,
+            return_address,
+        );
+    }
+
+    fn resize(
+        _: *anyopaque,
+        _: []u8,
+        _: u29,
+        _: usize,
+        _: u29,
+        _: usize,
+    ) ?usize {
+        return null;
+    }
+
+    fn free(
+        _: *anyopaque,
+        buf: []u8,
+        a: u29,
+        b: usize,
+    ) void {
+        if (buf.len >= huge_threshold) {
+            return huge_allocator.rawFree(
+                buf,
+                a,
+                b,
+            );
+        }
+
+        return c_allocator.rawFree(
+            buf,
+            a,
+            b,
+        );
+    }
+};
+
+pub const auto_allocator = Allocator{
+    .ptr = undefined,
+    .vtable = &auto_allocator_vtable,
+};
+const auto_allocator_vtable = Allocator.VTable{
+    .alloc = AutoSizeAllocator.alloc,
+    .resize = AutoSizeAllocator.resize,
+    .free = AutoSizeAllocator.free,
+};

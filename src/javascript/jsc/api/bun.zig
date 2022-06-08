@@ -623,7 +623,7 @@ pub fn openInEditor(
 ) js.JSValueRef {
     var edit = &VirtualMachine.vm.rareData().editor_context;
 
-    var arguments = JSC.Node.ArgumentsSlice.from(args);
+    var arguments = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), args);
     defer arguments.deinit();
     var path: string = "";
     var editor_choice: ?Editor = null;
@@ -822,7 +822,7 @@ fn doResolve(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) ?JSC.JSValue {
-    var args = JSC.Node.ArgumentsSlice.from(arguments);
+    var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
     defer args.deinit();
     const specifier = args.protectEatNext() orelse {
         JSC.throwInvalidArguments("Expected a specifier and a from path", .{}, ctx, exception);
@@ -1543,7 +1543,7 @@ pub fn serve(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    var args = JSC.Node.ArgumentsSlice.from(arguments);
+    var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
     var config = JSC.API.ServerConfig.fromJS(ctx.ptr(), &args, exception);
     if (exception.* != null) {
         return null;
@@ -1612,6 +1612,100 @@ pub fn serve(
     unreachable;
 }
 
+pub export fn Bun__escapeHTML(
+    globalObject: *JSGlobalObject,
+    callframe: *JSC.CallFrame,
+) JSC.JSValue {
+    const arguments = callframe.arguments();
+    if (arguments.len < 1) {
+        return ZigString.Empty.toValue(globalObject);
+    }
+
+    const input_value = arguments[0];
+    const zig_str = input_value.getZigString(globalObject);
+    if (zig_str.len == 0)
+        return ZigString.Empty.toValue(globalObject);
+
+    if (zig_str.is16Bit()) {
+        var input_slice = zig_str.utf16SliceAligned();
+        var escaped_html = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
+            globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
+            return JSC.JSValue.jsUndefined();
+        };
+
+        if (escaped_html.ptr == input_slice.ptr and escaped_html.len == input_slice.len) {
+            return input_value;
+        }
+
+        if (input_slice.len == 1) {
+            // single character escaped strings are statically allocated
+            return ZigString.init(std.mem.sliceAsBytes(escaped_html)).to16BitValue(globalObject);
+        }
+
+        if (comptime Environment.allow_assert) {
+            // assert that re-encoding the string produces the same result
+            std.debug.assert(
+                std.mem.eql(
+                    u16,
+                    (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false) catch unreachable).?,
+                    escaped_html,
+                ),
+            );
+
+            // assert we do not allocate a new string unnecessarily
+            std.debug.assert(
+                !std.mem.eql(
+                    u16,
+                    input_slice,
+                    escaped_html,
+                ),
+            );
+
+            // the output should always be longer than the input
+            std.debug.assert(escaped_html.len > input_slice.len);
+        }
+
+        return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
+    } else {
+        var input_slice = zig_str.slice();
+        var escaped_html = strings.escapeHTMLForLatin1Input(globalObject.bunVM().allocator, input_slice) catch {
+            globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
+            return JSC.JSValue.jsUndefined();
+        };
+
+        if (escaped_html.ptr == input_slice.ptr and escaped_html.len == input_slice.len) {
+            return input_value;
+        }
+
+        if (input_slice.len == 1) {
+            // single character escaped strings are statically allocated
+            return ZigString.init(escaped_html).toValue(globalObject);
+        }
+
+        if (comptime Environment.allow_assert) {
+            // the output should always be longer than the input
+            std.debug.assert(escaped_html.len > input_slice.len);
+
+            // assert we do not allocate a new string unnecessarily
+            std.debug.assert(
+                !std.mem.eql(
+                    u8,
+                    input_slice,
+                    escaped_html,
+                ),
+            );
+        }
+
+        return ZigString.init(escaped_html).toExternalValue(globalObject);
+    }
+}
+
+comptime {
+    if (!JSC.is_bindgen) {
+        _ = Bun__escapeHTML;
+    }
+}
+
 pub fn allocUnsafe(
     _: void,
     ctx: js.JSContextRef,
@@ -1620,7 +1714,7 @@ pub fn allocUnsafe(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    var args = JSC.Node.ArgumentsSlice.from(arguments);
+    var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
 
     const length = @intCast(
         usize,
@@ -1649,7 +1743,7 @@ pub fn mmapFile(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) js.JSValueRef {
-    var args = JSC.Node.ArgumentsSlice.from(arguments);
+    var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
 
     var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
     const path = getFilePath(ctx, arguments[0..@minimum(1, arguments.len)], &buf, exception) orelse return null;
@@ -1795,7 +1889,7 @@ pub const Hash = struct {
                 arguments: []const js.JSValueRef,
                 exception: js.ExceptionRef,
             ) js.JSValueRef {
-                var args = JSC.Node.ArgumentsSlice.from(arguments);
+                var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
                 var input: []const u8 = "";
                 var input_slice = ZigString.Slice.empty;
                 defer input_slice.deinit();
@@ -2375,7 +2469,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref());
         }
 
-        return JSC.JSValue.jsNumber(@bitCast(f64, @as(usize, addr)));
+        return JSC.JSValue.fromPtrAddress(addr);
     }
 
     const ValueOrError = union(enum) {

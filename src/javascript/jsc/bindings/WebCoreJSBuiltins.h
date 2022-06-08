@@ -1,5 +1,10 @@
 /*
- * Copyright (c) 2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2015 Igalia
+ * Copyright (c) 2015 Igalia S.L.
+ * Copyright (c) 2015 Igalia.
+ * Copyright (c) 2015, 2016 Canon Inc. All rights reserved.
+ * Copyright (c) 2015, 2016, 2017 Canon Inc.
+ * Copyright (c) 2016, 2020 Apple Inc. All rights reserved.
  * Copyright (c) 2022 Codeblog Corp. All rights reserved.
  * 
  * Redistribution and use in source and binary forms, with or without
@@ -30,9 +35,26 @@
 
 #pragma once
 
+#include "ByteLengthQueuingStrategyBuiltins.h"
+#include "CountQueuingStrategyBuiltins.h"
 #include "JSBufferConstructorBuiltins.h"
 #include "JSBufferPrototypeBuiltins.h"
 #include "JSZigGlobalObjectBuiltins.h"
+#include "ReadableByteStreamControllerBuiltins.h"
+#include "ReadableByteStreamInternalsBuiltins.h"
+#include "ReadableStreamBYOBReaderBuiltins.h"
+#include "ReadableStreamBYOBRequestBuiltins.h"
+#include "ReadableStreamBuiltins.h"
+#include "ReadableStreamDefaultControllerBuiltins.h"
+#include "ReadableStreamDefaultReaderBuiltins.h"
+#include "ReadableStreamInternalsBuiltins.h"
+#include "StreamInternalsBuiltins.h"
+#include "TransformStreamBuiltins.h"
+#include "TransformStreamDefaultControllerBuiltins.h"
+#include "TransformStreamInternalsBuiltins.h"
+#include "WritableStreamDefaultControllerBuiltins.h"
+#include "WritableStreamDefaultWriterBuiltins.h"
+#include "WritableStreamInternalsBuiltins.h"
 #include <JavaScriptCore/VM.h>
 
 namespace WebCore {
@@ -41,21 +63,77 @@ class JSBuiltinFunctions {
 public:
     explicit JSBuiltinFunctions(JSC::VM& vm)
         : m_vm(vm)
+        , m_byteLengthQueuingStrategyBuiltins(m_vm)
+        , m_countQueuingStrategyBuiltins(m_vm)
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
         , m_jsZigGlobalObjectBuiltins(m_vm)
+        , m_readableByteStreamControllerBuiltins(m_vm)
+        , m_readableByteStreamInternalsBuiltins(m_vm)
+        , m_readableStreamBuiltins(m_vm)
+        , m_readableStreamBYOBReaderBuiltins(m_vm)
+        , m_readableStreamBYOBRequestBuiltins(m_vm)
+        , m_readableStreamDefaultControllerBuiltins(m_vm)
+        , m_readableStreamDefaultReaderBuiltins(m_vm)
+        , m_readableStreamInternalsBuiltins(m_vm)
+        , m_streamInternalsBuiltins(m_vm)
+        , m_transformStreamBuiltins(m_vm)
+        , m_transformStreamDefaultControllerBuiltins(m_vm)
+        , m_transformStreamInternalsBuiltins(m_vm)
+        , m_writableStreamDefaultControllerBuiltins(m_vm)
+        , m_writableStreamDefaultWriterBuiltins(m_vm)
+        , m_writableStreamInternalsBuiltins(m_vm)
     {
+        m_readableByteStreamInternalsBuiltins.exportNames();
+        m_readableStreamInternalsBuiltins.exportNames();
+        m_streamInternalsBuiltins.exportNames();
+        m_transformStreamInternalsBuiltins.exportNames();
+        m_writableStreamInternalsBuiltins.exportNames();
     }
 
+    ByteLengthQueuingStrategyBuiltinsWrapper& byteLengthQueuingStrategyBuiltins() { return m_byteLengthQueuingStrategyBuiltins; }
+    CountQueuingStrategyBuiltinsWrapper& countQueuingStrategyBuiltins() { return m_countQueuingStrategyBuiltins; }
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
     JSZigGlobalObjectBuiltinsWrapper& jsZigGlobalObjectBuiltins() { return m_jsZigGlobalObjectBuiltins; }
+    ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
+    ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
+    ReadableStreamBuiltinsWrapper& readableStreamBuiltins() { return m_readableStreamBuiltins; }
+    ReadableStreamBYOBReaderBuiltinsWrapper& readableStreamBYOBReaderBuiltins() { return m_readableStreamBYOBReaderBuiltins; }
+    ReadableStreamBYOBRequestBuiltinsWrapper& readableStreamBYOBRequestBuiltins() { return m_readableStreamBYOBRequestBuiltins; }
+    ReadableStreamDefaultControllerBuiltinsWrapper& readableStreamDefaultControllerBuiltins() { return m_readableStreamDefaultControllerBuiltins; }
+    ReadableStreamDefaultReaderBuiltinsWrapper& readableStreamDefaultReaderBuiltins() { return m_readableStreamDefaultReaderBuiltins; }
+    ReadableStreamInternalsBuiltinsWrapper& readableStreamInternalsBuiltins() { return m_readableStreamInternalsBuiltins; }
+    StreamInternalsBuiltinsWrapper& streamInternalsBuiltins() { return m_streamInternalsBuiltins; }
+    TransformStreamBuiltinsWrapper& transformStreamBuiltins() { return m_transformStreamBuiltins; }
+    TransformStreamDefaultControllerBuiltinsWrapper& transformStreamDefaultControllerBuiltins() { return m_transformStreamDefaultControllerBuiltins; }
+    TransformStreamInternalsBuiltinsWrapper& transformStreamInternalsBuiltins() { return m_transformStreamInternalsBuiltins; }
+    WritableStreamDefaultControllerBuiltinsWrapper& writableStreamDefaultControllerBuiltins() { return m_writableStreamDefaultControllerBuiltins; }
+    WritableStreamDefaultWriterBuiltinsWrapper& writableStreamDefaultWriterBuiltins() { return m_writableStreamDefaultWriterBuiltins; }
+    WritableStreamInternalsBuiltinsWrapper& writableStreamInternalsBuiltins() { return m_writableStreamInternalsBuiltins; }
 
 private:
     JSC::VM& m_vm;
+    ByteLengthQueuingStrategyBuiltinsWrapper m_byteLengthQueuingStrategyBuiltins;
+    CountQueuingStrategyBuiltinsWrapper m_countQueuingStrategyBuiltins;
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
     JSZigGlobalObjectBuiltinsWrapper m_jsZigGlobalObjectBuiltins;
+    ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
+    ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;
+    ReadableStreamBuiltinsWrapper m_readableStreamBuiltins;
+    ReadableStreamBYOBReaderBuiltinsWrapper m_readableStreamBYOBReaderBuiltins;
+    ReadableStreamBYOBRequestBuiltinsWrapper m_readableStreamBYOBRequestBuiltins;
+    ReadableStreamDefaultControllerBuiltinsWrapper m_readableStreamDefaultControllerBuiltins;
+    ReadableStreamDefaultReaderBuiltinsWrapper m_readableStreamDefaultReaderBuiltins;
+    ReadableStreamInternalsBuiltinsWrapper m_readableStreamInternalsBuiltins;
+    StreamInternalsBuiltinsWrapper m_streamInternalsBuiltins;
+    TransformStreamBuiltinsWrapper m_transformStreamBuiltins;
+    TransformStreamDefaultControllerBuiltinsWrapper m_transformStreamDefaultControllerBuiltins;
+    TransformStreamInternalsBuiltinsWrapper m_transformStreamInternalsBuiltins;
+    WritableStreamDefaultControllerBuiltinsWrapper m_writableStreamDefaultControllerBuiltins;
+    WritableStreamDefaultWriterBuiltinsWrapper m_writableStreamDefaultWriterBuiltins;
+    WritableStreamInternalsBuiltinsWrapper m_writableStreamInternalsBuiltins;
 };
 
 } // namespace WebCore

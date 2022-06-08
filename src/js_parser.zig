@@ -13531,14 +13531,21 @@ fn NewParser_(
                             const runtime = if (p.options.jsx.runtime == .automatic and !e_.flags.contains(.is_key_before_rest)) options.JSX.Runtime.automatic else options.JSX.Runtime.classic;
                             var children_count = e_.children.len;
 
-                            const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.slice(p.allocator));
+                            const is_childless_tag = FeatureFlags.react_specific_warnings and children_count > 0 and
+                                tag.data == .e_string and tag.data.e_string.isUTF8() and js_lexer.ChildlessJSXTags.has(tag.data.e_string.slice(p.allocator));
 
                             children_count = if (is_childless_tag) 0 else children_count;
 
                             if (children_count != e_.children.len) {
                                 // Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
                                 // ^ from react-dom
-                                p.log.addWarningFmt(p.source, tag.loc, p.allocator, "<{s} /> is a void element and must not have \"children\"", .{tag.data.e_string.slice(p.allocator)}) catch {};
+                                p.log.addWarningFmt(
+                                    p.source,
+                                    tag.loc,
+                                    p.allocator,
+                                    "<{s} /> is a void element and must not have \"children\"",
+                                    .{tag.data.e_string.slice(p.allocator)},
+                                ) catch {};
                             }
 
                             // TODO: maybe we should split these into two different AST Nodes
@@ -13686,6 +13693,51 @@ fn NewParser_(
                                             },
                                             expr.loc,
                                         );
+                                        var props_expression = props_object;
+
+                                        // we must check for default props
+                                        if (tag.data != .e_string) {
+                                            // We assume defaultProps is supposed to _not_ have side effects
+                                            // We do not support "key" or "ref" in defaultProps.
+                                            const defaultProps = p.e(E.Dot{
+                                                .name = "defaultProps",
+                                                .name_loc = tag.loc,
+                                                .target = tag,
+                                                .can_be_removed_if_unused = true,
+                                            }, tag.loc);
+                                            // props: MyComponent.defaultProps || {}
+                                            if (props.items.len == 0) {
+                                                props_expression = p.e(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
+                                            } else {
+                                                // we assume that most components don't use defaultProps
+                                                // props: !MyComponent.defaultProps ? {myProp: 123} : { ...MyComponent.defaultProps,  myProp: 123}
+                                                var with_default_props = p.allocator.alloc(G.Property, props_object.data.e_object.properties.len + 1) catch unreachable;
+                                                with_default_props[0] = G.Property{
+                                                    .key = null,
+                                                    .value = defaultProps,
+                                                    .kind = Property.Kind.spread,
+                                                    .flags = Flags.Property.init(
+                                                        .{
+                                                            .is_spread = true,
+                                                        },
+                                                    ),
+                                                };
+
+                                                std.mem.copy(G.Property, with_default_props[1..], props_object.data.e_object.properties.slice());
+                                                props_expression = p.e(
+                                                    E.If{
+                                                        .test_ = p.e(E.Unary{ .op = .un_not, .value = defaultProps }, defaultProps.loc),
+                                                        .no = p.e(
+                                                            E.Object{ .properties = G.Property.List.init(with_default_props), .close_brace_loc = e_.close_tag_loc },
+                                                            tag.loc,
+                                                        ),
+                                                        .yes = props_object,
+                                                    },
+                                                    props_object.loc,
+                                                );
+                                            }
+                                        }
+
                                         jsx_element[0..6].* =
                                             [_]G.Property{
                                             G.Property{
@@ -13714,7 +13766,7 @@ fn NewParser_(
                                             },
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.@"props", .loc = expr.loc },
-                                                .value = props_object,
+                                                .value = props_expression,
                                             },
                                             G.Property{
                                                 .key = Expr{ .data = Prefill.Data.@"_owner", .loc = key.loc },

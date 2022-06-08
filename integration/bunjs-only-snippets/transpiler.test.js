@@ -1438,21 +1438,22 @@ class Foo {
       expectPrinted("'a' != '\\x62'", "true");
       expectPrinted("'a' != 'abc'", "true");
 
-      // TODO: string simplification
-      // expectPrinted("'a' + 'b'", '"ab"');
-      // expectPrinted("'a' + 'bc'", '"abc"');
-      // expectPrinted("'ab' + 'c'", '"abc"');
-      // expectPrinted("x + 'a' + 'b'", 'x + "ab"');
-      // expectPrinted("x + 'a' + 'bc'", 'x + "abc"');
-      // expectPrinted("x + 'ab' + 'c'", 'x + "abc"');
-      // expectPrinted("'a' + 1", '"a" + 1;');
-      // expectPrinted("x * 'a' + 'b'", 'x * "a" + "b"');
+      expectPrinted("'a' + 'b'", '"ab"');
+      expectPrinted("'a' + 'bc'", '"abc"');
+      expectPrinted("'ab' + 'c'", '"abc"');
+      expectPrinted("x + 'a' + 'b'", 'x + "ab"');
+      expectPrinted("x + 'a' + 'bc'", 'x + "abc"');
+      expectPrinted("x + 'ab' + 'c'", 'x + "abc"');
+      expectPrinted("'a' + 1", '"a" + 1');
+      expectPrinted("x * 'a' + 'b'", 'x * "a" + "b"');
 
-      // TODO: string simplification
-      // expectPrinted("'string' + `template`", "`stringtemplate`");
+      expectPrinted("'string' + `template`", `"stringtemplate"`);
+
+      expectPrinted("`template` + 'string'", "`templatestring`");
+
+      // TODO: string template simplification
       // expectPrinted("'string' + `a${foo}b`", "`stringa${foo}b`");
       // expectPrinted("'string' + tag`template`", '"string" + tag`template`;');
-      // expectPrinted("`template` + 'string'", "`templatestring`");
       // expectPrinted("`a${foo}b` + 'string'", "`a${foo}bstring`");
       // expectPrinted("tag`template` + 'string'", 'tag`template` + "string"');
       // expectPrinted("`template` + `a${foo}b`", "`templatea${foo}b`");

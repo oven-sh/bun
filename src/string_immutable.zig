@@ -715,45 +715,33 @@ pub fn toUTF8Alloc(allocator: std.mem.Allocator, js: []const u16) !string {
 }
 
 pub inline fn appendUTF8MachineWordToUTF16MachineWord(output: *[@sizeOf(usize) / 2]u16, input: *const [@sizeOf(usize) / 2]u8) void {
-    comptime var i: usize = 0;
-    inline while (i < @sizeOf(usize) / 2) : (i += 1) {
-        output[i] = input[i];
-    }
+    output[0 .. @sizeOf(usize) / 2].* = @bitCast(
+        [4]u16,
+        @as(
+            @Vector(4, u16),
+            @bitCast(@Vector(4, u8), input[0 .. @sizeOf(usize) / 2].*),
+        ),
+    );
 }
 
 pub inline fn copyU8IntoU16(output_: []u16, input_: []const u8) void {
     var output = output_;
     var input = input_;
-    const word = @sizeOf(usize) / 2;
     if (comptime Environment.allow_assert) {
         std.debug.assert(input.len <= output.len);
     }
 
     // https://zig.godbolt.org/z/9rTn1orcY
 
-    const group = comptime if (Environment.isAarch64)
-        // on ARM64, 128 seems to be the best choice judging by lines of ASM
-        128
-    else
-        // on x64, 128 seems to be the best choice judging by lines of ASM
-        16;
+    var input_ptr = input.ptr;
+    var output_ptr = output.ptr;
 
-    while (input.len >= group) {
-        const input_vec: @Vector(group, u8) = input[0..group].*;
-        const output_vec: @Vector(group, u16) = @as(@Vector(group, u16), input_vec);
-        output[0..group].* = output_vec;
-        output = output[group..];
-        input = input[group..];
-    }
+    const last_input_ptr = input_ptr + @minimum(input.len, output.len);
 
-    while (input.len >= word) {
-        appendUTF8MachineWordToUTF16MachineWord(output[0..word], input[0..word]);
-        output = output[word..];
-        input = input[word..];
-    }
-
-    for (input) |c, i| {
-        output[i] = c;
+    while (last_input_ptr != input_ptr) {
+        output_ptr[0] = input_ptr[0];
+        output_ptr += 1;
+        input_ptr += 1;
     }
 }
 
@@ -814,29 +802,30 @@ pub inline fn copyU16IntoU8(output_: []u8, comptime InputType: type, input_: Inp
     if (comptime Environment.allow_assert) {
         std.debug.assert(input_.len <= output_.len);
     }
-
-    if (comptime !JSC.is_bindgen) {
+    if (comptime !JSC.is_bindgen and Environment.isAarch64) {
+        // faster on aarch64
+        // but it only uses SSE2 when it could use AVX2
+        // so it's better to let llvm auto-vectorize it
         JSC.WTF.copyLCharsFromUCharSource(output_.ptr, InputType, input_);
     } else {
         var output = output_;
         var input = input_;
-
-        // on X64, this is 4
-        // on WASM, this is 2
-        const machine_word_length = comptime @sizeOf(usize) / @sizeOf(u16);
-
-        while (input.len >= machine_word_length) {
-            comptime var machine_word_i: usize = 0;
-            inline while (machine_word_i < machine_word_length) : (machine_word_i += 1) {
-                output[machine_word_i] = @intCast(u8, input[machine_word_i]);
-            }
-
-            output = output[machine_word_length..];
-            input = input[machine_word_length..];
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(input.len <= output.len);
         }
 
-        for (input) |c, i| {
-            output[i] = @intCast(u8, c);
+        // https://zig.godbolt.org/z/Y1qa9PTo1
+        // https://github.com/ziglang/zig/issues/11830
+        // this auto-vectorizes on x64 and aarch64
+        var input_ptr = input.ptr;
+        var output_ptr = output.ptr;
+
+        const last_input_ptr = input_ptr + @minimum(input.len, output.len);
+
+        while (last_input_ptr != input_ptr) {
+            output_ptr[0] = @truncate(u8, input_ptr[0]);
+            output_ptr += 1;
+            input_ptr += 1;
         }
     }
 }
@@ -1281,7 +1270,12 @@ pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: t
     var latin1 = latin1_;
     while (buf.len > 0 and latin1.len > 0) {
         const to_write = strings.firstNonASCII(latin1) orelse @truncate(u32, latin1.len);
-        strings.copyU8IntoU16WithAlignment(std.meta.alignment(Buffer), buf, latin1[0..to_write]);
+        if (comptime std.meta.alignment(Buffer) != @alignOf(u16)) {
+            strings.copyU8IntoU16WithAlignment(std.meta.alignment(Buffer), buf, latin1[0..to_write]);
+        } else {
+            strings.copyU8IntoU16(buf, latin1[0..to_write]);
+        }
+
         latin1 = latin1[to_write..];
         buf = buf[to_write..];
         if (latin1.len > 0 and buf.len >= 2) {

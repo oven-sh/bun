@@ -1078,18 +1078,9 @@ JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject*
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), str)));
 }
 
-static void free_global_string(void* str, void* ptr, unsigned len)
-{
-    // i don't understand why this happens
-    if (ptr == nullptr)
-        return;
-
-    ZigString__free_global(reinterpret_cast<const unsigned char*>(ptr), len);
-}
-
 JSC__JSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, JSC__JSGlobalObject* global)
 {
-    auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, nullptr, free_global_string));
+    auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(arg0), len, reinterpret_cast<void*>(const_cast<uint16_t*>(arg0)), free_global_string));
 
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
         global->vm(), WTFMove(ref))));
@@ -1099,12 +1090,12 @@ JSC__JSValue ZigString__toExternalValue(const ZigString* arg0, JSC__JSGlobalObje
 {
     ZigString str = *arg0;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, nullptr, free_global_string));
+        auto ref = String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, Zig::untagVoid(str.ptr), free_global_string));
 
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(), WTFMove(ref))));
     } else {
-        auto ref = String(ExternalStringImpl::create(Zig::untag(str.ptr), str.len, nullptr, free_global_string));
+        auto ref = String(ExternalStringImpl::create(Zig::untag(str.ptr), str.len, Zig::untagVoid(str.ptr), free_global_string));
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
             WTFMove(ref))));

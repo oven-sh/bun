@@ -2151,21 +2151,26 @@ pub fn JSError(
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
-    var error_args: [1]js.JSValueRef = undefined;
     @setCold(true);
 
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         var zig_str = JSC.ZigString.init(fmt);
-        zig_str.detectEncoding();
-        error_args[0] = zig_str.toValueAuto(ctx.ptr()).asObjectRef();
-        exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
+        if (comptime !strings.isAllASCII(fmt)) {
+            zig_str.markUTF16();
+        }
+
+        exception.* = zig_str.toErrorInstance(ctx).asObjectRef();
     } else {
-        var buf = std.fmt.allocPrint(default_allocator, fmt, args) catch unreachable;
+        var fallback = std.heap.stackFallback(256, default_allocator);
+        var allocator = fallback.get();
+
+        var buf = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
         var zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
-
-        error_args[0] = zig_str.toValueGC(ctx.ptr()).asObjectRef();
-        exception.* = js.JSObjectMakeError(ctx, 1, &error_args, null);
+        zig_str.mark();
+        // it alwayas clones
+        exception.* = zig_str.toErrorInstance(ctx).asObjectRef();
+        allocator.free(buf);
     }
 }
 

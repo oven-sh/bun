@@ -2723,7 +2723,7 @@ pub const JSValue = enum(i64) {
     /// This algorithm differs from the IsStrictlyEqual Algorithm by treating all NaN values as equivalent and by differentiating +0𝔽 from -0𝔽.
     /// https://tc39.es/ecma262/#sec-samevalue
     pub fn isSameValue(this: JSValue, other: JSValue, global: *JSGlobalObject) bool {
-        return cppFn("isSameValue", .{ this, other, global });
+        return @enumToInt(this) == @enumToInt(other) or cppFn("isSameValue", .{ this, other, global });
     }
 
     pub fn asString(this: JSValue) *JSString {

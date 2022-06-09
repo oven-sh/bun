@@ -81,6 +81,16 @@ static const unsigned char* untag(const unsigned char* ptr)
         ((reinterpret_cast<uintptr_t>(ptr) & ~(static_cast<uint64_t>(1) << 63) & ~(static_cast<uint64_t>(1) << 62)) & ~(static_cast<uint64_t>(1) << 61)));
 }
 
+static void* untagVoid(const unsigned char* ptr)
+{
+    return const_cast<void*>(reinterpret_cast<const void*>(untag(ptr)));
+}
+
+static void* untagVoid(const char16_t* ptr)
+{
+    return untagVoid(reinterpret_cast<const unsigned char*>(ptr));
+}
+
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)
 {
     if (str.len == 0 || str.ptr == nullptr) {
@@ -106,6 +116,15 @@ static bool isTaggedExternalPtr(const unsigned char* ptr)
     return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 62)) != 0;
 }
 
+static void free_global_string(void* str, void* ptr, unsigned len)
+{
+    // i don't understand why this happens
+    if (ptr == nullptr)
+        return;
+
+    ZigString__free_global(reinterpret_cast<const unsigned char*>(ptr), len);
+}
+
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
 static const WTF::String toString(ZigString str)
 {
@@ -114,6 +133,13 @@ static const WTF::String toString(ZigString str)
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
         return WTF::String::fromUTF8(untag(str.ptr), str.len);
+    }
+
+    if (UNLIKELY(isTaggedExternalPtr(str.ptr))) {
+        return !isTaggedUTF16Ptr(str.ptr)
+            ? WTF::String(WTF::ExternalStringImpl::create(untag(str.ptr), str.len, untagVoid(str.ptr), free_global_string))
+            : WTF::String(WTF::ExternalStringImpl::create(
+                reinterpret_cast<const UChar*>(untag(str.ptr)), str.len, untagVoid(str.ptr), free_global_string));
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
@@ -280,13 +306,8 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* 
 {
     JSC::VM& vm = globalObject->vm();
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSValue message = Zig::toJSString(*str, globalObject);
-    JSC::JSValue options = JSC::jsUndefined();
-    JSC::Structure* errorStructure = globalObject->errorStructure();
-    JSC::JSObject* result = JSC::ErrorInstance::create(globalObject, errorStructure, message, options);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue());
-    scope.release();
+    JSC::JSObject* result = JSC::createError(globalObject, toString(*str));
+    JSC::EnsureStillAliveScope ensureAlive(result);
 
     return JSC::JSValue(result);
 }

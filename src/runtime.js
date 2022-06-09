@@ -1,5 +1,6 @@
 var $$mod$ = Symbol.for;
 var __create = Object.create;
+var __descs = Object.getOwnPropertyDescriptors;
 var __defProp = Object.defineProperty;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
@@ -181,4 +182,27 @@ export var __reExport = (target, module, desc) => {
             !(desc = __getOwnPropDesc(module, key)) || desc.enumerable,
         });
   return target;
+};
+
+function hasAnyProps(obj) {
+  for (let key in obj) return true;
+  return false;
+}
+
+function mergeDefaultProps(props, defaultProps) {
+  var result = __create(defaultProps, __descs(props));
+
+  for (let key in defaultProps) {
+    if (result[key] !== undefined) continue;
+
+    result[key] = defaultProps[key];
+  }
+  return result;
+}
+export var __merge = (props, defaultProps) => {
+  return !hasAnyProps(defaultProps)
+    ? props
+    : !hasAnyProps(props)
+    ? defaultProps
+    : mergeDefaultProps(props, defaultProps);
 };

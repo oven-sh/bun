@@ -339,6 +339,7 @@ pub const Runtime = struct {
         __exportValue: ?GeneratedSymbol = null,
         __exportDefault: ?GeneratedSymbol = null,
         __FastRefreshRuntime: ?GeneratedSymbol = null,
+        __merge: ?GeneratedSymbol = null,
 
         pub const all = [_][]const u8{
             // __HMRClient goes first
@@ -358,6 +359,7 @@ pub const Runtime = struct {
             "__exportValue",
             "__exportDefault",
             "__FastRefreshRuntime",
+            "__merge",
         };
         pub const Name = "bun:wrap";
         pub const alt_name = "bun:wrap";
@@ -452,6 +454,11 @@ pub const Runtime = struct {
                                 return Entry{ .key = 14, .value = val.ref };
                             }
                         },
+                        15 => {
+                            if (@field(this.runtime_imports, all[15])) |val| {
+                                return Entry{ .key = 15, .value = val.ref };
+                            }
+                        },
                         else => {
                             return null;
                         },
@@ -511,6 +518,7 @@ pub const Runtime = struct {
                 12 => (@field(imports, all[12]) orelse return null).ref,
                 13 => (@field(imports, all[13]) orelse return null).ref,
                 14 => (@field(imports, all[14]) orelse return null).ref,
+                15 => (@field(imports, all[15]) orelse return null).ref,
                 else => null,
             };
         }

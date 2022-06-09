@@ -134,10 +134,6 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
             }
         }
         switch (c) {
-            // Special-case the bell character since it may cause dumping this file to
-            // the terminal to make a sound, which is undesirable. Note that we can't
-            // use an octal literal to print this shorter since octal literals are not
-            // allowed in strict mode (or in template strings).
             0x07 => {
                 try bytes.appendSlice("\\x07");
                 i += 1;

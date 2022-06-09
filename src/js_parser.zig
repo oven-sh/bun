@@ -1028,6 +1028,8 @@ const StaticSymbolName = struct {
         pub const effect = NewStaticSymbol("effect");
         pub const delegateEvents = NewStaticSymbol("delegateEvents");
         pub const Solid = NewStaticSymbol("Solid");
+
+        pub const __merge = NewStaticSymbol("__merge");
     };
 };
 
@@ -5102,6 +5104,9 @@ fn NewParser_(
             if (p.options.features.jsx_optimization_inline) {
                 p.resolveGeneratedSymbol(&p.react_element_type);
                 p.resolveGeneratedSymbol(&p.es6_symbol_global);
+                if (p.runtime_imports.__merge) |*merge| {
+                    p.resolveGeneratedSymbol(merge);
+                }
             }
             p.resolveGeneratedSymbol(&p.jsx_runtime);
             p.resolveGeneratedSymbol(&p.jsxs_runtime);
@@ -13709,32 +13714,20 @@ fn NewParser_(
                                             if (props.items.len == 0) {
                                                 props_expression = p.e(E.Binary{ .op = Op.Code.bin_logical_or, .left = defaultProps, .right = props_object }, defaultProps.loc);
                                             } else {
-                                                // we assume that most components don't use defaultProps
-                                                // props: !MyComponent.defaultProps ? {myProp: 123} : { ...MyComponent.defaultProps,  myProp: 123}
-                                                var with_default_props = p.allocator.alloc(G.Property, props_object.data.e_object.properties.len + 1) catch unreachable;
-                                                with_default_props[0] = G.Property{
-                                                    .key = null,
-                                                    .value = defaultProps,
-                                                    .kind = Property.Kind.spread,
-                                                    .flags = Flags.Property.init(
-                                                        .{
-                                                            .is_spread = true,
-                                                        },
-                                                    ),
+                                                var call_args = p.allocator.alloc(Expr, 2) catch unreachable;
+                                                call_args[0..2].* = .{
+                                                    props_object,
+                                                    defaultProps,
                                                 };
-
-                                                std.mem.copy(G.Property, with_default_props[1..], props_object.data.e_object.properties.slice());
-                                                props_expression = p.e(
-                                                    E.If{
-                                                        .test_ = p.e(E.Unary{ .op = .un_not, .value = defaultProps }, defaultProps.loc),
-                                                        .no = p.e(
-                                                            E.Object{ .properties = G.Property.List.init(with_default_props), .close_brace_loc = e_.close_tag_loc },
-                                                            tag.loc,
-                                                        ),
-                                                        .yes = props_object,
-                                                    },
-                                                    props_object.loc,
-                                                );
+                                                // __merge(props, MyComponent.defaultProps)
+                                                // originally, we always inlined here
+                                                // see https://twitter.com/jarredsumner/status/1534084541236686848
+                                                // but, that breaks for defaultProps
+                                                // we assume that most components do not have defaultProps
+                                                // so __merge quickly checks if it needs to merge any props
+                                                // and if not, it passes along the props object
+                                                // this skips an extra allocation
+                                                props_expression = p.callRuntime(tag.loc, "__merge", call_args);
                                             }
                                         }
 
@@ -13784,11 +13777,6 @@ fn NewParser_(
                                             },
                                             expr.loc,
                                         );
-
-                                        if (p.options.features.jsx_optimization_hoist) {
-                                            // if the expression is free of side effects
-                                            if (p.exprCanBeRemovedIfUnused(&props_object)) {}
-                                        }
 
                                         return output;
                                     } else {
@@ -15418,6 +15406,27 @@ fn NewParser_(
             return false;
         }
 
+        /// This is based on exprCanBeRemovedIfUnused. 
+        /// The main difference: identifiers, functions, arrow functions cause it to return false
+                    //
+                    // They could technically have side effects if the imported module is a
+                    // CommonJS module and the import item was translated to a property access
+                    // (which esbuild's bundler does) and the property has a getter with side
+                    // effects.
+                    //
+                    // But this is very unlikely and respecting this edge case would mean
+                    // disabling tree shaking of all code that references an export from a
+                    // CommonJS module. It would also likely violate the expectations of some
+                    // developers because the code *looks* like it should be able to be tree
+                    // shaken.
+                    //
+                    // So we deliberately ignore this edge case and always treat import item
+                    // references as being side-effect free.
+                    return true;
+                },
+                .e_if => |ex| {
+                    return p.exprCanBeHoistedForJSX(&ex.test_) and
+                        (p.isSideEffectFreeUnboundIdentifierRef(
         fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch: bool) bool {
             if (value.data != .e_identifier or
                 p.symbols.items[value.data.e_identifier.ref.innerIndex()].kind != .unbound or

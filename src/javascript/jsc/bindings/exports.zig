@@ -1596,7 +1596,12 @@ pub const ZigConsoleClient = struct {
                     }
                 },
                 .Integer => {
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.toInt32()});
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.toInt64()});
+                },
+                .BigInt => {
+                    var sliced = value.toSlice(this.globalThis, bun.default_allocator);
+                    defer sliced.deinit();
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}<r>", enable_ansi_colors), .{sliced.slice()});
                 },
                 .Double => {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});

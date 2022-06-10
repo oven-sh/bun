@@ -5,6 +5,7 @@ const MimeType = @import("../../../http.zig").MimeType;
 const ZigURL = @import("../../../url.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = HTTPClient.NetworkThread;
+const Environment = @import("../../../env.zig");
 
 const JSC = @import("../../../jsc.zig");
 const js = JSC.C;
@@ -369,12 +370,14 @@ pub const Expect = struct {
         const right = JSValue.fromRef(this.value);
 
         if (!left.isSameValue(right, ctx.ptr())) {
-            if (left.isString() and right.isString()) {
-                var left_slice = left.toSlice(ctx, getAllocator(ctx));
-                defer left_slice.deinit();
-                var right_slice = right.toSlice(ctx, getAllocator(ctx));
-                defer right_slice.deinit();
-                std.debug.assert(!strings.eqlLong(left_slice.slice(), right_slice.slice(), true));
+            if (comptime Environment.allow_assert) {
+                if (left.isString() and right.isString()) {
+                    var left_slice = left.toSlice(ctx, getAllocator(ctx));
+                    defer left_slice.deinit();
+                    var right_slice = right.toSlice(ctx, getAllocator(ctx));
+                    defer right_slice.deinit();
+                    std.debug.assert(!strings.eqlLong(left_slice.slice(), right_slice.slice(), true));
+                }
             }
 
             var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };

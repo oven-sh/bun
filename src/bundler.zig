@@ -1529,7 +1529,7 @@ pub const Bundler = struct {
             );
         }
 
-        if (FeatureFlags.tracing and bundler.options.log.level == .info) {
+        if (FeatureFlags.tracing and bundler.options.log.level.atLeast(.info)) {
             Output.prettyErrorln(
                 "<r><d>\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n<r>",
                 .{

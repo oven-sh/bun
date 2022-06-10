@@ -219,14 +219,44 @@ declare module "bun" {
    *
    * Concatenate the chunks into a single {@link ArrayBuffer}.
    *
-   * Each chunk must be a TypedArray or an ArrayBuffer.
+   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
    */
-  export function readableStreamToArrayBuffer<T>(
+  export function readableStreamToArrayBuffer(
     stream: ReadableStream
   ): Promise<ArrayBuffer> | ArrayBuffer;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single {@link Blob}.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
+   */
+  export function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single string. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   */
+  export function readableStreamToText(stream: ReadableStream): Promise<string>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single string and parse as JSON. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   */
+  export function readableStreamToJSON(stream: ReadableStream): Promise<any>;
 
   /**
    * Consume all data from a {@link ReadableStream} until it closes or errors.

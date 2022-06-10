@@ -183,7 +183,7 @@ declare module "bun" {
   }
 
   /**
-   * Concatenate an array of typed arrays into a single `ArrayBuffer`.
+   * Concatenate an array of typed arrays into a single `ArrayBuffer`. This is a fast path.
    *
    * You can do this manually if you'd like, but this function will generally
    * be a little faster.
@@ -193,7 +193,7 @@ declare module "bun" {
    * @param buffers An array of typed arrays to concatenate.
    * @returns An `ArrayBuffer` with the data from all the buffers.
    *
-   * Here is the equivalent code to do it manually:
+   * Here is similar code to do it manually, except about 30% slower:
    * ```js
    *   var chunks = [...];
    *   var size = 0;
@@ -209,6 +209,9 @@ declare module "bun" {
    *   }
    *   return buffer;
    * ```
+   *
+   * This function is faster because it uses uninitialized memory when copying. Since the entire
+   * length of the buffer is known, it is safe to use uninitialized memory.
    */
   export function concatArrayBuffers(
     buffers: Array<ArrayBufferView | ArrayBufferLike>

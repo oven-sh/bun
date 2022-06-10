@@ -99,6 +99,7 @@ pub const Bunfig = struct {
                 Matcher.case("debug") => Api.MessageLevel.debug,
                 Matcher.case("error") => Api.MessageLevel.err,
                 Matcher.case("warn") => Api.MessageLevel.warn,
+                Matcher.case("info") => Api.MessageLevel.info,
                 else => {
                     try this.addError(expr.loc, "Invalid log level, must be one of debug, error, or warn");
                     unreachable;

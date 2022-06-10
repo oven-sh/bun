@@ -525,6 +525,10 @@ pub const Log = struct {
         warn,
         err,
 
+        pub fn atLeast(this: Level, other: Level) bool {
+            return @enumToInt(this) >= @enumToInt(other);
+        }
+
         pub const label: std.EnumArray(Level, string) = brk: {
             var map = std.EnumArray(Level, string).initFill("");
             map.set(Level.verbose, "verbose");

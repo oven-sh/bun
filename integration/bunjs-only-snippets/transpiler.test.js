@@ -358,12 +358,9 @@ export var ComponentThatChecksDefaultPropsAndHasChildren = {
   type: Hello,
   key: null,
   ref: null,
-  props: !Hello.defaultProps ? {
+  props: __merge({
     children: "my child"
-  } : {
-    ...Hello.defaultProps,
-    children: "my child"
-  },
+  }, Hello.defaultProps),
   _owner: null
 };
 export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {

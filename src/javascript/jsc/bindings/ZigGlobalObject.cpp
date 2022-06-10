@@ -886,6 +886,19 @@ static JSC_DEFINE_HOST_FUNCTION(functionReportError,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" JSC__JSValue Bun__createUninitializedArrayBuffer(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(len, 1);
+
+    if (UNLIKELY(!arrayBuffer)) {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTFMove(arrayBuffer))));
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer);
 JSC_DEFINE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1273,12 +1286,9 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
     auto* readableStream = jsCast<JSReadableStream*>(object);
     auto& vm = globalObject->vm();
     auto& builtinNames = WebCore::clientData(vm)->builtinNames();
-
-    JSValue numberValue = readableStream->getDirect(vm, builtinNames.bunNativeTypePrivateName());
-    int32_t num = numberValue.toInt32(globalObject);
-    if (numberValue.isUndefined() || num == 0) {
-        *ptr = JSC::JSValue();
-        return 0;
+    int32_t num = 0;
+    if (JSValue numberValue = readableStream->getDirect(vm, builtinNames.bunNativeTypePrivateName())) {
+        num = numberValue.toInt32(globalObject);
     }
 
     // If this type is outside the expected range, it means something is wrong.
@@ -1533,6 +1543,78 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::Global
     return ZigGlobalObject__readableStreamToArrayBufferBody(reinterpret_cast<Zig::GlobalObject*>(globalObject), readableStreamValue);
 }
 
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+{
+    auto& vm = globalObject->vm();
+
+    auto clientData = WebCore::clientData(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    JSC::JSFunction* function = nullptr;
+    if (auto readableStreamToText = globalObject->m_readableStreamToText.get()) {
+        function = readableStreamToText;
+    } else {
+        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToTextCodeGenerator(vm)), globalObject);
+
+        globalObject->m_readableStreamToText.set(vm, globalObject, function);
+    }
+
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(readableStreamValue));
+
+    auto callData = JSC::getCallData(function);
+    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+{
+    auto& vm = globalObject->vm();
+
+    auto clientData = WebCore::clientData(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    JSC::JSFunction* function = nullptr;
+    if (auto readableStreamToJSON = globalObject->m_readableStreamToJSON.get()) {
+        function = readableStreamToJSON;
+    } else {
+        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToJSONCodeGenerator(vm)), globalObject);
+
+        globalObject->m_readableStreamToJSON.set(vm, globalObject, function);
+    }
+
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(readableStreamValue));
+
+    auto callData = JSC::getCallData(function);
+    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
+extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
+{
+    auto& vm = globalObject->vm();
+
+    auto clientData = WebCore::clientData(vm);
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    JSC::JSFunction* function = nullptr;
+    if (auto readableStreamToBlob = globalObject->m_readableStreamToBlob.get()) {
+        function = readableStreamToBlob;
+    } else {
+        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToBlobCodeGenerator(vm)), globalObject);
+
+        globalObject->m_readableStreamToBlob.set(vm, globalObject, function);
+    }
+
+    JSC::MarkedArgumentBuffer arguments = JSC::MarkedArgumentBuffer();
+    arguments.append(JSValue::decode(readableStreamValue));
+
+    auto callData = JSC::getCallData(function);
+    return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToArrayBuffer);
 JSC_DEFINE_HOST_FUNCTION(functionReadableStreamToArrayBuffer, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -1772,6 +1854,24 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToText"_s);
+            object->putDirectBuiltinFunction(vm, this, identifier, readableStreamReadableStreamToTextCodeGenerator(vm),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToBlob"_s);
+            object->putDirectBuiltinFunction(vm, this, identifier, readableStreamReadableStreamToBlobCodeGenerator(vm),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "readableStreamToJSON"_s);
+            object->putDirectBuiltinFunction(vm, this, identifier, readableStreamReadableStreamToJSONCodeGenerator(vm),
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "concatArrayBuffers"_s);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionConcatTypedArrays, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
@@ -1871,7 +1971,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_builtinInternalFunctions.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
-    visitor.append(thisObject->m_readableStreamToTextResolve);
+    visitor.append(thisObject->m_readableStreamToText);
+    visitor.append(thisObject->m_readableStreamToJSON);
+    visitor.append(thisObject->m_readableStreamToBlob);
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
 }

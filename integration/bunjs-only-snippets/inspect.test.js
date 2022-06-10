@@ -91,4 +91,5 @@ it("inspect", () => {
   ).toBe(`<div hello="quoted">
   <input type="text" value="123" />
 </div>`);
+  expect(Bun.inspect(BigInt(32)), "32n");
 });

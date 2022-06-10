@@ -80,6 +80,12 @@ function readMany()
     
 
     if (length > 0) {
+        for (var i = 0; i < values.length; i++) {
+            const buf = values[i];
+            if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
+                values[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+            }
+        }
         
         @resetQueue(@getByIdDirectPrivate(controller, "queue"));
 
@@ -102,6 +108,13 @@ function readMany()
         
         var queue = @getByIdDirectPrivate(controller, "queue");
         var value = [result.value].concat(queue.content.toArray(false));
+        for (var i = 0; i < value.length; i++) {
+            const buf = value[i];
+            if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
+                value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+            }
+        }
+
         var size = queue.size;
         @resetQueue(queue);
 

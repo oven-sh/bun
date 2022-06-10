@@ -366,7 +366,7 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerPullC
 
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength = 872;
+const int s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeLength = 873;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsReadableByteStreamControllerShouldCallPullCode =
     "(function (controller)\n" \
@@ -381,7 +381,8 @@ const char* const s_readableByteStreamInternalsReadableByteStreamControllerShoul
     "        return false;\n" \
     "    if (!@getByIdDirectPrivate(controller, \"started\"))\n" \
     "        return false;\n" \
-    "        const reader = @getByIdDirectPrivate(stream, \"reader\");\n" \
+    "    const reader = @getByIdDirectPrivate(stream, \"reader\");\n" \
+    "    \n" \
     "    if (reader && (@getByIdDirectPrivate(reader, \"readRequests\")?.isNotEmpty() || !!@getByIdDirectPrivate(reader, \"bunNativePtr\")))\n" \
     "        return true;\n" \
     "    if (@readableStreamHasBYOBReader(stream) && @getByIdDirectPrivate(@getByIdDirectPrivate(stream, \"reader\"), \"readIntoRequests\")?.isNotEmpty())\n" \

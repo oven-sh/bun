@@ -184,3 +184,96 @@ it("ReadableStream for empty file closes immediately", async () => {
 
   expect(chunks.length).toBe(0);
 });
+
+it("new Response(stream).arrayBuffer() (bytes)", async () => {
+  var queue = [Buffer.from("abdefgh")];
+  var stream = new ReadableStream({
+    pull(controller) {
+      var chunk = queue.shift();
+      if (chunk) {
+        controller.enqueue(chunk);
+      } else {
+        controller.close();
+      }
+    },
+    cancel() {},
+    type: "bytes",
+  });
+  const buffer = await new Response(stream).arrayBuffer();
+  expect(new TextDecoder().decode(new Uint8Array(buffer))).toBe("abdefgh");
+});
+
+it("new Response(stream).arrayBuffer() (default)", async () => {
+  var queue = [Buffer.from("abdefgh")];
+  var stream = new ReadableStream({
+    pull(controller) {
+      var chunk = queue.shift();
+      if (chunk) {
+        controller.enqueue(chunk);
+      } else {
+        controller.close();
+      }
+    },
+    cancel() {},
+  });
+  const buffer = await new Response(stream).arrayBuffer();
+  expect(new TextDecoder().decode(new Uint8Array(buffer))).toBe("abdefgh");
+});
+
+it("new Response(stream).text() (default)", async () => {
+  var queue = [Buffer.from("abdefgh")];
+  var stream = new ReadableStream({
+    pull(controller) {
+      var chunk = queue.shift();
+      if (chunk) {
+        controller.enqueue(chunk);
+      } else {
+        controller.close();
+      }
+    },
+    cancel() {},
+  });
+  const text = await new Response(stream).text();
+  expect(text).toBe("abdefgh");
+});
+
+it("new Response(stream).json() (default)", async () => {
+  var queue = [Buffer.from(JSON.stringify({ hello: true }))];
+  var stream = new ReadableStream({
+    pull(controller) {
+      var chunk = queue.shift();
+      if (chunk) {
+        controller.enqueue(chunk);
+      } else {
+        controller.close();
+      }
+    },
+    cancel() {},
+  });
+  const json = await new Response(stream).json();
+  expect(json.hello).toBe(true);
+});
+
+it("new Response(stream).blob() (default)", async () => {
+  var queue = [Buffer.from(JSON.stringify({ hello: true }))];
+  var stream = new ReadableStream({
+    pull(controller) {
+      var chunk = queue.shift();
+      if (chunk) {
+        controller.enqueue(chunk);
+      } else {
+        controller.close();
+      }
+    },
+    cancel() {},
+  });
+  const blob = await new Response(stream).blob();
+  expect(await blob.text()).toBe('{"hello":true}');
+});
+
+it("Blob.stream() -> new Response(stream).text()", async () => {
+  var blob = new Blob(["abdefgh"]);
+  var stream = blob.stream();
+  const text = await new Response(stream).text();
+  expect(text).toBe("abdefgh");
+});

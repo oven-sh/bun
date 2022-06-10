@@ -51,6 +51,10 @@ pub const ReadableStream = struct {
     value: JSValue,
     ptr: Handle,
 
+    pub fn done(this: *const ReadableStream) void {
+        this.value.unprotect();
+    }
+
     pub const Tag = enum(i32) {
         Invalid = -1,
 

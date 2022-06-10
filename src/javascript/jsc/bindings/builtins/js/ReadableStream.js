@@ -96,7 +96,6 @@ function readableStreamToArray(stream) {
         return null;
     }
     var reader = stream.getReader();
-
     var manyResult = reader.readMany();
     
     async function processManyResult(result) {
@@ -130,6 +129,45 @@ function readableStreamToArray(stream) {
     }
 
     return processManyResult(manyResult);
+}
+
+@globalPrivate
+function readableStreamToText(stream) {
+    "use strict";
+
+    // TODO: optimize this to skip the extra ArrayBuffer
+    return globalThis.Bun.readableStreamToArrayBuffer(stream).@then(function(arrayBuffer) {
+        return new globalThis.TextDecoder().decode(arrayBuffer);
+    });
+}
+
+@globalPrivate
+function readableStreamToJSON(stream) {
+    "use strict";
+
+    // TODO: optimize this to skip the extra ArrayBuffer
+    return globalThis.Bun.readableStreamToArrayBuffer(stream).@then(function(arrayBuffer) {
+        return globalThis.JSON.parse(new globalThis.TextDecoder().decode(arrayBuffer));
+    });
+}
+
+@globalPrivate
+function readableStreamToBlob(stream) {
+    "use strict";
+
+ 
+    const array = @readableStreamToArray(stream);
+    if (array === null) {
+        return new globalThis.Blob();
+    }
+
+    return array.@then(function(chunks) {
+        if (chunks === null || chunks.length === 0) {
+            return new globalThis.Blob();
+        }
+
+        return new globalThis.Blob(chunks);
+    });
 }
 
 @globalPrivate

@@ -77,7 +77,7 @@ describe("bun:jsc", () => {
     count();
   });
   it("numberOfDFGCompiles", () => {
-    expect(numberOfDFGCompiles(count)).toBe(3);
+    expect(numberOfDFGCompiles(count) > 0).toBe(true);
   });
   it("releaseWeakRefs", () => {
     releaseWeakRefs();

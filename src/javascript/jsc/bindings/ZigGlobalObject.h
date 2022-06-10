@@ -153,7 +153,9 @@ public:
     bool isThreadLocalDefaultGlobalObject = false;
 
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
-    mutable WriteBarrier<JSFunction> m_readableStreamToTextResolve;
+    mutable WriteBarrier<JSFunction> m_readableStreamToText;
+    mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
+    mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
 
 private:
     void addBuiltinGlobals(JSC::VM&);

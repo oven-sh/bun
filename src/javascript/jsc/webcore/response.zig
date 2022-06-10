@@ -3811,7 +3811,7 @@ pub const Body = struct {
 
     pub const PendingValue = struct {
         promise: ?JSValue = null,
-        readable: JSValue = JSValue.zero,
+        stream: ?JSC.WebCore.ReadableStream = null,
 
         global: *JSGlobalObject,
         task: ?*anyopaque = null,
@@ -3825,14 +3825,47 @@ pub const Body = struct {
 
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
-            var promise = JSC.JSPromise.create(globalThis);
-            const promise_value = promise.asValue(globalThis);
-            value.promise = promise_value;
-            if (value.onPull) |onPull| {
-                value.onPull = null;
-                onPull(value.task.?);
+
+            if (value.stream) |*stream| {
+                // switch (stream.ptr) {
+                //     .JavaScript
+                // }
+                switch (action) {
+                    .getText, .getJSON, .getBlob, .getArrayBuffer => {
+                        switch (stream.ptr) {
+                            .Blob => unreachable,
+                            else => {},
+                        }
+                        value.promise = switch (action) {
+                            .getJSON => globalThis.readableStreamToJSON(stream.value),
+                            .getArrayBuffer => globalThis.readableStreamToArrayBuffer(stream.value),
+                            .getText => globalThis.readableStreamToText(stream.value),
+                            .getBlob => globalThis.readableStreamToBlob(stream.value),
+                            else => unreachable,
+                        };
+                        value.promise.?.ensureStillAlive();
+                        stream.value.unprotect();
+
+                        // js now owns the memory
+                        value.stream = null;
+
+                        return value.promise.?;
+                    },
+                    .none => {},
+                }
             }
-            return promise_value;
+
+            {
+                var promise = JSC.JSPromise.create(globalThis);
+                const promise_value = promise.asValue(globalThis);
+                value.promise = promise_value;
+
+                if (value.onPull) |onPull| {
+                    value.onPull = null;
+                    onPull(value.task.?);
+                }
+                return promise_value;
+            }
         }
 
         pub const Action = enum {
@@ -3861,9 +3894,28 @@ pub const Body = struct {
 
         pub const empty = Value{ .Empty = .{} };
 
+        pub fn fromReadableStream(stream: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
+            if (stream.isLocked(globalThis)) {
+                return .{ .Error = ZigString.init("Cannot use a locked ReadableStream").toErrorInstance(globalThis) };
+            }
+
+            stream.value.protect();
+            return .{
+                .Locked = .{
+                    .stream = stream,
+                    .global = globalThis,
+                },
+            };
+        }
+
         pub fn resolve(this: *Value, new: *Value, global: *JSGlobalObject) void {
             if (this.* == .Locked) {
-                var locked = this.Locked;
+                var locked = &this.Locked;
+                if (locked.stream) |stream| {
+                    stream.done();
+                    locked.stream = null;
+                }
+
                 if (locked.callback) |callback| {
                     locked.callback = null;
                     callback(locked.task.?, new);
@@ -3936,6 +3988,11 @@ pub const Body = struct {
                     locked.promise = null;
                 }
 
+                if (locked.stream) |stream| {
+                    stream.done();
+                    locked.stream = null;
+                }
+
                 this.* = .{ .Error = error_instance };
                 if (locked.callback) |callback| {
                     locked.callback = null;
@@ -3967,6 +4024,10 @@ pub const Body = struct {
         pub fn deinit(this: *Value) void {
             const tag = @as(Tag, this.*);
             if (tag == .Locked) {
+                if (this.Locked.stream) |*stream| {
+                    stream.done();
+                }
+
                 this.Locked.deinit = true;
                 return;
             }
@@ -4051,10 +4112,28 @@ pub const Body = struct {
             } else |_| {}
         }
 
-        // if (value.as(JSC.WebCore.ReadableStream)) |readable| {
-        //     body.value = Body.Value.fromReadableStream(ctx, readable);
-        //     return body;
-        // }
+        if (JSC.WebCore.ReadableStream.fromJS(value, ctx)) |readable| {
+            switch (readable.ptr) {
+                .Blob => |blob| {
+                    body.value = .{
+                        .Blob = Blob.initWithStore(blob.store, ctx),
+                    };
+                    blob.store.ref();
+
+                    readable.done();
+
+                    if (!blob.done) {
+                        blob.done = true;
+                        blob.deinit();
+                    }
+                    return body;
+                },
+                else => {},
+            }
+
+            body.value = Body.Value.fromReadableStream(readable, ctx);
+            return body;
+        }
 
         body.value = .{
             .Blob = Blob.fromJS(ctx.ptr(), value, true, false) catch |err| {
@@ -4451,7 +4530,7 @@ fn BlobInterface(comptime Type: type) type {
             _: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
-            var value = this.getBodyValue();
+            var value: *Body.Value = this.getBodyValue();
             if (value.* == .Locked) {
                 return value.Locked.setPromise(ctx.ptr(), .getText).asObjectRef();
             }
@@ -4468,7 +4547,7 @@ fn BlobInterface(comptime Type: type) type {
             _: []const js.JSValueRef,
             exception: js.ExceptionRef,
         ) js.JSValueRef {
-            var value = this.getBodyValue();
+            var value: *Body.Value = this.getBodyValue();
             if (value.* == .Locked) {
                 return value.Locked.setPromise(ctx.ptr(), .getJSON).asObjectRef();
             }
@@ -4484,7 +4563,7 @@ fn BlobInterface(comptime Type: type) type {
             _: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
-            var value = this.getBodyValue();
+            var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Locked) {
                 return value.Locked.setPromise(ctx.ptr(), .getArrayBuffer).asObjectRef();
@@ -4502,7 +4581,8 @@ fn BlobInterface(comptime Type: type) type {
             _: []const js.JSValueRef,
             _: js.ExceptionRef,
         ) js.JSValueRef {
-            var value = this.getBodyValue();
+            var value: *Body.Value = this.getBodyValue();
+
             if (value.* == .Locked) {
                 return value.Locked.setPromise(ctx.ptr(), .getBlob).asObjectRef();
             }

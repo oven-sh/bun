@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { gcTick } from "./gc";
-import { concat } from "bun";
+import { concatArrayBuffers } from "bun";
 
 describe("concat", () => {
   function polyfill(chunks) {
@@ -19,7 +19,7 @@ describe("concat", () => {
   }
 
   function concatToString(chunks) {
-    return Array.from(new Uint8Array(concat(chunks))).join("");
+    return Array.from(new Uint8Array(concatArrayBuffers(chunks))).join("");
   }
 
   function polyfillToString(chunks) {

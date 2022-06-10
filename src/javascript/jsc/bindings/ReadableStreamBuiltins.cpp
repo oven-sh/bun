@@ -119,7 +119,7 @@ const char* const s_readableStreamInitializeReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToArrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToArrayCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToArrayCodeLength = 884;
+const int s_readableStreamReadableStreamToArrayCodeLength = 883;
 static const JSC::Intrinsic s_readableStreamReadableStreamToArrayCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToArrayCode =
     "(function (stream) {\n" \
@@ -129,7 +129,6 @@ const char* const s_readableStreamReadableStreamToArrayCode =
     "        return null;\n" \
     "    }\n" \
     "    var reader = stream.getReader();\n" \
-    "\n" \
     "    var manyResult = reader.readMany();\n" \
     "    \n" \
     "    async function processManyResult(result) {\n" \
@@ -163,6 +162,60 @@ const char* const s_readableStreamReadableStreamToArrayCode =
     "    }\n" \
     "\n" \
     "    return processManyResult(manyResult);\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_readableStreamReadableStreamToTextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamReadableStreamToTextCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamReadableStreamToTextCodeLength = 215;
+static const JSC::Intrinsic s_readableStreamReadableStreamToTextCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamReadableStreamToTextCode =
+    "(function (stream) {\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    "    //\n" \
+    "    return globalThis.Bun.readableStreamToArrayBuffer(stream).@then(function(arrayBuffer) {\n" \
+    "        return new globalThis.TextDecoder().decode(arrayBuffer);\n" \
+    "    });\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamReadableStreamToJSONCodeLength = 238;
+static const JSC::Intrinsic s_readableStreamReadableStreamToJSONCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamReadableStreamToJSONCode =
+    "(function (stream) {\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    "    //\n" \
+    "    return globalThis.Bun.readableStreamToArrayBuffer(stream).@then(function(arrayBuffer) {\n" \
+    "        return globalThis.JSON.parse(new globalThis.TextDecoder().decode(arrayBuffer));\n" \
+    "    });\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamReadableStreamToBlobCodeLength = 367;
+static const JSC::Intrinsic s_readableStreamReadableStreamToBlobCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamReadableStreamToBlobCode =
+    "(function (stream) {\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    " \n" \
+    "    const array = @readableStreamToArray(stream);\n" \
+    "    if (array === null) {\n" \
+    "        return new globalThis.Blob();\n" \
+    "    }\n" \
+    "\n" \
+    "    return array.@then(function(chunks) {\n" \
+    "        if (chunks === null || chunks.length === 0) {\n" \
+    "            return new globalThis.Blob();\n" \
+    "        }\n" \
+    "\n" \
+    "        return new globalThis.Blob(chunks);\n" \
+    "    });\n" \
     "})\n" \
 ;
 

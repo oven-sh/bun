@@ -385,6 +385,10 @@ pub noinline fn globalError(err: anyerror) noreturn {
             Output.flush();
             Global.exit(1);
         },
+        error.@"Invalid Bunfig" => {
+            Output.flush();
+            Global.exit(1);
+        },
         error.ProcessFdQuotaExceeded => {
             const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
             if (comptime Environment.isMac) {

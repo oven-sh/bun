@@ -94,6 +94,7 @@ CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 SQLITE_OBJECT =
 
 BITCODE_OR_SECTIONS=-fdata-sections -ffunction-sections
+EMBED_OR_EMIT_BITCODE=-emit-llvm
 LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
 LIBTOOL=glibtoolize
@@ -109,6 +110,7 @@ endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
 CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(EMBED_OR_EMIT_BITCODE) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
 BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
 
@@ -292,7 +294,7 @@ ifeq ($(OS_NAME), darwin)
 SYMBOLS=-exported_symbols_list $(realpath src/symbols.txt)
 PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
-		-fno-keep-static-consts
+		-fno-keep-static-consts -fuse-ld=lld 
 endif
 
 ifeq ($(OS_NAME),linux)
@@ -334,7 +336,7 @@ endif
 STATIC_MUSL_FLAG ?= 
 
 ifeq ($(OS_NAME), linux)
-PLATFORM_LINKER_FLAGS = $(CFLAGS) \
+PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fuse-ld=lld \
 		-Wl,-z,now \
 		-Wl,--as-needed \
@@ -376,8 +378,8 @@ bun:
 base64:
 	cd src/base64 && \
 		rm -rf src/base64/*.{o,ll,bc} && \
-	   $(CC) $(CFLAGS) $(OPTIMIZATION_LEVEL) -g -fPIC -c *.c -I$(SRC_DIR)/base64 $(BITCODE_OR_SECTIONS) && \
-	   $(CXX) $(CXXFLAGS) $(CFLAGS) -c neonbase64.cc -g -fPIC $(BITCODE_OR_SECTIONS) && \
+	   $(CC) $(BUN_CFLAGS) $(OPTIMIZATION_LEVEL) -g -fPIC -c *.c -I$(SRC_DIR)/base64  && \
+	   $(CXX) $(CXXFLAGS) $(BUN_CFLAGS) -c neonbase64.cc -g -fPIC  && \
 	   $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libbase64.a ./*.bc
 
 # Prevent dependency on libtcc1 so it doesn't do filesystem lookups
@@ -426,10 +428,10 @@ lolhtml:
 	cd $(BUN_DEPS_DIR)/lol-html/ && cd $(BUN_DEPS_DIR)/lol-html/c-api && cargo build --release && cp target/release/liblolhtml.a $(BUN_DEPS_OUT_DIR)
 
 boringssl-build:
-	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(BUN_CFLAGS)" cmake $(CMAKE_FLAGS) -GNinja .. && ninja 
 
 boringssl-build-debug:
-	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) -GNinja .. && ninja 
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(BUN_CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) -GNinja .. && ninja 
 
 boringssl-copy:
 	cp $(BUN_DEPS_DIR)/boringssl/build/ssl/libssl.a $(BUN_DEPS_OUT_DIR)/libssl.a
@@ -456,7 +458,7 @@ libarchive:
 	(make clean || echo ""); \
 	(./build/clean.sh || echo ""); \
 	./build/autogen.sh; \
-	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
+	CFLAGS="$(BUN_CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic  --disable-bsdtar   --disable-bsdcat --disable-rpath --enable-posix-regex-lib  --without-xml2  --without-expat --without-openssl  --without-iconv --without-zlib; \
 	make -j${CPUS}; \
 	cp ./.libs/libarchive.a $(BUN_DEPS_OUT_DIR)/libarchive.a;
 
@@ -473,7 +475,7 @@ tgz-debug:
 vendor: require init-submodules vendor-without-check 
 
 zlib: 
-	cd $(BUN_DEPS_DIR)/zlib; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) .; CFLAGS="$(CFLAGS)" make;
+	cd $(BUN_DEPS_DIR)/zlib; CFLAGS="$(BUN_CFLAGS)" cmake $(CMAKE_FLAGS) .; CFLAGS="$(BUN_CFLAGS)" make;
 	cp $(BUN_DEPS_DIR)/zlib/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
 docker-login:
@@ -1359,7 +1361,7 @@ build-unit:
 	-lc -lc++ \
 	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
 	-fallow-shlib-undefined \
-	$(ARCHIVE_FILES) $(ICU_FLAGS) && \
+	 && \
 	cp zig-out/bin/$(testname) $(testbinpath)
 
 run-all-unit-tests:

@@ -15406,27 +15406,206 @@ fn NewParser_(
             return false;
         }
 
-        /// This is based on exprCanBeRemovedIfUnused. 
-        /// The main difference: identifiers, functions, arrow functions cause it to return false
-                    //
-                    // They could technically have side effects if the imported module is a
-                    // CommonJS module and the import item was translated to a property access
-                    // (which esbuild's bundler does) and the property has a getter with side
-                    // effects.
-                    //
-                    // But this is very unlikely and respecting this edge case would mean
-                    // disabling tree shaking of all code that references an export from a
-                    // CommonJS module. It would also likely violate the expectations of some
-                    // developers because the code *looks* like it should be able to be tree
-                    // shaken.
-                    //
-                    // So we deliberately ignore this edge case and always treat import item
-                    // references as being side-effect free.
-                    return true;
-                },
-                .e_if => |ex| {
-                    return p.exprCanBeHoistedForJSX(&ex.test_) and
-                        (p.isSideEffectFreeUnboundIdentifierRef(
+        // // This is based on exprCanBeRemovedIfUnused.
+        // // The main difference: identifiers, functions, arrow functions cause it to return false
+        // pub fn exprCanBeHoistedForJSX(p: *P, expr: *const Expr) bool {
+        //     if (comptime jsx_transform_type != .react) {
+        //         unreachable;
+        //     }
+
+        //     switch (expr.data) {
+        //         .e_null,
+        //         .e_undefined,
+        //         .e_missing,
+        //         .e_boolean,
+        //         .e_number,
+        //         .e_big_int,
+        //         .e_string,
+        //         .e_reg_exp,
+        //         => {
+        //             return true;
+        //         },
+
+        //         .e_dot => |ex| {
+        //             return ex.can_be_removed_if_unused;
+        //         },
+        //         .e_import_identifier => {
+
+        //             // References to an ES6 import item are always side-effect free in an
+        //             // ECMAScript environment.
+        //             //
+        //             // They could technically have side effects if the imported module is a
+        //             // CommonJS module and the import item was translated to a property access
+        //             // (which esbuild's bundler does) and the property has a getter with side
+        //             // effects.
+        //             //
+        //             // But this is very unlikely and respecting this edge case would mean
+        //             // disabling tree shaking of all code that references an export from a
+        //             // CommonJS module. It would also likely violate the expectations of some
+        //             // developers because the code *looks* like it should be able to be tree
+        //             // shaken.
+        //             //
+        //             // So we deliberately ignore this edge case and always treat import item
+        //             // references as being side-effect free.
+        //             return true;
+        //         },
+        //         .e_if => |ex| {
+        //             return p.exprCanBeHoistedForJSX(&ex.test_) and
+        //                 (p.isSideEffectFreeUnboundIdentifierRef(
+        //                 ex.yes,
+        //                 ex.test_,
+        //                 true,
+        //             ) or
+        //                 p.exprCanBeHoistedForJSX(&ex.yes)) and
+        //                 (p.isSideEffectFreeUnboundIdentifierRef(
+        //                 ex.no,
+        //                 ex.test_,
+        //                 false,
+        //             ) or p.exprCanBeHoistedForJSX(
+        //                 &ex.no,
+        //             ));
+        //         },
+        //         .e_array => |ex| {
+        //             for (ex.items.slice()) |*item| {
+        //                 if (!p.exprCanBeHoistedForJSX(item)) {
+        //                     return false;
+        //                 }
+        //             }
+
+        //             return true;
+        //         },
+        //         .e_object => |ex| {
+        //             // macros disable this because macros get inlined
+        //             // so it's sort of the opposite of the purpose of this function
+        //             if (ex.was_originally_macro)
+        //                 return false;
+
+        //             for (ex.properties.slice()) |*property| {
+
+        //                 // The key must still be evaluated if it's computed or a spread
+        //                 if (property.kind == .spread or property.flags.contains(.is_computed) or property.flags.contains(.is_spread)) {
+        //                     return false;
+        //                 }
+
+        //                 if (property.value) |*val| {
+        //                     if (!p.exprCanBeHoistedForJSX(val)) {
+        //                         return false;
+        //                     }
+        //                 }
+        //             }
+        //             return true;
+        //         },
+        //         .e_call => |ex| {
+
+        //             // A call that has been marked "__PURE__" can be removed if all arguments
+        //             // can be removed. The annotation causes us to ignore the target.
+        //             if (ex.can_be_unwrapped_if_unused) {
+        //                 for (ex.args.slice()) |*arg| {
+        //                     if (!p.exprCanBeHoistedForJSX(arg)) {
+        //                         return false;
+        //                     }
+        //                 }
+        //                 return true;
+        //             }
+        //         },
+        //         .e_new => |ex| {
+
+        //             // A call that has been marked "__PURE__" can be removed if all arguments
+        //             // can be removed. The annotation causes us to ignore the target.
+        //             if (ex.can_be_unwrapped_if_unused) {
+        //                 for (ex.args.slice()) |*arg| {
+        //                     if (!p.exprCanBeHoistedForJSX(arg)) {
+        //                         return false;
+        //                     }
+        //                 }
+
+        //                 return true;
+        //             }
+        //         },
+        //         .e_unary => |ex| {
+        //             switch (ex.op) {
+        //                 // These operators must not have any type conversions that can execute code
+        //                 // such as "toString" or "valueOf". They must also never throw any exceptions.
+        //                 .un_void, .un_not => {
+        //                     return p.exprCanBeHoistedForJSX(&ex.value);
+        //                 },
+
+        //                 // The "typeof" operator doesn't do any type conversions so it can be removed
+        //                 // if the result is unused and the operand has no side effects. However, it
+        //                 // has a special case where if the operand is an identifier expression such
+        //                 // as "typeof x" and "x" doesn't exist, no reference error is thrown so the
+        //                 // operation has no side effects.
+        //                 //
+        //                 // Note that there *is* actually a case where "typeof x" can throw an error:
+        //                 // when "x" is being referenced inside of its TDZ (temporal dead zone). TDZ
+        //                 // checks are not yet handled correctly by bun or esbuild, so this possibility is
+        //                 // currently ignored.
+        //                 .un_typeof => {
+        //                     if (ex.value.data == .e_identifier) {
+        //                         return true;
+        //                     }
+
+        //                     return p.exprCanBeHoistedForJSX(&ex.value);
+        //                 },
+
+        //                 else => {},
+        //             }
+        //         },
+        //         .e_binary => |ex| {
+        //             switch (ex.op) {
+        //                 // These operators must not have any type conversions that can execute code
+        //                 // such as "toString" or "valueOf". They must also never throw any exceptions.
+        //                 .bin_strict_eq,
+        //                 .bin_strict_ne,
+        //                 .bin_comma,
+        //                 .bin_nullish_coalescing,
+        //                 => return p.exprCanBeHoistedForJSX(&ex.left) and p.exprCanBeHoistedForJSX(&ex.right),
+
+        //                 // Special-case "||" to make sure "typeof x === 'undefined' || x" can be removed
+        //                 .bin_logical_or => return p.exprCanBeHoistedForJSX(&ex.left) and
+        //                     (p.isSideEffectFreeUnboundIdentifierRef(ex.right, ex.left, false) or p.exprCanBeHoistedForJSX(&ex.right)),
+
+        //                 // Special-case "&&" to make sure "typeof x !== 'undefined' && x" can be removed
+        //                 .bin_logical_and => return p.exprCanBeHoistedForJSX(&ex.left) and
+        //                     (p.isSideEffectFreeUnboundIdentifierRef(ex.right, ex.left, true) or p.exprCanBeHoistedForJSX(&ex.right)),
+
+        //                 // For "==" and "!=", pretend the operator was actually "===" or "!==". If
+        //                 // we know that we can convert it to "==" or "!=", then we can consider the
+        //                 // operator itself to have no side effects. This matters because our mangle
+        //                 // logic will convert "typeof x === 'object'" into "typeof x == 'object'"
+        //                 // and since "typeof x === 'object'" is considered to be side-effect free,
+        //                 // we must also consider "typeof x == 'object'" to be side-effect free.
+        //                 .bin_loose_eq, .bin_loose_ne => return SideEffects.canChangeStrictToLoose(
+        //                     ex.left.data,
+        //                     ex.right.data,
+        //                 ) and
+        //                     p.exprCanBeHoistedForJSX(&ex.left) and p.exprCanBeHoistedForJSX(&ex.right),
+        //                 else => {},
+        //             }
+        //         },
+        //         .e_template => |templ| {
+        //             if (templ.tag == null) {
+        //                 for (templ.parts) |part| {
+        //                     if (!p.exprCanBeHoistedForJSX(&part.value) or part.value.knownPrimitive() == .unknown) {
+        //                         return false;
+        //                     }
+        //                 }
+        //             }
+
+        //             return true;
+        //         },
+        //         else => {},
+
+        //         // These may reference variables from an upper scope
+        //         // it's possible to detect that, but we are cutting scope for now
+        //         // .e_function,
+        //         // .e_arrow,
+        //         // .e_this,
+        //     }
+
+        //     return false;
+        // }
+
         fn isSideEffectFreeUnboundIdentifierRef(p: *P, value: Expr, guard_condition: Expr, is_yes_branch: bool) bool {
             if (value.data != .e_identifier or
                 p.symbols.items[value.data.e_identifier.ref.innerIndex()].kind != .unbound or

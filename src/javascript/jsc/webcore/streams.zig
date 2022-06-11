@@ -1261,9 +1261,7 @@ pub const FileBlobLoader = struct {
 
         switch (rc) {
             .err => |err| {
-                const retry = comptime if (Environment.isLinux)
-                    std.os.E.WOULDBLOCK
-                else
+                const retry =
                     std.os.E.AGAIN;
 
                 switch (err.getErrno()) {

@@ -467,6 +467,7 @@ pub const Poller = struct {
         if (comptime Environment.isLinux) {
             // std.debug.assert(this.watch_fd != 0);
             // TODO:
+            return JSC.Maybe(void).success;
         } else if (comptime Environment.isMac) {
             if (this.watch_fd == 0) {
                 this.watch_fd = std.c.kqueue();

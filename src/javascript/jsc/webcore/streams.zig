@@ -85,14 +85,17 @@ pub const ReadableStream = struct {
     ) JSC.JSValue;
 
     pub fn isDisturbed(this: *const ReadableStream, globalObject: *JSGlobalObject) bool {
+        JSC.markBinding();
         return ReadableStream__isDisturbed(this.value, globalObject);
     }
 
     pub fn isLocked(this: *const ReadableStream, globalObject: *JSGlobalObject) bool {
+        JSC.markBinding();
         return ReadableStream__isLocked(this.value, globalObject);
     }
 
     pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {
+        JSC.markBinding();
         var ptr = JSValue.zero;
         return switch (ReadableStreamTag__tagged(globalThis, value, &ptr)) {
             .JavaScript => ReadableStream{

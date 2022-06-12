@@ -42,3 +42,6 @@ pub const Node = struct {
     pub const fs = @import("./javascript/jsc/node/node_fs_constant.zig");
 };
 pub const Maybe = Node.Maybe;
+pub inline fn markBinding() void {
+    if (comptime is_bindgen) unreachable;
+}

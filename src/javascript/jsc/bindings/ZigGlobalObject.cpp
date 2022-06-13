@@ -136,6 +136,8 @@ using JSBuffer = WebCore::JSBuffer;
 #include "StructuredClone.h"
 
 #include "ReadableStream.h"
+#include "JSSink.h"
+
 // #include <iostream>
 static bool has_loaded_jsc = false;
 
@@ -1635,6 +1637,26 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    m_NapiClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
+        });
+
+    m_JSArrayBufferSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::ArrayBufferSink);
+            auto* structure = JSArrayBufferSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSArrayBufferSinkConstructor::create(init.vm, init.global, JSArrayBufferSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSFFIFunctionStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
+        });
+
     addBuiltinGlobals(vm);
 
     RELEASE_ASSERT(classInfo());
@@ -1878,6 +1900,12 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "ArrayBufferSink"_s);
+            object->putDirectCustomAccessor(vm, identifier, JSC::CustomGetterSetter::create(vm, functionArrayBufferSink__getter, nullptr),
+                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        }
+
+        {
             object->putDirectBuiltinFunction(vm, this, builtinNames.readableStreamToArrayPublicName(), readableStreamReadableStreamToArrayCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
         }
 
@@ -1926,16 +1954,6 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
 
-    m_NapiClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
-        });
-
-    m_JSFFIFunctionStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
-        });
-
     // putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "SQL"_s), JSC::CustomGetterSetter::create(vm, JSSQLStatement_getter, nullptr),
     //     JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
@@ -1970,10 +1988,13 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_builtinInternalFunctions.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
+    thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
+
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
     visitor.append(thisObject->m_readableStreamToText);
     visitor.append(thisObject->m_readableStreamToJSON);
     visitor.append(thisObject->m_readableStreamToBlob);
+
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
 }

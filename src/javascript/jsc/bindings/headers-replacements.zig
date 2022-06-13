@@ -1,6 +1,6 @@
 // GENERATED FILE - do not modify!
 const bindings = @import("../../../jsc.zig");
-
+pub const struct_JSC__CallFrame = bindings.CallFrame;
 pub const struct_JSC__StringPrototype = bindings.StringPrototype;
 pub const struct_JSC__SetIteratorPrototype = bindings.SetIteratorPrototype;
 pub const struct_JSC__RegExpPrototype = bindings.RegExpPrototype;
@@ -17,6 +17,7 @@ pub const struct_JSC__AsyncGeneratorPrototype = bindings.AsyncGeneratorPrototype
 pub const struct_JSC__AsyncGeneratorFunctionPrototype = bindings.AsyncGeneratorFunctionPrototype;
 pub const struct_JSC__AsyncFunctionPrototype = bindings.AsyncFunctionPrototype;
 pub const struct_JSC__ArrayPrototype = bindings.ArrayPrototype;
+
 pub const struct_JSC__ArrayIteratorPrototype = bindings.ArrayIteratorPrototype;
 pub const bWTF__URL = bindings.URL;
 pub const bWTF__StringView = bindings.StringView;
@@ -63,3 +64,4 @@ pub const struct_WebCore__DOMURL = bindings.DOMURL;
 pub const struct_WebCore__FetchHeaders = bindings.FetchHeaders;
 pub const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
 pub const struct_VirtualMachine = bindings.VirtualMachine;
+pub const ArrayBufferSink = @import("../webcore/streams.zig").ArrayBufferSink;

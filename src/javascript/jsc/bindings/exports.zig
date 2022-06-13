@@ -183,6 +183,9 @@ pub const NodePath = JSC.Node.Path;
 pub const JSReadableStreamBlob = JSC.WebCore.ByteBlobLoader.Source.JSReadableStreamSource;
 pub const JSReadableStreamFile = JSC.WebCore.FileBlobLoader.Source.JSReadableStreamSource;
 
+// Sinks
+pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSArrayBufferSink;
+
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
@@ -1599,9 +1602,8 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.toInt64()});
                 },
                 .BigInt => {
-                    var sliced = value.toSlice(this.globalThis, bun.default_allocator);
-                    defer sliced.deinit();
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}<r>", enable_ansi_colors), .{sliced.slice()});
+                    var wtf = value.toWTFString(this.globalThis);
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{wtf.slice()});
                 },
                 .Double => {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});
@@ -2507,12 +2509,14 @@ comptime {
         _ = Process.setTitle;
         _ = Zig__getAPIGlobals;
         _ = Zig__getAPIConstructors;
-        std.testing.refAllDecls(NodeReadableStream);
-        std.testing.refAllDecls(Bun.Timer);
-        std.testing.refAllDecls(NodeWritableStream);
-        std.testing.refAllDecls(NodePath);
-        std.testing.refAllDecls(JSReadableStreamBlob);
-        std.testing.refAllDecls(JSReadableStreamFile);
+        NodeReadableStream.shim.ref();
+        Bun.Timer.shim.ref();
+        NodeWritableStream.shim.ref();
+        NodePath.shim.ref();
+        JSReadableStreamBlob.shim.ref();
+        JSArrayBufferSink.shim.ref();
+
+        JSReadableStreamFile.shim.ref();
         _ = ZigString__free;
         _ = ZigString__free_global;
     }

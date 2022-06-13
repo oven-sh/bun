@@ -1,6 +1,6 @@
 // GENERATED FILE - do not modify!
 const bindings = @import("../../../jsc.zig");
-
+pub const struct_JSC__CallFrame = bindings.CallFrame;
 pub const struct_JSC__StringPrototype = bindings.StringPrototype;
 pub const struct_JSC__SetIteratorPrototype = bindings.SetIteratorPrototype;
 pub const struct_JSC__RegExpPrototype = bindings.RegExpPrototype;
@@ -17,6 +17,7 @@ pub const struct_JSC__AsyncGeneratorPrototype = bindings.AsyncGeneratorPrototype
 pub const struct_JSC__AsyncGeneratorFunctionPrototype = bindings.AsyncGeneratorFunctionPrototype;
 pub const struct_JSC__AsyncFunctionPrototype = bindings.AsyncFunctionPrototype;
 pub const struct_JSC__ArrayPrototype = bindings.ArrayPrototype;
+
 pub const struct_JSC__ArrayIteratorPrototype = bindings.ArrayIteratorPrototype;
 pub const bWTF__URL = bindings.URL;
 pub const bWTF__StringView = bindings.StringView;
@@ -63,6 +64,7 @@ pub const struct_WebCore__DOMURL = bindings.DOMURL;
 pub const struct_WebCore__FetchHeaders = bindings.FetchHeaders;
 pub const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
 pub const struct_VirtualMachine = bindings.VirtualMachine;
+pub const ArrayBufferSink = @import("../webcore/streams.zig").ArrayBufferSink;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;
@@ -116,6 +118,8 @@ pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
 pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
 
 pub const WebCore__FetchHeaders = struct_WebCore__FetchHeaders;
+
+pub const JSC__CallFrame = struct_JSC__CallFrame;
 pub const WTF__StringView = bWTF__StringView;
 pub const JSC__ThrowScope = bJSC__ThrowScope;
 pub const WTF__StringImpl = bWTF__StringImpl;
@@ -460,4 +464,6 @@ pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: [*c]JSC__JSGlobalO
 pub extern fn Bun__Readable__create(arg0: [*c]Bun__Readable, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn Bun__Writable__create(arg0: [*c]Bun__Writable, arg1: [*c]JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn Bun__Path__create(arg0: [*c]JSC__JSGlobalObject, arg1: bool) JSC__JSValue;
+pub extern fn ArrayBufferSink__createObject(arg0: [*c]JSC__JSGlobalObject, arg1: ?*anyopaque) JSC__JSValue;
+pub extern fn ArrayBufferSink__fromJS(arg0: [*c]JSC__JSGlobalObject, JSValue1: JSC__JSValue) ?*anyopaque;
 pub extern fn ZigException__fromException(arg0: [*c]JSC__Exception) ZigException;

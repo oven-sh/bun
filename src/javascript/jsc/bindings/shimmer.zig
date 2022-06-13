@@ -13,6 +13,20 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
         pub const namespace = _namespace;
         pub const name = _name;
 
+        pub fn ref() void {
+            if (comptime @hasDecl(Parent, "Export")) {
+                inline for (Parent.Export) |exp| {
+                    _ = exp;
+                }
+            }
+
+            if (comptime @hasDecl(Parent, "Extern")) {
+                inline for (Parent.Extern) |exp| {
+                    _ = @field(Parent, exp);
+                }
+            }
+        }
+
         // fn toCppType(comptime FromType: type) type {
         //     var NewReturnType = FromType;
 

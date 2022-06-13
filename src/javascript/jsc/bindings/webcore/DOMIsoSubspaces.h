@@ -22,6 +22,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForNapiPrototype;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatement;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSQLStatementConstructor;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSinkConstructor;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSSink;
     /*-- BUN --*/
 
     // std::unique_ptr<IsoSubspace> m_subspaceForTouch;

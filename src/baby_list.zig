@@ -1,5 +1,6 @@
 const std = @import("std");
 const Environment = @import("./env.zig");
+const strings = @import("./string_immutable.zig");
 
 /// This is like ArrayList except it stores the length and capacity as u32
 /// In practice, it is very unusual to have lengths above 4 GB
@@ -99,6 +100,54 @@ pub fn BabyList(comptime Type: type) type {
         pub inline fn slice(this: ListType) []Type {
             @setRuntimeSafety(false);
             return this.ptr[0..this.len];
+        }
+
+        pub fn write(this: *@This(), allocator: std.mem.Allocator, str: []const u8) !u32 {
+            if (comptime Type != u8)
+                @compileError("Unsupported for type " ++ @typeName(Type));
+            const initial = this.len;
+            var list_ = this.listManaged(allocator);
+            try list_.appendSlice(str);
+            this.update(list_);
+            return this.len - initial;
+        }
+        pub fn writeLatin1(this: *@This(), allocator: std.mem.Allocator, str: []const u8) !u32 {
+            if (comptime Type != u8)
+                @compileError("Unsupported for type " ++ @typeName(Type));
+            const initial = this.len;
+            var list_ = this.listManaged(allocator);
+            defer this.update(list_);
+            const start = list_.items.len;
+            try list_.appendSlice(str);
+
+            strings.replaceLatin1WithUTF8(list_.items[start..list_.items.len]);
+
+            return this.len - initial;
+        }
+        pub fn writeUTF16(this: *@This(), allocator: std.mem.Allocator, str: []const u16) !u32 {
+            if (comptime Type != u8)
+                @compileError("Unsupported for type " ++ @typeName(Type));
+
+            var list_ = this.listManaged(allocator);
+            defer this.update(list_);
+            try list_.ensureTotalCapacityPrecise(list_.items.len + str.len);
+            const initial = this.len;
+            var remain = str;
+            while (remain.len > 0) {
+                const orig_len = list_.items.len;
+
+                var slice_ = list_.items.ptr[orig_len..list_.capacity];
+                const result = strings.copyUTF16IntoUTF8(slice_, []const u16, remain);
+                remain = remain[result.read..];
+                list_.items.len += @as(usize, result.written);
+                if (remain.len > 0) {
+                    try list_.ensureTotalCapacityPrecise(list_.items.len + strings.elementLengthUTF16IntoUTF8([]const u16, remain));
+                    continue;
+                }
+                if (result.read == 0 or result.written == 0) break;
+            }
+
+            return this.len - initial;
         }
     };
 }

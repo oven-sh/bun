@@ -313,6 +313,8 @@ function consumeReadableStream(nativePtr, nativeType, inputStream) {
                 if (!this.#ptr) return @throwTypeError("ReadableStreamSink is already closed");
                 return this.processResult(this.#reader.readMany());
             }
+
+            
         };
 
         const minlength = nativeType + 1;
@@ -326,7 +328,7 @@ function consumeReadableStream(nativePtr, nativeType, inputStream) {
         @throwTypeError("Cannot start reading from a locked stream");
     }
 
-    return new Prototype(inputStream.getReader(), nativePtr);
+   return new Prototype(inputStream.getReader(), nativePtr);
 }
 
 @globalPrivate

@@ -49,7 +49,7 @@ const Request = JSC.WebCore.Request;
 
 pub const ReadableStream = struct {
     value: JSValue,
-    ptr: Handle,
+    ptr: Source,
 
     pub fn done(this: *const ReadableStream) void {
         this.value.unprotect();
@@ -63,14 +63,22 @@ pub const ReadableStream = struct {
         File = 2,
         HTTPRequest = 3,
         HTTPSRequest = 4,
+        HTTPResponse = 5,
+        HTTPSResponse = 6,
     };
-    pub const Handle = union(Tag) {
+    pub const Source = union(Tag) {
         Invalid: void,
         JavaScript: void,
         Blob: *ByteBlobLoader,
         File: *FileBlobLoader,
+        // HTTPRequest: *HTTPRequest,
         HTTPRequest: void,
+        // HTTPSRequest: *HTTPSRequest,
         HTTPSRequest: void,
+        // HTTPRequest: *HTTPRequest,
+        HTTPResponse: void,
+        // HTTPSRequest: *HTTPSRequest,
+        HTTPSResponse: void,
     };
 
     extern fn ReadableStreamTag__tagged(globalObject: *JSGlobalObject, possibleReadableStream: JSValue, ptr: *JSValue) Tag;
@@ -116,6 +124,19 @@ pub const ReadableStream = struct {
                     .File = ptr.asPtr(FileBlobLoader),
                 },
             },
+
+            // .HTTPRequest => ReadableStream{
+            //     .value = value,
+            //     .ptr = .{
+            //         .HTTPRequest = ptr.asPtr(HTTPRequest),
+            //     },
+            // },
+            // .HTTPSRequest => ReadableStream{
+            //     .value = value,
+            //     .ptr = .{
+            //         .HTTPSRequest = ptr.asPtr(HTTPSRequest),
+            //     },
+            // },
             else => null,
         };
     }
@@ -181,81 +202,6 @@ pub const ReadableStream = struct {
             return @intCast(JSC.Node.FileDescriptor, out);
         }
     };
-
-    pub fn NewNativeReader(
-        comptime Context: type,
-        comptime onEnqueue: anytype,
-        comptime onEnqueueMany: anytype,
-        comptime onClose: anytype,
-        comptime onError: anytype,
-        comptime name_: []const u8,
-    ) type {
-        return struct {
-            pub const JSReadableStreamReaderNative = struct {
-                pub const shim = JSC.Shimmer(std.mem.span(name_), "JSReadableStreamReaderNative", @This());
-                pub const tag = Context.tag;
-                pub const name = std.fmt.comptimePrint("{s}_JSReadableStreamReaderNative", .{std.mem.span(name_)});
-
-                pub fn enqueue(globalThis: *JSGlobalObject, callframe: *const JSC.CallFrame) callconv(.C) JSC.JSValue {
-                    var this = callframe.argument(0).asPtr(*Context);
-                    var buffer = callframe.argument(1).asArrayBuffer(globalThis) orelse {
-                        globalThis.vm().throwError(globalThis, JSC.toInvalidArguments("Expected TypedArray or ArrayBuffer", .{}, globalThis));
-                        return JSC.JSValue.jsUndefined();
-                    };
-                    return onEnqueue(this, globalThis, buffer.slice(), callframe.argument(1));
-                }
-
-                pub fn enqueueMany(globalThis: *JSGlobalObject, callframe: *const JSC.CallFrame) callconv(.C) JSC.JSValue {
-                    var this = callframe.argument(0).asPtr(*Context);
-                    return onEnqueueMany(this, globalThis, callframe.argument(1));
-                }
-
-                pub fn close(globalThis: *JSGlobalObject, callframe: *const JSC.CallFrame) callconv(.C) JSC.JSValue {
-                    var this = callframe.argument(0).asPtr(*Context);
-                    return onClose(this, globalThis, callframe.argument(1));
-                }
-
-                pub fn @"error"(globalThis: *JSGlobalObject, callframe: *const JSC.CallFrame) callconv(.C) JSC.JSValue {
-                    var this = callframe.argument(0).asPtr(*Context);
-                    return onError(this, globalThis, callframe.argument(1));
-                }
-
-                pub fn load(globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
-                    if (comptime JSC.is_bindgen) unreachable;
-                    if (comptime Environment.allow_assert) {
-                        // this should be cached per globals object
-                        const OnlyOnce = struct {
-                            pub threadlocal var last_globals: ?*JSGlobalObject = null;
-                        };
-                        if (OnlyOnce.last_globals) |last_globals| {
-                            std.debug.assert(last_globals != globalThis);
-                        }
-                        OnlyOnce.last_globals = globalThis;
-                    }
-                    return JSC.JSArray.from(globalThis, &.{
-                        JSC.NewFunction(globalThis, null, 2, JSReadableStreamReaderNative.enqueue),
-                        JSC.NewFunction(globalThis, null, 2, JSReadableStreamReaderNative.enqueueMany),
-                        JSC.NewFunction(globalThis, null, 2, JSReadableStreamReaderNative.close),
-                        JSC.NewFunction(globalThis, null, 2, JSReadableStreamReaderNative.@"error"),
-                    });
-                }
-
-                pub const Export = shim.exportFunctions(.{
-                    .@"load" = load,
-                });
-
-                comptime {
-                    if (!JSC.is_bindgen) {
-                        @export(load, .{ .name = Export[0].symbol_name });
-                        _ = JSReadableStreamReaderNative.enqueue;
-                        _ = JSReadableStreamReaderNative.enqueueMany;
-                        _ = JSReadableStreamReaderNative.close;
-                        _ = JSReadableStreamReaderNative.@"error";
-                    }
-                }
-            };
-        };
-    }
 };
 
 pub const StreamStart = union(enum) {
@@ -263,9 +209,36 @@ pub const StreamStart = union(enum) {
     err: JSC.Node.Syscall.Error,
     chunk_size: Blob.SizeType,
     ready: void,
+
+    pub fn toJS(this: StreamStart, globalThis: *JSGlobalObject) JSC.JSValue {
+        switch (this) {
+            .empty, .ready => {
+                return JSC.JSValue.jsUndefined();
+            },
+            .chunk_size => |chunk| {
+                return JSC.JSValue.jsNumber(@intCast(Blob.SizeType, chunk));
+            },
+            .err => |err| {
+                globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                return JSC.JSValue.jsUndefined();
+            },
+        }
+    }
+
+    pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) StreamStart {
+        if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
+            return .{ .empty = {} };
+        }
+
+        if (value.get(globalThis, "chunkSize")) |chunkSize| {
+            return .{ .chunk_size = @intCast(Blob.SizeType, @truncate(i52, chunkSize.toInt64())) };
+        }
+
+        return .{ .empty = {} };
+    }
 };
 
-pub const StreamResult = union(enum) {
+pub const StreamResult = union(Tag) {
     owned: bun.ByteList,
     owned_and_done: bun.ByteList,
     temporary_and_done: bun.ByteList,
@@ -275,6 +248,117 @@ pub const StreamResult = union(enum) {
     pending: *Pending,
     err: JSC.Node.Syscall.Error,
     done: void,
+
+    pub const Tag = enum {
+        owned,
+        owned_and_done,
+        temporary_and_done,
+        temporary,
+        into_array,
+        into_array_and_done,
+        pending,
+        err,
+        done,
+    };
+
+    pub fn slice(this: *const StreamResult) []const u8 {
+        return switch (this.*) {
+            .owned => |owned| owned.slice(),
+            .owned_and_done => |owned_and_done| owned_and_done.slice(),
+            .temporary_and_done => |temporary_and_done| temporary_and_done.slice(),
+            .temporary => |temporary| temporary.slice(),
+            else => "",
+        };
+    }
+
+    pub const Writable = union(StreamResult.Tag) {
+        owned: Blob.SizeType,
+        owned_and_done: Blob.SizeType,
+        temporary_and_done: Blob.SizeType,
+        temporary: Blob.SizeType,
+        into_array: Blob.SizeType,
+        into_array_and_done: Blob.SizeType,
+        pending: *Writable.Pending,
+        err: JSC.Node.Syscall.Error,
+        done: void,
+
+        pub const Pending = struct {
+            frame: anyframe,
+            result: Writable,
+            consumed: Blob.SizeType = 0,
+            used: bool = false,
+        };
+
+        pub fn toPromised(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Writable.Pending) void {
+            var frame = bun.default_allocator.create(@Frame(Writable.toPromisedWrap)) catch unreachable;
+            frame.* = async Writable.toPromisedWrap(globalThis, promise, pending);
+            pending.frame = frame;
+        }
+
+        pub fn isDone(this: *const Writable) bool {
+            return switch (this.*) {
+                .owned_and_done, .temporary_and_done, .into_array_and_done, .done, .err => true,
+                else => false,
+            };
+        }
+        fn toPromisedWrap(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Writable.Pending) void {
+            suspend {}
+
+            pending.used = true;
+            const result: Writable = pending.result;
+
+            switch (result) {
+                .err => |err| {
+                    promise.reject(globalThis, err.toJSC(globalThis));
+                },
+                .done => {
+                    promise.resolve(globalThis, JSValue.jsBoolean(false));
+                },
+                else => {
+                    promise.resolve(globalThis, result.toJS(globalThis));
+                },
+            }
+        }
+
+        pub fn toJS(this: *const Writable, globalThis: *JSGlobalObject) JSValue {
+            switch (this.*) {
+                .pending => |pending| {
+                    var promise = JSC.JSPromise.create(globalThis);
+                    Writable.toPromised(globalThis, promise, pending);
+                    return promise.asValue(globalThis);
+                },
+
+                .err => |err| {
+                    return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis.ref()))).asValue(globalThis);
+                },
+
+                .owned => |len| {
+                    return JSC.JSValue.jsNumber(len);
+                },
+                .owned_and_done => |len| {
+                    return JSC.JSValue.jsNumber(len);
+                },
+                .temporary_and_done => |len| {
+                    return JSC.JSValue.jsNumber(len);
+                },
+                .temporary => |len| {
+                    return JSC.JSValue.jsNumber(len);
+                },
+                .into_array => |len| {
+                    return JSC.JSValue.jsNumber(len);
+                },
+                .into_array_and_done => |len| {
+                    return JSC.JSValue.jsNumber(len);
+                },
+
+                // false == controller.close()
+                // undefined == noop, but we probably won't send it
+                .done => {
+                    return JSC.JSValue.jsBoolean(true);
+                },
+            }
+        }
+    };
 
     pub const IntoArray = struct {
         value: JSValue = JSValue.zero,
@@ -329,14 +413,14 @@ pub const StreamResult = union(enum) {
             },
             .temporary => |temp| {
                 var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
-                var slice = array.asArrayBuffer(globalThis).?.slice();
-                @memcpy(slice.ptr, temp.ptr, temp.len);
+                var slice_ = array.asArrayBuffer(globalThis).?.slice();
+                @memcpy(slice_.ptr, temp.ptr, temp.len);
                 return array;
             },
             .temporary_and_done => |temp| {
                 var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
-                var slice = array.asArrayBuffer(globalThis).?.slice();
-                @memcpy(slice.ptr, temp.ptr, temp.len);
+                var slice_ = array.asArrayBuffer(globalThis).?.slice();
+                @memcpy(slice_.ptr, temp.ptr, temp.len);
                 return array;
             },
             .into_array => |array| {
@@ -363,6 +447,680 @@ pub const StreamResult = union(enum) {
         }
     }
 };
+
+pub const Signal = struct {
+    ptr: *anyopaque = @intToPtr(*anyopaque, 0xaaaaaaaa),
+    vtable: VTable = VTable.Dead,
+
+    pub fn isDead(this: Signal) bool {
+        return this.ptr == @intToPtr(*anyopaque, 0xaaaaaaaa);
+    }
+
+    pub fn initWithType(comptime Type: type, handler: *Type) Sink {
+        return .{
+            .ptr = handler,
+            .vtable = VTable.wrap(Type),
+        };
+    }
+
+    pub fn init(handler: anytype) Signal {
+        return initWithType(std.meta.Child(@TypeOf(handler)), handler);
+    }
+
+    pub fn close(this: Signal, err: ?JSC.Node.Syscall.Error) void {
+        if (this.isDead())
+            return;
+        this.vtable.close(this.ptr, err);
+    }
+    pub fn ready(this: Signal, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void {
+        if (this.isDead())
+            return;
+        this.vtable.ready(this.ptr, amount, offset);
+    }
+    pub fn start(this: Signal) void {
+        if (this.isDead())
+            return;
+        this.vtable.start(this.ptr);
+    }
+
+    pub const VTable = struct {
+        pub const OnCloseFn = fn (this: *anyopaque, err: ?JSC.Node.Syscall.Error) void;
+        pub const OnReadyFn = fn (this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void;
+        pub const OnStartFn = fn (this: *anyopaque) void;
+        close: OnCloseFn,
+        ready: OnReadyFn,
+        start: OnStartFn,
+
+        const DeadFns = struct {
+            pub fn close(_: *anyopaque, _: ?JSC.Node.Syscall.Error) void {
+                unreachable;
+            }
+            pub fn ready(_: *anyopaque, _: ?Blob.SizeType, _: ?Blob.SizeType) void {
+                unreachable;
+            }
+
+            pub fn start(_: *anyopaque) void {
+                unreachable;
+            }
+        };
+
+        pub const Dead = VTable{ .close = DeadFns.close, .ready = DeadFns.ready, .start = DeadFns.start };
+
+        pub fn wrap(
+            comptime Wrapped: type,
+        ) VTable {
+            const Functions = struct {
+                fn onClose(this: *anyopaque, err: ?JSC.Node.Syscall.Error) void {
+                    Wrapped.close(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), err);
+                }
+                fn onReady(this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void {
+                    Wrapped.ready(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), amount, offset);
+                }
+                fn onStart(this: *anyopaque) void {
+                    Wrapped.start(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)));
+                }
+            };
+
+            return VTable{
+                .close = Functions.onClose,
+                .ready = Functions.onReady,
+                .start = Functions.onStart,
+            };
+        }
+    };
+};
+
+pub const Sink = struct {
+    ptr: *anyopaque,
+    vtable: VTable,
+    status: Status = Status.closed,
+    used: bool = false,
+
+    pub const Status = enum {
+        ready,
+        closed,
+    };
+
+    pub const Data = union(enum) {
+        utf16: StreamResult,
+        latin1: StreamResult,
+        bytes: StreamResult,
+    };
+
+    pub fn initWithType(comptime Type: type, handler: *Type) Sink {
+        return .{
+            .ptr = handler,
+            .vtable = VTable.wrap(Type),
+            .status = .ready,
+            .used = false,
+        };
+    }
+
+    pub fn init(handler: anytype) Sink {
+        return initWithType(std.meta.Child(@TypeOf(handler)), handler);
+    }
+
+    pub const UTF8Fallback = struct {
+        const stack_size = 1024;
+        pub fn writeLatin1(comptime Ctx: type, ctx: *Ctx, input: StreamResult, comptime writeFn: anytype) StreamResult.Writable {
+            var str = input.slice();
+            if (strings.isAllASCII(str)) {
+                return writeFn(
+                    ctx,
+                    input,
+                );
+            }
+
+            if (stack_size >= str.len) {
+                var buf: [stack_size]u8 = undefined;
+                @memcpy(&buf, str.ptr, str.len);
+                strings.replaceLatin1WithUTF8(buf[0..str.len]);
+                if (input.isDone()) {
+                    const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.init(buf[0..str.len]) });
+                    return result;
+                } else {
+                    const result = writeFn(ctx, .{ .temporary = bun.ByteList.init(buf[0..str.len]) });
+                    return result;
+                }
+            }
+
+            {
+                var slice = bun.default_allocator.alloc(u8, str.len) catch return .{ .err = JSC.Node.Syscall.Error.oom };
+                @memcpy(slice.ptr, str.ptr, str.len);
+                strings.replaceLatin1WithUTF8(slice[0..str.len]);
+                if (input.isDone()) {
+                    return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(slice) });
+                } else {
+                    return writeFn(ctx, .{ .owned = bun.ByteList.init(slice) });
+                }
+            }
+        }
+
+        pub fn writeUTF16(comptime Ctx: type, ctx: *Ctx, input: StreamResult, comptime writeFn: anytype) StreamResult.Writable {
+            var str: []const u16 = std.mem.bytesAsSlice(u16, input.slice());
+
+            if (stack_size >= str.len * 2) {
+                var buf: [stack_size]u8 = undefined;
+                const copied = strings.copyUTF16IntoUTF8(&buf, []const u16, str);
+                std.debug.assert(copied.written <= stack_size);
+                std.debug.assert(copied.read <= stack_size);
+                if (input.isDone()) {
+                    const result = writeFn(ctx, .{ .temporary_and_done = bun.ByteList.init(buf[0..copied.written]) });
+                    return result;
+                } else {
+                    const result = writeFn(ctx, .{ .temporary = bun.ByteList.init(buf[0..copied.written]) });
+                    return result;
+                }
+            }
+
+            {
+                var allocated = strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = JSC.Node.Syscall.Error.oom };
+                if (input.isDone()) {
+                    return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(allocated) });
+                } else {
+                    return writeFn(ctx, .{ .owned = bun.ByteList.init(allocated) });
+                }
+            }
+        }
+    };
+
+    pub const VTable = struct {
+        pub const WriteUTF16Fn = fn (this: *anyopaque, data: StreamResult) StreamResult.Writable;
+        pub const WriteUTF8Fn = fn (this: *anyopaque, data: StreamResult) StreamResult.Writable;
+        pub const WriteLatin1Fn = fn (this: *anyopaque, data: StreamResult) StreamResult.Writable;
+        pub const EndFn = fn (this: *anyopaque, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void);
+        pub const ConnectFn = fn (this: *anyopaque, signal: Signal) JSC.Node.Maybe(void);
+
+        connect: ConnectFn,
+        write: WriteUTF8Fn,
+        writeLatin1: WriteLatin1Fn,
+        writeUTF16: WriteUTF16Fn,
+        end: EndFn,
+
+        pub fn wrap(
+            comptime Wrapped: type,
+        ) VTable {
+            const Functions = struct {
+                pub fn onWrite(this: *anyopaque, data: StreamResult) StreamResult.Writable {
+                    return Wrapped.write(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), data);
+                }
+                pub fn onConnect(this: *anyopaque, signal: Signal) JSC.Node.Maybe(void) {
+                    return Wrapped.connect(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), signal);
+                }
+                pub fn onWriteLatin1(this: *anyopaque, data: StreamResult) StreamResult.Writable {
+                    return Wrapped.writeLatin1(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), data);
+                }
+                pub fn onWriteUTF16(this: *anyopaque, data: StreamResult) StreamResult.Writable {
+                    return Wrapped.writeUTF16(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), data);
+                }
+                pub fn onEnd(this: *anyopaque, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
+                    return Wrapped.end(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), err);
+                }
+            };
+
+            return VTable{
+                .write = Functions.onWrite,
+                .writeLatin1 = Functions.onWriteLatin1,
+                .writeUTF16 = Functions.onWriteUTF16,
+                .end = Functions.onEnd,
+                .connect = Functions.onConnect,
+            };
+        }
+    };
+
+    pub fn end(this: *Sink, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
+        if (this.status == .closed) {
+            return .{ .result = {} };
+        }
+
+        this.status = .closed;
+        return this.vtable.end(this.ptr, err);
+    }
+
+    pub fn writeLatin1(this: *Sink, data: StreamResult) StreamResult.Writable {
+        if (this.status == .closed) {
+            return .{ .done = {} };
+        }
+
+        const res = this.vtable.writeLatin1(this.ptr, data);
+        this.status = if ((res.isDone()) or this.status == .closed)
+            Status.closed
+        else
+            Status.ready;
+        this.used = true;
+        return res;
+    }
+
+    pub fn writeBytes(this: *Sink, data: StreamResult) StreamResult.Writable {
+        if (this.status == .closed) {
+            return .{ .done = {} };
+        }
+
+        const res = this.vtable.write(this.ptr, data);
+        this.status = if ((res.isDone()) or this.status == .closed)
+            Status.closed
+        else
+            Status.ready;
+        this.used = true;
+        return res;
+    }
+
+    pub fn writeUTF16(this: *Sink, data: StreamResult) StreamResult.Writable {
+        if (this.status == .closed) {
+            return .{ .done = {} };
+        }
+
+        const res = this.vtable.writeUTF16(this.ptr, data);
+        this.status = if ((res.isDone()) or this.status == .closed)
+            Status.closed
+        else
+            Status.ready;
+        this.used = true;
+        return res;
+    }
+
+    pub fn write(this: *Sink, data: Data) StreamResult.Writable {
+        switch (data) {
+            .utf16 => |str| {
+                return this.writeUTF16(str);
+            },
+            .latin1 => |str| {
+                return this.writeLatin1(str);
+            },
+            .bytes => |bytes| {
+                return this.writeBytes(bytes);
+            },
+        }
+    }
+};
+
+pub const ArrayBufferSink = struct {
+    bytes: bun.ByteList,
+    allocator: std.mem.Allocator,
+    done: bool = false,
+    signal: Signal = .{},
+    next: ?Sink = null,
+
+    pub fn connect(this: *ArrayBufferSink, signal: Signal) void {
+        std.debug.assert(this.reader == null);
+        this.signal = signal;
+    }
+
+    pub fn start(this: *ArrayBufferSink, config: StreamStart) JSC.Node.Maybe(void) {
+        var list = this.bytes.listManaged(this.allocator);
+        list.clearAndFree();
+
+        switch (config) {
+            .chunk_size => |chunk_size| {
+                if (chunk_size > 0) {
+                    list.ensureTotalCapacityPrecise(chunk_size) catch return .{ .err = JSC.Node.Syscall.Error.oom };
+                    this.bytes.update(list);
+                }
+            },
+            else => {},
+        }
+
+        this.done = false;
+
+        this.signal.start();
+        return .{ .result = {} };
+    }
+
+    pub fn drain(_: *ArrayBufferSink) JSC.Node.Maybe(void) {
+        return .{ .result = {} };
+    }
+
+    pub fn finalize(this: *ArrayBufferSink) void {
+        if (this.bytes.len > 0) {
+            this.bytes.listManaged(this.allocator).deinit();
+            this.bytes = bun.ByteList.init("");
+            this.done = true;
+        }
+    }
+
+    pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*ArrayBufferSink {
+        var this = try allocator.create(ArrayBufferSink);
+        this.* = ArrayBufferSink{
+            .bytes = bun.ByteList.init(&.{}),
+            .allocator = allocator,
+            .next = next,
+        };
+        return this;
+    }
+
+    pub fn construct(this: *ArrayBufferSink, allocator: std.mem.Allocator) void {
+        this.* = ArrayBufferSink{
+            .bytes = bun.ByteList.init(&.{}),
+            .allocator = allocator,
+            .next = null,
+        };
+    }
+
+    pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeBytes(data);
+        }
+
+        const len = this.bytes.write(this.allocator, data.slice()) catch {
+            return .{ .err = JSC.Node.Syscall.Error.oom };
+        };
+        this.signal.ready(null, null);
+        return .{ .owned = len };
+    }
+    pub const writeBytes = write;
+    pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeLatin1(data);
+        }
+        const len = this.bytes.writeLatin1(this.allocator, data.slice()) catch {
+            return .{ .err = JSC.Node.Syscall.Error.oom };
+        };
+        this.signal.ready(null, null);
+        return .{ .owned = len };
+    }
+    pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
+        if (this.next) |*next| {
+            return next.writeUTF16(data);
+        }
+        const len = this.bytes.writeUTF16(this.allocator, @ptrCast([*]const u16, @alignCast(@alignOf(u16), data.slice().ptr))[0..std.mem.bytesAsSlice(u16, data.slice()).len]) catch {
+            return .{ .err = JSC.Node.Syscall.Error.oom };
+        };
+        this.signal.ready(null, null);
+        return .{ .owned = len };
+    }
+
+    pub fn end(this: *ArrayBufferSink, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
+        if (this.next) |*next| {
+            return next.end(err);
+        }
+        return .{ .result = {} };
+    }
+
+    pub fn toJS(this: *ArrayBufferSink, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
+        if (this.next) |*next| {
+            return next.end(err);
+        }
+        return .{ .result = {} };
+    }
+
+    pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) JSC.Node.Maybe(ArrayBuffer) {
+        if (this.done) {
+            return .{ .result = ArrayBuffer.fromBytes(&[_]u8{}, .ArrayBuffer) };
+        }
+
+        std.debug.assert(this.next == null);
+        var list = this.bytes.listManaged(this.allocator);
+        this.bytes = bun.ByteList.init("");
+        this.done = true;
+        this.signal.close(null);
+        return .{ .result = ArrayBuffer.fromBytes(list.toOwnedSlice(), .ArrayBuffer) };
+    }
+
+    pub fn sink(this: *ArrayBufferSink) Sink {
+        return Sink.init(this);
+    }
+
+    pub const JSArrayBufferSink = NewJSSink(@This(), "ArrayBufferSink");
+};
+
+pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
+    return struct {
+        sink: SinkType,
+
+        const ThisSink = @This();
+
+        pub const shim = JSC.Shimmer("", std.mem.span(name_), @This());
+        pub const name = std.fmt.comptimePrint("{s}", .{std.mem.span(name_)});
+
+        pub fn createObject(globalThis: *JSGlobalObject, object: *anyopaque) callconv(.C) JSValue {
+            JSC.markBinding();
+
+            return shim.cppFn("createObject", .{ globalThis, object });
+        }
+
+        pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?*anyopaque {
+            JSC.markBinding();
+
+            return shim.cppFn("fromJS", .{ globalThis, value });
+        }
+
+        pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+            JSC.markBinding();
+            var allocator = globalThis.bunVM().allocator;
+            var this = allocator.create(ThisSink) catch {
+                globalThis.vm().throwError(globalThis, JSC.Node.Syscall.Error.oom.toJSC(
+                    globalThis,
+                ));
+                return JSC.JSValue.jsUndefined();
+            };
+            this.sink.construct(allocator);
+            return createObject(globalThis, this);
+        }
+
+        pub fn finalize(ptr: *anyopaque) callconv(.C) void {
+            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), ptr));
+
+            this.sink.finalize();
+        }
+
+        pub fn write(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            JSC.markBinding();
+            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), fromJS(globalThis, callframe.this()) orelse {
+                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }));
+
+            if (comptime @hasDecl(SinkType, "getPendingError")) {
+                if (this.sink.getPendingError()) |err| {
+                    globalThis.vm().throwError(globalThis, err);
+                    return JSC.JSValue.jsUndefined();
+                }
+            }
+
+            const args = callframe.arguments();
+            if (args.len == 0 or args[0].isEmptyOrUndefinedOrNull() or args[0].isNumber()) {
+                const err = JSC.toTypeError(
+                    if (args.len == 0) JSC.Node.ErrorCode.ERR_MISSING_ARGS else JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
+                    .{},
+                    globalThis,
+                );
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }
+
+            const arg = args[0];
+            if (arg.asArrayBuffer(globalThis)) |buffer| {
+                const slice = buffer.slice();
+                if (slice.len == 0) {
+                    return JSC.JSValue.jsNumber(0);
+                }
+
+                return this.sink.writeBytes(.{ .temporary = bun.ByteList.init(slice) }).toJS(globalThis);
+            }
+
+            const str = arg.getZigString(globalThis);
+            if (str.len == 0) {
+                return JSC.JSValue.jsNumber(0);
+            }
+
+            if (str.is16Bit()) {
+                return this.sink.writeUTF16(.{ .temporary = bun.ByteList.init(std.mem.sliceAsBytes(str.utf16SliceAligned())) }).toJS(globalThis);
+            }
+
+            return this.sink.writeLatin1(.{ .temporary = bun.ByteList.init(str.slice()) }).toJS(globalThis);
+        }
+
+        pub fn writeString(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            JSC.markBinding();
+
+            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), fromJS(globalThis, callframe.this()) orelse {
+                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }));
+
+            if (comptime @hasDecl(SinkType, "getPendingError")) {
+                if (this.sink.getPendingError()) |err| {
+                    globalThis.vm().throwError(globalThis, err);
+                    return JSC.JSValue.jsUndefined();
+                }
+            }
+
+            const args = callframe.arguments();
+            if (args.len == 0 or args[0].isEmptyOrUndefinedOrNull() or args[0].isNumber()) {
+                const err = JSC.toTypeError(
+                    if (args.len == 0) JSC.Node.ErrorCode.ERR_MISSING_ARGS else JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
+                    .{},
+                    globalThis,
+                );
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }
+
+            const arg = args[0];
+
+            const str = arg.getZigString(globalThis);
+            if (str.len == 0) {
+                return JSC.JSValue.jsNumber(0);
+            }
+
+            if (str.is16Bit()) {
+                return this.sink.writeUTF16(.{ .temporary = str.utf16SliceAligned() }).toJS(globalThis);
+            }
+
+            return this.sink.writeLatin1(.{ .temporary = str.slice() }).toJS(globalThis);
+        }
+
+        pub fn close(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            JSC.markBinding();
+            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), fromJS(globalThis, callframe.this()) orelse {
+                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }));
+
+            if (comptime @hasDecl(SinkType, "getPendingError")) {
+                if (this.sink.getPendingError()) |err| {
+                    globalThis.vm().throwError(globalThis, err);
+                    return JSC.JSValue.jsUndefined();
+                }
+            }
+
+            return this.sink.end(null).toJS(globalThis);
+        }
+        pub fn closeWithError(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            JSC.markBinding();
+            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), fromJS(globalThis, callframe.this()) orelse {
+                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }));
+
+            if (comptime @hasDecl(SinkType, "getPendingError")) {
+                if (this.sink.getPendingError()) |err| {
+                    globalThis.vm().throwError(globalThis, err);
+                    return JSC.JSValue.jsUndefined();
+                }
+            }
+
+            if (callframe.argumentsCount() == 0) {
+                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_MISSING_ARGS, "closeWithError() expects an error", .{}, globalThis);
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }
+
+            return this.sink.end(null).toJS(globalThis);
+        }
+
+        pub fn drain(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            JSC.markBinding();
+
+            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), fromJS(globalThis, callframe.this()) orelse {
+                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }));
+
+            if (comptime @hasDecl(SinkType, "getPendingError")) {
+                if (this.sink.getPendingError()) |err| {
+                    globalThis.vm().throwError(globalThis, err);
+                    return JSC.JSValue.jsUndefined();
+                }
+            }
+
+            return this.sink.drain().toJS(globalThis);
+        }
+
+        pub fn start(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            JSC.markBinding();
+
+            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), fromJS(globalThis, callframe.this()) orelse {
+                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }));
+
+            if (comptime @hasDecl(SinkType, "getPendingError")) {
+                if (this.sink.getPendingError()) |err| {
+                    globalThis.vm().throwError(globalThis, err);
+                    return JSC.JSValue.jsUndefined();
+                }
+            }
+
+            return this.sink.start(
+                if (callframe.argumentsCount() > 0) StreamStart.fromJS(globalThis, callframe.argument(0)) else StreamStart{ .empty = {} },
+            ).toJS(globalThis);
+        }
+
+        pub fn end(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            JSC.markBinding();
+
+            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), fromJS(globalThis, callframe.this()) orelse {
+                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
+                globalThis.vm().throwError(globalThis, err);
+                return JSC.JSValue.jsUndefined();
+            }));
+
+            if (comptime @hasDecl(SinkType, "getPendingError")) {
+                if (this.sink.getPendingError()) |err| {
+                    globalThis.vm().throwError(globalThis, err);
+                    return JSC.JSValue.jsUndefined();
+                }
+            }
+
+            return this.sink.endFromJS(globalThis).toJS(globalThis);
+        }
+
+        pub const Export = shim.exportFunctions(.{
+            .@"finalize" = finalize,
+            .@"write" = write,
+            .@"close" = close,
+            .@"closeWithError" = closeWithError,
+            .@"drain" = drain,
+            .@"start" = start,
+            .@"end" = end,
+            .@"construct" = construct,
+        });
+
+        comptime {
+            if (!JSC.is_bindgen) {
+                @export(finalize, .{ .name = Export[0].symbol_name });
+                @export(write, .{ .name = Export[1].symbol_name });
+                @export(close, .{ .name = Export[2].symbol_name });
+                @export(closeWithError, .{ .name = Export[3].symbol_name });
+                @export(drain, .{ .name = Export[4].symbol_name });
+                @export(start, .{ .name = Export[5].symbol_name });
+                @export(end, .{ .name = Export[6].symbol_name });
+                @export(construct, .{ .name = Export[7].symbol_name });
+            }
+        }
+
+        pub const Extern = [_][]const u8{ "createObject", "fromJS" };
+    };
+}
 
 pub fn WritableStreamSink(
     comptime Context: type,
@@ -824,23 +1582,6 @@ pub fn RequestBodyStreamer(
         else if (is_ssl)
             ReadableStream.Tag.HTTPSRequest;
 
-        pub fn setup(
-            this: *ByteBlobLoader,
-            blob: *const Blob,
-            user_chunk_size: Blob.SizeType,
-        ) void {
-            blob.store.?.ref();
-            var blobe = blob.*;
-            blobe.resolveSize();
-            this.* = ByteBlobLoader{
-                .offset = blobe.offset,
-                .store = blobe.store.?,
-                .chunk_size = if (user_chunk_size > 0) @minimum(user_chunk_size, blobe.size) else @minimum(1024 * 1024 * 2, blobe.size),
-                .remain = blobe.size,
-                .done = false,
-            };
-        }
-
         pub fn onStart(this: *ByteBlobLoader) StreamStart {
             return .{ .chunk_size = this.chunk_size };
         }
@@ -910,6 +1651,7 @@ pub const FileBlobLoader = struct {
     user_chunk_size: Blob.SizeType = 0,
     scheduled_count: u32 = 0,
     concurrent: Concurrent = Concurrent{},
+    input_tag: StreamResult.Tag = StreamResult.Tag.done,
 
     const FileReader = @This();
 
@@ -1195,8 +1937,9 @@ pub const FileBlobLoader = struct {
             @minimum(available_to_read, chunk_size);
     }
 
-    pub fn onPull(this: *FileBlobLoader, buffer: []u8, view: JSC.JSValue) StreamResult {
+    pub fn onPullInto(this: *FileBlobLoader, buffer: []u8, view: JSC.JSValue) StreamResult {
         const chunk_size = this.calculateChunkSize(std.math.maxInt(usize));
+        this.input_tag = .into_array;
 
         switch (chunk_size) {
             0 => {
@@ -1362,16 +2105,17 @@ pub const FileBlobLoader = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub const Source = ReadableStreamSource(@This(), "FileBlobLoader", onStart, onPull, onCancel, deinit);
+    pub const Source = ReadableStreamSource(@This(), "FileBlobLoader", onStart, onPullInto, onCancel, deinit);
 };
 
-pub const StreamSource = struct {
-    ptr: ?*anyopaque = null,
-    vtable: VTable,
-
-    pub const VTable = struct {
-        onStart: fn (this: StreamSource) JSC.WebCore.StreamStart,
-        onPull: fn (this: StreamSource) JSC.WebCore.StreamResult,
-        onError: fn (this: StreamSource) void,
-    };
-};
+// pub const HTTPRequest = RequestBodyStreamer(false);
+// pub const HTTPSRequest = RequestBodyStreamer(true);
+// pub fn ResponseBodyStreamer(comptime is_ssl: bool) type {
+//     return struct {
+//         const Streamer = @This();
+//         pub fn onEnqueue(this: *Streamer, buffer: []u8, ): anytype,
+//         pub fn onEnqueueMany(this: *Streamer): anytype,
+//         pub fn onClose(this: *Streamer): anytype,
+//         pub fn onError(this: *Streamer): anytype,
+//     };
+// }

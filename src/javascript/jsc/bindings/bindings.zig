@@ -3236,6 +3236,8 @@ pub const CallFrame = opaque {
     const argumentsCount_offset = thisValue_offset - 1;
     const alignment = std.meta.alignment([]const JSC.JSValue);
 
+    pub const name = "JSC::CallFrame";
+
     pub fn argumentsPtr(self: *const CallFrame) [*]const JSC.JSValue {
         return @ptrCast([*]const JSC.JSValue, @alignCast(alignment, self)) + arguments_offset;
     }

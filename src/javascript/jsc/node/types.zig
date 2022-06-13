@@ -85,6 +85,55 @@ pub fn Maybe(comptime ResultType: type) type {
 
         pub const todo: @This() = @This(){ .err = Syscall.Error.todo };
 
+        pub fn toJS(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+            switch (this) {
+                .err => |e| {
+                    return e.toJSC(globalThis);
+                },
+                .result => |r| {
+                    if (comptime ReturnType == void) {
+                        return JSC.JSValue.jsUndefined();
+                    }
+
+                    if (comptime ReturnType == JSC.ArrayBuffer) {
+                        return r.toJS(globalThis, null);
+                    }
+
+                    if (comptime std.meta.trait.isNumber(ResultType) or std.meta.trait.isFloat(ResultType)) {
+                        return JSC.JSValue.jsNumber(r);
+                    }
+
+                    if (comptime std.meta.trait.isZigString(ResultType)) {
+                        if (ResultType == []u8) {
+                            return JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalThis, null);
+                        }
+                        return JSC.ZigString.init(std.mem.span(r)).withEncoding().toValueAuto(globalThis);
+                    }
+
+                    if (comptime @typeInfo(ReturnType) == .Bool) {
+                        return JSC.JSValue.jsBoolean(r);
+                    }
+
+                    if (comptime std.meta.trait.isContainer(ReturnType)) {
+                        return r.toJS(globalThis);
+                    }
+
+                    @compileError("toJS Not implemented for type " ++ @typeName(ReturnType));
+                },
+            }
+        }
+
+        pub fn toArrayBuffer(this: @This(), globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+            switch (this) {
+                .err => |e| {
+                    return e.toJSC(globalThis);
+                },
+                .result => |r| {
+                    return JSC.ArrayBuffer.fromBytes(r, .ArrayBuffer).toJS(globalThis, null);
+                },
+            }
+        }
+
         pub inline fn getErrno(this: @This()) os.E {
             return switch (this) {
                 .result => os.E.SUCCESS,

@@ -44,6 +44,8 @@ typedef struct SystemError {
     ZigString syscall;
 } SystemError;
 
+typedef void* ArrayBufferSink;
+
 typedef uint8_t ZigStackFrameCode;
 const ZigStackFrameCode ZigStackFrameCodeNone = 0;
 const ZigStackFrameCode ZigStackFrameCodeEval = 1;

@@ -5,6 +5,14 @@ pub usingnamespace @import("./webcore/streams.zig");
 const JSC = @import("../../jsc.zig");
 const std = @import("std");
 
+pub const Lifetime = enum {
+    clone,
+    transfer,
+    share,
+    /// When reading from a fifo like STDIN/STDERR
+    temporary,
+};
+
 pub const Crypto = struct {
     const UUID = @import("./uuid.zig");
 

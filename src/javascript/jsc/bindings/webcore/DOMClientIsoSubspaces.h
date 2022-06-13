@@ -22,6 +22,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiPrototype;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatement;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatementConstructor;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSinkConstructor;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSink;
     /* --- bun --- */
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMException;

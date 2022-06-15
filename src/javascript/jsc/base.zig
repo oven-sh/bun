@@ -2246,15 +2246,16 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn create(globalThis: *JSC.JSGlobalObject, bytes: []const u8, comptime kind: JSC.JSValue.JSType) JSValue {
+        JSC.markBinding();
         return switch (comptime kind) {
-            .Uint8Array => Bun__createUninitializedUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len),
-            .ArrayBuffer => Bun__createUninitializedArrayBufferForCopy(globalThis, bytes.ptr, bytes.len),
+            .Uint8Array => Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len),
+            .ArrayBuffer => Bun__createArrayBufferForCopy(globalThis, bytes.ptr, bytes.len),
             else => @compileError("Not implemented yet"),
         };
     }
 
-    extern "C" fn Bun__createUninitializedArrayBufferForCopy(*JSC.JSGlobalObject, ptr: *const anyopaque, len: usize) JSValue;
-    extern "C" fn Bun__createUninitializedUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: *const anyopaque, len: usize) JSValue;
+    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: *const anyopaque, len: usize) JSValue;
+    extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: *const anyopaque, len: usize) JSValue;
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, _: JSC.C.ExceptionRef) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);

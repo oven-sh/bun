@@ -184,7 +184,7 @@ pub const JSReadableStreamBlob = JSC.WebCore.ByteBlobLoader.Source.JSReadableStr
 pub const JSReadableStreamFile = JSC.WebCore.FileBlobLoader.Source.JSReadableStreamSource;
 
 // Sinks
-pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSArrayBufferSink;
+pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 
 pub fn Errorable(comptime Type: type) type {
     return extern struct {

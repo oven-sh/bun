@@ -266,7 +266,7 @@ pub const StreamStart = union(Tag) {
             .ArrayBufferSink => {
                 var as_uint8array = false;
                 var stream = false;
-                var chunk_size: JSC.Blob.SizeType = 0;
+                var chunk_size: JSC.WebCore.Blob.SizeType = 0;
                 var empty = true;
 
                 if (value.get(globalThis, "asUint8Array")) |as_array| {
@@ -279,9 +279,9 @@ pub const StreamStart = union(Tag) {
                     empty = false;
                 }
 
-                if (value.get(globalThis, "chunkSize")) |chunkSize| {
+                if (value.get(globalThis, "highwaterMark")) |chunkSize| {
                     empty = false;
-                    chunk_size = @intCast(JSC.Blob.SizeType, @maximum(0, @truncate(i51, chunkSize.toInt64())));
+                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @maximum(0, @truncate(i51, chunkSize.toInt64())));
                 }
 
                 if (!empty) {
@@ -831,7 +831,7 @@ pub const ArrayBufferSink = struct {
                 false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
             };
             this.bytes.len = 0;
-            return value;
+            return .{ .result = value };
         }
 
         return .{ .result = JSValue.jsUndefined() };
@@ -938,7 +938,13 @@ pub const ArrayBufferSink = struct {
         this.bytes = bun.ByteList.init("");
         this.done = true;
         this.signal.close(null);
-        return .{ .result = ArrayBuffer.fromBytes(list.toOwnedSlice(), .ArrayBuffer) };
+        return .{ .result = ArrayBuffer.fromBytes(
+            list.toOwnedSlice(),
+            if (this.as_uint8array)
+                .Uint8Array
+            else
+                .ArrayBuffer,
+        ) };
     }
 
     pub fn sink(this: *ArrayBufferSink) Sink {
@@ -1079,42 +1085,19 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return this.sink.writeLatin1(.{ .temporary = str.slice() }).toJS(globalThis);
         }
 
-        pub fn close(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn close(globalThis: *JSGlobalObject, sink_ptr: ?*anyopaque) callconv(.C) JSValue {
             JSC.markBinding();
-            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), fromJS(globalThis, callframe.this()) orelse {
+            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), sink_ptr) orelse {
                 const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
                 globalThis.vm().throwError(globalThis, err);
                 return JSC.JSValue.jsUndefined();
-            }));
+            });
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
                     globalThis.vm().throwError(globalThis, err);
                     return JSC.JSValue.jsUndefined();
                 }
-            }
-
-            return this.sink.end(null).toJS(globalThis);
-        }
-        pub fn closeWithError(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-            JSC.markBinding();
-            var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), fromJS(globalThis, callframe.this()) orelse {
-                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
-                globalThis.vm().throwError(globalThis, err);
-                return JSC.JSValue.jsUndefined();
-            }));
-
-            if (comptime @hasDecl(SinkType, "getPendingError")) {
-                if (this.sink.getPendingError()) |err| {
-                    globalThis.vm().throwError(globalThis, err);
-                    return JSC.JSValue.jsUndefined();
-                }
-            }
-
-            if (callframe.argumentsCount() == 0) {
-                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_MISSING_ARGS, "closeWithError() expects an error", .{}, globalThis);
-                globalThis.vm().throwError(globalThis, err);
-                return JSC.JSValue.jsUndefined();
             }
 
             return this.sink.end(null).toJS(globalThis);
@@ -1137,7 +1120,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             if (comptime @hasDecl(SinkType, "drainFromJS")) {
-                return this.sink.drainFromJS(globalThis);
+                return this.sink.drainFromJS(globalThis).result;
             }
 
             return this.sink.drain().toJS(globalThis);
@@ -1203,7 +1186,6 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             .@"finalize" = finalize,
             .@"write" = write,
             .@"close" = close,
-            .@"closeWithError" = closeWithError,
             .@"drain" = drain,
             .@"start" = start,
             .@"end" = end,
@@ -1215,11 +1197,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 @export(finalize, .{ .name = Export[0].symbol_name });
                 @export(write, .{ .name = Export[1].symbol_name });
                 @export(close, .{ .name = Export[2].symbol_name });
-                @export(closeWithError, .{ .name = Export[3].symbol_name });
-                @export(drain, .{ .name = Export[4].symbol_name });
-                @export(start, .{ .name = Export[5].symbol_name });
-                @export(end, .{ .name = Export[6].symbol_name });
-                @export(construct, .{ .name = Export[7].symbol_name });
+                @export(drain, .{ .name = Export[3].symbol_name });
+                @export(start, .{ .name = Export[4].symbol_name });
+                @export(end, .{ .name = Export[5].symbol_name });
+                @export(construct, .{ .name = Export[6].symbol_name });
             }
         }
 

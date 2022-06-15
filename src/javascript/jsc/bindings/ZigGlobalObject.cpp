@@ -1661,6 +1661,12 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
+    m_JSArrayBufferControllerPrototype.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::ArrayBufferSink);
+            init.set(prototype);
+        });
+
     m_JSArrayBufferSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::ArrayBufferSink);
@@ -1748,6 +1754,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
                 "reportError"_s, functionReportError),
             JSC::PropertyAttribute::DontDelete | 0 });
 
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { builtinNames.startDirectStreamPrivateName(),
+            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+                String(), functionStartDirectStream),
+            JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
+
     static NeverDestroyed<const String> BunLazyString(MAKE_STATIC_STRING_IMPL("Bun.lazy"));
     JSC::Identifier BunLazyIdentifier = JSC::Identifier::fromUid(vm.symbolRegistry().symbolForKey(BunLazyString));
     extraStaticGlobals.uncheckedAppend(
@@ -1782,6 +1794,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.consumeReadableStreamPrivateName(), readableStreamConsumeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.readableStreamToArrayPrivateName(), readableStreamReadableStreamToArrayCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectBuiltinFunction(vm, this, builtinNames.assignDirectStreamPrivateName(), readableStreamInternalsAssignDirectStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
 
@@ -2008,6 +2021,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_builtinInternalFunctions.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
+    thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
 
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
     visitor.append(thisObject->m_readableStreamToText);

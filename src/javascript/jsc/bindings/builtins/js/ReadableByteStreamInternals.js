@@ -61,12 +61,20 @@ function privateInitializeReadableByteStreamController(stream, underlyingByteSou
     @putByIdDirectPrivate(this, "cancel", @readableByteStreamControllerCancel);
     @putByIdDirectPrivate(this, "pull", @readableByteStreamControllerPull);
 
+    if (@getByIdDirectPrivate(underlyingByteSource, "lazy") === true) {
+        @putByIdDirectPrivate(this, "start", () => @readableStreamByteStreamControllerStart(this));
+    } else {
+        @putByIdDirectPrivate(this, "start", @undefined); 
+        @readableStreamByteStreamControllerStart(this);
+    }
+
     return this;
 }
 
 function readableStreamByteStreamControllerStart(controller) {
     "use strict";
-
+    @putByIdDirectPrivate(controller, "start", @undefined);
+    
     if (@getByIdDirectPrivate(controller, "started") !== -1)
         return;
 
@@ -83,6 +91,7 @@ function readableStreamByteStreamControllerStart(controller) {
             @readableByteStreamControllerError(controller, error);
     });
 }
+
 
 function privateInitializeReadableStreamBYOBRequest(controller, view)
 {

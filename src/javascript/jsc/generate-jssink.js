@@ -1,25 +1,24 @@
-const classes = [ "ArrayBufferSink" ];
+const classes = ["ArrayBufferSink"];
+const SINK_COUNT = 5;
 
 function names(name) {
   return {
-    constructor : `JS${name}Constructor`,
-    className : `JS${name}`,
-    controller : `JSReadable${name}Controller`,
-    controllerName : `Readable${name}Controller`,
-    prototypeName : `JS${name}Prototype`,
-    controllerPrototypeName : `JSReadable${name}ControllerPrototype`,
+    constructor: `JS${name}Constructor`,
+    className: `JS${name}`,
+    controller: `JSReadable${name}Controller`,
+    controllerName: `Readable${name}Controller`,
+    prototypeName: `JS${name}Prototype`,
+    controllerPrototypeName: `JSReadable${name}ControllerPrototype`,
   };
 }
 function header() {
   function classTemplate(name) {
-    const {constructor, className, controller} = names(name);
+    const { constructor, className, controller } = names(name);
 
-    return `class ${
-        constructor} final : public JSC::InternalFunction {                                                                                                     
+    return `class ${constructor} final : public JSC::InternalFunction {                                                                                                     
         public:                                                                                                                                                                     
             using Base = JSC::InternalFunction;                                                                                                                                     
-            static ${
-        constructor}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype); 
+            static ${constructor}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype); 
             static constexpr SinkID Sink = SinkID::${name};
                                                                                                                                                                                     
             static constexpr unsigned StructureFlags = Base::StructureFlags;                                                                                                        
@@ -30,8 +29,7 @@ function header() {
             {                                                                                                                                                                       
                 if constexpr (mode == JSC::SubspaceAccess::Concurrently)                                                                                                            
                     return nullptr;                                                                                                                                                 
-                return WebCore::subspaceForImpl<${
-        constructor}, WebCore::UseCustomHeapCellType::No>(                                                                    
+                return WebCore::subspaceForImpl<${constructor}, WebCore::UseCustomHeapCellType::No>(                                                                    
                     vm,                                                                                                                                                             
                     [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkConstructor.get(); },                                                                                 
                     [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkConstructor = WTFMove(space); },                                                               
@@ -50,8 +48,7 @@ function header() {
             static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
                                                                                                                                                                
         private:                                                                                                                                                                    
-            ${
-        constructor}(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)                                                                  
+            ${constructor}(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)                                                                  
                 : Base(vm, structure, nativeFunction, nativeFunction)                                                                                                               
                                                                                                                                                                                     
             {                                                                                                                                                                       
@@ -60,22 +57,18 @@ function header() {
             void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype);                                                     
         };                                                                                                                                                                          
                                                                                                                                                                                     
-        class ${
-        className} final : public JSC::JSDestructibleObject {                                                                                                              
+        class ${className} final : public JSC::JSDestructibleObject {                                                                                                              
         public:                                                                                                                                                                     
             using Base = JSC::JSDestructibleObject;                                                                                                                                 
-            static ${
-        className}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr);       
-            static constexpr SinkID Sink = SinkID::${
-        name};                                          
+            static ${className}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr);       
+            static constexpr SinkID Sink = SinkID::${name};                                          
                                                                                                                                                                                     
             DECLARE_EXPORT_INFO;                                                                                                                                                    
             template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)                                                                
             {                                                                                                                                                                       
                 if constexpr (mode == JSC::SubspaceAccess::Concurrently)                                                                                                            
                     return nullptr;                                                                                                                                                 
-                return WebCore::subspaceForImpl<${
-        className}, WebCore::UseCustomHeapCellType::No>(                                                                                 
+                return WebCore::subspaceForImpl<${className}, WebCore::UseCustomHeapCellType::No>(                                                                                 
                     vm,                                                                                                                                                             
                     [](auto& spaces) { return spaces.m_clientSubspaceForJSSink.get(); },                                                                                            
                     [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSink = WTFMove(space); },                                                                          
@@ -89,8 +82,7 @@ function header() {
                 return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());                                                 
             }                                                                                                                                                                       
                                                                                                                                                                                     
-            ~${
-        className}();                                                                                                                                                       
+            ~${className}();                                                                                                                                                       
                                                                                                                                                                                     
             void* wrapped() const { return m_sinkPtr; }                                                                                                                             
 
@@ -102,8 +94,7 @@ function header() {
                                                                                                                                                                                     
             void* m_sinkPtr;
                                                                                                                                                                                     
-            ${
-        className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
+            ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
                 : Base(vm, structure)                                                                                                                                               
             {                                                                                                                                                                       
                 m_sinkPtr = sinkPtr;                                                                                                                                                
@@ -112,22 +103,18 @@ function header() {
             void finishCreation(JSC::VM&);                                                                                                                                          
         };
 
-        class ${
-        controller} final : public JSC::JSDestructibleObject {                                                                                                              
+        class ${controller} final : public JSC::JSDestructibleObject {                                                                                                              
             public:                                                                                                                                                                     
                 using Base = JSC::JSDestructibleObject;                                                                                                                                 
-                static ${
-        controller}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr);       
-                static constexpr SinkID Sink = SinkID::${
-        name};                                          
+                static ${controller}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr);       
+                static constexpr SinkID Sink = SinkID::${name};                                          
                                                                                                                                                                                         
                 DECLARE_EXPORT_INFO;                                                                                                                                                    
                 template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)                                                                
                 {                                                                                                                                                                       
                     if constexpr (mode == JSC::SubspaceAccess::Concurrently)                                                                                                            
                         return nullptr;                                                                                                                                                 
-                    return WebCore::subspaceForImpl<${
-        controller}, WebCore::UseCustomHeapCellType::No>(                                                                                 
+                    return WebCore::subspaceForImpl<${controller}, WebCore::UseCustomHeapCellType::No>(                                                                                 
                         vm,                                                                                                                                                             
                         [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },                                                                                            
                         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = WTFMove(space); },                                                                          
@@ -141,8 +128,7 @@ function header() {
                     return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());                                                 
                 }                                                                                                                                                                       
                                                                                                                                                                                         
-                ~${
-        controller}();                                                                                                                                                       
+                ~${controller}();                                                                                                                                                       
 
 
                 void* wrapped() const { return m_sinkPtr; }    
@@ -158,10 +144,9 @@ function header() {
                 void* m_sinkPtr;
                 mutable WriteBarrier<JSC::JSFunction> m_onPull;
                 mutable WriteBarrier<JSC::JSFunction> m_onClose;
-                JSC::Weak<Unknown> m_weakReadableStream;
+                mutable JSC::Weak<JSObject> m_weakReadableStream;
                                                                                                                                                                                         
-                ${
-        controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
+                ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
                     : Base(vm, structure)                                                                                                                                               
                 {                                                                                                                                                                       
                     m_sinkPtr = sinkPtr;                                                                                                                                                
@@ -198,8 +183,9 @@ using namespace JSC;
 JSC_DECLARE_HOST_FUNCTION(functionStartDirectStream);
 `;
 
-  const bottom =
-      `JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
+  const bottom = `
+JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
+JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
 
 } // namespace WebCore
 `;
@@ -263,6 +249,11 @@ async function implementation() {
 // #include "JavaScriptCore/JSTypedArrayViewPrototype.h"
 #include "JavaScriptCore/JSArrayBufferViewInlines.h"
 
+#include "JSReadableStream.h"
+#include "BunClientData.h"
+#include "JavaScriptCore/Weak.h"
+#include "JavaScriptCore/WeakInlines.h"
+
 namespace WebCore {
 using namespace JSC;
 
@@ -280,7 +271,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
     JSC::JSValue onPull = callFrame->argument(1);
     JSC::JSValue onClose = callFrame->argument(2);
     if (!readableStream.isObject()) {
-        scope.throwException(callFrame, JSC::createTypeError(callFrame, "Expected ReadableStream"_s))
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ReadableStream"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
@@ -291,6 +282,9 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
     if (!onClose.isObject() || !onClose.isCallable()) {
         onClose = JSC::jsUndefined();
     }
+
+    JSC::JSFunction *onPullFunction = JSC::jsDynamicCast<JSC::JSFunction*>(onPull);
+    JSC::JSFunction *onCloseFunction = JSC::jsDynamicCast<JSC::JSFunction*>(onClose);
 
 `;
   var templ = head;
@@ -307,24 +301,23 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
 
     templ += `
 
-    ${isFirst ? "" : "else"} if (${controller}* ${
-        name}Controller = JSC::jsDynamicCast<${
-        controller}*>(callFrame->thisValue())) {
+    ${
+      isFirst ? "" : "else"
+    } if (WebCore::${controller}* ${name}Controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue())) {
         if (${name}Controller->wrapped() == nullptr) {
-            scope.throwException(callFrame, JSC::createTypeError(callFrame, "Controller is already closed"_s));
+            scope.throwException(globalObject, JSC::createTypeError(globalObject, "Controller is already closed"_s));
             return JSC::JSValue::encode(JSC::jsUndefined());
         }
 
-        ${name}Controller->start(globalObject, readableStream, onPull, onClose);
+        ${name}Controller->start(globalObject, readableStream, onPullFunction, onCloseFunction);
     }
-}
 `;
     isFirst = false;
   }
 
   templ += `
     else {
-        scope.throwException(callFrame, JSC::createTypeError(callFrame, "Unknown direct controller. This is a bug in Bun."_s));
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Unknown direct controller. This is a bug in Bun."_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
@@ -343,8 +336,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
     } = names(name);
 
     templ += `
-JSC_DEFINE_CUSTOM_GETTER(function${
-        name}__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(function${name}__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto& vm = lexicalGlobalObject->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -354,29 +346,50 @@ JSC_DEFINE_CUSTOM_GETTER(function${
 
 
 JSC_DECLARE_HOST_FUNCTION(${controller}__close);
-JSC_DEFINE_HOST_FUNCTION(${
-        controller}__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
 {
     
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    ${controller}* controller = JSC::jsDynamicCast<${
-        controller}*>(callFrame->thisValue());
-    if (!${controller}) {
-        scope.throwException(callFrame, JSC::createTypeError(callFrame, "Expected ${
-        controller}"_s));
+    WebCore::${controller}* controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue());
+    if (!controller) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     void *ptr = controller->wrapped();
     if (ptr == nullptr) {
-        scope.throwException(callFrame, JSC::createTypeError(callFrame, "Controller is already closed"_s));
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Controller is already closed"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
     controller->detach();
-    ${name}__close(ptr, callFrame->argument(0));
+    ${name}__close(lexicalGlobalObject, ptr);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DECLARE_HOST_FUNCTION(${name}__doClose);
+JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    WebCore::${className}* sink = JSC::jsDynamicCast<WebCore::${className}*>(callFrame->thisValue());
+    if (!sink) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    void *ptr = sink->wrapped();
+    if (ptr == nullptr) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Controller is already closed"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    sink->detach();
+    ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -385,30 +398,20 @@ JSC_DEFINE_HOST_FUNCTION(${
 
 static const HashTableValue JS${name}PrototypeTableValues[]
     = {
-          { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${
-        name}__close), (intptr_t)(0) } },
-          { "drain"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${
-        name}__drain), (intptr_t)(1) } },
-          { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${
-        name}__end), (intptr_t)(0) } },
-          { "start"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${
-        name}__start), (intptr_t)(1) } },
-          { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${
-        name}__write), (intptr_t)(1) } },
+          { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__doClose), (intptr_t)(0) } },
+          { "drain"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__drain), (intptr_t)(1) } },
+          { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__end), (intptr_t)(0) } },
+          { "start"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__start), (intptr_t)(1) } },
+          { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__write), (intptr_t)(1) } },
       };
 
 static const HashTableValue ${controllerPrototypeName}TableValues[]
       = {
-            { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${
-        controller}__close), (intptr_t)(0) } },
-            { "drain"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${
-        name}__drain), (intptr_t)(1) } },
-            { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${
-        name}__end), (intptr_t)(0) } },
-            { "start"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(function${
-        controller}__start), (intptr_t)(1) } },
-            { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${
-        name}__write), (intptr_t)(1) } },
+            { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${controller}__close), (intptr_t)(0) } },
+            { "drain"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__drain), (intptr_t)(1) } },
+            { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__end), (intptr_t)(0) } },
+            { "start"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__start), (intptr_t)(1) } },
+            { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__write), (intptr_t)(1) } },
         };
 
 `;
@@ -439,11 +442,9 @@ class ${prototypeName} final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
 
-    static ${
-        prototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+    static ${prototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        ${prototypeName}* ptr = new (NotNull, JSC::allocateCell<${
-        prototypeName}>(vm)) ${prototypeName}(vm, globalObject, structure);
+        ${prototypeName}* ptr = new (NotNull, JSC::allocateCell<${prototypeName}>(vm)) ${prototypeName}(vm, globalObject, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -469,23 +470,45 @@ private:
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${prototypeName}, ${prototypeName}::Base);
 
-const ClassInfo ${prototypeName}::s_info = { "${
-        name}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${
-        prototypeName}) };
-const ClassInfo ${className}::s_info = { "${
-        name}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${
-        className}) };
-const ClassInfo ${constructor}::s_info = { "${
-        name}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${
-        constructor}) };
+class ${controllerPrototypeName} final : public JSC::JSNonFinalObject {
+    public:
+        using Base = JSC::JSNonFinalObject;
+    
+        static ${controllerPrototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        {
+            ${controllerPrototypeName}* ptr = new (NotNull, JSC::allocateCell<${controllerPrototypeName}>(vm)) ${controllerPrototypeName}(vm, globalObject, structure);
+            ptr->finishCreation(vm, globalObject);
+            return ptr;
+        }
+    
+        DECLARE_INFO;
+        template<typename CellType, JSC::SubspaceAccess>
+        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            return &vm.plainObjectSpace();
+        }
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        }
+    
+    private:
+        ${controllerPrototypeName}(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+            : Base(vm, structure)
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    };
+    STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${controllerPrototypeName}, ${controllerPrototypeName}::Base);
+
+const ClassInfo ${prototypeName}::s_info = { "${name}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${prototypeName}) };
+const ClassInfo ${className}::s_info = { "${name}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${className}) };
+const ClassInfo ${constructor}::s_info = { "${name}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${constructor}) };
 
 
-const ClassInfo ${controllerPrototypeName}::s_info = { "${
-        controllerName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${
-        controllerPrototypeName}) };
-const ClassInfo ${controller}::s_info = { "${
-        controllerName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${
-        controller}) };
+const ClassInfo ${controllerPrototypeName}::s_info = { "${controllerName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${controllerPrototypeName}) };
+const ClassInfo ${controller}::s_info = { "${controllerName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${controller}) };
 
 ${className}::~${className}()
 {
@@ -507,29 +530,23 @@ ${controller}::~${controller}()
 
     templ += `
 
-${constructor}* ${
-        constructor}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSObject* prototype)
+${constructor}* ${constructor}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSObject* prototype)
 {
-    ${constructor}* ptr = new (NotNull, JSC::allocateCell<${
-        constructor}>(vm)) ${constructor}(vm, structure, ${name}__construct);
+    ${constructor}* ptr = new (NotNull, JSC::allocateCell<${constructor}>(vm)) ${constructor}(vm, structure, ${name}__construct);
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;
 }
 
-${className}* ${
-        className}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr)
+${className}* ${className}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr)
 {
-    ${className}* ptr = new (NotNull, JSC::allocateCell<${className}>(vm)) ${
-        className}(vm, structure, sinkPtr);
+    ${className}* ptr = new (NotNull, JSC::allocateCell<${className}>(vm)) ${className}(vm, structure, sinkPtr);
     ptr->finishCreation(vm);
     return ptr;
 }
 
-${controller}* ${
-        controller}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr)
+${controller}* ${controller}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr)
 {
-    ${controller}* ptr = new (NotNull, JSC::allocateCell<${controller}>(vm)) ${
-        controller}(vm, structure, sinkPtr);
+    ${controller}* ptr = new (NotNull, JSC::allocateCell<${controller}>(vm)) ${controller}(vm, structure, sinkPtr);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -541,8 +558,7 @@ void ${constructor}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, J
     initializeProperties(vm, globalObject, prototype);
 }
 
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${
-        constructor}::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${constructor}::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
     return ${name}__construct(globalObject, callFrame);
 }
 
@@ -558,16 +574,14 @@ void ${constructor}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObj
 void ${prototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, ${className}::info(), ${
-        className}PrototypeTableValues, *this);
+    reifyStaticProperties(vm, ${className}::info(), ${className}PrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
 void ${controllerPrototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, ${controller}::info(), ${
-        controller}PrototypeTableValues, *this);
+    reifyStaticProperties(vm, ${controller}::info(), ${controller}PrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -610,7 +624,7 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 template<typename Visitor>
 void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    auto* thisObject = jsCast<${controller}*>(cell);
+    ${controller}* thisObject = jsCast<${controller}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_onPull);
@@ -620,6 +634,12 @@ void ${controller}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(${controller});
 
+
+void ${controller}::start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSFunction *onPull, JSC::JSFunction *onClose) {
+    this->m_weakReadableStream = JSC::Weak<JSC::JSObject>(readableStream.getObject());
+    this->m_onPull.set(globalObject->vm(), this, onPull);
+    this->m_onClose.set(globalObject->vm(), this, onClose);
+}
 
 void ${className}::destroy(JSCell* cell)
 {
@@ -644,14 +664,31 @@ void ${controller}::destroy(JSCell* cell)
   for (let name of classes) {
     templ += `
     case ${name}:
-        return JS${name}Prototype::create(vm, globalObject, JS${
-        name}Prototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+        return JS${name}Prototype::create(vm, globalObject, JS${name}Prototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 `;
   }
   templ += `
 default: 
     RELEASE_ASSERT_NOT_REACHED();
     }
+}`;
+
+  templ += `
+JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
+{
+    switch (sinkID) {
+  `;
+  for (let name of classes) {
+    const { controllerPrototypeName } = names(name);
+    templ += `
+  case ${name}:
+      return ${controllerPrototypeName}::create(vm, globalObject, ${controllerPrototypeName}::createStructure(vm, globalObject, globalObject->objectPrototype()));
+`;
+  }
+  templ += `
+default: 
+  RELEASE_ASSERT_NOT_REACHED();
+  }
 }`;
 
   templ += footer;
@@ -666,54 +703,56 @@ default:
     } = names(name);
 
     templ += `
-extern "C" JSC__JSValue ${
-        name}__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
+extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* sinkPtr)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     JSC::JSValue prototype = globalObject->${name}Prototype();
-    JSC::Structure* structure = WebCore::JS${
-        name}::createStructure(vm, globalObject, prototype);
-    return JSC::JSValue::encode(WebCore::JS${
-        name}::create(vm, globalObject, structure, sinkPtr));
+    JSC::Structure* structure = WebCore::JS${name}::createStructure(vm, globalObject, prototype);
+    return JSC::JSValue::encode(WebCore::JS${name}::create(vm, globalObject, structure, sinkPtr));
 }
 
-extern "C" void* ${
-        name}__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
+extern "C" void* ${name}__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
 {
     JSC::VM& vm = WebCore::getVM(arg0);
-    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${
-        name}*>(JSC::JSValue::decode(JSValue1)))
+    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(JSValue1)))
         return sink->wrapped();
+
+    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(JSValue1)))
+        return controller->wrapped();
 
     return nullptr;
 }
 
-extern "C" JSC__JSValue ${
-        name}__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, int32_t *bunNativeTag, void** bunNativePtr)
+extern "C" JSC__JSValue ${name}__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, int32_t *bunNativeTag, void** bunNativePtr)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
-    JSC::JSValue prototype = globalObject->${controllerPrototypeName}();
-    JSC::Structure* structure = WebCore::${
-        controller}::createStructure(vm, globalObject, prototype);
-    ${controller} *controller = WebCore::${
-        controller}::create(vm, globalObject, structure, sinkPtr);
-    auto &clientData = WebCore:;getClientData(vm);
+    auto clientData = WebCore::clientData(vm);
     JSC::JSObject *readableStream = JSC::JSValue::decode(stream).getObject();
 
-    if (readableStream->get(vm, clientData.builtinNames().bunNativeTag()).isUndefined()) {
-
+    if (JSC::JSValue tag = readableStream->get(globalObject, clientData->builtinNames().bunNativeTypePrivateName())) {
+        if (tag.isInt32()) {
+            int32_t tagNumber = tag.toInt32(arg0);
+            if (tagNumber > 0 && tagNumber < 5) {
+                *bunNativeTag = tagNumber;
+                *bunNativePtr = reinterpret_cast<void*>(bitwise_cast<uintptr_t>(readableStream->get(globalObject, clientData->builtinNames().bunNativePtrPrivateName()).asNumber()));
+                return JSC::JSValue::encode(JSC::jsNull());
+            }
+        }
     }
 
+    JSC::JSValue prototype = globalObject->${controllerPrototypeName}();
+    JSC::Structure* structure = WebCore::${controller}::createStructure(vm, globalObject, prototype);
+    WebCore::${controller} *controller = WebCore::${controller}::create(vm, globalObject, structure, sinkPtr);
 
-    JSC::JSObject *function = globalObject->getDirect(vm, clientData.builtinNames()->assignDirectStreamPrivateName()).getObject();
+    JSC::JSObject *function = globalObject->getDirect(vm, clientData->builtinNames().assignDirectStreamPrivateName()).getObject();
     auto callData = JSC::getCallData(function);
-    MarkedArgumentBuffer arguments;
-    args.append(JSC::JSValue::encode(stream));
-    args.append(JSC::JSValue::encode(controller));
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSC::JSValue::decode(stream));
+    arguments.append(controller);
 
-    auto result = JSC::call(arg0, function, callData, jsUndefined(), arguments);
+    auto result = JSC::call(arg0, function, callData, JSC::jsUndefined(), arguments);
     return JSC::JSValue::encode(result);
 }
 
@@ -725,5 +764,7 @@ extern "C" JSC__JSValue ${
 }
 
 await Bun.write(import.meta.dir + "/bindings/JSSink.h", header());
-await Bun.write(import.meta.dir + "/bindings/JSSink.cpp",
-                await implementation());
+await Bun.write(
+  import.meta.dir + "/bindings/JSSink.cpp",
+  await implementation()
+);

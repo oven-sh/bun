@@ -364,7 +364,6 @@ pub extern fn JSC__JSValue__jsDoubleNumber(arg0: f64) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNull(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromChar(arg0: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromDouble(arg0: f64) JSC__JSValue;
-pub extern fn JSC__JSValue__jsNumberFromInt32(arg0: i32) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromInt64(arg0: i64) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromU16(arg0: u16) JSC__JSValue;
 pub extern fn JSC__JSValue__jsNumberFromUint64(arg0: u64) JSC__JSValue;

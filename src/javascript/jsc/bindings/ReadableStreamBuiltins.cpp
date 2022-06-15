@@ -49,7 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableStreamInitializeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInitializeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInitializeReadableStreamCodeLength = 2367;
+const int s_readableStreamInitializeReadableStreamCodeLength = 2262;
 static const JSC::Intrinsic s_readableStreamInitializeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInitializeReadableStreamCode =
     "(function (underlyingSource, strategy)\n" \
@@ -70,7 +70,6 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "    @putByIdDirectPrivate(this, \"state\", @streamReadable);\n" \
     "    \n" \
     "    @putByIdDirectPrivate(this, \"reader\", @undefined);\n" \
-    "    @putByIdDirectPrivate(this, \"sink\", @undefined);\n" \
     "    \n" \
     "    @putByIdDirectPrivate(this, \"storedError\", @undefined);\n" \
     "    \n" \
@@ -78,39 +77,34 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "    \n" \
     "    //\n" \
     "    @putByIdDirectPrivate(this, \"readableStreamController\", null);\n" \
-    "    \n" \
     "\n" \
+    "    const isDirect = underlyingSource.type === \"direct\";\n" \
+    "    //\n" \
+    "    const isUnderlyingSourceLazy = !!underlyingSource.@lazy;\n" \
+    "    const isLazy = isDirect || isUnderlyingSourceLazy;\n" \
+    "    \n" \
     "    //\n" \
     "    //\n" \
-    "    if (@getByIdDirectPrivate(underlyingSource, \"pull\") !== @undefined) {\n" \
-    "        \n" \
+    "    if (@getByIdDirectPrivate(underlyingSource, \"pull\") !== @undefined && !isLazy) {\n" \
     "        const size = @getByIdDirectPrivate(strategy, \"size\");\n" \
     "        const highWaterMark = @getByIdDirectPrivate(strategy, \"highWaterMark\");\n" \
     "        @setupReadableStreamDefaultController(this, underlyingSource, size, highWaterMark !== @undefined ? highWaterMark : 1, @getByIdDirectPrivate(underlyingSource, \"start\"), @getByIdDirectPrivate(underlyingSource, \"pull\"), @getByIdDirectPrivate(underlyingSource, \"cancel\"));\n" \
     "        \n" \
     "        return this;\n" \
     "    }\n" \
-    "\n" \
-    "    const type = underlyingSource.type;\n" \
-    "    const typeString = @toString(type);\n" \
-    "\n" \
-    "    if (typeString === \"bytes\") {\n" \
-    "        //\n" \
-    "        //\n" \
-    "\n" \
-    "        if (strategy.highWaterMark === @undefined)\n" \
-    "            strategy.highWaterMark = 0;\n" \
-    "        if (strategy.size !== @undefined)\n" \
-    "            @throwRangeError(\"Strategy for a ReadableByteStreamController cannot have a size\");\n" \
-    "\n" \
-    "        @putByIdDirectPrivate(this, \"readableStreamController\", new @ReadableByteStreamController(this, underlyingSource, strategy.highWaterMark, @isReadableStream));\n" \
-    "    } else if (type === @undefined) {\n" \
-    "        if (strategy.highWaterMark === @undefined)\n" \
-    "            strategy.highWaterMark = 1;\n" \
-    "            \n" \
-    "        @setupReadableStreamDefaultController(this, underlyingSource, strategy.size, strategy.highWaterMark, underlyingSource.start, underlyingSource.pull, underlyingSource.cancel);\n" \
-    "    } else\n" \
-    "        @throwRangeError(\"Invalid type for underlying source\");\n" \
+    "    if (isDirect) {\n" \
+    "        if (\"start\" in underlyingSource && typeof underlyingSource.start === \"function\")\n" \
+    "            @throwTypeError(\"\\\"start\\\" for direct streams are not implemented yet\");\n" \
+    "    \n" \
+    "        @putByIdDirectPrivate(this, \"start\", () => @createReadableStreamController.@call(this, underlyingSource, strategy, true));\n" \
+    "    } else if (isLazy) {\n" \
+    "        const autoAllocateChunkSize = underlyingSource.autoAllocateChunkSize;\n" \
+    "        @putByIdDirectPrivate(this, \"start\", () => @lazyLoadStream(this, autoAllocateChunkSize));\n" \
+    "    } else {\n" \
+    "        @putByIdDirectPrivate(this, \"start\", @undefined);\n" \
+    "        @createReadableStreamController.@call(this, underlyingSource, strategy, false);\n" \
+    "    }\n" \
+    "    \n" \
     "\n" \
     "    return this;\n" \
     "})\n" \
@@ -267,19 +261,19 @@ const char* const s_readableStreamReadableStreamToArrayPublicCode =
 
 const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamConsumeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamConsumeReadableStreamCodeLength = 3696;
+const int s_readableStreamConsumeReadableStreamCodeLength = 3718;
 static const JSC::Intrinsic s_readableStreamConsumeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamConsumeReadableStreamCode =
     "(function (nativePtr, nativeType, inputStream) {\n" \
     "    \"use strict\";\n" \
-    "    const symbol = Symbol.for(\"Bun.consumeReadableStreamPrototype\");\n" \
+    "    const symbol = globalThis.Symbol.for(\"Bun.consumeReadableStreamPrototype\");\n" \
     "    var cached =  globalThis[symbol];\n" \
     "    if (!cached) {\n" \
     "        cached = globalThis[symbol] = [];\n" \
     "    }\n" \
     "    var Prototype = cached[nativeType];\n" \
     "    if (Prototype === @undefined) {\n" \
-    "        var [doRead, doError, doReadMany, doClose, onClose, deinit] = globalThis[Symbol.for(\"Bun.lazy\")](nativeType);\n" \
+    "        var [doRead, doError, doReadMany, doClose, onClose, deinit] = globalThis[globalThis.Symbol.for(\"Bun.lazy\")](nativeType);\n" \
     "\n" \
     "        Prototype = class NativeReadableStreamSink {\n" \
     "            constructor(reader, ptr) {\n" \
@@ -403,95 +397,15 @@ const char* const s_readableStreamCreateEmptyReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamCreateNativeReadableStreamCodeLength = 2955;
+const int s_readableStreamCreateNativeReadableStreamCodeLength = 343;
 static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateNativeReadableStreamCode =
     "(function (nativePtr, nativeType, autoAllocateChunkSize) {\n" \
     "    \"use strict\";\n" \
-    "    var cached =  globalThis[Symbol.for(\"Bun.nativeReadableStreamPrototype\")] ||= new @Map;\n" \
-    "    var Prototype = cached.@get(nativeType);\n" \
-    "    if (Prototype === @undefined) {\n" \
-    "        var [pull, start, cancel, setClose, deinit] = globalThis[Symbol.for(\"Bun.lazy\")](nativeType);\n" \
-    "        var closer = [false];\n" \
-    "        var handleResult;\n" \
-    "        function handleNativeReadableStreamPromiseResult(val) {\n" \
-    "            \"use strict\";\n" \
-    "            var {c, v} = this;\n" \
-    "            this.c = @undefined;\n" \
-    "            this.v = @undefined;\n" \
-    "            handleResult(val, c, v);\n" \
-    "        }\n" \
-    "     \n" \
-    "        handleResult = function handleResult(result, controller, view) {\n" \
-    "            \"use strict\";\n" \
-    "\n" \
-    "            if (result && @isPromise(result)) {\n" \
-    "                return result.then(handleNativeReadableStreamPromiseResult.bind({c: controller, v: view}), (err) => controller.error(err));\n" \
-    "            } else if (result !== false) {\n" \
-    "                if (view && view.byteLength === result) {\n" \
-    "                    controller.byobRequest.respondWithNewView(view);\n" \
-    "                } else {\n" \
-    "                    controller.byobRequest.respond(result);\n" \
-    "                }\n" \
-    "            }\n" \
-    "\n" \
-    "            if (closer[0] || result === false) {\n" \
-    "                @enqueueJob(() => controller.close());\n" \
-    "                closer[0] = false;\n" \
-    "            }\n" \
-    "        };\n" \
-    "\n" \
-    "        Prototype = class NativeReadableStreamSource {\n" \
-    "            constructor(tag, autoAllocateChunkSize) {\n" \
-    "                this.pull = this.pull_.bind(tag);\n" \
-    "                this.cancel = this.cancel_.bind(tag);\n" \
-    "                this.autoAllocateChunkSize = autoAllocateChunkSize;\n" \
-    "            }\n" \
-    "\n" \
-    "            pull;\n" \
-    "            cancel;\n" \
-    "\n" \
-    "            type = \"bytes\";\n" \
-    "            autoAllocateChunkSize = 0;\n" \
-    "\n" \
-    "            static startSync = start;\n" \
-    "            \n" \
-    "            pull_(controller) {\n" \
-    "                closer[0] = false;\n" \
-    "                var result;\n" \
-    "\n" \
-    "                const view = controller.byobRequest.view;\n" \
-    "                try {\n" \
-    "                    result = pull(this, view, closer);\n" \
-    "                } catch(err) {\n" \
-    "                    return controller.error(err);\n" \
-    "                }\n" \
-    "\n" \
-    "                return handleResult(result, controller, view);\n" \
-    "            }\n" \
-    "\n" \
-    "            cancel_(reason) {\n" \
-    "                cancel(this, reason);\n" \
-    "            }\n" \
-    "\n" \
-    "            static registry = new FinalizationRegistry(deinit);\n" \
-    "        }\n" \
-    "        cached.@set(nativeType, Prototype);\n" \
-    "    }\n" \
-    "    \n" \
-    "    //\n" \
-    "    //\n" \
-    "    //\n" \
-    "    const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);\n" \
-    "\n" \
-    "    //\n" \
-    "    if (chunkSize === 0) {\n" \
-    "        return @createEmptyReadableStream();\n" \
-    "    }\n" \
-    "\n" \
-    "    var instance = new Prototype(nativePtr, chunkSize);\n" \
-    "    Prototype.registry.register(instance, nativePtr);\n" \
-    "    var stream = new @ReadableStream(instance);\n" \
+    "    stream = new @ReadableStream({\n" \
+    "        @lazy: true,\n" \
+    "        autoAllocateChunkSize: autoAllocateChunkSize,\n" \
+    "    });\n" \
     "    @putByIdDirectPrivate(stream, \"bunNativeType\", nativeType);\n" \
     "    @putByIdDirectPrivate(stream, \"bunNativePtr\", nativePtr);\n" \
     "    return stream;\n" \
@@ -519,7 +433,7 @@ const char* const s_readableStreamCancelCode =
 
 const JSC::ConstructAbility s_readableStreamGetReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamGetReaderCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamGetReaderCodeLength = 759;
+const int s_readableStreamGetReaderCodeLength = 619;
 static const JSC::Intrinsic s_readableStreamGetReaderCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamGetReaderCode =
     "(function (options)\n" \
@@ -530,17 +444,15 @@ const char* const s_readableStreamGetReaderCode =
     "        throw @makeThisTypeError(\"ReadableStream\", \"getReader\");\n" \
     "\n" \
     "    const mode = @toDictionary(options, { }, \"ReadableStream.getReader takes an object as first argument\").mode;\n" \
-    "    if (mode === @undefined)\n" \
+    "    if (mode === @undefined) {\n" \
+    "        var start_ = @getByIdDirectPrivate(this, \"start\");\n" \
+    "        if (start_) {\n" \
+    "            start_.@call(this);\n" \
+    "        }\n" \
     "        return new @ReadableStreamDefaultReader(this);\n" \
-    "\n" \
+    "    }\n" \
     "    //\n" \
     "    if (mode == 'byob') {\n" \
-    "        var controller = @getByIdDirectPrivate(this, \"controller\");\n" \
-    "        if (@isReadableStreamDefaultController(controller))\n" \
-    "            @readableStreamDefaultControllerStart(controller)\n" \
-    "        else\n" \
-    "            @readableStreamByteStreamControllerStart(controller);\n" \
-    "\n" \
     "        return new @ReadableStreamBYOBReader(this);\n" \
     "    }\n" \
     "\n" \

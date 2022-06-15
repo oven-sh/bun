@@ -40,9 +40,9 @@ using namespace JSC;
     macro(addEventListener) \
     macro(appendFromJS) \
     macro(argv) \
+    macro(assignDirectStream) \
     macro(associatedReadableByteStreamController) \
     macro(autoAllocateChunkSize) \
-    macro(startDirectStream) \
     macro(backpressure) \
     macro(backpressureChangePromise) \
     macro(basename) \
@@ -79,8 +79,8 @@ using namespace JSC;
     macro(delimiter) \
     macro(destroy) \
     macro(dir) \
-    macro(dirname) \
     macro(direct) \
+    macro(dirname) \
     macro(disturbed) \
     macro(document) \
     macro(encode) \
@@ -124,6 +124,7 @@ using namespace JSC;
     macro(isWindows) \
     macro(join) \
     macro(kind) \
+    macro(lazy) \
     macro(localStreams) \
     macro(makeDOMException) \
     macro(makeGetterTypeError) \
@@ -186,6 +187,7 @@ using namespace JSC;
     macro(start) \
     macro(startAlgorithm) \
     macro(startConsumingStream) \
+    macro(startDirectStream) \
     macro(started) \
     macro(startedPromise) \
     macro(state) \

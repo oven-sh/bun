@@ -55,14 +55,6 @@ extern const char* const s_readableStreamInternalsPrivateInitializeReadableStrea
 extern const int s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeConstructorKind;
-extern const char* const s_readableStreamInternalsSetupReadableStreamDefaultControllerCode;
-extern const int s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeLength;
-extern const JSC::ConstructAbility s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeConstructorKind;
-extern const char* const s_readableStreamInternalsReadableStreamDefaultControllerStartCode;
-extern const int s_readableStreamInternalsReadableStreamDefaultControllerStartCodeLength;
-extern const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerStartCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerStartCodeConstructorKind;
 extern const char* const s_readableStreamInternalsReadableStreamDefaultControllerErrorCode;
 extern const int s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeConstructAbility;
@@ -75,6 +67,18 @@ extern const char* const s_readableStreamInternalsAcquireReadableStreamDefaultRe
 extern const int s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeConstructorKind;
+extern const char* const s_readableStreamInternalsSetupReadableStreamDefaultControllerCode;
+extern const int s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeConstructorKind;
+extern const char* const s_readableStreamInternalsCreateReadableStreamControllerCode;
+extern const int s_readableStreamInternalsCreateReadableStreamControllerCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsCreateReadableStreamControllerCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsCreateReadableStreamControllerCodeConstructorKind;
+extern const char* const s_readableStreamInternalsReadableStreamDefaultControllerStartCode;
+extern const int s_readableStreamInternalsReadableStreamDefaultControllerStartCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerStartCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerStartCodeConstructorKind;
 extern const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCode;
 extern const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructAbility;
@@ -143,6 +147,42 @@ extern const char* const s_readableStreamInternalsIsReadableStreamDefaultControl
 extern const int s_readableStreamInternalsIsReadableStreamDefaultControllerCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamDefaultControllerCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamDefaultControllerCodeConstructorKind;
+extern const char* const s_readableStreamInternalsAssignDirectStreamCode;
+extern const int s_readableStreamInternalsAssignDirectStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsAssignDirectStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsAssignDirectStreamCodeConstructorKind;
+extern const char* const s_readableStreamInternalsHandleDirectStreamErrorCode;
+extern const int s_readableStreamInternalsHandleDirectStreamErrorCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsHandleDirectStreamErrorCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsHandleDirectStreamErrorCodeConstructorKind;
+extern const char* const s_readableStreamInternalsHandleDirectStreamErrorRejectCode;
+extern const int s_readableStreamInternalsHandleDirectStreamErrorRejectCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsHandleDirectStreamErrorRejectCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsHandleDirectStreamErrorRejectCodeConstructorKind;
+extern const char* const s_readableStreamInternalsOnPullDirectStreamCode;
+extern const int s_readableStreamInternalsOnPullDirectStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsOnPullDirectStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsOnPullDirectStreamCodeConstructorKind;
+extern const char* const s_readableStreamInternalsNoopDoneFunctionCode;
+extern const int s_readableStreamInternalsNoopDoneFunctionCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsNoopDoneFunctionCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsNoopDoneFunctionCodeConstructorKind;
+extern const char* const s_readableStreamInternalsOnReadableStreamDirectControllerClosedCode;
+extern const int s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeConstructorKind;
+extern const char* const s_readableStreamInternalsOnCloseDirectStreamCode;
+extern const int s_readableStreamInternalsOnCloseDirectStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsOnCloseDirectStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsOnCloseDirectStreamCodeConstructorKind;
+extern const char* const s_readableStreamInternalsOnDrainDirectStreamCode;
+extern const int s_readableStreamInternalsOnDrainDirectStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsOnDrainDirectStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsOnDrainDirectStreamCodeConstructorKind;
+extern const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode;
+extern const int s_readableStreamInternalsInitializeArrayBufferStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructorKind;
 extern const char* const s_readableStreamInternalsReadableStreamErrorCode;
 extern const int s_readableStreamInternalsReadableStreamErrorCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsReadableStreamErrorCodeConstructAbility;
@@ -215,15 +255,20 @@ extern const char* const s_readableStreamInternalsReadableStreamDefaultControlle
 extern const int s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeConstructorKind;
+extern const char* const s_readableStreamInternalsLazyLoadStreamCode;
+extern const int s_readableStreamInternalsLazyLoadStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind;
 
 #define WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_DATA(macro) \
     macro(readableStreamReaderGenericInitialize, readableStreamInternalsReadableStreamReaderGenericInitialize, 2) \
     macro(privateInitializeReadableStreamDefaultController, readableStreamInternalsPrivateInitializeReadableStreamDefaultController, 4) \
-    macro(setupReadableStreamDefaultController, readableStreamInternalsSetupReadableStreamDefaultController, 7) \
-    macro(readableStreamDefaultControllerStart, readableStreamInternalsReadableStreamDefaultControllerStart, 1) \
     macro(readableStreamDefaultControllerError, readableStreamInternalsReadableStreamDefaultControllerError, 2) \
     macro(readableStreamPipeTo, readableStreamInternalsReadableStreamPipeTo, 2) \
     macro(acquireReadableStreamDefaultReader, readableStreamInternalsAcquireReadableStreamDefaultReader, 1) \
+    macro(setupReadableStreamDefaultController, readableStreamInternalsSetupReadableStreamDefaultController, 7) \
+    macro(createReadableStreamController, readableStreamInternalsCreateReadableStreamController, 3) \
+    macro(readableStreamDefaultControllerStart, readableStreamInternalsReadableStreamDefaultControllerStart, 1) \
     macro(readableStreamPipeToWritableStream, readableStreamInternalsReadableStreamPipeToWritableStream, 6) \
     macro(pipeToLoop, readableStreamInternalsPipeToLoop, 1) \
     macro(pipeToDoReadWrite, readableStreamInternalsPipeToDoReadWrite, 1) \
@@ -241,6 +286,15 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefault
     macro(isReadableStream, readableStreamInternalsIsReadableStream, 1) \
     macro(isReadableStreamDefaultReader, readableStreamInternalsIsReadableStreamDefaultReader, 1) \
     macro(isReadableStreamDefaultController, readableStreamInternalsIsReadableStreamDefaultController, 1) \
+    macro(assignDirectStream, readableStreamInternalsAssignDirectStream, 0) \
+    macro(handleDirectStreamError, readableStreamInternalsHandleDirectStreamError, 1) \
+    macro(handleDirectStreamErrorReject, readableStreamInternalsHandleDirectStreamErrorReject, 1) \
+    macro(onPullDirectStream, readableStreamInternalsOnPullDirectStream, 1) \
+    macro(noopDoneFunction, readableStreamInternalsNoopDoneFunction, 0) \
+    macro(onReadableStreamDirectControllerClosed, readableStreamInternalsOnReadableStreamDirectControllerClosed, 1) \
+    macro(onCloseDirectStream, readableStreamInternalsOnCloseDirectStream, 1) \
+    macro(onDrainDirectStream, readableStreamInternalsOnDrainDirectStream, 0) \
+    macro(initializeArrayBufferStream, readableStreamInternalsInitializeArrayBufferStream, 2) \
     macro(readableStreamError, readableStreamInternalsReadableStreamError, 2) \
     macro(readableStreamDefaultControllerShouldCallPull, readableStreamInternalsReadableStreamDefaultControllerShouldCallPull, 1) \
     macro(readableStreamDefaultControllerCallPullIfNeeded, readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeeded, 1) \
@@ -259,14 +313,16 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefault
     macro(isReadableStreamDisturbed, readableStreamInternalsIsReadableStreamDisturbed, 1) \
     macro(readableStreamReaderGenericRelease, readableStreamInternalsReadableStreamReaderGenericRelease, 1) \
     macro(readableStreamDefaultControllerCanCloseOrEnqueue, readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueue, 1) \
+    macro(lazyLoadStream, readableStreamInternalsLazyLoadStream, 2) \
 
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMREADERGENERICINITIALIZE 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_PRIVATEINITIALIZEREADABLESTREAMDEFAULTCONTROLLER 1
-#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_SETUPREADABLESTREAMDEFAULTCONTROLLER 1
-#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMDEFAULTCONTROLLERSTART 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMDEFAULTCONTROLLERERROR 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMPIPETO 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ACQUIREREADABLESTREAMDEFAULTREADER 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_SETUPREADABLESTREAMDEFAULTCONTROLLER 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_CREATEREADABLESTREAMCONTROLLER 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMDEFAULTCONTROLLERSTART 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMPIPETOWRITABLESTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_PIPETOLOOP 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_PIPETODOREADWRITE 1
@@ -284,6 +340,15 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefault
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ISREADABLESTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ISREADABLESTREAMDEFAULTREADER 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ISREADABLESTREAMDEFAULTCONTROLLER 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ASSIGNDIRECTSTREAM 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_HANDLEDIRECTSTREAMERROR 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_HANDLEDIRECTSTREAMERRORREJECT 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONPULLDIRECTSTREAM 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_NOOPDONEFUNCTION 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONREADABLESTREAMDIRECTCONTROLLERCLOSED 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONCLOSEDIRECTSTREAM 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONDRAINDIRECTSTREAM 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_INITIALIZEARRAYBUFFERSTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMERROR 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMDEFAULTCONTROLLERSHOULDCALLPULL 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMDEFAULTCONTROLLERCALLPULLIFNEEDED 1
@@ -302,15 +367,17 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefault
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ISREADABLESTREAMDISTURBED 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMREADERGENERICRELEASE 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMDEFAULTCONTROLLERCANCLOSEORENQUEUE 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_LAZYLOADSTREAM 1
 
 #define WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_CODE(macro) \
     macro(readableStreamInternalsReadableStreamReaderGenericInitializeCode, readableStreamReaderGenericInitialize, ASCIILiteral(), s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeLength) \
     macro(readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCode, privateInitializeReadableStreamDefaultController, ASCIILiteral(), s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeLength) \
-    macro(readableStreamInternalsSetupReadableStreamDefaultControllerCode, setupReadableStreamDefaultController, ASCIILiteral(), s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeLength) \
-    macro(readableStreamInternalsReadableStreamDefaultControllerStartCode, readableStreamDefaultControllerStart, ASCIILiteral(), s_readableStreamInternalsReadableStreamDefaultControllerStartCodeLength) \
     macro(readableStreamInternalsReadableStreamDefaultControllerErrorCode, readableStreamDefaultControllerError, ASCIILiteral(), s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeLength) \
     macro(readableStreamInternalsReadableStreamPipeToCode, readableStreamPipeTo, ASCIILiteral(), s_readableStreamInternalsReadableStreamPipeToCodeLength) \
     macro(readableStreamInternalsAcquireReadableStreamDefaultReaderCode, acquireReadableStreamDefaultReader, ASCIILiteral(), s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeLength) \
+    macro(readableStreamInternalsSetupReadableStreamDefaultControllerCode, setupReadableStreamDefaultController, ASCIILiteral(), s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeLength) \
+    macro(readableStreamInternalsCreateReadableStreamControllerCode, createReadableStreamController, ASCIILiteral(), s_readableStreamInternalsCreateReadableStreamControllerCodeLength) \
+    macro(readableStreamInternalsReadableStreamDefaultControllerStartCode, readableStreamDefaultControllerStart, ASCIILiteral(), s_readableStreamInternalsReadableStreamDefaultControllerStartCodeLength) \
     macro(readableStreamInternalsReadableStreamPipeToWritableStreamCode, readableStreamPipeToWritableStream, ASCIILiteral(), s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength) \
     macro(readableStreamInternalsPipeToLoopCode, pipeToLoop, ASCIILiteral(), s_readableStreamInternalsPipeToLoopCodeLength) \
     macro(readableStreamInternalsPipeToDoReadWriteCode, pipeToDoReadWrite, ASCIILiteral(), s_readableStreamInternalsPipeToDoReadWriteCodeLength) \
@@ -328,6 +395,15 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefault
     macro(readableStreamInternalsIsReadableStreamCode, isReadableStream, ASCIILiteral(), s_readableStreamInternalsIsReadableStreamCodeLength) \
     macro(readableStreamInternalsIsReadableStreamDefaultReaderCode, isReadableStreamDefaultReader, ASCIILiteral(), s_readableStreamInternalsIsReadableStreamDefaultReaderCodeLength) \
     macro(readableStreamInternalsIsReadableStreamDefaultControllerCode, isReadableStreamDefaultController, ASCIILiteral(), s_readableStreamInternalsIsReadableStreamDefaultControllerCodeLength) \
+    macro(readableStreamInternalsAssignDirectStreamCode, assignDirectStream, ASCIILiteral(), s_readableStreamInternalsAssignDirectStreamCodeLength) \
+    macro(readableStreamInternalsHandleDirectStreamErrorCode, handleDirectStreamError, ASCIILiteral(), s_readableStreamInternalsHandleDirectStreamErrorCodeLength) \
+    macro(readableStreamInternalsHandleDirectStreamErrorRejectCode, handleDirectStreamErrorReject, ASCIILiteral(), s_readableStreamInternalsHandleDirectStreamErrorRejectCodeLength) \
+    macro(readableStreamInternalsOnPullDirectStreamCode, onPullDirectStream, ASCIILiteral(), s_readableStreamInternalsOnPullDirectStreamCodeLength) \
+    macro(readableStreamInternalsNoopDoneFunctionCode, noopDoneFunction, ASCIILiteral(), s_readableStreamInternalsNoopDoneFunctionCodeLength) \
+    macro(readableStreamInternalsOnReadableStreamDirectControllerClosedCode, onReadableStreamDirectControllerClosed, ASCIILiteral(), s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeLength) \
+    macro(readableStreamInternalsOnCloseDirectStreamCode, onCloseDirectStream, ASCIILiteral(), s_readableStreamInternalsOnCloseDirectStreamCodeLength) \
+    macro(readableStreamInternalsOnDrainDirectStreamCode, onDrainDirectStream, ASCIILiteral(), s_readableStreamInternalsOnDrainDirectStreamCodeLength) \
+    macro(readableStreamInternalsInitializeArrayBufferStreamCode, initializeArrayBufferStream, ASCIILiteral(), s_readableStreamInternalsInitializeArrayBufferStreamCodeLength) \
     macro(readableStreamInternalsReadableStreamErrorCode, readableStreamError, ASCIILiteral(), s_readableStreamInternalsReadableStreamErrorCodeLength) \
     macro(readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCode, readableStreamDefaultControllerShouldCallPull, ASCIILiteral(), s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeLength) \
     macro(readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCode, readableStreamDefaultControllerCallPullIfNeeded, ASCIILiteral(), s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeLength) \
@@ -346,14 +422,26 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefault
     macro(readableStreamInternalsIsReadableStreamDisturbedCode, isReadableStreamDisturbed, ASCIILiteral(), s_readableStreamInternalsIsReadableStreamDisturbedCodeLength) \
     macro(readableStreamInternalsReadableStreamReaderGenericReleaseCode, readableStreamReaderGenericRelease, ASCIILiteral(), s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeLength) \
     macro(readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCode, readableStreamDefaultControllerCanCloseOrEnqueue, ASCIILiteral(), s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeLength) \
+    macro(readableStreamInternalsLazyLoadStreamCode, lazyLoadStream, ASCIILiteral(), s_readableStreamInternalsLazyLoadStreamCodeLength) \
 
 #define WEBCORE_FOREACH_READABLESTREAMINTERNALS_BUILTIN_FUNCTION_NAME(macro) \
     macro(acquireReadableStreamDefaultReader) \
+    macro(assignDirectStream) \
+    macro(createReadableStreamController) \
+    macro(handleDirectStreamError) \
+    macro(handleDirectStreamErrorReject) \
+    macro(initializeArrayBufferStream) \
     macro(isReadableStream) \
     macro(isReadableStreamDefaultController) \
     macro(isReadableStreamDefaultReader) \
     macro(isReadableStreamDisturbed) \
     macro(isReadableStreamLocked) \
+    macro(lazyLoadStream) \
+    macro(noopDoneFunction) \
+    macro(onCloseDirectStream) \
+    macro(onDrainDirectStream) \
+    macro(onPullDirectStream) \
+    macro(onReadableStreamDirectControllerClosed) \
     macro(pipeToClosingMustBePropagatedBackward) \
     macro(pipeToClosingMustBePropagatedForward) \
     macro(pipeToDoReadWrite) \

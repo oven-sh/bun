@@ -75,12 +75,11 @@ const char* const s_writableStreamInternalsIsWritableStreamDefaultWriterCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeLength = 165;
+const int s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeLength = 77;
 static const JSC::Intrinsic s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsAcquireWritableStreamDefaultWriterCode =
     "(function (stream)\n" \
     "{\n" \
-    "    @writableStreamDefaultControllerStart(@getByIdDirectPrivate(stream, \"controller\"));\n" \
     "    return new @WritableStreamDefaultWriter(stream);\n" \
     "})\n" \
 ;
@@ -842,7 +841,7 @@ const char* const s_writableStreamInternalsWritableStreamDefaultWriterWriteCode 
 
 const JSC::ConstructAbility s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeLength = 1086;
+const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeLength = 1142;
 static const JSC::Intrinsic s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerCode =
     "(function (stream, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm)\n" \
@@ -867,6 +866,8 @@ const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerC
     "\n" \
     "    const backpressure = @writableStreamDefaultControllerGetBackpressure(controller);\n" \
     "    @writableStreamUpdateBackpressure(stream, backpressure);\n" \
+    "\n" \
+    "    @writableStreamDefaultControllerStart(controller);\n" \
     "})\n" \
 ;
 

@@ -42,7 +42,6 @@ function isWritableStreamDefaultWriter(writer)
 
 function acquireWritableStreamDefaultWriter(stream)
 {
-    @writableStreamDefaultControllerStart(@getByIdDirectPrivate(stream, "controller"));
     return new @WritableStreamDefaultWriter(stream);
 }
 

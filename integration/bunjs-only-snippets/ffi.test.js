@@ -383,7 +383,6 @@ function ffiRunner(types) {
   var bigArray = new BigUint64Array(8);
   new Uint8Array(bigArray.buffer).fill(255);
   var bigIntArray = new BigInt64Array(bigArray.buffer);
-
   expect(identity_uint64_t(bigArray[0])).toBe(bigArray[0]);
   expect(identity_uint64_t(bigArray[0] - BigInt(1))).toBe(
     bigArray[0] - BigInt(1)

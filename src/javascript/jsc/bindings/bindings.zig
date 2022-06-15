@@ -15,6 +15,7 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const JSC = @import("../../../jsc.zig");
 const Shimmer = JSC.Shimmer;
+const FFI = @import("./FFI.zig");
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     bytes: shim.Bytes,
@@ -2424,7 +2425,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn jsNumberFromDouble(i: f64) JSValue {
-        return cppFn("jsNumberFromDouble", .{i});
+        return FFI.DOUBLE_TO_JSVALUE(i).asJSValue;
     }
     pub fn jsNumberFromChar(i: u8) JSValue {
         return cppFn("jsNumberFromChar", .{i});
@@ -2433,13 +2434,30 @@ pub const JSValue = enum(i64) {
         return cppFn("jsNumberFromU16", .{i});
     }
     pub fn jsNumberFromInt32(i: i32) JSValue {
-        return cppFn("jsNumberFromInt32", .{i});
+        return FFI.INT32_TO_JSVALUE(i).asJSValue;
     }
 
     pub fn jsNumberFromInt64(i: i64) JSValue {
+        if (i <= std.math.maxInt(i32)) {
+            return jsNumberFromInt32(@intCast(i32, i));
+        }
+
+        if (i <= std.math.maxInt(i52)) {
+            return jsNumberFromDouble(@intToFloat(f64, @intCast(i52, i)));
+        }
+
         return cppFn("jsNumberFromInt64", .{i});
     }
+
     pub fn jsNumberFromUint64(i: u64) JSValue {
+        if (i <= std.math.maxInt(i32)) {
+            return jsNumberFromInt32(@intCast(i32, i));
+        }
+
+        if (i <= std.math.maxInt(i52)) {
+            return jsNumberFromDouble(@intToFloat(f64, @intCast(i52, i)));
+        }
+
         return cppFn("jsNumberFromUint64", .{i});
     }
 
@@ -2487,7 +2505,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn isInt32(this: JSValue) bool {
-        return (@bitCast(c_ulonglong, @enumToInt(this)) & @as(c_ulonglong, 18446181123756130304)) == @as(c_ulonglong, 18446181123756130304);
+        return FFI.JSVALUE_IS_INT32(.{ .asJSValue = this });
     }
 
     pub fn isInt32AsAnyInt(this: JSValue) bool {
@@ -2495,7 +2513,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn isNumber(this: JSValue) bool {
-        return (@bitCast(c_ulonglong, @enumToInt(this)) & @as(c_ulonglong, 18446181123756130304)) != 0;
+        return FFI.JSVALUE_IS_NUMBER(.{ .asJSValue = this });
     }
 
     pub fn isError(this: JSValue) bool {
@@ -2776,7 +2794,7 @@ pub const JSValue = enum(i64) {
 
     pub fn asNumber(this: JSValue) f64 {
         if (this.isInt32()) {
-            return @intToFloat(f64, this.toInt32());
+            return @intToFloat(f64, this.asInt32());
         }
 
         if (isNumber(this)) {
@@ -2795,7 +2813,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn asDouble(this: JSValue) f64 {
-        return @bitCast(f64, @enumToInt(this) - comptime (@as(c_longlong, 1) << @intCast(@import("std").math.Log2Int(c_longlong), 49)));
+        return FFI.JSVALUE_TO_DOUBLE(.{ .asJSValue = this });
     }
 
     pub fn asPtr(this: JSValue, comptime Pointer: type) *Pointer {
@@ -2915,7 +2933,7 @@ pub const JSValue = enum(i64) {
         return @intToPtr(*anyopaque, @bitCast(usize, @enumToInt(this)));
     }
 
-    pub const Extern = [_][]const u8{ "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "getReadableStreamState", "getWritableStreamState", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt32", "jsNumberFromInt64", "jsNumberFromUint64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
+    pub const Extern = [_][]const u8{ "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "getReadableStreamState", "getWritableStreamState", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "jsNumberFromUint64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };
 };
 
 extern "c" fn Microtask__run(*Microtask, *JSGlobalObject) void;
@@ -3289,17 +3307,12 @@ pub const CallFrame = opaque {
 
 // };
 
-pub const EncodedJSValue = enum(i64) {
-    _,
-
-    pub const shim = Shimmer("JSC", "EncodedJSValue", @This());
-
-    pub const Type = u64;
-    const cppFn = shim.cppFn;
-
-    pub const include = "JavaScriptCore/EncodedJSValue.h";
-    pub const name = "JSC::EncodedJSValue";
-    pub const namespace = "JSC";
+pub const EncodedJSValue = extern union {
+    asInt64: i64,
+    ptr: ?*JSCell,
+    asBits: [8]u8,
+    asPtr: ?*anyopaque,
+    asDouble: f64,
 };
 
 pub const Identifier = extern struct {

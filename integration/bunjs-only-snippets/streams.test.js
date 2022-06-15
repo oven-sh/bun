@@ -22,15 +22,37 @@ it("exists globally", () => {
   expect(typeof CountQueuingStrategy).toBe("function");
 });
 
+it("ReadableStream (direct)", async () => {
+  var stream = new ReadableStream({
+    pull(controller) {
+      controller.write("hello");
+      controller.write("world");
+      controller.close();
+    },
+    cancel() {},
+    type: "direct",
+  });
+  console.log("hello");
+  const chunks = [];
+  const chunk = await stream.getReader().read();
+  console.log("it's me");
+  chunks.push(chunk.value);
+  expect(chunks[0].join("")).toBe(Buffer.from("helloworld").join(""));
+});
+
 it("ReadableStream (bytes)", async () => {
+  console.trace();
+
   var stream = new ReadableStream({
     start(controller) {
+      console.log("there");
       controller.enqueue(Buffer.from("abdefgh"));
     },
     pull(controller) {},
     cancel() {},
     type: "bytes",
   });
+  console.log("here");
   const chunks = [];
   const chunk = await stream.getReader().read();
   chunks.push(chunk.value);
@@ -38,6 +60,7 @@ it("ReadableStream (bytes)", async () => {
 });
 
 it("ReadableStream (default)", async () => {
+  console.trace();
   var stream = new ReadableStream({
     start(controller) {
       controller.enqueue(Buffer.from("abdefgh"));
@@ -53,6 +76,7 @@ it("ReadableStream (default)", async () => {
 });
 
 it("readableStreamToArray", async () => {
+  console.trace();
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({
     pull(controller) {
@@ -73,6 +97,7 @@ it("readableStreamToArray", async () => {
 });
 
 it("readableStreamToArrayBuffer (bytes)", async () => {
+  console.trace();
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({
     pull(controller) {
@@ -109,6 +134,7 @@ it("readableStreamToArrayBuffer (default)", async () => {
 });
 
 it("ReadableStream for Blob", async () => {
+  console.trace();
   var blob = new Blob(["abdefgh", "ijklmnop"]);
   expect(await blob.text()).toBe("abdefghijklmnop");
   var stream = blob.stream();
@@ -125,6 +151,7 @@ it("ReadableStream for Blob", async () => {
 });
 
 it("ReadableStream for File", async () => {
+  console.trace();
   var blob = file(import.meta.dir + "/fetch.js.txt");
   var stream = blob.stream(24);
   const chunks = [];

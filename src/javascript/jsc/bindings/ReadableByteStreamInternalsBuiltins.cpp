@@ -49,7 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength = 1782;
+const int s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength = 2089;
 static const JSC::Intrinsic s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCode =
     "(function (stream, underlyingByteSource, highWaterMark)\n" \
@@ -89,23 +89,31 @@ const char* const s_readableByteStreamInternalsPrivateInitializeReadableByteStre
     "    @putByIdDirectPrivate(this, \"cancel\", @readableByteStreamControllerCancel);\n" \
     "    @putByIdDirectPrivate(this, \"pull\", @readableByteStreamControllerPull);\n" \
     "\n" \
+    "    if (@getByIdDirectPrivate(underlyingByteSource, \"lazy\") === true) {\n" \
+    "        @putByIdDirectPrivate(this, \"start\", () => @readableStreamByteStreamControllerStart(this));\n" \
+    "    } else {\n" \
+    "        @putByIdDirectPrivate(this, \"start\", @undefined); \n" \
+    "        @readableStreamByteStreamControllerStart(this);\n" \
+    "    }\n" \
+    "\n" \
     "    return this;\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength = 829;
+const int s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength = 972;
 static const JSC::Intrinsic s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCode =
     "(function (controller) {\n" \
     "    \"use strict\";\n" \
-    "\n" \
+    "    @putByIdDirectPrivate(controller, \"start\", @undefined);\n" \
+    "    \n" \
     "    if (@getByIdDirectPrivate(controller, \"started\") !== -1)\n" \
     "        return;\n" \
     "\n" \
     "    @putByIdDirectPrivate(controller, \"started\", 0);\n" \
-    "\n" \
+    "    var stream = @getByIdDirectPrivate(controller, \"controlledReadableStream\");\n" \
     "    return @promiseInvokeOrNoopNoCatch(@getByIdDirectPrivate(controller, \"underlyingByteSource\"), \"start\", [controller]).@then(() => {\n" \
     "        @putByIdDirectPrivate(controller, \"started\", 1);\n" \
     "        @assert(!@getByIdDirectPrivate(controller, \"pulling\"));\n" \

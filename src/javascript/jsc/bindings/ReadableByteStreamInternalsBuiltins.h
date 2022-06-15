@@ -51,6 +51,10 @@ extern const char* const s_readableByteStreamInternalsPrivateInitializeReadableB
 extern const int s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeConstructorKind;
+extern const char* const s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCode;
+extern const int s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength;
+extern const JSC::ConstructAbility s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeConstructorKind;
 extern const char* const s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCode;
 extern const int s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeConstructAbility;
@@ -190,6 +194,7 @@ extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAdd
 
 #define WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_DATA(macro) \
     macro(privateInitializeReadableByteStreamController, readableByteStreamInternalsPrivateInitializeReadableByteStreamController, 3) \
+    macro(readableStreamByteStreamControllerStart, readableByteStreamInternalsReadableStreamByteStreamControllerStart, 1) \
     macro(privateInitializeReadableStreamBYOBRequest, readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequest, 2) \
     macro(isReadableByteStreamController, readableByteStreamInternalsIsReadableByteStreamController, 1) \
     macro(isReadableStreamBYOBRequest, readableByteStreamInternalsIsReadableStreamBYOBRequest, 1) \
@@ -226,6 +231,7 @@ extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAdd
     macro(readableStreamAddReadIntoRequest, readableByteStreamInternalsReadableStreamAddReadIntoRequest, 1) \
 
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_PRIVATEINITIALIZEREADABLEBYTESTREAMCONTROLLER 1
+#define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_READABLESTREAMBYTESTREAMCONTROLLERSTART 1
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_PRIVATEINITIALIZEREADABLESTREAMBYOBREQUEST 1
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_ISREADABLEBYTESTREAMCONTROLLER 1
 #define WEBCORE_BUILTIN_READABLEBYTESTREAMINTERNALS_ISREADABLESTREAMBYOBREQUEST 1
@@ -263,6 +269,7 @@ extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAdd
 
 #define WEBCORE_FOREACH_READABLEBYTESTREAMINTERNALS_BUILTIN_CODE(macro) \
     macro(readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCode, privateInitializeReadableByteStreamController, ASCIILiteral(), s_readableByteStreamInternalsPrivateInitializeReadableByteStreamControllerCodeLength) \
+    macro(readableByteStreamInternalsReadableStreamByteStreamControllerStartCode, readableStreamByteStreamControllerStart, ASCIILiteral(), s_readableByteStreamInternalsReadableStreamByteStreamControllerStartCodeLength) \
     macro(readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCode, privateInitializeReadableStreamBYOBRequest, ASCIILiteral(), s_readableByteStreamInternalsPrivateInitializeReadableStreamBYOBRequestCodeLength) \
     macro(readableByteStreamInternalsIsReadableByteStreamControllerCode, isReadableByteStreamController, ASCIILiteral(), s_readableByteStreamInternalsIsReadableByteStreamControllerCodeLength) \
     macro(readableByteStreamInternalsIsReadableStreamBYOBRequestCode, isReadableStreamBYOBRequest, ASCIILiteral(), s_readableByteStreamInternalsIsReadableStreamBYOBRequestCodeLength) \
@@ -329,6 +336,7 @@ extern const JSC::ConstructorKind s_readableByteStreamInternalsReadableStreamAdd
     macro(readableByteStreamControllerShouldCallPull) \
     macro(readableStreamAddReadIntoRequest) \
     macro(readableStreamBYOBReaderRead) \
+    macro(readableStreamByteStreamControllerStart) \
     macro(readableStreamFulfillReadIntoRequest) \
     macro(readableStreamHasBYOBReader) \
     macro(readableStreamHasDefaultReader) \

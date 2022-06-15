@@ -77,19 +77,20 @@ function readMany()
     var size = @getByIdDirectPrivate(controller, "queue").size;
     var values = content.toArray(false);
     var length = values.length;
-    
 
     if (length > 0) {
-        for (var i = 0; i < values.length; i++) {
-            const buf = values[i];
-            if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
-                values[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+
+        if (@isReadableByteStreamController(controller)) {
+            for (var i = 0; i < value.length; i++) {
+                const buf = value[i];
+                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
+                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+                }
             }
         }
         
         @resetQueue(@getByIdDirectPrivate(controller, "queue"));
 
-        
         if (@getByIdDirectPrivate(controller, "closeRequested"))
             @readableStreamClose(@getByIdDirectPrivate(controller, "controlledReadableStream"));
         else if (@isReadableStreamDefaultController(controller)) 
@@ -108,13 +109,16 @@ function readMany()
         
         var queue = @getByIdDirectPrivate(controller, "queue");
         var value = [result.value].concat(queue.content.toArray(false));
-        for (var i = 0; i < value.length; i++) {
-            const buf = value[i];
-            if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
-                value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+
+        if (@isReadableByteStreamController(controller)) {
+            for (var i = 0; i < value.length; i++) {
+                const buf = value[i];
+                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {
+                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+                }
             }
         }
-
+        
         var size = queue.size;
         @resetQueue(queue);
 

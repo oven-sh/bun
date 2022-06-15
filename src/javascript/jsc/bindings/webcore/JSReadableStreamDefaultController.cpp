@@ -40,12 +40,10 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 // Functions
-
 
 // Attributes
 
@@ -109,13 +107,12 @@ template<> FunctionExecutable* JSReadableStreamDefaultControllerDOMConstructor::
 
 /* Hash table for prototype */
 
-static const HashTableValue JSReadableStreamDefaultControllerPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsReadableStreamDefaultControllerConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamDefaultControllerDesiredSizeCodeGenerator), (intptr_t) (0) } },
-    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamDefaultControllerEnqueueCodeGenerator), (intptr_t) (0) } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamDefaultControllerCloseCodeGenerator), (intptr_t) (0) } },
-    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamDefaultControllerErrorCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSReadableStreamDefaultControllerPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsReadableStreamDefaultControllerConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultControllerDesiredSizeCodeGenerator), (intptr_t)(0) } },
+    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultControllerEnqueueCodeGenerator), (intptr_t)(0) } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultControllerCloseCodeGenerator), (intptr_t)(0) } },
+    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultControllerErrorCodeGenerator), (intptr_t)(0) } },
 };
 
 const ClassInfo JSReadableStreamDefaultControllerPrototype::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultControllerPrototype) };
@@ -125,18 +122,22 @@ void JSReadableStreamDefaultControllerPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableStreamDefaultController::info(), JSReadableStreamDefaultControllerPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+    auto clientData = WebCore::clientData(vm);
+    this->putDirect(vm, clientData->builtinNames().sinkPublicName(), jsUndefined(), JSC::PropertyAttribute::DontDelete | 0);
 }
 
 const ClassInfo JSReadableStreamDefaultController::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultController) };
 
 JSReadableStreamDefaultController::JSReadableStreamDefaultController(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSReadableStreamDefaultController::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSReadableStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -160,7 +161,7 @@ void JSReadableStreamDefaultController::destroy(JSC::JSCell* cell)
     thisObject->JSReadableStreamDefaultController::~JSReadableStreamDefaultController();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultControllerConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -172,13 +173,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultControllerConstructor, (JSGlobal
 
 JSC::GCClient::IsoSubspace* JSReadableStreamDefaultController::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamDefaultController, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForReadableStreamDefaultController.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultController = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForReadableStreamDefaultController.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultController = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSReadableStreamDefaultController, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamDefaultController = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForReadableStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamDefaultController = WTFMove(space); });
 }
-
 
 }

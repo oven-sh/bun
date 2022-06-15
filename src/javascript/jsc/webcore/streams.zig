@@ -204,11 +204,24 @@ pub const ReadableStream = struct {
     };
 };
 
-pub const StreamStart = union(enum) {
+pub const StreamStart = union(Tag) {
     empty: void,
     err: JSC.Node.Syscall.Error,
     chunk_size: Blob.SizeType,
+    ArrayBufferSink: struct {
+        chunk_size: Blob.SizeType,
+        as_uint8array: bool,
+        stream: bool,
+    },
     ready: void,
+
+    pub const Tag = enum {
+        empty,
+        err,
+        chunk_size,
+        ArrayBufferSink,
+        ready,
+    };
 
     pub fn toJS(this: StreamStart, globalThis: *JSGlobalObject) JSC.JSValue {
         switch (this) {
@@ -222,6 +235,9 @@ pub const StreamStart = union(enum) {
                 globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
                 return JSC.JSValue.jsUndefined();
             },
+            else => {
+                return JSC.JSValue.jsUndefined();
+            },
         }
     }
 
@@ -232,6 +248,53 @@ pub const StreamStart = union(enum) {
 
         if (value.get(globalThis, "chunkSize")) |chunkSize| {
             return .{ .chunk_size = @intCast(Blob.SizeType, @truncate(i52, chunkSize.toInt64())) };
+        }
+
+        return .{ .empty = {} };
+    }
+
+    pub fn fromJSWithTag(
+        globalThis: *JSGlobalObject,
+        value: JSValue,
+        comptime tag: Tag,
+    ) StreamStart {
+        if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
+            return .{ .empty = {} };
+        }
+
+        switch (comptime tag) {
+            .ArrayBufferSink => {
+                var as_uint8array = false;
+                var stream = false;
+                var chunk_size: JSC.Blob.SizeType = 0;
+                var empty = true;
+
+                if (value.get(globalThis, "asUint8Array")) |as_array| {
+                    as_uint8array = as_array.toBoolean();
+                    empty = false;
+                }
+
+                if (value.get(globalThis, "stream")) |as_array| {
+                    stream = as_array.toBoolean();
+                    empty = false;
+                }
+
+                if (value.get(globalThis, "chunkSize")) |chunkSize| {
+                    empty = false;
+                    chunk_size = @intCast(JSC.Blob.SizeType, @maximum(0, @truncate(i51, chunkSize.toInt64())));
+                }
+
+                if (!empty) {
+                    return .{
+                        .ArrayBufferSink = .{
+                            .chunk_size = chunk_size,
+                            .as_uint8array = as_uint8array,
+                            .stream = stream,
+                        },
+                    };
+                }
+            },
+            else => @compileError("Unuspported tag"),
         }
 
         return .{ .empty = {} };
@@ -272,15 +335,17 @@ pub const StreamResult = union(Tag) {
     }
 
     pub const Writable = union(StreamResult.Tag) {
+        pending: *Writable.Pending,
+
+        err: JSC.Node.Syscall.Error,
+        done: void,
+
         owned: Blob.SizeType,
         owned_and_done: Blob.SizeType,
         temporary_and_done: Blob.SizeType,
         temporary: Blob.SizeType,
         into_array: Blob.SizeType,
         into_array_and_done: Blob.SizeType,
-        pending: *Writable.Pending,
-        err: JSC.Node.Syscall.Error,
-        done: void,
 
         pub const Pending = struct {
             frame: anyframe,
@@ -320,43 +385,27 @@ pub const StreamResult = union(Tag) {
             }
         }
 
-        pub fn toJS(this: *const Writable, globalThis: *JSGlobalObject) JSValue {
-            switch (this.*) {
-                .pending => |pending| {
-                    var promise = JSC.JSPromise.create(globalThis);
-                    Writable.toPromised(globalThis, promise, pending);
-                    return promise.asValue(globalThis);
-                },
+        pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
+            return switch (this) {
+                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis.ref()))).asValue(globalThis),
 
-                .err => |err| {
-                    return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis.ref()))).asValue(globalThis);
-                },
-
-                .owned => |len| {
-                    return JSC.JSValue.jsNumber(len);
-                },
-                .owned_and_done => |len| {
-                    return JSC.JSValue.jsNumber(len);
-                },
-                .temporary_and_done => |len| {
-                    return JSC.JSValue.jsNumber(len);
-                },
-                .temporary => |len| {
-                    return JSC.JSValue.jsNumber(len);
-                },
-                .into_array => |len| {
-                    return JSC.JSValue.jsNumber(len);
-                },
-                .into_array_and_done => |len| {
-                    return JSC.JSValue.jsNumber(len);
-                },
+                .owned => |len| JSC.JSValue.jsNumber(len),
+                .owned_and_done => |len| JSC.JSValue.jsNumber(len),
+                .temporary_and_done => |len| JSC.JSValue.jsNumber(len),
+                .temporary => |len| JSC.JSValue.jsNumber(len),
+                .into_array => |len| JSC.JSValue.jsNumber(len),
+                .into_array_and_done => |len| JSC.JSValue.jsNumber(len),
 
                 // false == controller.close()
                 // undefined == noop, but we probably won't send it
-                .done => {
-                    return JSC.JSValue.jsBoolean(true);
+                .done => JSC.JSValue.jsBoolean(true),
+
+                .pending => |pending| brk: {
+                    var promise = JSC.JSPromise.create(globalThis);
+                    Writable.toPromised(globalThis, promise, pending);
+                    break :brk promise.asValue(globalThis);
                 },
-            }
+            };
         }
     };
 
@@ -740,22 +789,27 @@ pub const ArrayBufferSink = struct {
     done: bool = false,
     signal: Signal = .{},
     next: ?Sink = null,
+    streaming: bool = false,
+    as_uint8array: bool = false,
 
     pub fn connect(this: *ArrayBufferSink, signal: Signal) void {
         std.debug.assert(this.reader == null);
         this.signal = signal;
     }
 
-    pub fn start(this: *ArrayBufferSink, config: StreamStart) JSC.Node.Maybe(void) {
+    pub fn start(this: *ArrayBufferSink, stream_start: StreamStart) JSC.Node.Maybe(void) {
         var list = this.bytes.listManaged(this.allocator);
         list.clearAndFree();
 
-        switch (config) {
-            .chunk_size => |chunk_size| {
-                if (chunk_size > 0) {
-                    list.ensureTotalCapacityPrecise(chunk_size) catch return .{ .err = JSC.Node.Syscall.Error.oom };
+        switch (stream_start) {
+            .ArrayBufferSink => |config| {
+                if (config.chunk_size > 0) {
+                    list.ensureTotalCapacityPrecise(config.chunk_size) catch return .{ .err = JSC.Node.Syscall.Error.oom };
                     this.bytes.update(list);
                 }
+
+                this.as_uint8array = config.as_uint8array;
+                this.streaming = config.stream;
             },
             else => {},
         }
@@ -768,6 +822,19 @@ pub const ArrayBufferSink = struct {
 
     pub fn drain(_: *ArrayBufferSink) JSC.Node.Maybe(void) {
         return .{ .result = {} };
+    }
+
+    pub fn drainFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject) JSC.Node.Maybe(JSValue) {
+        if (this.streaming) {
+            const value: JSValue = switch (this.as_uint8array) {
+                true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
+                false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
+            };
+            this.bytes.len = 0;
+            return value;
+        }
+
+        return .{ .result = JSValue.jsUndefined() };
     }
 
     pub fn finalize(this: *ArrayBufferSink) void {
@@ -788,7 +855,10 @@ pub const ArrayBufferSink = struct {
         return this;
     }
 
-    pub fn construct(this: *ArrayBufferSink, allocator: std.mem.Allocator) void {
+    pub fn construct(
+        this: *ArrayBufferSink,
+        allocator: std.mem.Allocator,
+    ) void {
         this.* = ArrayBufferSink{
             .bytes = bun.ByteList.init(&.{}),
             .allocator = allocator,
@@ -833,14 +903,29 @@ pub const ArrayBufferSink = struct {
         if (this.next) |*next| {
             return next.end(err);
         }
+        this.signal.close(err);
         return .{ .result = {} };
     }
 
-    pub fn toJS(this: *ArrayBufferSink, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
-        if (this.next) |*next| {
-            return next.end(err);
+    pub fn toJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: bool) JSValue {
+        if (this.streaming) {
+            const value: JSValue = switch (as_uint8array) {
+                true => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .Uint8Array),
+                false => JSC.ArrayBuffer.create(globalThis, this.bytes.slice(), .ArrayBuffer),
+            };
+            this.bytes.len = 0;
+            return value;
         }
-        return .{ .result = {} };
+
+        var list = this.bytes.listManaged(this.allocator);
+        this.bytes = bun.ByteList.init("");
+        return ArrayBuffer.fromBytes(
+            list.toOwnedSlice(),
+            if (as_uint8array)
+                .Uint8Array
+            else
+                .ArrayBuffer,
+        ).toJS(globalThis, null);
     }
 
     pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) JSC.Node.Maybe(ArrayBuffer) {
@@ -860,7 +945,7 @@ pub const ArrayBufferSink = struct {
         return Sink.init(this);
     }
 
-    pub const JSArrayBufferSink = NewJSSink(@This(), "ArrayBufferSink");
+    pub const JSSink = NewJSSink(@This(), "ArrayBufferSink");
 };
 
 pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
@@ -1051,6 +1136,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
+            if (comptime @hasDecl(SinkType, "drainFromJS")) {
+                return this.sink.drainFromJS(globalThis);
+            }
+
             return this.sink.drain().toJS(globalThis);
         }
 
@@ -1070,8 +1159,24 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
+            if (comptime @hasField(StreamStart, name_)) {
+                return this.sink.start(
+                    if (callframe.argumentsCount() > 0)
+                        StreamStart.fromJSWithTag(
+                            globalThis,
+                            callframe.argument(0),
+                            comptime @field(StreamStart, name_),
+                        )
+                    else
+                        StreamStart{ .empty = {} },
+                ).toJS(globalThis);
+            }
+
             return this.sink.start(
-                if (callframe.argumentsCount() > 0) StreamStart.fromJS(globalThis, callframe.argument(0)) else StreamStart{ .empty = {} },
+                if (callframe.argumentsCount() > 0)
+                    StreamStart.fromJS(globalThis, callframe.argument(0))
+                else
+                    StreamStart{ .empty = {} },
             ).toJS(globalThis);
         }
 
@@ -1417,6 +1522,7 @@ pub fn ReadableStreamSource(
                         globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
                         return JSC.JSValue.jsUndefined();
                     },
+                    else => unreachable,
                 }
             }
 

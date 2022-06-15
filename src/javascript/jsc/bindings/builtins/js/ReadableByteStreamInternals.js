@@ -41,7 +41,7 @@ function privateInitializeReadableByteStreamController(stream, underlyingByteSou
     @putByIdDirectPrivate(this, "pulling", false);
     @readableByteStreamControllerClearPendingPullIntos(this);
     @putByIdDirectPrivate(this, "queue", @newQueue());
-    @putByIdDirectPrivate(this, "started", false);
+    @putByIdDirectPrivate(this, "started", -1);
     @putByIdDirectPrivate(this, "closeRequested", false);
 
     let hwm = @toNumber(highWaterMark);
@@ -58,21 +58,30 @@ function privateInitializeReadableByteStreamController(stream, underlyingByteSou
     @putByIdDirectPrivate(this, "autoAllocateChunkSize", autoAllocateChunkSize);
     @putByIdDirectPrivate(this, "pendingPullIntos", @createFIFO());
 
-    const controller = this;
-    const startResult = @promiseInvokeOrNoopNoCatch(underlyingByteSource, "start", [this]).@then(() => {
-        @putByIdDirectPrivate(controller, "started", true);
-        @assert(!@getByIdDirectPrivate(controller, "pulling"));
-        @assert(!@getByIdDirectPrivate(controller, "pullAgain"));
-        @readableByteStreamControllerCallPullIfNeeded(controller);
-    }, (error) => {
-        if (@getByIdDirectPrivate(stream, "state") === @streamReadable)
-            @readableByteStreamControllerError(controller, error);
-    });
-
     @putByIdDirectPrivate(this, "cancel", @readableByteStreamControllerCancel);
     @putByIdDirectPrivate(this, "pull", @readableByteStreamControllerPull);
 
     return this;
+}
+
+function readableStreamByteStreamControllerStart(controller) {
+    "use strict";
+
+    if (@getByIdDirectPrivate(controller, "started") !== -1)
+        return;
+
+    @putByIdDirectPrivate(controller, "started", 0);
+    var stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
+    return @promiseInvokeOrNoopNoCatch(@getByIdDirectPrivate(controller, "underlyingByteSource"), "start", [controller]).@then(() => {
+        @putByIdDirectPrivate(controller, "started", 1);
+        @assert(!@getByIdDirectPrivate(controller, "pulling"));
+        @assert(!@getByIdDirectPrivate(controller, "pullAgain"));
+        @readableByteStreamControllerCallPullIfNeeded(controller);
+    }, (error) => {
+        var stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
+        if (stream && @getByIdDirectPrivate(stream, "state") === @streamReadable)
+            @readableByteStreamControllerError(controller, error);
+    });
 }
 
 function privateInitializeReadableStreamBYOBRequest(controller, view)
@@ -267,7 +276,7 @@ function readableByteStreamControllerShouldCallPull(controller)
         return false;
     if (@getByIdDirectPrivate(controller, "closeRequested"))
         return false;
-    if (!@getByIdDirectPrivate(controller, "started"))
+    if (!(@getByIdDirectPrivate(controller, "started") > 0))
         return false;
     const reader = @getByIdDirectPrivate(stream, "reader");
     

@@ -75,11 +75,12 @@ const char* const s_writableStreamInternalsIsWritableStreamDefaultWriterCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeLength = 77;
+const int s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeLength = 165;
 static const JSC::Intrinsic s_writableStreamInternalsAcquireWritableStreamDefaultWriterCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsAcquireWritableStreamDefaultWriterCode =
     "(function (stream)\n" \
     "{\n" \
+    "    @writableStreamDefaultControllerStart(@getByIdDirectPrivate(stream, \"controller\"));\n" \
     "    return new @WritableStreamDefaultWriter(stream);\n" \
     "})\n" \
 ;
@@ -160,11 +161,12 @@ const char* const s_writableStreamInternalsCreateInternalWritableStreamFromUnder
 
 const JSC::ConstructAbility s_writableStreamInternalsInitializeWritableStreamSlotsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsInitializeWritableStreamSlotsCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsInitializeWritableStreamSlotsCodeLength = 745;
+const int s_writableStreamInternalsInitializeWritableStreamSlotsCodeLength = 762;
 static const JSC::Intrinsic s_writableStreamInternalsInitializeWritableStreamSlotsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsInitializeWritableStreamSlotsCode =
     "(function (stream, underlyingSink)\n" \
-    "{\n" \
+    "{   \"use strict\";\n" \
+    "\n" \
     "    @putByIdDirectPrivate(stream, \"state\", \"writable\");\n" \
     "    @putByIdDirectPrivate(stream, \"storedError\", @undefined);\n" \
     "    @putByIdDirectPrivate(stream, \"writer\", @undefined);\n" \
@@ -181,11 +183,12 @@ const char* const s_writableStreamInternalsInitializeWritableStreamSlotsCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamCloseForBindingsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamCloseForBindingsCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamCloseForBindingsCodeLength = 417;
+const int s_writableStreamInternalsWritableStreamCloseForBindingsCodeLength = 434;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamCloseForBindingsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamCloseForBindingsCode =
     "(function (stream)\n" \
-    "{\n" \
+    "{   \"use strict\";\n" \
+    "\n" \
     "    if (@isWritableStreamLocked(stream))\n" \
     "        return @Promise.@reject(@makeTypeError(\"WritableStream.close method can only be used on non locked WritableStream\"));\n" \
     "\n" \
@@ -198,11 +201,12 @@ const char* const s_writableStreamInternalsWritableStreamCloseForBindingsCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamAbortForBindingsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamAbortForBindingsCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamAbortForBindingsCodeLength = 249;
+const int s_writableStreamInternalsWritableStreamAbortForBindingsCodeLength = 266;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamAbortForBindingsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamAbortForBindingsCode =
     "(function (stream, reason)\n" \
-    "{\n" \
+    "{   \"use strict\";\n" \
+    "\n" \
     "    if (@isWritableStreamLocked(stream))\n" \
     "        return @Promise.@reject(@makeTypeError(\"WritableStream.abort method can only be used on non locked WritableStream\"));\n" \
     "\n" \
@@ -212,22 +216,24 @@ const char* const s_writableStreamInternalsWritableStreamAbortForBindingsCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsIsWritableStreamLockedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsIsWritableStreamLockedCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsIsWritableStreamLockedCodeLength = 91;
+const int s_writableStreamInternalsIsWritableStreamLockedCodeLength = 108;
 static const JSC::Intrinsic s_writableStreamInternalsIsWritableStreamLockedCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsIsWritableStreamLockedCode =
     "(function (stream)\n" \
-    "{\n" \
+    "{   \"use strict\";\n" \
+    "\n" \
     "    return @getByIdDirectPrivate(stream, \"writer\") !== @undefined;\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeLength = 1521;
+const int s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeLength = 1538;
 static const JSC::Intrinsic s_writableStreamInternalsSetUpWritableStreamDefaultWriterCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsSetUpWritableStreamDefaultWriterCode =
     "(function (writer, stream)\n" \
-    "{\n" \
+    "{   \"use strict\";\n" \
+    "\n" \
     "    if (@isWritableStreamLocked(stream))\n" \
     "        @throwTypeError(\"WritableStream is locked\");\n" \
     "\n" \
@@ -262,11 +268,12 @@ const char* const s_writableStreamInternalsSetUpWritableStreamDefaultWriterCode 
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamAbortCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamAbortCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamAbortCodeLength = 910;
+const int s_writableStreamInternalsWritableStreamAbortCodeLength = 928;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamAbortCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamAbortCode =
     "(function (stream, reason)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const state = @getByIdDirectPrivate(stream, \"state\");\n" \
     "    if (state === \"closed\" || state === \"errored\")\n" \
     "        return @Promise.@resolve();\n" \
@@ -293,11 +300,13 @@ const char* const s_writableStreamInternalsWritableStreamAbortCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamCloseCodeLength = 885;
+const int s_writableStreamInternalsWritableStreamCloseCodeLength = 904;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamCloseCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const state = @getByIdDirectPrivate(stream, \"state\");\n" \
     "    if (state === \"closed\" || state === \"errored\")\n" \
     "        return @Promise.@reject(@makeTypeError(\"Cannot close a writable stream that is closed or errored\"));\n" \
@@ -320,11 +329,13 @@ const char* const s_writableStreamInternalsWritableStreamCloseCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamAddWriteRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamAddWriteRequestCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamAddWriteRequestCodeLength = 372;
+const int s_writableStreamInternalsWritableStreamAddWriteRequestCodeLength = 391;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamAddWriteRequestCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamAddWriteRequestCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    @assert(@isWritableStreamLocked(stream))\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === \"writable\");\n" \
     "\n" \
@@ -337,22 +348,26 @@ const char* const s_writableStreamInternalsWritableStreamAddWriteRequestCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeLength = 169;
+const int s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeLength = 188;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamCloseQueuedOrInFlightCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    return @getByIdDirectPrivate(stream, \"closeRequest\") !== @undefined || @getByIdDirectPrivate(stream, \"inFlightCloseRequest\") !== @undefined;\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDealWithRejectionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDealWithRejectionCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDealWithRejectionCodeLength = 275;
+const int s_writableStreamInternalsWritableStreamDealWithRejectionCodeLength = 294;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDealWithRejectionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDealWithRejectionCode =
     "(function (stream, error)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const state = @getByIdDirectPrivate(stream, \"state\");\n" \
     "    if (state === \"writable\") {\n" \
     "        @writableStreamStartErroring(stream, error);\n" \
@@ -366,11 +381,13 @@ const char* const s_writableStreamInternalsWritableStreamDealWithRejectionCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishErroringCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishErroringCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamFinishErroringCodeLength = 1556;
+const int s_writableStreamInternalsWritableStreamFinishErroringCodeLength = 1575;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishErroringCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamFinishErroringCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === \"erroring\");\n" \
     "    @assert(!@writableStreamHasOperationMarkedInFlight(stream));\n" \
     "\n" \
@@ -412,11 +429,13 @@ const char* const s_writableStreamInternalsWritableStreamFinishErroringCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeLength = 1092;
+const int s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeLength = 1111;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishInFlightCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamFinishInFlightCloseCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const inFlightCloseRequest = @getByIdDirectPrivate(stream, \"inFlightCloseRequest\");\n" \
     "    inFlightCloseRequest.@resolve.@call();\n" \
     "\n" \
@@ -447,11 +466,13 @@ const char* const s_writableStreamInternalsWritableStreamFinishInFlightCloseCode
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeLength = 734;
+const int s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeLength = 753;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamFinishInFlightCloseWithErrorCode =
     "(function (stream, error)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const inFlightCloseRequest = @getByIdDirectPrivate(stream, \"inFlightCloseRequest\");\n" \
     "    @assert(inFlightCloseRequest !== @undefined);\n" \
     "    inFlightCloseRequest.@reject.@call(@undefined, error);\n" \
@@ -473,11 +494,13 @@ const char* const s_writableStreamInternalsWritableStreamFinishInFlightCloseWith
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeLength = 277;
+const int s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeLength = 296;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishInFlightWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamFinishInFlightWriteCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const inFlightWriteRequest = @getByIdDirectPrivate(stream, \"inFlightWriteRequest\");\n" \
     "    @assert(inFlightWriteRequest !== @undefined);\n" \
     "    inFlightWriteRequest.@resolve.@call();\n" \
@@ -488,11 +511,13 @@ const char* const s_writableStreamInternalsWritableStreamFinishInFlightWriteCode
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeLength = 472;
+const int s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeLength = 491;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamFinishInFlightWriteWithErrorCode =
     "(function (stream, error)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const inFlightWriteRequest = @getByIdDirectPrivate(stream, \"inFlightWriteRequest\");\n" \
     "    @assert(inFlightWriteRequest !== @undefined);\n" \
     "    inFlightWriteRequest.@reject.@call(@undefined, error);\n" \
@@ -508,22 +533,26 @@ const char* const s_writableStreamInternalsWritableStreamFinishInFlightWriteWith
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeLength = 177;
+const int s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeLength = 196;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamHasOperationMarkedInFlightCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    return @getByIdDirectPrivate(stream, \"inFlightWriteRequest\") !== @undefined || @getByIdDirectPrivate(stream, \"inFlightCloseRequest\") !== @undefined;\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeLength = 358;
+const int s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeLength = 377;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamMarkCloseRequestInFlightCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const closeRequest = @getByIdDirectPrivate(stream, \"closeRequest\");\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"inFlightCloseRequest\") === @undefined);\n" \
     "    @assert(closeRequest !== @undefined);\n" \
@@ -535,11 +564,13 @@ const char* const s_writableStreamInternalsWritableStreamMarkCloseRequestInFligh
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeLength = 344;
+const int s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeLength = 363;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamMarkFirstWriteRequestInFlightCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const writeRequests = @getByIdDirectPrivate(stream, \"writeRequests\");\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"inFlightWriteRequest\") === @undefined);\n" \
     "    @assert(writeRequests.isNotEmpty());\n" \
@@ -551,11 +582,13 @@ const char* const s_writableStreamInternalsWritableStreamMarkFirstWriteRequestIn
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeLength = 790;
+const int s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeLength = 809;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamRejectCloseAndClosedPromiseIfNeededCode =
     "(function (stream)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === \"errored\");\n" \
     "\n" \
     "    const storedError = @getByIdDirectPrivate(stream, \"storedError\");\n" \
@@ -578,11 +611,13 @@ const char* const s_writableStreamInternalsWritableStreamRejectCloseAndClosedPro
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamStartErroringCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamStartErroringCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamStartErroringCodeLength = 727;
+const int s_writableStreamInternalsWritableStreamStartErroringCodeLength = 752;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamStartErroringCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamStartErroringCode =
     "(function (stream, reason)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"storedError\") === @undefined);\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === \"writable\");\n" \
     " \n" \
@@ -596,18 +631,19 @@ const char* const s_writableStreamInternalsWritableStreamStartErroringCode =
     "    if (writer !== @undefined)\n" \
     "        @writableStreamDefaultWriterEnsureReadyPromiseRejected(writer, reason);\n" \
     "\n" \
-    "    if (!@writableStreamHasOperationMarkedInFlight(stream) && @getByIdDirectPrivate(controller, \"started\"))\n" \
+    "    if (!@writableStreamHasOperationMarkedInFlight(stream) && @getByIdDirectPrivate(controller, \"started\") === 1)\n" \
     "        @writableStreamFinishErroring(stream);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamUpdateBackpressureCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamUpdateBackpressureCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamUpdateBackpressureCodeLength = 603;
+const int s_writableStreamInternalsWritableStreamUpdateBackpressureCodeLength = 621;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamUpdateBackpressureCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamUpdateBackpressureCode =
     "(function (stream, backpressure)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === \"writable\");\n" \
     "    @assert(!@writableStreamCloseQueuedOrInFlight(stream));\n" \
     "\n" \
@@ -624,11 +660,12 @@ const char* const s_writableStreamInternalsWritableStreamUpdateBackpressureCode 
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeLength = 177;
+const int s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeLength = 195;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterAbortCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultWriterAbortCode =
     "(function (writer, reason)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const stream = @getByIdDirectPrivate(writer, \"stream\");\n" \
     "    @assert(stream !== @undefined);\n" \
     "    return @writableStreamAbort(stream, reason);\n" \
@@ -637,11 +674,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultWriterAbortCode 
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeLength = 161;
+const int s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeLength = 179;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultWriterCloseCode =
     "(function (writer)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const stream = @getByIdDirectPrivate(writer, \"stream\");\n" \
     "    @assert(stream !== @undefined);\n" \
     "    return @writableStreamClose(stream);\n" \
@@ -650,11 +688,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultWriterCloseCode 
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeLength = 515;
+const int s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeLength = 533;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultWriterCloseWithErrorPropagationCode =
     "(function (writer)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const stream = @getByIdDirectPrivate(writer, \"stream\");\n" \
     "    @assert(stream !== @undefined);\n" \
     "\n" \
@@ -673,11 +712,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultWriterCloseWithE
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeLength = 607;
+const int s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeLength = 625;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultWriterEnsureClosedPromiseRejectedCode =
     "(function (writer, error)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    let closedPromiseCapability = @getByIdDirectPrivate(writer, \"closedPromise\");\n" \
     "    let closedPromise = closedPromiseCapability.@promise;\n" \
     "\n" \
@@ -694,11 +734,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultWriterEnsureClos
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeLength = 595;
+const int s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeLength = 613;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultWriterEnsureReadyPromiseRejectedCode =
     "(function (writer, error)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    let readyPromiseCapability = @getByIdDirectPrivate(writer, \"readyPromise\");\n" \
     "    let readyPromise = readyPromiseCapability.@promise;\n" \
     "\n" \
@@ -715,11 +756,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultWriterEnsureRead
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeLength = 406;
+const int s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeLength = 424;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultWriterGetDesiredSizeCode =
     "(function (writer)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const stream = @getByIdDirectPrivate(writer, \"stream\");\n" \
     "    @assert(stream !== @undefined);\n" \
     "\n" \
@@ -737,11 +779,13 @@ const char* const s_writableStreamInternalsWritableStreamDefaultWriterGetDesired
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeLength = 549;
+const int s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeLength = 568;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultWriterReleaseCode =
     "(function (writer)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const stream = @getByIdDirectPrivate(writer, \"stream\");\n" \
     "    @assert(stream !== @undefined);\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"writer\") === writer);\n" \
@@ -758,11 +802,13 @@ const char* const s_writableStreamInternalsWritableStreamDefaultWriterReleaseCod
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeLength = 1247;
+const int s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeLength = 1266;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultWriterWriteCode =
     "(function (writer, chunk)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const stream = @getByIdDirectPrivate(writer, \"stream\");\n" \
     "    @assert(stream !== @undefined);\n" \
     "\n" \
@@ -796,11 +842,13 @@ const char* const s_writableStreamInternalsWritableStreamDefaultWriterWriteCode 
 
 const JSC::ConstructAbility s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeLength = 1587;
+const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeLength = 1086;
 static const JSC::Intrinsic s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerCode =
     "(function (stream, controller, startAlgorithm, writeAlgorithm, closeAlgorithm, abortAlgorithm, highWaterMark, sizeAlgorithm)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    @assert(@isWritableStream(stream));\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"controller\") === @undefined);\n" \
     "\n" \
@@ -809,7 +857,8 @@ const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerC
     "\n" \
     "    @resetQueue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
     "\n" \
-    "    @putByIdDirectPrivate(controller, \"started\", false);\n" \
+    "    @putByIdDirectPrivate(controller, \"started\", -1);\n" \
+    "    @putByIdDirectPrivate(controller, \"startAlgorithm\", startAlgorithm);\n" \
     "    @putByIdDirectPrivate(controller, \"strategySizeAlgorithm\", sizeAlgorithm);\n" \
     "    @putByIdDirectPrivate(controller, \"strategyHWM\", highWaterMark);\n" \
     "    @putByIdDirectPrivate(controller, \"writeAlgorithm\", writeAlgorithm);\n" \
@@ -818,16 +867,34 @@ const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerC
     "\n" \
     "    const backpressure = @writableStreamDefaultControllerGetBackpressure(controller);\n" \
     "    @writableStreamUpdateBackpressure(stream, backpressure);\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerStartCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerStartCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_writableStreamInternalsWritableStreamDefaultControllerStartCodeLength = 982;
+static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerStartCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_writableStreamInternalsWritableStreamDefaultControllerStartCode =
+    "(function (controller) {\n" \
+    "    \"use strict\";\n" \
     "\n" \
-    "    @Promise.@resolve(startAlgorithm.@call()).@then(() => {\n" \
+    "    if (@getByIdDirectPrivate(controller, \"started\") !== -1)\n" \
+    "        return;\n" \
+    "\n" \
+    "    @putByIdDirectPrivate(controller, \"started\", 0);\n" \
+    "\n" \
+    "    const startAlgorithm = @getByIdDirectPrivate(controller, \"startAlgorithm\");\n" \
+    "    @putByIdDirectPrivate(controller, \"startAlgorithm\", @undefined);\n" \
+    "    const stream = @getByIdDirectPrivate(controller, \"stream\");\n" \
+    "    return @Promise.@resolve(startAlgorithm.@call()).@then(() => {\n" \
     "        const state = @getByIdDirectPrivate(stream, \"state\");\n" \
     "        @assert(state === \"writable\" || state === \"erroring\");\n" \
-    "        @putByIdDirectPrivate(controller, \"started\", true);\n" \
+    "        @putByIdDirectPrivate(controller, \"started\", 1);\n" \
     "        @writableStreamDefaultControllerAdvanceQueueIfNeeded(controller);\n" \
     "    }, (error) => {\n" \
     "        const state = @getByIdDirectPrivate(stream, \"state\");\n" \
     "        @assert(state === \"writable\" || state === \"erroring\");\n" \
-    "        @putByIdDirectPrivate(controller, \"started\", true);\n" \
+    "        @putByIdDirectPrivate(controller, \"started\", 1);\n" \
     "        @writableStreamDealWithRejection(stream, error);\n" \
     "    });\n" \
     "})\n" \
@@ -835,11 +902,12 @@ const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerC
 
 const JSC::ConstructAbility s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeLength = 1376;
+const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeLength = 1394;
 static const JSC::Intrinsic s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCode =
     "(function (stream, underlyingSink, underlyingSinkDict, highWaterMark, sizeAlgorithm)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const controller = new @WritableStreamDefaultController();\n" \
     "\n" \
     "    let startAlgorithm = () => { };\n" \
@@ -870,14 +938,15 @@ const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerF
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeLength = 872;
+const int s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeLength = 895;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCode =
     "(function (controller)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const stream = @getByIdDirectPrivate(controller, \"stream\");\n" \
     "\n" \
-    "    if (!@getByIdDirectPrivate(controller, \"started\"))\n" \
+    "    if (@getByIdDirectPrivate(controller, \"started\") !== 1)\n" \
     "        return;\n" \
     "\n" \
     "    @assert(stream !== @undefined);\n" \
@@ -914,11 +983,12 @@ const char* const s_writableStreamInternalsIsCloseSentinelCode =
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeLength = 311;
+const int s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeLength = 329;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerClearAlgorithmsCode =
     "(function (controller)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    @putByIdDirectPrivate(controller, \"writeAlgorithm\", @undefined);\n" \
     "    @putByIdDirectPrivate(controller, \"closeAlgorithm\", @undefined);\n" \
     "    @putByIdDirectPrivate(controller, \"abortAlgorithm\", @undefined);\n" \
@@ -928,11 +998,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerClearA
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeLength = 190;
+const int s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeLength = 208;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerCloseCode =
     "(function (controller)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    @enqueueValueWithSize(@getByIdDirectPrivate(controller, \"queue\"), @isCloseSentinel, 0);\n" \
     "    @writableStreamDefaultControllerAdvanceQueueIfNeeded(controller);\n" \
     "})\n" \
@@ -940,11 +1011,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerCloseC
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeLength = 318;
+const int s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeLength = 336;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerErrorCode =
     "(function (controller, error)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const stream = @getByIdDirectPrivate(controller, \"stream\");\n" \
     "    @assert(stream !== @undefined);\n" \
     "    @assert(@getByIdDirectPrivate(stream, \"state\") === \"writable\");\n" \
@@ -956,11 +1028,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerErrorC
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeLength = 228;
+const int s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeLength = 246;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerErrorIfNeededCode =
     "(function (controller, error)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const stream = @getByIdDirectPrivate(controller, \"stream\");\n" \
     "    if (@getByIdDirectPrivate(stream, \"state\") === \"writable\")\n" \
     "        @writableStreamDefaultControllerError(controller, error);\n" \
@@ -969,11 +1042,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerErrorI
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeLength = 141;
+const int s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeLength = 159;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetBackpressureCode =
     "(function (controller)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const desiredSize = @writableStreamDefaultControllerGetDesiredSize(controller);\n" \
     "    return desiredSize <= 0;\n" \
     "})\n" \
@@ -981,11 +1055,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetBac
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeLength = 257;
+const int s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeLength = 275;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetChunkSizeCode =
     "(function (controller, chunk)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    try {\n" \
     "        return @getByIdDirectPrivate(controller, \"strategySizeAlgorithm\").@call(@undefined, chunk);\n" \
     "    } catch (e) {\n" \
@@ -997,22 +1072,24 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetChu
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeLength = 139;
+const int s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeLength = 157;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerGetDesiredSizeCode =
     "(function (controller)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    return @getByIdDirectPrivate(controller, \"strategyHWM\") - @getByIdDirectPrivate(controller, \"queue\").size;\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeLength = 628;
+const int s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeLength = 646;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerProcessCloseCode =
     "(function (controller)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const stream = @getByIdDirectPrivate(controller, \"stream\");\n" \
     "\n" \
     "    @writableStreamMarkCloseRequestInFlight(stream);\n" \
@@ -1033,11 +1110,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerProces
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeLength = 1147;
+const int s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeLength = 1165;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerProcessWriteCode =
     "(function (controller, chunk)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const stream = @getByIdDirectPrivate(controller, \"stream\");\n" \
     "\n" \
     "    @writableStreamMarkFirstWriteRequestInFlight(stream);\n" \
@@ -1067,11 +1145,12 @@ const char* const s_writableStreamInternalsWritableStreamDefaultControllerProces
 
 const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeLength = 707;
+const int s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeLength = 725;
 static const JSC::Intrinsic s_writableStreamInternalsWritableStreamDefaultControllerWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamInternalsWritableStreamDefaultControllerWriteCode =
     "(function (controller, chunk, chunkSize)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    try {\n" \
     "        @enqueueValueWithSize(@getByIdDirectPrivate(controller, \"queue\"), chunk, chunkSize);\n" \
     "\n" \

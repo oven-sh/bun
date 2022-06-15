@@ -42,8 +42,7 @@ using namespace JSC;
     macro(argv) \
     macro(associatedReadableByteStreamController) \
     macro(autoAllocateChunkSize) \
-    macro(backingMap) \
-    macro(backingSet) \
+    macro(startDirectStream) \
     macro(backpressure) \
     macro(backpressureChangePromise) \
     macro(basename) \
@@ -64,13 +63,13 @@ using namespace JSC;
     macro(closedPromiseCapability) \
     macro(code) \
     macro(connect) \
+    macro(consumeReadableStream) \
     macro(controlledReadableStream) \
     macro(controller) \
-    macro(consumeReadableStream) \
     macro(cork) \
+    macro(createEmptyReadableStream) \
     macro(createFIFO) \
     macro(createNativeReadableStream) \
-    macro(createEmptyReadableStream) \
     macro(createReadableStream) \
     macro(createUninitializedArrayBuffer) \
     macro(createWritableStreamFromInternal) \
@@ -81,6 +80,7 @@ using namespace JSC;
     macro(destroy) \
     macro(dir) \
     macro(dirname) \
+    macro(direct) \
     macro(disturbed) \
     macro(document) \
     macro(encode) \
@@ -181,8 +181,10 @@ using namespace JSC;
     macro(sep) \
     macro(setBody) \
     macro(setStatus) \
+    macro(sink) \
     macro(size) \
     macro(start) \
+    macro(startAlgorithm) \
     macro(startConsumingStream) \
     macro(started) \
     macro(startedPromise) \

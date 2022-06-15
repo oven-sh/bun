@@ -116,12 +116,12 @@ pub fn BabyList(comptime Type: type) type {
                 @compileError("Unsupported for type " ++ @typeName(Type));
             const initial = this.len;
             var list_ = this.listManaged(allocator);
-            defer this.update(list_);
-            const start = list_.items.len;
-            try list_.appendSlice(str);
-
-            strings.replaceLatin1WithUTF8(list_.items[start..list_.items.len]);
-
+            {
+                defer this.update(list_);
+                const start = list_.items.len;
+                try list_.appendSlice(str);
+                strings.replaceLatin1WithUTF8(list_.items[start..list_.items.len]);
+            }
             return this.len - initial;
         }
         pub fn writeUTF16(this: *@This(), allocator: std.mem.Allocator, str: []const u16) !u32 {

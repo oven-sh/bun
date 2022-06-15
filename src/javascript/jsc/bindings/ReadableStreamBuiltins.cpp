@@ -49,7 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableStreamInitializeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInitializeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInitializeReadableStreamCodeLength = 2408;
+const int s_readableStreamInitializeReadableStreamCodeLength = 2367;
 static const JSC::Intrinsic s_readableStreamInitializeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInitializeReadableStreamCode =
     "(function (underlyingSource, strategy)\n" \
@@ -70,6 +70,7 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "    @putByIdDirectPrivate(this, \"state\", @streamReadable);\n" \
     "    \n" \
     "    @putByIdDirectPrivate(this, \"reader\", @undefined);\n" \
+    "    @putByIdDirectPrivate(this, \"sink\", @undefined);\n" \
     "    \n" \
     "    @putByIdDirectPrivate(this, \"storedError\", @undefined);\n" \
     "    \n" \
@@ -102,8 +103,6 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "        if (strategy.size !== @undefined)\n" \
     "            @throwRangeError(\"Strategy for a ReadableByteStreamController cannot have a size\");\n" \
     "\n" \
-    "        let readableByteStreamControllerConstructor = @ReadableByteStreamController;\n" \
-    "        \n" \
     "        @putByIdDirectPrivate(this, \"readableStreamController\", new @ReadableByteStreamController(this, underlyingSource, strategy.highWaterMark, @isReadableStream));\n" \
     "    } else if (type === @undefined) {\n" \
     "        if (strategy.highWaterMark === @undefined)\n" \
@@ -268,7 +267,7 @@ const char* const s_readableStreamReadableStreamToArrayPublicCode =
 
 const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamConsumeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamConsumeReadableStreamCodeLength = 3683;
+const int s_readableStreamConsumeReadableStreamCodeLength = 3696;
 static const JSC::Intrinsic s_readableStreamConsumeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamConsumeReadableStreamCode =
     "(function (nativePtr, nativeType, inputStream) {\n" \
@@ -369,6 +368,8 @@ const char* const s_readableStreamConsumeReadableStreamCode =
     "                if (!this.#ptr) return @throwTypeError(\"ReadableStreamSink is already closed\");\n" \
     "                return this.processResult(this.#reader.readMany());\n" \
     "            }\n" \
+    "\n" \
+    "            \n" \
     "        };\n" \
     "\n" \
     "        const minlength = nativeType + 1;\n" \
@@ -382,20 +383,18 @@ const char* const s_readableStreamConsumeReadableStreamCode =
     "        @throwTypeError(\"Cannot start reading from a locked stream\");\n" \
     "    }\n" \
     "\n" \
-    "    return new Prototype(inputStream.getReader(), nativePtr);\n" \
+    "   return new Prototype(inputStream.getReader(), nativePtr);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableStreamCreateEmptyReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateEmptyReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamCreateEmptyReadableStreamCodeLength = 178;
+const int s_readableStreamCreateEmptyReadableStreamCodeLength = 137;
 static const JSC::Intrinsic s_readableStreamCreateEmptyReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateEmptyReadableStreamCode =
     "(function () {\n" \
     "    var stream = new @ReadableStream({\n" \
     "        pull() {},\n" \
-    "        start() {},\n" \
-    "        cancel() {},\n" \
     "    });\n" \
     "    @readableStreamClose(stream);\n" \
     "    return stream;\n" \
@@ -520,7 +519,7 @@ const char* const s_readableStreamCancelCode =
 
 const JSC::ConstructAbility s_readableStreamGetReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamGetReaderCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamGetReaderCodeLength = 481;
+const int s_readableStreamGetReaderCodeLength = 759;
 static const JSC::Intrinsic s_readableStreamGetReaderCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamGetReaderCode =
     "(function (options)\n" \
@@ -535,8 +534,15 @@ const char* const s_readableStreamGetReaderCode =
     "        return new @ReadableStreamDefaultReader(this);\n" \
     "\n" \
     "    //\n" \
-    "    if (mode == 'byob')\n" \
+    "    if (mode == 'byob') {\n" \
+    "        var controller = @getByIdDirectPrivate(this, \"controller\");\n" \
+    "        if (@isReadableStreamDefaultController(controller))\n" \
+    "            @readableStreamDefaultControllerStart(controller)\n" \
+    "        else\n" \
+    "            @readableStreamByteStreamControllerStart(controller);\n" \
+    "\n" \
     "        return new @ReadableStreamBYOBReader(this);\n" \
+    "    }\n" \
     "\n" \
     "    \n" \
     "    @throwTypeError(\"Invalid mode is specified\");\n" \

@@ -89,7 +89,7 @@ const char* const s_readableStreamDefaultReaderCancelCode =
 
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamDefaultReaderReadManyCodeLength = 3235;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 3414;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderReadManyCode =
     "(function ()\n" \
@@ -118,19 +118,20 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "    var size = @getByIdDirectPrivate(controller, \"queue\").size;\n" \
     "    var values = content.toArray(false);\n" \
     "    var length = values.length;\n" \
-    "    \n" \
     "\n" \
     "    if (length > 0) {\n" \
-    "        for (var i = 0; i < values.length; i++) {\n" \
-    "            const buf = values[i];\n" \
-    "            if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
-    "                values[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);\n" \
+    "\n" \
+    "        if (@isReadableByteStreamController(controller)) {\n" \
+    "            for (var i = 0; i < value.length; i++) {\n" \
+    "                const buf = value[i];\n" \
+    "                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
+    "                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);\n" \
+    "                }\n" \
     "            }\n" \
     "        }\n" \
     "        \n" \
     "        @resetQueue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
     "\n" \
-    "        \n" \
     "        if (@getByIdDirectPrivate(controller, \"closeRequested\"))\n" \
     "            @readableStreamClose(@getByIdDirectPrivate(controller, \"controlledReadableStream\"));\n" \
     "        else if (@isReadableStreamDefaultController(controller)) \n" \
@@ -149,13 +150,16 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "        \n" \
     "        var queue = @getByIdDirectPrivate(controller, \"queue\");\n" \
     "        var value = [result.value].concat(queue.content.toArray(false));\n" \
-    "        for (var i = 0; i < value.length; i++) {\n" \
-    "            const buf = value[i];\n" \
-    "            if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
-    "                value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);\n" \
+    "\n" \
+    "        if (@isReadableByteStreamController(controller)) {\n" \
+    "            for (var i = 0; i < value.length; i++) {\n" \
+    "                const buf = value[i];\n" \
+    "                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
+    "                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);\n" \
+    "                }\n" \
     "            }\n" \
     "        }\n" \
-    "\n" \
+    "        \n" \
     "        var size = queue.size;\n" \
     "        @resetQueue(queue);\n" \
     "\n" \

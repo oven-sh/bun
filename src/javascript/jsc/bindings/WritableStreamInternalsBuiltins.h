@@ -187,6 +187,10 @@ extern const char* const s_writableStreamInternalsSetUpWritableStreamDefaultCont
 extern const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeLength;
 extern const JSC::ConstructAbility s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeConstructorKind;
+extern const char* const s_writableStreamInternalsWritableStreamDefaultControllerStartCode;
+extern const int s_writableStreamInternalsWritableStreamDefaultControllerStartCodeLength;
+extern const JSC::ConstructAbility s_writableStreamInternalsWritableStreamDefaultControllerStartCodeConstructAbility;
+extern const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefaultControllerStartCodeConstructorKind;
 extern const char* const s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCode;
 extern const int s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeLength;
 extern const JSC::ConstructAbility s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeConstructAbility;
@@ -276,6 +280,7 @@ extern const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefault
     macro(writableStreamDefaultWriterRelease, writableStreamInternalsWritableStreamDefaultWriterRelease, 1) \
     macro(writableStreamDefaultWriterWrite, writableStreamInternalsWritableStreamDefaultWriterWrite, 2) \
     macro(setUpWritableStreamDefaultController, writableStreamInternalsSetUpWritableStreamDefaultController, 8) \
+    macro(writableStreamDefaultControllerStart, writableStreamInternalsWritableStreamDefaultControllerStart, 1) \
     macro(setUpWritableStreamDefaultControllerFromUnderlyingSink, writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSink, 5) \
     macro(writableStreamDefaultControllerAdvanceQueueIfNeeded, writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeeded, 1) \
     macro(isCloseSentinel, writableStreamInternalsIsCloseSentinel, 0) \
@@ -325,6 +330,7 @@ extern const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefault
 #define WEBCORE_BUILTIN_WRITABLESTREAMINTERNALS_WRITABLESTREAMDEFAULTWRITERRELEASE 1
 #define WEBCORE_BUILTIN_WRITABLESTREAMINTERNALS_WRITABLESTREAMDEFAULTWRITERWRITE 1
 #define WEBCORE_BUILTIN_WRITABLESTREAMINTERNALS_SETUPWRITABLESTREAMDEFAULTCONTROLLER 1
+#define WEBCORE_BUILTIN_WRITABLESTREAMINTERNALS_WRITABLESTREAMDEFAULTCONTROLLERSTART 1
 #define WEBCORE_BUILTIN_WRITABLESTREAMINTERNALS_SETUPWRITABLESTREAMDEFAULTCONTROLLERFROMUNDERLYINGSINK 1
 #define WEBCORE_BUILTIN_WRITABLESTREAMINTERNALS_WRITABLESTREAMDEFAULTCONTROLLERADVANCEQUEUEIFNEEDED 1
 #define WEBCORE_BUILTIN_WRITABLESTREAMINTERNALS_ISCLOSESENTINEL 1
@@ -375,6 +381,7 @@ extern const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefault
     macro(writableStreamInternalsWritableStreamDefaultWriterReleaseCode, writableStreamDefaultWriterRelease, ASCIILiteral(), s_writableStreamInternalsWritableStreamDefaultWriterReleaseCodeLength) \
     macro(writableStreamInternalsWritableStreamDefaultWriterWriteCode, writableStreamDefaultWriterWrite, ASCIILiteral(), s_writableStreamInternalsWritableStreamDefaultWriterWriteCodeLength) \
     macro(writableStreamInternalsSetUpWritableStreamDefaultControllerCode, setUpWritableStreamDefaultController, ASCIILiteral(), s_writableStreamInternalsSetUpWritableStreamDefaultControllerCodeLength) \
+    macro(writableStreamInternalsWritableStreamDefaultControllerStartCode, writableStreamDefaultControllerStart, ASCIILiteral(), s_writableStreamInternalsWritableStreamDefaultControllerStartCodeLength) \
     macro(writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCode, setUpWritableStreamDefaultControllerFromUnderlyingSink, ASCIILiteral(), s_writableStreamInternalsSetUpWritableStreamDefaultControllerFromUnderlyingSinkCodeLength) \
     macro(writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCode, writableStreamDefaultControllerAdvanceQueueIfNeeded, ASCIILiteral(), s_writableStreamInternalsWritableStreamDefaultControllerAdvanceQueueIfNeededCodeLength) \
     macro(writableStreamInternalsIsCloseSentinelCode, isCloseSentinel, ASCIILiteral(), s_writableStreamInternalsIsCloseSentinelCodeLength) \
@@ -418,6 +425,7 @@ extern const JSC::ConstructorKind s_writableStreamInternalsWritableStreamDefault
     macro(writableStreamDefaultControllerGetDesiredSize) \
     macro(writableStreamDefaultControllerProcessClose) \
     macro(writableStreamDefaultControllerProcessWrite) \
+    macro(writableStreamDefaultControllerStart) \
     macro(writableStreamDefaultControllerWrite) \
     macro(writableStreamDefaultWriterAbort) \
     macro(writableStreamDefaultWriterClose) \

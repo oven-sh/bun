@@ -969,7 +969,7 @@ export interface Install {
   globalBinDir: string;
   cache: Cache;
   lockfile: Lockfile;
-  logLevel: "verbose" | "error" | "warn";
+  logLevel: "debug" | "error" | "warn";
 }
 
 type Registry =

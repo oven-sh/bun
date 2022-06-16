@@ -282,8 +282,8 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSQLResultSet;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSQLResultSetRowList;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSQLTransaction;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCloseEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebSocket;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCloseEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebSocket;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebXRBoundedReferenceSpace;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebXRFrame;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWebXRHand;

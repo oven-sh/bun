@@ -272,8 +272,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForSQLResultSet;
     // std::unique_ptr<IsoSubspace> m_subspaceForSQLResultSetRowList;
     // std::unique_ptr<IsoSubspace> m_subspaceForSQLTransaction;
-    // std::unique_ptr<IsoSubspace> m_subspaceForCloseEvent;
-    // std::unique_ptr<IsoSubspace> m_subspaceForWebSocket;
+    std::unique_ptr<IsoSubspace> m_subspaceForCloseEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForWebSocket;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebXRBoundedReferenceSpace;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebXRFrame;
     // std::unique_ptr<IsoSubspace> m_subspaceForWebXRHand;

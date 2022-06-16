@@ -7,6 +7,8 @@ import {
 import { expect, it } from "bun:test";
 import { writeFileSync } from "node:fs";
 
+new Uint8Array();
+
 it("exists globally", () => {
   expect(typeof ReadableStream).toBe("function");
   expect(typeof ReadableStreamBYOBReader).toBe("function");
@@ -32,12 +34,11 @@ it("ReadableStream (direct)", async () => {
     cancel() {},
     type: "direct",
   });
-  console.log("hello");
-  const chunks = [];
-  const chunk = await stream.getReader().read();
-  console.log("it's me");
-  chunks.push(chunk.value);
-  expect(chunks[0].join("")).toBe(Buffer.from("helloworld").join(""));
+  var reader = stream.getReader();
+  const chunk = await reader.read();
+  expect(chunk.value.join("")).toBe(Buffer.from("helloworld").join(""));
+  expect((await reader.read()).done).toBe(true);
+  expect((await reader.read()).done).toBe(true);
 });
 
 it("ReadableStream (bytes)", async () => {
@@ -137,11 +138,27 @@ it("ReadableStream for Blob", async () => {
   console.trace();
   var blob = new Blob(["abdefgh", "ijklmnop"]);
   expect(await blob.text()).toBe("abdefghijklmnop");
-  var stream = blob.stream();
+  var stream;
+  try {
+    stream = blob.stream();
+    stream = blob.stream();
+  } catch (e) {
+    console.error(e);
+    console.error(e.stack);
+  }
   const chunks = [];
-  var reader = stream.getReader();
+  var reader;
+  reader = stream.getReader();
+
   while (true) {
-    const chunk = await reader.read();
+    var chunk;
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      console.error(e);
+      console.error(e.stack);
+    }
+
     if (chunk.done) break;
     chunks.push(new TextDecoder().decode(chunk.value));
   }
@@ -200,7 +217,12 @@ it("ReadableStream for empty blob closes immediately", async () => {
 it("ReadableStream for empty file closes immediately", async () => {
   writeFileSync("/tmp/bun-empty-file-123456", "");
   var blob = file("/tmp/bun-empty-file-123456");
-  var stream = blob.stream();
+  var stream;
+  try {
+    stream = blob.stream();
+  } catch (e) {
+    console.error(e.stack);
+  }
   const chunks = [];
   var reader = stream.getReader();
   while (true) {

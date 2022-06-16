@@ -260,6 +260,8 @@ pub extern fn JSC__JSGlobalObject__promisePrototype(arg0: [*c]JSC__JSGlobalObjec
 pub extern fn JSC__JSGlobalObject__putCachedObject(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]const ZigString, JSValue2: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__regExpPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__RegExpPrototype;
 pub extern fn JSC__JSGlobalObject__setIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__SetIteratorPrototype;
+pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]u8, arg2: u16) bool;
+pub extern fn JSC__JSGlobalObject__stopRemoteInspector(arg0: [*c]JSC__JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__stringPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__StringPrototype;
 pub extern fn JSC__JSGlobalObject__symbolPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__vm(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__VM;

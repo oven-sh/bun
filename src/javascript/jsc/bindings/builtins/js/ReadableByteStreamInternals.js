@@ -41,7 +41,7 @@ function privateInitializeReadableByteStreamController(stream, underlyingByteSou
     @putByIdDirectPrivate(this, "pulling", false);
     @readableByteStreamControllerClearPendingPullIntos(this);
     @putByIdDirectPrivate(this, "queue", @newQueue());
-    @putByIdDirectPrivate(this, "started", -1);
+    @putByIdDirectPrivate(this, "started", 0);
     @putByIdDirectPrivate(this, "closeRequested", false);
 
     let hwm = @toNumber(highWaterMark);
@@ -58,38 +58,28 @@ function privateInitializeReadableByteStreamController(stream, underlyingByteSou
     @putByIdDirectPrivate(this, "autoAllocateChunkSize", autoAllocateChunkSize);
     @putByIdDirectPrivate(this, "pendingPullIntos", @createFIFO());
 
+
+    const controller = this;
+    @promiseInvokeOrNoopNoCatch(@getByIdDirectPrivate(controller, "underlyingByteSource"), "start", [controller]).@then(() => {
+        @putByIdDirectPrivate(controller, "started", 1);
+        @assert(!@getByIdDirectPrivate(controller, "pulling"));
+        @assert(!@getByIdDirectPrivate(controller, "pullAgain"));
+        @readableByteStreamControllerCallPullIfNeeded(controller);
+    }, (error) => {
+        if (@getByIdDirectPrivate(stream, "state") === @streamReadable)
+            @readableByteStreamControllerError(controller, error);
+    });
+
     @putByIdDirectPrivate(this, "cancel", @readableByteStreamControllerCancel);
     @putByIdDirectPrivate(this, "pull", @readableByteStreamControllerPull);
-
-    if (@getByIdDirectPrivate(underlyingByteSource, "lazy") === true) {
-        @putByIdDirectPrivate(this, "start", () => @readableStreamByteStreamControllerStart(this));
-    } else {
-        @putByIdDirectPrivate(this, "start", @undefined); 
-        @readableStreamByteStreamControllerStart(this);
-    }
-
+    
     return this;
 }
 
 function readableStreamByteStreamControllerStart(controller) {
     "use strict";
     @putByIdDirectPrivate(controller, "start", @undefined);
-    
-    if (@getByIdDirectPrivate(controller, "started") !== -1)
-        return;
 
-    @putByIdDirectPrivate(controller, "started", 0);
-    var stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
-    return @promiseInvokeOrNoopNoCatch(@getByIdDirectPrivate(controller, "underlyingByteSource"), "start", [controller]).@then(() => {
-        @putByIdDirectPrivate(controller, "started", 1);
-        @assert(!@getByIdDirectPrivate(controller, "pulling"));
-        @assert(!@getByIdDirectPrivate(controller, "pullAgain"));
-        @readableByteStreamControllerCallPullIfNeeded(controller);
-    }, (error) => {
-        var stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
-        if (stream && @getByIdDirectPrivate(stream, "state") === @streamReadable)
-            @readableByteStreamControllerError(controller, error);
-    });
 }
 
 
@@ -237,8 +227,7 @@ function readableByteStreamControllerPull(controller)
 
     const stream = @getByIdDirectPrivate(controller, "controlledReadableStream");
     @assert(@readableStreamHasDefaultReader(stream));
-
-    if (@getByIdDirectPrivate(controller, "queue").size > 0) {
+    if (@getByIdDirectPrivate(controller, "queue").content?.isNotEmpty()) {
         const entry = @getByIdDirectPrivate(controller, "queue").content.shift();
         @getByIdDirectPrivate(controller, "queue").size -= entry.byteLength;
         @readableByteStreamControllerHandleQueueDrain(controller);

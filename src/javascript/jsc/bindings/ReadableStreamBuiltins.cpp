@@ -49,7 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableStreamInitializeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInitializeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInitializeReadableStreamCodeLength = 2262;
+const int s_readableStreamInitializeReadableStreamCodeLength = 2501;
 static const JSC::Intrinsic s_readableStreamInitializeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInitializeReadableStreamCode =
     "(function (underlyingSource, strategy)\n" \
@@ -57,7 +57,7 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "    \"use strict\";\n" \
     "\n" \
     "     if (underlyingSource === @undefined)\n" \
-    "         underlyingSource = { };\n" \
+    "         underlyingSource = { @bunNativeType: 0, @bunNativePtr: 0, @lazy: false };\n" \
     "     if (strategy === @undefined)\n" \
     "         strategy = { };\n" \
     "\n" \
@@ -77,6 +77,8 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "    \n" \
     "    //\n" \
     "    @putByIdDirectPrivate(this, \"readableStreamController\", null);\n" \
+    "    @putByIdDirectPrivate(this, \"bunNativeType\", @getByIdDirectPrivate(underlyingSource, \"bunNativeType\") ?? 0);\n" \
+    "    @putByIdDirectPrivate(this, \"bunNativePtr\", @getByIdDirectPrivate(underlyingSource, \"bunNativePtr\") ?? 0);\n" \
     "\n" \
     "    const isDirect = underlyingSource.type === \"direct\";\n" \
     "    //\n" \
@@ -93,16 +95,20 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "        return this;\n" \
     "    }\n" \
     "    if (isDirect) {\n" \
-    "        if (\"start\" in underlyingSource && typeof underlyingSource.start === \"function\")\n" \
-    "            @throwTypeError(\"\\\"start\\\" for direct streams are not implemented yet\");\n" \
-    "    \n" \
-    "        @putByIdDirectPrivate(this, \"start\", () => @createReadableStreamController.@call(this, underlyingSource, strategy, true));\n" \
+    "        @putByIdDirectPrivate(this, \"start\", () => @createReadableStreamController(this, underlyingSource, strategy));\n" \
     "    } else if (isLazy) {\n" \
     "        const autoAllocateChunkSize = underlyingSource.autoAllocateChunkSize;\n" \
-    "        @putByIdDirectPrivate(this, \"start\", () => @lazyLoadStream(this, autoAllocateChunkSize));\n" \
+    "\n" \
+    "        \n" \
+    "        @putByIdDirectPrivate(this, \"start\", () => {\n" \
+    "            const instance = @lazyLoadStream(this, autoAllocateChunkSize);\n" \
+    "            if (instance) {\n" \
+    "                @createReadableStreamController(this, instance, strategy);\n" \
+    "            }\n" \
+    "        });\n" \
     "    } else {\n" \
     "        @putByIdDirectPrivate(this, \"start\", @undefined);\n" \
-    "        @createReadableStreamController.@call(this, underlyingSource, strategy, false);\n" \
+    "        @createReadableStreamController(this, underlyingSource, strategy);\n" \
     "    }\n" \
     "    \n" \
     "\n" \
@@ -383,10 +389,12 @@ const char* const s_readableStreamConsumeReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamCreateEmptyReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateEmptyReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamCreateEmptyReadableStreamCodeLength = 137;
+const int s_readableStreamCreateEmptyReadableStreamCodeLength = 156;
 static const JSC::Intrinsic s_readableStreamCreateEmptyReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateEmptyReadableStreamCode =
     "(function () {\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    var stream = new @ReadableStream({\n" \
     "        pull() {},\n" \
     "    });\n" \
@@ -397,18 +405,17 @@ const char* const s_readableStreamCreateEmptyReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamCreateNativeReadableStreamCodeLength = 343;
+const int s_readableStreamCreateNativeReadableStreamCodeLength = 266;
 static const JSC::Intrinsic s_readableStreamCreateNativeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamCreateNativeReadableStreamCode =
     "(function (nativePtr, nativeType, autoAllocateChunkSize) {\n" \
     "    \"use strict\";\n" \
-    "    stream = new @ReadableStream({\n" \
+    "    return new @ReadableStream({\n" \
     "        @lazy: true,\n" \
+    "        @bunNativeType: nativeType,\n" \
+    "        @bunNativePtr: nativePtr,\n" \
     "        autoAllocateChunkSize: autoAllocateChunkSize,\n" \
     "    });\n" \
-    "    @putByIdDirectPrivate(stream, \"bunNativeType\", nativeType);\n" \
-    "    @putByIdDirectPrivate(stream, \"bunNativePtr\", nativePtr);\n" \
-    "    return stream;\n" \
     "})\n" \
 ;
 
@@ -433,7 +440,7 @@ const char* const s_readableStreamCancelCode =
 
 const JSC::ConstructAbility s_readableStreamGetReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamGetReaderCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamGetReaderCodeLength = 619;
+const int s_readableStreamGetReaderCodeLength = 680;
 static const JSC::Intrinsic s_readableStreamGetReaderCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamGetReaderCode =
     "(function (options)\n" \
@@ -447,8 +454,10 @@ const char* const s_readableStreamGetReaderCode =
     "    if (mode === @undefined) {\n" \
     "        var start_ = @getByIdDirectPrivate(this, \"start\");\n" \
     "        if (start_) {\n" \
-    "            start_.@call(this);\n" \
+    "            @putByIdDirectPrivate(this, \"start\", @undefined);\n" \
+    "            start_();\n" \
     "        }\n" \
+    "        \n" \
     "        return new @ReadableStreamDefaultReader(this);\n" \
     "    }\n" \
     "    //\n" \

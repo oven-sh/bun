@@ -29,7 +29,7 @@ function initializeReadableStream(underlyingSource, strategy)
     "use strict";
 
      if (underlyingSource === @undefined)
-         underlyingSource = { };
+         underlyingSource = { @bunNativeType: 0, @bunNativePtr: 0, @lazy: false };
      if (strategy === @undefined)
          strategy = { };
 
@@ -49,6 +49,8 @@ function initializeReadableStream(underlyingSource, strategy)
     
     // Initialized with null value to enable distinction with undefined case.
     @putByIdDirectPrivate(this, "readableStreamController", null);
+    @putByIdDirectPrivate(this, "bunNativeType", @getByIdDirectPrivate(underlyingSource, "bunNativeType") ?? 0);
+    @putByIdDirectPrivate(this, "bunNativePtr", @getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? 0);
 
     const isDirect = underlyingSource.type === "direct";
     // direct streams are always lazy
@@ -65,16 +67,20 @@ function initializeReadableStream(underlyingSource, strategy)
         return this;
     }
     if (isDirect) {
-        if ("start" in underlyingSource && typeof underlyingSource.start === "function")
-            @throwTypeError("\"start\" for direct streams are not implemented yet");
-    
-        @putByIdDirectPrivate(this, "start", () => @createReadableStreamController.@call(this, underlyingSource, strategy, true));
+        @putByIdDirectPrivate(this, "start", () => @createReadableStreamController(this, underlyingSource, strategy));
     } else if (isLazy) {
         const autoAllocateChunkSize = underlyingSource.autoAllocateChunkSize;
-        @putByIdDirectPrivate(this, "start", () => @lazyLoadStream(this, autoAllocateChunkSize));
+
+        
+        @putByIdDirectPrivate(this, "start", () => {
+            const instance = @lazyLoadStream(this, autoAllocateChunkSize);
+            if (instance) {
+                @createReadableStreamController(this, instance, strategy);
+            }
+        });
     } else {
         @putByIdDirectPrivate(this, "start", @undefined);
-        @createReadableStreamController.@call(this, underlyingSource, strategy, false);
+        @createReadableStreamController(this, underlyingSource, strategy);
     }
     
 
@@ -327,6 +333,8 @@ function consumeReadableStream(nativePtr, nativeType, inputStream) {
 
 @globalPrivate
 function createEmptyReadableStream() {
+    "use strict";
+
     var stream = new @ReadableStream({
         pull() {},
     });
@@ -337,13 +345,12 @@ function createEmptyReadableStream() {
 @globalPrivate
 function createNativeReadableStream(nativePtr, nativeType, autoAllocateChunkSize) {
     "use strict";
-    stream = new @ReadableStream({
+    return new @ReadableStream({
         @lazy: true,
+        @bunNativeType: nativeType,
+        @bunNativePtr: nativePtr,
         autoAllocateChunkSize: autoAllocateChunkSize,
     });
-    @putByIdDirectPrivate(stream, "bunNativeType", nativeType);
-    @putByIdDirectPrivate(stream, "bunNativePtr", nativePtr);
-    return stream;
 }
 
 function cancel(reason)
@@ -370,8 +377,10 @@ function getReader(options)
     if (mode === @undefined) {
         var start_ = @getByIdDirectPrivate(this, "start");
         if (start_) {
-            start_.@call(this);
+            @putByIdDirectPrivate(this, "start", @undefined);
+            start_();
         }
+        
         return new @ReadableStreamDefaultReader(this);
     }
     // String conversion is required by spec, hence double equals.

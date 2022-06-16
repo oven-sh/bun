@@ -152,6 +152,7 @@ public:
     JSC::JSObject* ArrayBufferSink() { return m_JSArrayBufferSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue ArrayBufferSinkPrototype() { return m_JSArrayBufferSinkClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::JSValue JSReadableArrayBufferSinkControllerPrototype() { return m_JSArrayBufferControllerPrototype.getInitializedOnMainThread(this); }
+    JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
 
     void* bunVM() { return m_bunVM; }
     bool isThreadLocalDefaultGlobalObject = false;
@@ -177,6 +178,7 @@ private:
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_JSArrayBufferSinkClassStructure;
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
+    LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

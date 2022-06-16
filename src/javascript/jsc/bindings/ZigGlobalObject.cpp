@@ -375,6 +375,17 @@ void GlobalObject::setConsole(void* console)
 
 #pragma mark - Globals
 
+JSC_DECLARE_CUSTOM_GETTER(functionLazyLoadStreamProtoypeMap_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(functionLazyLoadStreamProtoypeMap_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        thisObject->readableStreamNativeMap());
+}
+
 JSC_DECLARE_CUSTOM_GETTER(JSBuffer_getter);
 
 JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
@@ -1667,6 +1678,12 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(prototype);
         });
 
+    m_lazyReadableStreamPrototypeMap.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
+            auto* map = JSC::JSMap::create(init.owner, init.vm, init.owner->mapStructure());
+            init.set(map);
+        });
+
     m_JSArrayBufferSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::ArrayBufferSink);
@@ -1697,7 +1714,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(28);
+    extraStaticGlobals.reserveCapacity(29);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -1762,10 +1779,16 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     static NeverDestroyed<const String> BunLazyString(MAKE_STATIC_STRING_IMPL("Bun.lazy"));
     JSC::Identifier BunLazyIdentifier = JSC::Identifier::fromUid(vm.symbolRegistry().symbolForKey(BunLazyString));
+    JSC::JSFunction* lazyLoadFunction = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        BunLazyString, functionLazyLoad);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { BunLazyIdentifier,
-            JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-                BunLazyString, functionLazyLoad),
+            lazyLoadFunction,
+            JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::Function | 0 });
+
+    extraStaticGlobals.uncheckedAppend(
+        GlobalPropertyInfo { builtinNames.lazyLoadPrivateName(),
+            lazyLoadFunction,
             JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::Function | 0 });
 
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.makeThisTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeThisTypeErrorForBuiltins), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
@@ -1803,6 +1826,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"_s), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | 0);
+
+    putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamProtoypeMap_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URLSearchParams"_s), JSC::CustomGetterSetter::create(vm, JSURLSearchParams_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
@@ -2022,6 +2048,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
+    thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
 
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
     visitor.append(thisObject->m_readableStreamToText);

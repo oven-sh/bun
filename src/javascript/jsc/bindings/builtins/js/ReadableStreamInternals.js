@@ -143,10 +143,8 @@ function setupReadableStreamDefaultController(stream, underlyingSource, size, hi
 }
 
 
-function createReadableStreamController(underlyingSource, strategy, fromLazy) {
-    if (fromLazy) {
-        @putByIdDirectPrivate(this, "start", @undefined);
-    }
+function createReadableStreamController(stream, underlyingSource, strategy) {
+    "use strict";
 
     const type = underlyingSource.type;
     const typeString = @toString(type);
@@ -160,15 +158,15 @@ function createReadableStreamController(underlyingSource, strategy, fromLazy) {
         if (strategy.size !== @undefined)
             @throwRangeError("Strategy for a ReadableByteStreamController cannot have a size");
 
-        @putByIdDirectPrivate(this, "readableStreamController", new @ReadableByteStreamController(this, underlyingSource, strategy.highWaterMark, @isReadableStream));
+        @putByIdDirectPrivate(stream, "readableStreamController", new @ReadableByteStreamController(stream, underlyingSource, strategy.highWaterMark, @isReadableStream));
      } else if (typeString === "direct") {
         var highWaterMark = strategy?.highWaterMark;
-        @initializeArrayBufferStream.@call(this, underlyingSource, highWaterMark);  
+        @initializeArrayBufferStream.@call(stream, underlyingSource, highWaterMark);  
      } else if (type === @undefined) {
         if (strategy.highWaterMark === @undefined)
             strategy.highWaterMark = 1;
             
-        @setupReadableStreamDefaultController(this, underlyingSource, strategy.size, strategy.highWaterMark, underlyingSource.start, underlyingSource.pull, underlyingSource.cancel);
+        @setupReadableStreamDefaultController(stream, underlyingSource, strategy.size, strategy.highWaterMark, underlyingSource.start, underlyingSource.pull, underlyingSource.cancel);
     } else
         @throwRangeError("Invalid type for underlying source");
 
@@ -313,6 +311,8 @@ function pipeToDoReadWrite(pipeState)
 
 function pipeToErrorsMustBePropagatedForward(pipeState)
 {
+    "use strict";
+
     const action = () => {
         pipeState.pendingReadPromiseCapability.@resolve.@call(@undefined, false);
         const error = @getByIdDirectPrivate(pipeState.source, "storedError");
@@ -351,6 +351,7 @@ function pipeToErrorsMustBePropagatedBackward(pipeState)
 
 function pipeToClosingMustBePropagatedForward(pipeState)
 {
+    "use strict";
     const action = () => {
         pipeState.pendingReadPromiseCapability.@resolve.@call(@undefined, false);
         const error = @getByIdDirectPrivate(pipeState.source, "storedError");
@@ -369,6 +370,7 @@ function pipeToClosingMustBePropagatedForward(pipeState)
 
 function pipeToClosingMustBePropagatedBackward(pipeState)
 {
+    "use strict";
     if (!@writableStreamCloseQueuedOrInFlight(pipeState.destination) && @getByIdDirectPrivate(pipeState.destination, "state") !== "closed")
         return;
 
@@ -1167,14 +1169,12 @@ function readableStreamDefaultControllerCanCloseOrEnqueue(controller)
 function lazyLoadStream(stream, autoAllocateChunkSize) {
     "use strict";
 
-    @putByIdDirectPrivate(stream, "start", @undefined);
-    var bunNativeType = @getByIdDirectPrivate(stream, "bunNativeType");
-    var bunNativePtr = @getByIdDirectPrivate(stream, "bunNativePtr");
-
-    var cached =  globalThis[globalThis.Symbol.for("Bun.nativeReadableStreamPrototype")] ||= new @Map;
+    var nativeType = @getByIdDirectPrivate(stream, "bunNativeType");
+    var nativePtr = @getByIdDirectPrivate(stream, "bunNativePtr");
+    var cached = @lazyStreamPrototypeMap;
     var Prototype = cached.@get(nativeType);
     if (Prototype === @undefined) {
-        var [pull, start, cancel, setClose, deinit] = globalThis[globalThis.Symbol.for("Bun.lazy")](nativeType);
+        var [pull, start, cancel, setClose, deinit] = @lazyLoad(nativeType);
         var closer = [false];
         var handleResult;
         function handleNativeReadableStreamPromiseResult(val) {
@@ -1236,24 +1236,20 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
             cancel_(reason) {
                 cancel(this, reason);
             }
-
+            static deinit = deinit;
             static registry = new FinalizationRegistry(deinit);
         }
         cached.@set(nativeType, Prototype);
     }
 
-    // either returns the chunk size
-    // or throws an error
-    // should never return a Promise
     const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);
 
     // empty file, no need for native back-and-forth on this
     if (chunkSize === 0) {
         @readableStreamClose(stream);
-        return;
+        return null;
     }
-
     var instance = new Prototype(nativePtr, chunkSize);
     Prototype.registry.register(instance, nativePtr);
-    @createReadableStreamController.@call(stream, instance, @undefined, true);
+    return instance;
 }

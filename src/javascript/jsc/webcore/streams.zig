@@ -279,7 +279,7 @@ pub const StreamStart = union(Tag) {
                     empty = false;
                 }
 
-                if (value.get(globalThis, "highwaterMark")) |chunkSize| {
+                if (value.get(globalThis, "highWaterMark")) |chunkSize| {
                     empty = false;
                     chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @maximum(0, @truncate(i51, chunkSize.toInt64())));
                 }

@@ -125,12 +125,13 @@ using namespace JSC;
     macro(join) \
     macro(kind) \
     macro(lazy) \
+    macro(lazyStreamPrototypeMap) \
+    macro(lazyLoad) \
     macro(localStreams) \
     macro(makeDOMException) \
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
     macro(map) \
-    macro(nativeReadableStreamPrototype) \
     macro(nextTick) \
     macro(normalize) \
     macro(on) \

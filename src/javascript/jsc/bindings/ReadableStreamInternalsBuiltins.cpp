@@ -197,13 +197,11 @@ const char* const s_readableStreamInternalsSetupReadableStreamDefaultControllerC
 
 const JSC::ConstructAbility s_readableStreamInternalsCreateReadableStreamControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsCreateReadableStreamControllerCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsCreateReadableStreamControllerCodeLength = 1256;
+const int s_readableStreamInternalsCreateReadableStreamControllerCodeLength = 1196;
 static const JSC::Intrinsic s_readableStreamInternalsCreateReadableStreamControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsCreateReadableStreamControllerCode =
-    "(function (underlyingSource, strategy, fromLazy) {\n" \
-    "    if (fromLazy) {\n" \
-    "        @putByIdDirectPrivate(this, \"start\", @undefined);\n" \
-    "    }\n" \
+    "(function (stream, underlyingSource, strategy) {\n" \
+    "    \"use strict\";\n" \
     "\n" \
     "    const type = underlyingSource.type;\n" \
     "    const typeString = @toString(type);\n" \
@@ -217,15 +215,15 @@ const char* const s_readableStreamInternalsCreateReadableStreamControllerCode =
     "        if (strategy.size !== @undefined)\n" \
     "            @throwRangeError(\"Strategy for a ReadableByteStreamController cannot have a size\");\n" \
     "\n" \
-    "        @putByIdDirectPrivate(this, \"readableStreamController\", new @ReadableByteStreamController(this, underlyingSource, strategy.highWaterMark, @isReadableStream));\n" \
+    "        @putByIdDirectPrivate(stream, \"readableStreamController\", new @ReadableByteStreamController(stream, underlyingSource, strategy.highWaterMark, @isReadableStream));\n" \
     "     } else if (typeString === \"direct\") {\n" \
     "        var highWaterMark = strategy?.highWaterMark;\n" \
-    "        @initializeArrayBufferStream.@call(this, underlyingSource, highWaterMark);  \n" \
+    "        @initializeArrayBufferStream.@call(stream, underlyingSource, highWaterMark);  \n" \
     "     } else if (type === @undefined) {\n" \
     "        if (strategy.highWaterMark === @undefined)\n" \
     "            strategy.highWaterMark = 1;\n" \
     "            \n" \
-    "        @setupReadableStreamDefaultController(this, underlyingSource, strategy.size, strategy.highWaterMark, underlyingSource.start, underlyingSource.pull, underlyingSource.cancel);\n" \
+    "        @setupReadableStreamDefaultController(stream, underlyingSource, strategy.size, strategy.highWaterMark, underlyingSource.start, underlyingSource.pull, underlyingSource.cancel);\n" \
     "    } else\n" \
     "        @throwRangeError(\"Invalid type for underlying source\");\n" \
     "\n" \
@@ -392,11 +390,13 @@ const char* const s_readableStreamInternalsPipeToDoReadWriteCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeLength = 676;
+const int s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeLength = 695;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCode =
     "(function (pipeState)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
     "    const action = () => {\n" \
     "        pipeState.pendingReadPromiseCapability.@resolve.@call(@undefined, false);\n" \
     "        const error = @getByIdDirectPrivate(pipeState.source, \"storedError\");\n" \
@@ -442,11 +442,12 @@ const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardC
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeLength = 680;
+const int s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeLength = 698;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCode =
     "(function (pipeState)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    const action = () => {\n" \
     "        pipeState.pendingReadPromiseCapability.@resolve.@call(@undefined, false);\n" \
     "        const error = @getByIdDirectPrivate(pipeState.source, \"storedError\");\n" \
@@ -466,11 +467,12 @@ const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedForwardC
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeLength = 464;
+const int s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeLength = 482;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCode =
     "(function (pipeState)\n" \
     "{\n" \
+    "    \"use strict\";\n" \
     "    if (!@writableStreamCloseQueuedOrInFlight(pipeState.destination) && @getByIdDirectPrivate(pipeState.destination, \"state\") !== \"closed\")\n" \
     "        return;\n" \
     "\n" \
@@ -1486,20 +1488,18 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 3053;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 2853;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "(function (stream, autoAllocateChunkSize) {\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    @putByIdDirectPrivate(stream, \"start\", @undefined);\n" \
-    "    var bunNativeType = @getByIdDirectPrivate(stream, \"bunNativeType\");\n" \
-    "    var bunNativePtr = @getByIdDirectPrivate(stream, \"bunNativePtr\");\n" \
-    "\n" \
-    "    var cached =  globalThis[globalThis.Symbol.for(\"Bun.nativeReadableStreamPrototype\")] ||= new @Map;\n" \
+    "    var nativeType = @getByIdDirectPrivate(stream, \"bunNativeType\");\n" \
+    "    var nativePtr = @getByIdDirectPrivate(stream, \"bunNativePtr\");\n" \
+    "    var cached = @lazyStreamPrototypeMap;\n" \
     "    var Prototype = cached.@get(nativeType);\n" \
     "    if (Prototype === @undefined) {\n" \
-    "        var [pull, start, cancel, setClose, deinit] = globalThis[globalThis.Symbol.for(\"Bun.lazy\")](nativeType);\n" \
+    "        var [pull, start, cancel, setClose, deinit] = @lazyLoad(nativeType);\n" \
     "        var closer = [false];\n" \
     "        var handleResult;\n" \
     "        function handleNativeReadableStreamPromiseResult(val) {\n" \
@@ -1561,26 +1561,22 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "            cancel_(reason) {\n" \
     "                cancel(this, reason);\n" \
     "            }\n" \
-    "\n" \
+    "            static deinit = deinit;\n" \
     "            static registry = new FinalizationRegistry(deinit);\n" \
     "        }\n" \
     "        cached.@set(nativeType, Prototype);\n" \
     "    }\n" \
     "\n" \
-    "    //\n" \
-    "    //\n" \
-    "    //\n" \
     "    const chunkSize = Prototype.startSync(nativePtr, autoAllocateChunkSize);\n" \
     "\n" \
     "    //\n" \
     "    if (chunkSize === 0) {\n" \
     "        @readableStreamClose(stream);\n" \
-    "        return;\n" \
+    "        return null;\n" \
     "    }\n" \
-    "\n" \
     "    var instance = new Prototype(nativePtr, chunkSize);\n" \
     "    Prototype.registry.register(instance, nativePtr);\n" \
-    "    @createReadableStreamController.@call(stream, instance, @undefined, true);\n" \
+    "    return instance;\n" \
     "})\n" \
 ;
 

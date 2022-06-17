@@ -236,8 +236,8 @@
 // #include "JSWebKitMediaKeySession.h"
 // #include "WebKitMediaKeySession.h"
 // #endif
-// #include "WebSocket.h"
-// #include "JSWebSocket.h"
+#include "WebSocket.h"
+#include "JSWebSocket.h"
 // #if ENABLE(WEBXR)
 // #include "JSWebXRLayer.h"
 // #include "WebXRLayer.h"

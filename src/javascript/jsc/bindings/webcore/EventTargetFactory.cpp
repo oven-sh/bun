@@ -247,8 +247,8 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         //     case WebKitMediaKeySessionEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<WebKitMediaKeySession&>(impl));
         // #endif
-        //     case WebSocketEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<WebSocket&>(impl));
+    case WebSocketEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<WebSocket&>(impl));
         // #if ENABLE(WEBXR)
         //     case WebXRLayerEventTargetInterfaceType:
         //         return toJS(state, globalObject, static_cast<WebXRLayer&>(impl));

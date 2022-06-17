@@ -82,6 +82,7 @@
 #include "JSAbortController.h"
 #include "JSEvent.h"
 #include "JSErrorEvent.h"
+#include "JSCloseEvent.h"
 #include "JSFetchHeaders.h"
 
 #include "Process.h"
@@ -439,6 +440,17 @@ JSC_DEFINE_CUSTOM_GETTER(JSErrorEvent_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSErrorEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSCloseEvent_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSCloseEvent_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSCloseEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
 JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
@@ -1857,6 +1869,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "ErrorEvent"_s), JSC::CustomGetterSetter::create(vm, JSErrorEvent_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CloseEvent"_s), JSC::CustomGetterSetter::create(vm, JSCloseEvent_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Buffer"_s), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "TextEncoder"_s), JSC::CustomGetterSetter::create(vm, JSTextEncoder_getter, nullptr),
@@ -2016,11 +2031,13 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
     //     JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     extraStaticGlobals.releaseBuffer();
+}
 
-    this->setRemoteDebuggingEnabled(true);
-    // auto& server = Inspector::RemoteInspectorServer::singleton();
-    // if (server.start("localhost", 9222)) {
-    // }
+extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
+{
+    globalObject->setRemoteDebuggingEnabled(true);
+    auto& server = Inspector::RemoteInspectorServer::singleton();
+    return server.start(reinterpret_cast<const char*>(host), arg1);
 }
 
 template<typename Visitor>

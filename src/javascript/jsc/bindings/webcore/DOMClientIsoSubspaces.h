@@ -427,7 +427,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInputEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForKeyboardEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageChannel;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessageEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMessagePort;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMouseEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMutationEvent;

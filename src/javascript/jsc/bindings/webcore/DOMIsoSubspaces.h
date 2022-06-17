@@ -420,7 +420,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForInputEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForKeyboardEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMessageChannel;
-    // std::unique_ptr<IsoSubspace> m_subspaceForMessageEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForMessageEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMessagePort;
     // std::unique_ptr<IsoSubspace> m_subspaceForMouseEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForMutationEvent;

@@ -32,7 +32,10 @@ namespace WebCore {
 #define DOM_EVENT_NAMES_FOR_EACH(macro) \
     macro(error)                        \
         macro(abort)                    \
-            macro(close)
+            macro(close)                \
+                macro(open)             \
+                    macro(message)      \
+                        macro(messageerror)
 
 // macro(DOMActivate) \
     // macro(DOMCharacterDataModified) \
@@ -186,7 +189,6 @@ namespace WebCore {
     // macro(obsolete) \
     // macro(offline) \
     // macro(online) \
-    // macro(open) \
     // macro(orientationchange) \
     // macro(overflowchanged) \
     // macro(pagehide) \

@@ -10,11 +10,65 @@
 #include "JavaScriptCore/APICast.h"
 #include "JavaScriptCore/JSBasePrivate.h"
 #include "JavaScriptCore/ObjectConstructor.h"
-
+#include "JavaScriptCore/RemoteInspectorServer.h"
+#include "JavaScriptCore/AggregateError.h"
+#include "JavaScriptCore/BytecodeIndex.h"
+#include "JavaScriptCore/CallFrameInlines.h"
+#include "JavaScriptCore/ClassInfo.h"
+#include "JavaScriptCore/CodeBlock.h"
+#include "JavaScriptCore/CodeCache.h"
+#include "JavaScriptCore/Completion.h"
+#include "JavaScriptCore/Error.h"
+#include "JavaScriptCore/ErrorInstance.h"
 #include "mimalloc.h"
 
 using namespace JSC;
 using namespace WTF;
+
+JSC_DECLARE_HOST_FUNCTION(functionStartRemoteDebugger);
+JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+
+    static const char* defaultHost = "127.0.0.1\0";
+    static uint16_t defaultPort = 9230; // node + 1
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue hostValue = callFrame->argument(0);
+    JSC::JSValue portValue = callFrame->argument(1);
+    const char* host = defaultHost;
+    if (hostValue.isString()) {
+
+        auto str = hostValue.toWTFString(globalObject);
+        if (!str.isEmpty())
+            host = toCString(str).data();
+    } else if (!hostValue.isUndefined()) {
+        throwVMError(globalObject, scope, createTypeError(globalObject, "host must be a string"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    uint16_t port = defaultPort;
+    if (portValue.isNumber()) {
+        auto port_int = portValue.toUInt32(globalObject);
+        if (!(port_int > 0 && port_int < 65536)) {
+            throwVMError(globalObject, scope, createRangeError(globalObject, "port must be between 0 and 65535"_s));
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        }
+        port = port_int;
+    } else if (!portValue.isUndefined()) {
+        throwVMError(globalObject, scope, createTypeError(globalObject, "port must be a number between 0 and 65535"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    globalObject->setRemoteDebuggingEnabled(true);
+    auto& server = Inspector::RemoteInspectorServer::singleton();
+    if (!server.start(reinterpret_cast<const char*>(host), port)) {
+        throwVMError(globalObject, scope, createError(globalObject, "Failed to start server \""_s + host + ":"_s + port + "\". Is port already in use?"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+}
 
 JSC_DECLARE_HOST_FUNCTION(functionDescribe);
 JSC_DEFINE_HOST_FUNCTION(functionDescribe, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -266,27 +320,28 @@ JSC::JSObject* createJSCModule(JSC::JSGlobalObject* globalObject)
 
     {
         JSC::ObjectInitializationScope initializationScope(vm);
-        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 20);
+        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 21);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "callerSourceOrigin"_s), 1, functionCallerSourceOrigin, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "describe"_s), 1, functionDescribe, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "describeArray"_s), 1, functionDescribeArray, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gcAndSweep"_s), 1, functionGCAndSweep, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "fullGC"_s), 1, functionFullGC, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "drainMicrotasks"_s), 1, functionDrainMicrotasks, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "edenGC"_s), 1, functionEdenGC, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "fullGC"_s), 1, functionFullGC, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gcAndSweep"_s), 1, functionGCAndSweep, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getRandomSeed"_s), 1, functionGetRandomSeed, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapSize"_s), 1, functionHeapSize, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapStats"_s), 1, functionMemoryUsageStatistics, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "memoryUsage"_s), 1, functionCreateMemoryFootprint, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getRandomSeed"_s), 1, functionGetRandomSeed, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setRandomSeed"_s), 1, functionSetRandomSeed, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isRope"_s), 1, functionIsRope, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "callerSourceOrigin"_s), 1, functionCallerSourceOrigin, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "memoryUsage"_s), 1, functionCreateMemoryFootprint, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "noFTL"_s), 1, functionNoFTL, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "noOSRExitFuzzing"_s), 1, functionNoOSRExitFuzzing, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "optimizeNextInvocation"_s), 1, functionOptimizeNextInvocation, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "numberOfDFGCompiles"_s), 1, functionNumberOfDFGCompiles, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "optimizeNextInvocation"_s), 1, functionOptimizeNextInvocation, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "releaseWeakRefs"_s), 1, functionReleaseWeakRefs, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "totalCompileTime"_s), 1, functionTotalCompileTime, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reoptimizationRetryCount"_s), 1, functionReoptimizationRetryCount, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "drainMicrotasks"_s), 1, functionDrainMicrotasks, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setRandomSeed"_s), 1, functionSetRandomSeed, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startRemoteDebugger"_s), 2, functionStartRemoteDebugger, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "totalCompileTime"_s), 1, functionTotalCompileTime, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
     }
 
     return object;

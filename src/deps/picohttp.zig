@@ -171,6 +171,12 @@ test "pico_http: parse response" {
 pub const Headers = struct {
     headers: []const Header,
 
+    pub fn format(self: Headers, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        for (self.headers) |header| {
+            try fmt.format(writer, "{s}: {s}\r\n", .{ header.name, header.value });
+        }
+    }
+
     pub fn parse(buf: []const u8, src: []Header) !Headers {
         var num_headers: usize = src.len;
 

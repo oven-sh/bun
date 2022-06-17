@@ -10,6 +10,10 @@
 #include <wtf/text/WTFString.h>
 #include "CachedScript.h"
 #include "wtf/URL.h"
+#include <uws/src/WebSocketContext.h>
+struct us_socket_t;
+struct us_socket_context_t;
+
 namespace WebCore {
 
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
@@ -58,6 +62,13 @@ public:
     {
         return m_globalObject;
     }
+
+    template<bool isSSL>
+    us_socket_context_t* webSocketContext();
+
+    template<bool isSSL, bool isServer>
+    uWS::WebSocketContext<isSSL, isServer, ScriptExecutionContext*>* connnectedWebSocketContext();
+
     const WTF::URL& url() const { return m_url; }
     bool activeDOMObjectsAreSuspended() { return false; }
     bool activeDOMObjectsAreStopped() { return false; }
@@ -72,7 +83,7 @@ public:
     // {
     // }
 
-    void postTask(Task&&)
+    void postTask(Task&& task)
     {
 
     } // Executes the task on context's thread asynchronously.
@@ -91,5 +102,11 @@ private:
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();
+
+    us_socket_context_t* m_ssl_client_websockets_ctx = nullptr;
+    us_socket_context_t* m_client_websockets_ctx = nullptr;
+
+    uWS::WebSocketContext<true, false, ScriptExecutionContext*>* m_ssl_client_websockets_ctx = nullptr;
+    uWS::WebSocketContext<true, true, ScriptExecutionContext*>* m_client_websockets_ctx = nullptr;
 };
 }

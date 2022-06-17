@@ -32,7 +32,7 @@ const Response = WebCore.Response;
 const LOLHTML = @import("lolhtml");
 
 const SelectorMap = std.ArrayListUnmanaged(*LOLHTML.HTMLSelector);
-const LOLHTMLContext = struct {
+pub const LOLHTMLContext = struct {
     selectors: SelectorMap = .{},
     element_handlers: std.ArrayListUnmanaged(*ElementHandler) = .{},
     document_handlers: std.ArrayListUnmanaged(*DocumentHandler) = .{},
@@ -231,6 +231,163 @@ pub const HTMLRewriter = struct {
 
         return this.beginTransform(global, response);
     }
+
+    pub const HTMLRewriterLoader = struct {
+        rewriter: *LOLHTML.HTMLRewriter,
+        finalized: bool = false,
+        context: LOLHTMLContext,
+        chunk_size: usize = 0,
+        failed: bool = false,
+        output: JSC.WebCore.Sink,
+        signal: JSC.WebCore.Signal = .{},
+        backpressure: std.fifo.LinearFifo(u8, .Dynamic) = std.fifo.LinearFifo(u8, .Dynamic).init(bun.default_allocator),
+
+        pub fn finalize(this: *HTMLRewriterLoader) void {
+            if (this.finalized) return;
+            this.rewriter.deinit();
+            this.backpressure.deinit();
+            this.backpressure = std.fifo.LinearFifo(u8, .Dynamic).init(bun.default_allocator);
+            this.finalized = true;
+        }
+
+        pub fn fail(this: *HTMLRewriterLoader, err: JSC.Node.Syscall.Error) void {
+            this.signal.close(err);
+            this.output.end(err);
+            this.failed = true;
+            this.finalize();
+        }
+
+        pub fn connect(this: *HTMLRewriterLoader, signal: JSC.WebCore.Signal) void {
+            this.signal = signal;
+        }
+
+        pub fn writeToDestination(this: *HTMLRewriterLoader, bytes: []const u8) void {
+            if (this.backpressure.count > 0) {
+                this.backpressure.write(bytes) catch {
+                    this.fail(JSC.Node.Syscall.Error.oom);
+                    this.finalize();
+                };
+                return;
+            }
+
+            const write_result = this.output.write(.{ .temporary = bun.ByteList.init(bytes) });
+
+            switch (write_result) {
+                .err => |err| {
+                    this.fail(err);
+                },
+                .owned_and_done, .temporary_and_done, .into_array_and_done => {
+                    this.done();
+                },
+                .pending => |pending| {
+                    pending.applyBackpressure(bun.default_allocator, &this.output, pending, bytes);
+                },
+                .into_array, .owned, .temporary => {
+                    this.signal.ready(if (this.chunk_size > 0) this.chunk_size else null, null);
+                },
+            }
+        }
+
+        pub fn done(
+            this: *HTMLRewriterLoader,
+        ) void {
+            this.output.end(null);
+            this.signal.close(null);
+            this.finalize();
+        }
+
+        pub fn setup(
+            this: *HTMLRewriterLoader,
+            builder: *LOLHTML.HTMLRewriter.Builder,
+            context: LOLHTMLContext,
+            size_hint: ?usize,
+            output: JSC.WebCore.Sink,
+        ) ?[]const u8 {
+            for (context.document_handlers.items) |doc| {
+                doc.ctx = this;
+            }
+            for (context.element_handlers.items) |doc| {
+                doc.ctx = this;
+            }
+
+            const chunk_size = @maximum(size_hint orelse 16384, 1024);
+            this.rewriter = builder.build(
+                .UTF8,
+                .{
+                    .preallocated_parsing_buffer_size = chunk_size,
+                    .max_allowed_memory_usage = std.math.maxInt(u32),
+                },
+                false,
+                HTMLRewriterLoader,
+                this,
+                HTMLRewriterLoader.writeToDestination,
+                HTMLRewriterLoader.done,
+            ) catch {
+                output.end();
+                return LOLHTML.HTMLString.lastError().slice();
+            };
+
+            this.chunk_size = chunk_size;
+            this.context = context;
+            this.output = output;
+
+            return null;
+        }
+
+        pub fn sink(this: *HTMLRewriterLoader) JSC.WebCore.Sink {
+            return JSC.WebCore.Sink.init(this);
+        }
+
+        fn writeBytes(this: *HTMLRewriterLoader, bytes: bun.ByteList, comptime deinit_: bool) ?JSC.Node.Syscall.Error {
+            this.rewriter.write(bytes.slice()) catch {
+                return JSC.Node.Syscall.Error{
+                    .errno = 1,
+                    // TODO: make this a union
+                    .path = bun.default_allocator.dupe(u8, LOLHTML.HTMLString.lastError().slice()) catch unreachable,
+                };
+            };
+            if (comptime deinit_) bytes.listManaged(bun.default_allocator).deinit();
+            return null;
+        }
+
+        pub fn write(this: *HTMLRewriterLoader, data: JSC.WebCore.StreamResult) JSC.WebCore.StreamResult.Writable {
+            switch (data) {
+                .owned => |bytes| {
+                    if (this.writeBytes(bytes, true)) |err| {
+                        return .{ .err = err };
+                    }
+                    return .{ .owned = bytes.len };
+                },
+                .owned_and_done => |bytes| {
+                    if (this.writeBytes(bytes, true)) |err| {
+                        return .{ .err = err };
+                    }
+                    return .{ .owned_and_done = bytes.len };
+                },
+                .temporary_and_done => |bytes| {
+                    if (this.writeBytes(bytes, false)) |err| {
+                        return .{ .err = err };
+                    }
+                    return .{ .temporary_and_done = bytes.len };
+                },
+                .temporary => |bytes| {
+                    if (this.writeBytes(bytes, false)) |err| {
+                        return .{ .err = err };
+                    }
+                    return .{ .temporary = bytes.len };
+                },
+                else => unreachable,
+            }
+        }
+
+        pub fn writeUTF16(this: *HTMLRewriterLoader, data: JSC.WebCore.StreamResult) JSC.WebCore.StreamResult.Writable {
+            return JSC.WebCore.Sink.UTF8Fallback.writeUTF16(HTMLRewriterLoader, this, data, write);
+        }
+
+        pub fn writeLatin1(this: *HTMLRewriterLoader, data: JSC.WebCore.StreamResult) JSC.WebCore.StreamResult.Writable {
+            return JSC.WebCore.Sink.UTF8Fallback.writeLatin1(HTMLRewriterLoader, this, data, write);
+        }
+    };
 
     pub const BufferOutputSink = struct {
         global: *JSGlobalObject,

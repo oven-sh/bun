@@ -1620,6 +1620,10 @@ pub const JSGlobalObject = extern struct {
         return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));
     }
 
+    pub fn startRemoteInspector(this: *JSGlobalObject, host: [:0]const u8, port: u16) bool {
+        return cppFn("startRemoteInspector", .{ this, host, port });
+    }
+
     extern fn ZigGlobalObject__readableStreamToArrayBuffer(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToText(*JSGlobalObject, JSValue) JSValue;
     extern fn ZigGlobalObject__readableStreamToJSON(*JSGlobalObject, JSValue) JSValue;
@@ -1677,6 +1681,7 @@ pub const JSGlobalObject = extern struct {
         "asyncGeneratorFunctionPrototype",
         "vm",
         "generateHeapSnapshot",
+        "startRemoteInspector",
         // "createError",
         // "throwError",
     };

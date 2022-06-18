@@ -1,27 +1,14 @@
+#include "root.h"
+
 #include "WebSocketStream.h"
+#include "ScriptExecutionContext.h"
+#include <uws/src/App.h>
 #include <uws/uSockets/src/libusockets.h>
 
 namespace WebCore {
 
 template<bool SSL, bool isServer>
-WebSocketStreamBase<SSL, isServer>* WebSocketStreamBase<SSL, isServer>::adoptSocket(us_socket_t* socket, ScriptExecutionContext* scriptCtx)
-{
-    using UserData = WebCore::WebSocket;
-
-    /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-    uWS::WebSocket<SSL, isServer, UserData>* webSocket = (uWS::WebSocket<SSL, isServer, UserData>*)us_socket_context_adopt_socket(SSL,
-        (us_socket_context_t*)webSocketContext, (us_socket_t*)this, sizeof(WebSocketData) + sizeof(UserData));
-
-    /* For whatever reason we were corked, update cork to the new socket */
-    if (wasCorked) {
-        webSocket->AsyncSocket<SSL>::corkUnchecked();
-    }
-
-    /* Initialize websocket with any moved backpressure intact */
-    webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure));
-}
-
-void WebSocketStreamBase::registerHTTPContext(ScriptExecutionContext* script, us_socket_context_t* ctx, us_loop_t* loop)
+void registerHTTPContextForWebSocket(ScriptExecutionContext* script, us_socket_context_t* ctx, us_loop_t* loop)
 {
     if constexpr (!isServer) {
         if constexpr (SSL) {
@@ -35,11 +22,13 @@ void WebSocketStreamBase::registerHTTPContext(ScriptExecutionContext* script, us
 }
 
 template<bool SSL, bool isServer>
-uWS::WebSocketContext* WebSocketStreamBase<SSL, isServer>::registerClientContext(ScriptExecutionContext*, us_socket_context_t* parent)
+uWS::WebSocketContext<SSL, isServer, ScriptExecutionContext*>* registerWebSocketClientContext(ScriptExecutionContext* script, us_socket_context_t* parent)
 {
     uWS::Loop* loop = uWS::Loop::get();
-    uWS::WebSocketContext<SSL, isServer>* ctx = uWS::WebSocketContext<SSL, isServer>::create(loop, parent, nullptr);
+    uWS::WebSocketContext<SSL, isServer, ScriptExecutionContext*>* ctx = uWS::WebSocketContext<SSL, isServer>::create(loop, parent, nullptr);
     auto* opts = ctx->getExt();
+    ScriptExecutionContext** scriptCtx = ctx->getUserData();
+    *scriptCtx = script;
 
     /* Maximum message size we can receive */
     static unsigned int maxPayloadLength = 128 * 1024 * 1024;

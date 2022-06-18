@@ -10,7 +10,11 @@
 #include <wtf/text/WTFString.h>
 #include "CachedScript.h"
 #include "wtf/URL.h"
-#include <uws/src/WebSocketContext.h>
+
+namespace uWS {
+template<bool isServer, bool isClient, typename UserData>
+struct WebSocketContext;
+}
 struct us_socket_t;
 struct us_socket_context_t;
 
@@ -106,7 +110,7 @@ private:
     us_socket_context_t* m_ssl_client_websockets_ctx = nullptr;
     us_socket_context_t* m_client_websockets_ctx = nullptr;
 
-    uWS::WebSocketContext<true, false, ScriptExecutionContext*>* m_ssl_client_websockets_ctx = nullptr;
-    uWS::WebSocketContext<true, true, ScriptExecutionContext*>* m_client_websockets_ctx = nullptr;
+    uWS::WebSocketContext<true, false, ScriptExecutionContext*>* m_connected_ssl_client_websockets_ctx = nullptr;
+    uWS::WebSocketContext<true, true, ScriptExecutionContext*>* m_connected_client_websockets_ctx = nullptr;
 };
 }

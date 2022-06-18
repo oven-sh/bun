@@ -70,7 +70,8 @@ public:
         CONNECTING = 0,
         OPEN = 1,
         CLOSING = 2,
-        CLOSED = 3
+        CLOSED = 3,
+
     };
 
     ExceptionOr<void> connect(const String& url);
@@ -100,12 +101,16 @@ public:
 
     using RefCounted::deref;
     using RefCounted::ref;
+    void didConnect();
+    void didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompletionStatus, unsigned short code, const String& reason);
+    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize);
+    void didFailToConnect(int32_t code);
 
 private:
     typedef union AnyWebSocket {
         uWS::WebSocket<false, false, WebSocket*>* client;
-        uWS::WebSocket<false, true, WebSocket*>* clientSSL;
-        uWS::WebSocket<true, false, WebSocket*>* server;
+        uWS::WebSocket<true, false, WebSocket*>* clientSSL;
+        uWS::WebSocket<false, true, WebSocket*>* server;
         uWS::WebSocket<true, true, WebSocket*>* serverSSL;
     } AnyWebSocket;
     enum ConnectedWebSocketKind {
@@ -117,6 +122,7 @@ private:
     };
 
     explicit WebSocket(ScriptExecutionContext&);
+    explicit WebSocket(ScriptExecutionContext&, const String& url);
 
     void dispatchErrorEventIfNeeded();
 
@@ -131,16 +137,14 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didConnect();
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);
     void didReceiveBinaryData(Vector<uint8_t>&&);
-    void didReceiveMessageError(String&& reason);
+    void didReceiveMessageError(WTF::StringImpl::StaticStringImpl* reason);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
-    void didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompletionStatus, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize);
-    void didFailToConnect(int32_t code);
+
+    template<bool isBinary>
     void sendWebSocketData(const char* data, size_t length);
 
     void failAsynchronously();

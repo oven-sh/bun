@@ -69,6 +69,8 @@
 #include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
 
+#include <uws/src/App.h>
+
 // #if USE(WEB_THREAD)
 // #include "WebCoreThreadRun.h"
 // #endif
@@ -77,6 +79,20 @@ using WebSocketChannel = WebSocketStream;
 using ThreadableWebSocketChannel = WebSocketStream;
 using WebSocketChannelClient = WebSocketStream;
 WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
+
+static size_t getFramingOverhead(size_t payloadSize)
+{
+    static const size_t hybiBaseFramingOverhead = 2; // Every frame has at least two-byte header.
+    static const size_t hybiMaskingKeyLength = 4; // Every frame from client must have masking key.
+    static const size_t minimumPayloadSizeWithTwoByteExtendedPayloadLength = 126;
+    static const size_t minimumPayloadSizeWithEightByteExtendedPayloadLength = 0x10000;
+    size_t overhead = hybiBaseFramingOverhead + hybiMaskingKeyLength;
+    if (payloadSize >= minimumPayloadSizeWithEightByteExtendedPayloadLength)
+        overhead += 8;
+    else if (payloadSize >= minimumPayloadSizeWithTwoByteExtendedPayloadLength)
+        overhead += 2;
+    return overhead;
+}
 
 const size_t maxReasonSizeInBytes = 123;
 
@@ -145,8 +161,6 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
     : ContextDestructionObserver(&context)
     , m_subprotocol(emptyString())
     , m_extensions(emptyString())
-    , m_handshake(url, )
-
 {
 }
 
@@ -164,19 +178,19 @@ WebSocket::~WebSocket()
 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        this->m_connectedWebSocket.client->end(code);
+        this->m_connectedWebSocket.client->end(None);
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        this->m_connectedWebSocket.clientSSL->end(code);
+        this->m_connectedWebSocket.clientSSL->end(None);
         break;
     }
     case ConnectedWebSocketKind::Server: {
-        this->m_connectedWebSocket.server->end(code);
+        this->m_connectedWebSocket.server->end(None);
         break;
     }
     case ConnectedWebSocketKind::ServerSSL: {
-        this->m_connectedWebSocket.serverSSL->end(code);
+        this->m_connectedWebSocket.serverSSL->end(None);
         break;
     }
     default: {
@@ -195,10 +209,10 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
     if (url.isNull())
         return Exception { SyntaxError };
 
-    auto socket = adoptRef(*new WebSocket(context, url));
+    auto socket = adoptRef(*new WebSocket(context));
     // socket->suspendIfNeeded();
 
-    auto result = socket->connect(url.string(), protocols);
+    auto result = socket->connect(url, protocols);
     // auto result = socket->connect(url, protocols);
 
     if (result.hasException())
@@ -351,16 +365,20 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     auto resource = resourceName(m_url);
     ZigString path = Zig::toZigString(resource);
     ZigString clientProtocolString = Zig::toZigString(protocolString);
-    uint16_t port = m_url.port();
+    uint16_t port = is_secure ? 443 : 80;
+    if (auto userPort = m_url.port()) {
+        port = userPort.value();
+    }
+
     m_isSecure = is_secure;
     if (is_secure) {
-        us_socket_context_t* ctx = scriptExecutionContext->webSocketContext<true>();
+        us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun_SecureWebSocketUpgradeClient__connect(scriptExecutionContext->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
+        this->m_upgradeClient = Bun_SecureWebSocketUpgradeClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
     } else {
-        us_socket_context_t* ctx = scriptExecutionContext->webSocketContext<false>();
+        us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun_WebSocketUpgradeClient__connect(scriptExecutionContext->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
+        this->m_upgradeClient = Bun_WebSocketUpgradeClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
     }
 
     if (this->m_upgradeClient == nullptr) {
@@ -439,8 +457,8 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
     }
     ASSERT(m_channel);
 
-    auto buffer = arrayBufferView.unsharedBuffer();
-    char* baseAddress = reinterpret_cast<char*>(buffer.baseAddress()) + arrayBufferView.byteOffset();
+    auto buffer = arrayBufferView.unsharedBuffer().get();
+    char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
     if (length > 0)
         this->sendWebSocketData<true>(baseAddress, length);
@@ -468,10 +486,10 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
 template<bool isBinary>
 void WebSocket::sendWebSocketData(const char* baseAddress, size_t length)
 {
-    uWS::OpCode opCode = uWS::OpCode::Text;
+    uWS::OpCode opCode = uWS::OpCode::TEXT;
 
     if constexpr (isBinary)
-        opCode = uWS::OpCode::Binary;
+        opCode = uWS::OpCode::BINARY;
 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
@@ -732,7 +750,7 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
     // });
 }
 
-void WebSocket::didReceiveMessageError(String&& reason)
+void WebSocket::didReceiveMessageError(WTF::StringImpl::StaticStringImpl* reason)
 {
     LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, reason = WTFMove(reason)] {
@@ -747,26 +765,7 @@ void WebSocket::didReceiveMessageError(String&& reason)
     // }
 
     // FIXME: As per https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
-    dispatchErrorEventIfNeeded();
-    // });
-}
-
-void WebSocket::didReceiveMessageError(String& reason)
-{
-    LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, reason = WTFMove(reason)] {
-    if (m_state == CLOSED)
-        return;
-    m_state = CLOSED;
-    ASSERT(scriptExecutionContext());
-
-    // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
-    //     if (auto* inspector = m_channel->channelInspector())
-    //         inspector->didReceiveWebSocketFrameError(reason);
-    // }
-
-    // FIXME: As per https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
-    dispatchEvent(CloseEvent::create(false, 0, reason));
+    dispatchEvent(CloseEvent::create(false, 0, WTF::String(reason)));
     // });
 }
 
@@ -819,25 +818,11 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompl
     // });
 }
 
-void WebSocket::didUpgradeURL()
-{
-    ASSERT(m_url.protocolIs("ws"));
-    m_url.setProtocol("wss");
-}
-
-size_t WebSocket::getFramingOverhead(size_t payloadSize)
-{
-    static const size_t hybiBaseFramingOverhead = 2; // Every frame has at least two-byte header.
-    static const size_t hybiMaskingKeyLength = 4; // Every frame from client must have masking key.
-    static const size_t minimumPayloadSizeWithTwoByteExtendedPayloadLength = 126;
-    static const size_t minimumPayloadSizeWithEightByteExtendedPayloadLength = 0x10000;
-    size_t overhead = hybiBaseFramingOverhead + hybiMaskingKeyLength;
-    if (payloadSize >= minimumPayloadSizeWithEightByteExtendedPayloadLength)
-        overhead += 8;
-    else if (payloadSize >= minimumPayloadSizeWithTwoByteExtendedPayloadLength)
-        overhead += 2;
-    return overhead;
-}
+// void WebSocket::didUpgradeURL()
+// {
+//     ASSERT(m_url.protocolIs("ws"));
+//     m_url.setProtocol("wss");
+// }
 
 void WebSocket::dispatchErrorEventIfNeeded()
 {
@@ -850,24 +835,24 @@ void WebSocket::dispatchErrorEventIfNeeded()
 
 void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)
 {
-    m_state = CONNECTED;
+    m_state = OPEN;
     this->m_upgradeClient = nullptr;
     if (m_isSecure) {
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         uWS::WebSocket<true, false, WebSocket*>* webSocket = (uWS::WebSocket<true, false, WebSocket*>*)us_socket_context_adopt_socket(1,
-            (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<true>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
+            (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<true, false>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
 
-        webSocket->init(0, uWS::CompressOptions::disabled, uWS::Backpressure());
-        *webSocket->getExt() = this;
+        webSocket->init(0, uWS::CompressOptions::DISABLED, uWS::BackPressure());
+        *webSocket->getUserData() = this;
         this->m_connectedWebSocket.clientSSL = webSocket;
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
     } else {
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         uWS::WebSocket<false, false, WebSocket*>* webSocket = (uWS::WebSocket<false, false, WebSocket*>*)us_socket_context_adopt_socket(1,
-            (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<false>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
+            (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<false, false>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
 
-        webSocket->init(0, uWS::CompressOptions::disabled, uWS::Backpressure());
-        *webSocket->getExt() = this;
+        webSocket->init(0, uWS::CompressOptions::DISABLED, uWS::BackPressure());
+        *webSocket->getUserData() = this;
         this->m_connectedWebSocket.client = webSocket;
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }
@@ -996,11 +981,11 @@ void WebSocket::didFailToConnect(int32_t code)
 }
 } // namespace WebCore
 
-extern "C" WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len)
+extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len)
 {
     webSocket->didConnect(socket, bufferedData, len);
 }
-extern "C" WebSocket__didFailToConnect(WebCore::WebSocket* webSocket, int32_t errorCode)
+extern "C" void WebSocket__didFailToConnect(WebCore::WebSocket* webSocket, int32_t errorCode)
 {
-    webSocket->didFailToConnect(socket, errorCode);
+    webSocket->didFailToConnect(errorCode);
 }

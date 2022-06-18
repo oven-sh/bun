@@ -36,7 +36,14 @@
 #include "wtf/URL.h"
 #include "wtf/Vector.h"
 #include "wtf/Function.h"
-#include <uws/src/WebSocketContext.h>
+
+namespace uWS {
+template<bool, bool, typename>
+class WebSocket;
+
+template<bool, bool, typename>
+class WebSocketContext;
+}
 
 struct us_socket_context_t;
 struct us_socket_t;
@@ -44,18 +51,23 @@ struct us_loop_t;
 
 namespace WebCore {
 
+class ScriptExecutionContext;
+
 enum ClosingHandshakeCompletionStatus {
     ClosingHandshakeIncomplete,
     ClosingHandshakeComplete
 };
 
+class WebSocket;
+
 // This class expects the stream to already be connected & ready to go
 template<bool isSSL, bool isServer>
 class WebSocketStreamBase final {
 public:
-    using WebSocketImpl = uWS::WebSocket<isSSL, isServer>;
+    using WebSocketStreamPtr = WebCore::WebSocket*;
+    using WebSocketImpl = uWS::WebSocket<isSSL, isServer, WebSocketStreamPtr>;
     using WebSocketStreamImpl = WebSocketStreamBase<isSSL, isServer>;
-    using WebSocketContext = uWS::WebSocketContext<isSSL, isServer>;
+    using WebSocketContext = uWS::WebSocketContext<isSSL, isServer, WebSocketStreamPtr>;
 
     ~WebSocketStreamBase();
     void didConnect();
@@ -65,10 +77,6 @@ public:
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
 
-    static WebSocketStreamImpl* adoptSocket(us_socket_t* socket, ScriptExecutionContext* scriptCtx);
-    static void registerHTTPContext(ScriptExecutionContext*, us_socket_context_t*);
-
-    static WebSocketContext* registerClientContext(ScriptExecutionContext*, us_socket_context_t* parent);
     void sendData(const uint8_t* data, size_t length, Function<void(bool)>);
     void close(); // Disconnect after all data in buffer are sent.
     void disconnect();
@@ -102,6 +110,12 @@ public:
     {
     }
 };
+
+template<bool isSSL, bool isServer>
+void registerHTTPContextForWebSocket(ScriptExecutionContext*, us_socket_context_t*);
+
+template<bool SSL, bool isServer>
+uWS::WebSocketContext<SSL, isServer, ScriptExecutionContext*>* registerWebSocketClientContext(ScriptExecutionContext*, us_socket_context_t* parent);
 
 using WebSocketStream = WebSocketStreamBase<false, false>;
 using SecureWebSocketStream = WebSocketStreamBase<true, false>;

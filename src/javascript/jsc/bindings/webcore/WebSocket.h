@@ -37,7 +37,10 @@
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 
-#include "WebSocketStream.h"
+namespace uWS {
+template<bool, bool, typename>
+struct WebSocket;
+}
 
 namespace JSC {
 class ArrayBuffer;
@@ -49,14 +52,6 @@ namespace WebCore {
 // class Blob;
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
     WTF_MAKE_ISO_ALLOCATED(WebSocket);
-    friend struct uWS::WebSocket<false, false, WebSocket*>;
-    friend struct uWS::WebSocket<false, true, WebSocket*>;
-    friend struct uWS::WebSocket<true, false, WebSocket*>;
-    friend struct uWS::WebSocket<true, true, WebSocket*>;
-    friend WebCore::WebSocketStream;
-    friend WebCore::SecureWebSocketStream;
-    friend WebCore::ServerWebSocketStream;
-    friend WebCore::ServerSecureWebSocketStream;
 
 public:
     static ASCIILiteral subprotocolSeparator();
@@ -85,8 +80,6 @@ public:
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
 
-    WebSocketStream* channel() const;
-
     const URL& url() const;
     State readyState() const;
     unsigned bufferedAmount() const;
@@ -102,16 +95,20 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
     void didConnect();
-    void didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompletionStatus, unsigned short code, const String& reason);
+    void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize);
     void didFailToConnect(int32_t code);
 
+    void didReceiveMessage(String&& message);
+    void didReceiveData(const char* data, size_t length);
+    void didReceiveBinaryData(Vector<uint8_t>&&);
+
 private:
     typedef union AnyWebSocket {
-        uWS::WebSocket<false, false, WebSocket*>* client;
-        uWS::WebSocket<true, false, WebSocket*>* clientSSL;
-        uWS::WebSocket<false, true, WebSocket*>* server;
-        uWS::WebSocket<true, true, WebSocket*>* serverSSL;
+        uWS::WebSocket<false, false, WebCore::WebSocket*>* client;
+        uWS::WebSocket<true, false, WebCore::WebSocket*>* clientSSL;
+        uWS::WebSocket<false, true, WebCore::WebSocket*>* server;
+        uWS::WebSocket<true, true, WebCore::WebSocket*>* serverSSL;
     } AnyWebSocket;
     enum ConnectedWebSocketKind {
         None,
@@ -137,9 +134,6 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveMessage(String&& message);
-    void didReceiveData(const char* data, size_t length);
-    void didReceiveBinaryData(Vector<uint8_t>&&);
     void didReceiveMessageError(WTF::StringImpl::StaticStringImpl* reason);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
@@ -151,8 +145,6 @@ private:
 
     enum class BinaryType { Blob,
         ArrayBuffer };
-
-    WebSocketStream* m_channel { nullptr };
 
     State m_state { CONNECTING };
     URL m_url;

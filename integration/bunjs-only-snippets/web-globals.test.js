@@ -12,7 +12,9 @@ test("exists", () => {
   expect(typeof Headers !== "undefined").toBe(true);
   expect(typeof ErrorEvent !== "undefined").toBe(true);
   expect(typeof CloseEvent !== "undefined").toBe(true);
+  expect(typeof MessageEvent !== "undefined").toBe(true);
   expect(typeof TextEncoder !== "undefined").toBe(true);
+  expect(typeof WebSocket !== "undefined").toBe(true);
 });
 
 test("CloseEvent", () => {
@@ -23,6 +25,20 @@ test("CloseEvent", () => {
   target.addEventListener("close", ({ type, reason }) => {
     expect(type).toBe("close");
     expect(reason).toBe("world");
+    called = true;
+  });
+  target.dispatchEvent(event);
+  expect(called).toBe(true);
+});
+
+test("MessageEvent", () => {
+  var event = new MessageEvent("message", { data: "world" });
+  expect(event.type).toBe("message");
+  const target = new EventTarget();
+  var called = false;
+  target.addEventListener("message", ({ type, data }) => {
+    expect(type).toBe("message");
+    expect(data).toBe("world");
     called = true;
   });
   target.dispatchEvent(event);

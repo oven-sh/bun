@@ -14,20 +14,18 @@
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
 struct WebSocketContext;
+
 }
 struct us_socket_t;
 struct us_socket_context_t;
+struct us_loop_t;
 
 namespace WebCore {
 
-class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
+class WebSocket;
 
+class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
 public:
-    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
-        : m_vm(vm)
-        , m_globalObject(globalObject)
-    {
-    }
     class Task {
         WTF_MAKE_FAST_ALLOCATED;
 
@@ -62,16 +60,27 @@ public:
         bool m_isCleanupTask;
     };
 
+public:
+    ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
+        : m_vm(vm)
+        , m_globalObject(globalObject)
+    {
+    }
+
     JSC::JSGlobalObject* jsGlobalObject()
     {
         return m_globalObject;
     }
 
     template<bool isSSL>
-    us_socket_context_t* webSocketContext();
-
-    template<bool isSSL, bool isServer>
-    uWS::WebSocketContext<isSSL, isServer, ScriptExecutionContext*>* connnectedWebSocketContext();
+    us_socket_context_t* webSocketContext()
+    {
+        if constexpr (isSSL) {
+            return this->webSocketContextSSL();
+        } else {
+            return this->webSocketContextNoSSL();
+        }
+    }
 
     const WTF::URL& url() const { return m_url; }
     bool activeDOMObjectsAreSuspended() { return false; }
@@ -107,10 +116,34 @@ private:
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();
 
+    us_socket_context_t* webSocketContextSSL();
+    us_socket_context_t* webSocketContextNoSSL();
+    uWS::WebSocketContext<true, false, WebSocket*>* connectedWebSocketKindClientSSL();
+    uWS::WebSocketContext<false, false, WebSocket*>* connectedWebSocketKindClient();
+
     us_socket_context_t* m_ssl_client_websockets_ctx = nullptr;
     us_socket_context_t* m_client_websockets_ctx = nullptr;
 
-    uWS::WebSocketContext<true, false, ScriptExecutionContext*>* m_connected_ssl_client_websockets_ctx = nullptr;
-    uWS::WebSocketContext<true, true, ScriptExecutionContext*>* m_connected_client_websockets_ctx = nullptr;
+    uWS::WebSocketContext<true, false, WebSocket*>* m_connected_ssl_client_websockets_ctx = nullptr;
+    uWS::WebSocketContext<false, false, WebSocket*>* m_connected_client_websockets_ctx = nullptr;
+
+public:
+    template<bool isSSL, bool isServer>
+    uWS::WebSocketContext<isSSL, isServer, WebSocket*>* connnectedWebSocketContext()
+    {
+        if constexpr (isSSL) {
+            if (!m_connected_ssl_client_websockets_ctx) {
+                m_connected_ssl_client_websockets_ctx = connectedWebSocketKindClientSSL();
+            }
+
+            return m_connected_ssl_client_websockets_ctx;
+        } else {
+            if (!m_connected_client_websockets_ctx) {
+                m_connected_client_websockets_ctx = connectedWebSocketKindClient();
+            }
+
+            return m_connected_client_websockets_ctx;
+        }
+    }
 };
 }

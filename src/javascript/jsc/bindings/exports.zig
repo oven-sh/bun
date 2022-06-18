@@ -186,6 +186,10 @@ pub const JSReadableStreamFile = JSC.WebCore.FileBlobLoader.Source.JSReadableStr
 // Sinks
 pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 
+// WebSocket
+pub const WebSocketHTTPClient = @import("../../../http/websocket_http_client.zig").WebSocketHTTPClient;
+pub const WebSocketHTTSPClient = @import("../../../http/websocket_http_client.zig").WebSocketHTTPSClient;
+
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
@@ -2504,6 +2508,9 @@ pub const BunTimer = Bun.Timer;
 pub const Formatter = ZigConsoleClient.Formatter;
 
 comptime {
+    WebSocketHTTPClient.shim.ref();
+    WebSocketHTTSPClient.shim.ref();
+
     if (!is_bindgen) {
         _ = Process.getTitle;
         _ = Process.setTitle;

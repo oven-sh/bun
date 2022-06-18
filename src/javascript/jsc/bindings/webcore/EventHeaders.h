@@ -146,8 +146,8 @@
 // #include "MerchantValidationEvent.h"
 // #include "JSMerchantValidationEvent.h"
 // #endif
-// #include "MessageEvent.h"
-// #include "JSMessageEvent.h"
+#include "MessageEvent.h"
+#include "JSMessageEvent.h"
 // #include "MouseEvent.h"
 // #include "JSMouseEvent.h"
 // #include "MutationEvent.h"

@@ -31,7 +31,8 @@
 
 #include "config.h"
 #include "WebSocket.h"
-
+#include "WebSocketStream.h"
+#include "headers.h"
 // #include "Blob.h"
 #include "CloseEvent.h"
 // #include "ContentSecurityPolicy.h"
@@ -75,9 +76,6 @@
 // #include "WebCoreThreadRun.h"
 // #endif
 namespace WebCore {
-using WebSocketChannel = WebSocketStream;
-using ThreadableWebSocketChannel = WebSocketStream;
-using WebSocketChannelClient = WebSocketStream;
 WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
 
 static size_t getFramingOverhead(size_t payloadSize)
@@ -170,9 +168,9 @@ WebSocket::~WebSocket()
     if (m_upgradeClient != nullptr) {
         void* upgradeClient = m_upgradeClient;
         if (m_isSecure) {
-            Bun_SecureWebSocketUpgradeClient__cancel(upgradeClient);
+            Bun__WebSocketHTTPSClient__cancel(upgradeClient);
         } else {
-            Bun_WebSocketUpgradeClient__cancel(upgradeClient);
+            Bun__WebSocketHTTPClient__cancel(upgradeClient);
         }
     }
 
@@ -374,11 +372,11 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (is_secure) {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun_SecureWebSocketUpgradeClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
+        this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
-        this->m_upgradeClient = Bun_WebSocketUpgradeClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
+        this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
     }
 
     if (this->m_upgradeClient == nullptr) {
@@ -455,7 +453,6 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
-    ASSERT(m_channel);
 
     auto buffer = arrayBufferView.unsharedBuffer().get();
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
@@ -522,8 +519,8 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
 {
 
     CString utf8 = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
-    int code = optionalCode ? optionalCode.value() : static_cast<int>(WebSocketChannel::CloseEventCodeNotSpecified);
-    if (code == WebSocketChannel::CloseEventCodeNotSpecified)
+    int code = optionalCode ? optionalCode.value() : static_cast<int>(0);
+    if (code == 0)
         LOG(Network, "WebSocket %p close() without code and reason", this);
     else {
         LOG(Network, "WebSocket %p close() code=%d reason='%s'", this, code, reason.utf8().data());
@@ -543,9 +540,9 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
             void* upgradeClient = m_upgradeClient;
             m_upgradeClient = nullptr;
             if (m_isSecure) {
-                Bun_SecureWebSocketUpgradeClient__cancel(upgradeClient);
+                Bun__WebSocketHTTPSClient__cancel(upgradeClient);
             } else {
-                Bun_WebSocketUpgradeClient__cancel(upgradeClient);
+                Bun__WebSocketHTTPClient__cancel(upgradeClient);
             }
         }
         return {};
@@ -579,11 +576,6 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
 
     return {};
-}
-
-WebSocketChannelClient* WebSocket::channel() const
-{
-    return m_channel;
 }
 
 const URL& WebSocket::url() const
@@ -697,7 +689,7 @@ void WebSocket::didConnect()
     if (m_state == CLOSED)
         return;
     if (m_state != CONNECTING) {
-        didClose(0, ClosingHandshakeIncomplete, WebSocketChannel::CloseEventCodeAbnormalClosure, emptyString());
+        didClose(0, 0, emptyString());
         return;
     }
     ASSERT(scriptExecutionContext());
@@ -787,7 +779,7 @@ void WebSocket::didStartClosingHandshake()
     // });
 }
 
-void WebSocket::didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompletionStatus closingHandshakeCompletion, unsigned short code, const String& reason)
+void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason)
 {
     LOG(Network, "WebSocket %p didClose()", this);
     if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::None)
@@ -805,7 +797,7 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompl
     //     }
     // }
 
-    bool wasClean = m_state == CLOSING && !unhandledBufferedAmount && closingHandshakeCompletion == ClosingHandshakeComplete && code != WebSocketChannel::CloseEventCodeAbnormalClosure;
+    bool wasClean = m_state == CLOSING && !unhandledBufferedAmount && code != 0; // WebSocketChannel::CloseEventCodeAbnormalClosure;
     m_state = CLOSED;
     m_bufferedAmount = unhandledBufferedAmount;
     ASSERT(scriptExecutionContext());

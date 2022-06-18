@@ -1,4 +1,5 @@
 
+#include "root.h"
 #include "ZigGlobalObject.h"
 
 #include "helpers.h"
@@ -135,6 +136,8 @@ using JSBuffer = WebCore::JSBuffer;
 #include "JavaScriptCore/BuiltinNames.h"
 #include "JSTextEncoder.h"
 #include "StructuredClone.h"
+#include "JSWebSocket.h"
+#include "JSMessageEvent.h"
 
 #include "ReadableStream.h"
 #include "JSSink.h"
@@ -451,6 +454,28 @@ JSC_DEFINE_CUSTOM_GETTER(JSCloseEvent_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSCloseEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSMessageEvent_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSMessageEvent_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSMessageEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSWebSocket_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSWebSocket_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        WebCore::JSWebSocket::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
 JSC_DECLARE_CUSTOM_GETTER(JSEvent_getter);
@@ -1870,6 +1895,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "CloseEvent"_s), JSC::CustomGetterSetter::create(vm, JSCloseEvent_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "MessageEvent"_s), JSC::CustomGetterSetter::create(vm, JSMessageEvent_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "WebSocket"_s), JSC::CustomGetterSetter::create(vm, JSWebSocket_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Buffer"_s), JSC::CustomGetterSetter::create(vm, JSBuffer_getter, nullptr),

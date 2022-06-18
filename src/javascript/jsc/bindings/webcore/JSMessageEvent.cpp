@@ -419,9 +419,10 @@ static inline JSC::EncodedJSValue jsMessageEventPrototypeFunction_initMessageEve
     // RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     // EnsureStillAliveScope argument7 = callFrame->argument(7);
     // auto messagePorts = JSArray::create(lexicalGlobalObject.vm(), lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
-    auto messagePorts = Converter<IDLSequence<IDLInterface<MessagePort>>>::ReturnType {};
+    // auto messagePorts = Converter<IDLSequence<IDLInterface<MessagePort>>>::ReturnType {};
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initMessageEvent(WTFMove(type), WTFMove(bubbles), WTFMove(cancelable), WTFMove(data), WTFMove(originArg), WTFMove(lastEventId), WTFMove(source), WTFMove(messagePorts)); })));
+    // RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initMessageEvent(WTFMove(type), WTFMove(bubbles), WTFMove(cancelable), WTFMove(data), WTFMove(originArg), WTFMove(lastEventId), WTFMove(source), WTFMove(messagePorts)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.initMessageEvent(WTFMove(type), WTFMove(bubbles), WTFMove(cancelable), WTFMove(data), WTFMove(originArg), WTFMove(lastEventId), WTFMove(source)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMessageEventPrototypeFunction_initMessageEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

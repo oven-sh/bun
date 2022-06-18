@@ -10,7 +10,6 @@ class GlobalObject;
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
-#include "WebCoreJSBuiltinInternals.h"
 #include "JavaScriptCore/CallFrame.h"
 
 namespace JSC {

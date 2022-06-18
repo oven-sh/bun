@@ -156,8 +156,8 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
         //     case MerchantValidationEventInterfaceType:
         //         return createWrapper<MerchantValidationEvent>(globalObject, WTFMove(impl));
         // #endif
-        //     case MessageEventInterfaceType:
-        //         return createWrapper<MessageEvent>(globalObject, WTFMove(impl));
+    case MessageEventInterfaceType:
+        return createWrapper<MessageEvent>(globalObject, WTFMove(impl));
         //     case MouseEventInterfaceType:
         //         return createWrapper<MouseEvent>(globalObject, WTFMove(impl));
         //     case MutationEventInterfaceType:

@@ -33,7 +33,6 @@
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
-#include "WebCoreJSBuiltinInternals.h"
 #include "JavaScriptCore/CallFrame.h"
 
 #if defined(__APPLE__)

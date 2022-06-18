@@ -187,6 +187,9 @@ typedef struct StringPointer {
 } StringPointer;
 #endif
 
+typedef void WebSocketHTTPClient;
+typedef void WebSocketHTTPSClient;
+
 #ifdef __cplusplus
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;

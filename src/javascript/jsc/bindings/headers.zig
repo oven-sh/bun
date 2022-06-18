@@ -65,6 +65,9 @@ pub const struct_WebCore__FetchHeaders = bindings.FetchHeaders;
 pub const StringPointer = @import("../../../api/schema.zig").Api.StringPointer;
 pub const struct_VirtualMachine = bindings.VirtualMachine;
 pub const ArrayBufferSink = @import("../webcore/streams.zig").ArrayBufferSink;
+
+pub const WebSocketHTTPClient = bindings.WebSocketHTTPClient;
+pub const WebSocketHTTPSClient = bindings.WebSocketHTTPSClient;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;
@@ -261,7 +264,6 @@ pub extern fn JSC__JSGlobalObject__putCachedObject(arg0: [*c]JSC__JSGlobalObject
 pub extern fn JSC__JSGlobalObject__regExpPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__RegExpPrototype;
 pub extern fn JSC__JSGlobalObject__setIteratorPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__SetIteratorPrototype;
 pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: [*c]JSC__JSGlobalObject, arg1: [*c]u8, arg2: u16) bool;
-pub extern fn JSC__JSGlobalObject__stopRemoteInspector(arg0: [*c]JSC__JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__stringPrototype(arg0: [*c]JSC__JSGlobalObject) ?*JSC__StringPrototype;
 pub extern fn JSC__JSGlobalObject__symbolPrototype(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__vm(arg0: [*c]JSC__JSGlobalObject) [*c]JSC__VM;

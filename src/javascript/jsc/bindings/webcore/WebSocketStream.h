@@ -29,6 +29,7 @@
  */
 
 #pragma once
+#include "root.h"
 
 #include "wtf/text/StringImpl.h"
 #include "wtf/text/StringView.h"
@@ -36,6 +37,8 @@
 #include "wtf/URL.h"
 #include "wtf/Vector.h"
 #include "wtf/Function.h"
+#include "ScriptExecutionContext.h"
+#include "headers.h"
 
 namespace uWS {
 template<bool, bool, typename>
@@ -110,16 +113,5 @@ public:
     {
     }
 };
-
-template<bool isSSL, bool isServer>
-void registerHTTPContextForWebSocket(ScriptExecutionContext*, us_socket_context_t*);
-
-template<bool SSL, bool isServer>
-uWS::WebSocketContext<SSL, isServer, ScriptExecutionContext*>* registerWebSocketClientContext(ScriptExecutionContext*, us_socket_context_t* parent);
-
-using WebSocketStream = WebSocketStreamBase<false, false>;
-using SecureWebSocketStream = WebSocketStreamBase<true, false>;
-using ServerWebSocketStream = WebSocketStreamBase<false, true>;
-using ServerSecureWebSocketStream = WebSocketStreamBase<true, true>;
 
 } // namespace WebCore

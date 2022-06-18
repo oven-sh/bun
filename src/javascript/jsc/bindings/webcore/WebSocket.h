@@ -49,6 +49,14 @@ namespace WebCore {
 // class Blob;
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
     WTF_MAKE_ISO_ALLOCATED(WebSocket);
+    friend struct uWS::WebSocket<false, false, WebSocket*>;
+    friend struct uWS::WebSocket<false, true, WebSocket*>;
+    friend struct uWS::WebSocket<true, false, WebSocket*>;
+    friend struct uWS::WebSocket<true, true, WebSocket*>;
+    friend WebCore::WebSocketStream;
+    friend WebCore::SecureWebSocketStream;
+    friend WebCore::ServerWebSocketStream;
+    friend WebCore::ServerSecureWebSocketStream;
 
 public:
     static ASCIILiteral subprotocolSeparator();
@@ -57,9 +65,6 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     ~WebSocket();
-
-    static HashSet<WebSocket*>& allActiveWebSockets() WTF_REQUIRES_LOCK(s_allActiveWebSocketsLock);
-    static Lock& allActiveWebSocketsLock() WTF_RETURNS_LOCK(s_allActiveWebSocketsLock);
 
     enum State {
         CONNECTING = 0,
@@ -97,6 +102,20 @@ public:
     using RefCounted::ref;
 
 private:
+    typedef union AnyWebSocket {
+        uWS::WebSocket<false, false, WebSocket*>* client;
+        uWS::WebSocket<false, true, WebSocket*>* clientSSL;
+        uWS::WebSocket<true, false, WebSocket*>* server;
+        uWS::WebSocket<true, true, WebSocket*>* serverSSL;
+    } AnyWebSocket;
+    enum ConnectedWebSocketKind {
+        None,
+        Client,
+        ClientSSL,
+        Server,
+        ServerSSL
+    };
+
     explicit WebSocket(ScriptExecutionContext&);
 
     void dispatchErrorEventIfNeeded();
@@ -114,6 +133,7 @@ private:
 
     void didConnect();
     void didReceiveMessage(String&& message);
+    void didReceiveData(const char* data, size_t length);
     void didReceiveBinaryData(Vector<uint8_t>&&);
     void didReceiveMessageError(String&& reason);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
@@ -121,13 +141,13 @@ private:
     void didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompletionStatus, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize);
     void didFailToConnect(int32_t code);
+    void sendWebSocketData(const char* data, size_t length);
 
     void failAsynchronously();
 
     enum class BinaryType { Blob,
         ArrayBuffer };
 
-    static Lock s_allActiveWebSocketsLock;
     WebSocketStream* m_channel { nullptr };
 
     State m_state { CONNECTING };
@@ -138,6 +158,9 @@ private:
     String m_subprotocol;
     String m_extensions;
     void* m_upgradeClient { nullptr };
+    bool m_isSecure { false };
+    AnyWebSocket m_connectedWebSocket { nullptr };
+    ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
 
     bool m_dispatchedErrorEvent { false };
     // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;

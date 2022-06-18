@@ -420,6 +420,8 @@ ExceptionOr<void> WebSocket::send(const String& message)
     if (utf8.length() > 0)
         this->sendWebSocketData<false>(utf8.data(), utf8.length());
 
+    delete utf8;
+
     return {};
 }
 
@@ -490,22 +492,22 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length)
 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode, false);
+        this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        this->m_connectedWebSocket.clientSSL->send({ baseAddress, length }, opCode, false);
+        this->m_connectedWebSocket.clientSSL->send({ baseAddress, length }, opCode);
         this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::Server: {
-        this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode, false);
+        this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode);
         this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ServerSSL: {
-        this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode, false);
+        this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode);
         this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
         break;
     }
@@ -827,12 +829,13 @@ void WebSocket::dispatchErrorEventIfNeeded()
 
 void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)
 {
-    m_state = OPEN;
     this->m_upgradeClient = nullptr;
     if (m_isSecure) {
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         uWS::WebSocket<true, false, WebSocket*>* webSocket = (uWS::WebSocket<true, false, WebSocket*>*)us_socket_context_adopt_socket(1,
             (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<true, false>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
+
+        webSocket->AsyncSocket<true>::uncork();
 
         webSocket->init(0, uWS::CompressOptions::DISABLED, uWS::BackPressure());
         *webSocket->getUserData() = this;
@@ -842,6 +845,8 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         uWS::WebSocket<false, false, WebSocket*>* webSocket = (uWS::WebSocket<false, false, WebSocket*>*)us_socket_context_adopt_socket(1,
             (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<false, false>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
+
+        webSocket->AsyncSocket<false>::uncork();
 
         webSocket->init(0, uWS::CompressOptions::DISABLED, uWS::BackPressure());
         *webSocket->getUserData() = this;

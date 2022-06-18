@@ -64,11 +64,11 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 this.socket,
             );
         }
-        pub fn isShutdown(this: ThisSocket) c_int {
+        pub fn isShutdown(this: ThisSocket) bool {
             return us_socket_is_shut_down(
                 comptime ssl_int,
                 this.socket,
-            );
+            ) > 0;
         }
         pub fn isClosed(this: ThisSocket) c_int {
             return us_socket_is_closed(
@@ -136,12 +136,10 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             comptime onEnd: anytype,
         ) void {
             const SocketHandler = struct {
-                pub fn on_open(socket: *Socket, _: c_int, ip: [*c]u8, port: c_int) callconv(.C) ?*Socket {
+                pub fn on_open(socket: *Socket, _: c_int, _: [*c]u8, _: c_int) callconv(.C) ?*Socket {
                     onOpen(
                         @ptrCast(*ContextType, @alignCast(std.meta.alignment(ContextType), us_socket_ext(comptime ssl_int, socket).?)),
                         ThisSocket{ .socket = socket },
-                        bun.span(ip),
-                        port,
                     );
                     return socket;
                 }

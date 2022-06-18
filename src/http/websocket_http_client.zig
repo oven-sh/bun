@@ -60,7 +60,7 @@ fn buildRequestBody(vm: *JSC.VirtualMachine, pathname: *const JSC.ZigString, hos
             "Connection: Upgrade\r\n" ++
             "Upgrade: websocket\r\n" ++
             "Sec-WebSocket-Version: 13\r\n" ++
-            "{any}\n" ++
+            "{any}" ++
             "\r\n",
         .{
             pathname_,
@@ -199,7 +199,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleClose(this: *HTTPClient, _: Socket, _: c_int, _: ?*anyopaque) void {
             JSC.markBinding();
             this.clearData();
-            WebSocket__didFailToConnect(this.outgoing_websocket, ErrorCode.closed);
+            WebSocket__didFailToConnect(this.outgoing_websocket, ErrorCode.ended);
         }
 
         pub fn terminate(this: *HTTPClient, code: ErrorCode) void {
@@ -208,13 +208,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 this.socket.close(0, null);
         }
 
-        pub fn handleOpen(this: *HTTPClient, socket: Socket, _: []const u8, _: c_int) void {
+        pub fn handleOpen(this: *HTTPClient, socket: Socket) void {
             std.debug.assert(socket.socket == this.socket.socket);
 
             std.debug.assert(this.input_body_buf.len > 0);
             std.debug.assert(this.to_send.len == 0);
 
-            const wrote = socket.write(this.input_body_buf, false);
+            const wrote = socket.write(this.input_body_buf, true);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;
@@ -235,14 +235,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             std.debug.assert(socket.socket == this.socket.socket);
 
             if (comptime Environment.allow_assert)
-                std.debug.assert(socket.isShutdown() == 0);
+                std.debug.assert(!socket.isShutdown());
 
             var body = this.getBody();
             var remain = body[this.body_written..];
             const is_first = this.body_written == 0;
-            if (is_first and data.len >= "101 ".len) {
+            if (is_first and data.len >= "HTTP/1.1 101 ".len) {
                 // fail early if we receive a non-101 status code
-                if (!strings.eqlComptimeIgnoreLen(data[0.."101 ".len], "101 ")) {
+                if (!strings.eqlComptimeIgnoreLen(data[0.."HTTP/1.1 101 ".len], "HTTP/1.1 101 ")) {
                     this.terminate(ErrorCode.expected_101_status_code);
                     return;
                 }
@@ -291,7 +291,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var connection_header = PicoHTTP.Header{ .name = "", .value = "" };
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
             var visited_protocol = this.websocket_protocol == 0;
-            var visited_version = false;
+            // var visited_version = false;
+            std.debug.assert(response.status_code == 101);
 
             if (remain_buf.len > 0) {
                 std.debug.assert(overflow_buf.len == 0);
@@ -302,7 +303,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     "Connection".len => {
                         if (connection_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Connection", false)) {
                             connection_header = header;
-                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0 and visited_version) {
+                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0) {
                                 break;
                             }
                         }
@@ -310,14 +311,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     "Upgrade".len => {
                         if (upgrade_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Upgrade", false)) {
                             upgrade_header = header;
-                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0 and visited_version) {
+                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0) {
                                 break;
                             }
                         }
                     },
                     "Sec-WebSocket-Version".len => {
-                        if (!visited_version and strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Version", false)) {
-                            visited_version = true;
+                        if (strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Version", false)) {
                             if (!strings.eqlComptimeIgnoreLen(header.value, "13")) {
                                 this.terminate(ErrorCode.invalid_websocket_version);
                                 return;
@@ -327,7 +327,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     "Sec-WebSocket-Accept".len => {
                         if (websocket_accept_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Accept", false)) {
                             websocket_accept_header = header;
-                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0 and visited_version) {
+                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0) {
                                 break;
                             }
                         }
@@ -340,7 +340,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                             }
                             visited_protocol = true;
 
-                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0 and visited_version) {
+                            if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0) {
                                 break;
                             }
                         }
@@ -349,10 +349,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 }
             }
 
-            if (!visited_version) {
-                this.terminate(ErrorCode.invalid_websocket_version);
-                return;
-            }
+            // if (!visited_version) {
+            //     this.terminate(ErrorCode.invalid_websocket_version);
+            //     return;
+            // }
 
             if (@minimum(upgrade_header.name.len, upgrade_header.value.len) == 0) {
                 this.terminate(ErrorCode.missing_upgrade_header);
@@ -374,7 +374,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            if (strings.eqlComptime(connection_header.value, "Upgrade")) {
+            if (!strings.eqlComptime(connection_header.value, "Upgrade")) {
                 this.terminate(ErrorCode.invalid_connection_header);
                 return;
             }
@@ -394,7 +394,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     return;
                 };
                 if (remain_buf.len > 0) @memcpy(overflow.ptr, remain_buf.ptr, remain_buf.len);
-                if (overflow_buf.len > 0) @memcpy(overflow.ptr + remain_buf.len, overflow_buf.ptr, remain_buf.len);
+                if (overflow_buf.len > 0) @memcpy(overflow.ptr + remain_buf.len, overflow_buf.ptr, overflow_buf.len);
             }
 
             this.clearData();
@@ -411,7 +411,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (this.to_send.len == 0)
                 return;
 
-            const wrote = socket.write(this.to_send, false);
+            const wrote = socket.write(this.to_send, true);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return;

@@ -78,8 +78,6 @@ using ThreadableWebSocketChannel = WebSocketStream;
 using WebSocketChannelClient = WebSocketStream;
 WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
 
-Lock WebSocket::s_allActiveWebSocketsLock;
-
 const size_t maxReasonSizeInBytes = 123;
 
 static inline bool isValidProtocolCharacter(UChar character)
@@ -150,19 +148,41 @@ WebSocket::WebSocket(ScriptExecutionContext& context)
     , m_handshake(url, )
 
 {
-    Locker locker { allActiveWebSocketsLock() };
-    allActiveWebSockets().add(this);
 }
 
 WebSocket::~WebSocket()
 {
-    {
-        Locker locker { allActiveWebSocketsLock() };
-        allActiveWebSockets().remove(this);
+
+    if (m_upgradeClient != nullptr) {
+        void* upgradeClient = m_upgradeClient;
+        if (m_isSecure) {
+            Bun_SecureWebSocketUpgradeClient__cancel(upgradeClient);
+        } else {
+            Bun_WebSocketUpgradeClient__cancel(upgradeClient);
+        }
     }
 
-    if (m_channel)
-        m_channel->disconnect();
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client: {
+        this->m_connectedWebSocket.client->end(code);
+        break;
+    }
+    case ConnectedWebSocketKind::ClientSSL: {
+        this->m_connectedWebSocket.clientSSL->end(code);
+        break;
+    }
+    case ConnectedWebSocketKind::Server: {
+        this->m_connectedWebSocket.server->end(code);
+        break;
+    }
+    case ConnectedWebSocketKind::ServerSSL: {
+        this->m_connectedWebSocket.serverSSL->end(code);
+        break;
+    }
+    default: {
+        break;
+    }
+    }
 }
 
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url)
@@ -190,17 +210,6 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
 ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, const String& url, const String& protocol)
 {
     return create(context, url, Vector<String> { 1, protocol });
-}
-
-HashSet<WebSocket*>& WebSocket::allActiveWebSockets()
-{
-    static NeverDestroyed<HashSet<WebSocket*>> activeWebSockets;
-    return activeWebSockets;
-}
-
-Lock& WebSocket::allActiveWebSocketsLock()
-{
-    return s_allActiveWebSocketsLock;
 }
 
 ExceptionOr<void> WebSocket::connect(const String& url)
@@ -257,7 +266,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (!m_url.isValid()) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, "Invalid url for WebSocket " + m_url.stringCenterEllipsizedToLength() };
+        return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
 
     bool is_secure = m_url.protocolIs("wss");
@@ -265,12 +274,12 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (!m_url.protocolIs("ws") && !is_secure) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, "Wrong url scheme for WebSocket " + m_url.stringCenterEllipsizedToLength() };
+        return Exception { SyntaxError, makeString("Wrong url scheme for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
     if (m_url.hasFragmentIdentifier()) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, "URL has fragment component " + m_url.stringCenterEllipsizedToLength() };
+        return Exception { SyntaxError, makeString("URL has fragment component "_s, m_url.stringCenterEllipsizedToLength()) };
     }
 
     // ASSERT(context.contentSecurityPolicy());
@@ -308,7 +317,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         if (!isValidProtocolString(protocol)) {
             // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
             m_state = CLOSED;
-            return Exception { SyntaxError, "Wrong protocol for WebSocket '" + encodeProtocolString(protocol) + "'" };
+            return Exception { SyntaxError, makeString("Wrong protocol for WebSocket '"_s, encodeProtocolString(protocol), "'"_s) };
         }
     }
     HashSet<String> visited;
@@ -316,7 +325,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         if (!visited.add(protocol).isNewEntry) {
             // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
             m_state = CLOSED;
-            return Exception { SyntaxError, "WebSocket protocols contain duplicates: '" + encodeProtocolString(protocol) + "'" };
+            return Exception { SyntaxError, makeString("WebSocket protocols contain duplicates:"_s, encodeProtocolString(protocol), "'"_s) };
         }
     }
 
@@ -343,7 +352,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     ZigString path = Zig::toZigString(resource);
     ZigString clientProtocolString = Zig::toZigString(protocolString);
     uint16_t port = m_url.port();
-
+    m_isSecure = is_secure;
     if (is_secure) {
         us_socket_context_t* ctx = scriptExecutionContext->webSocketContext<true>();
         RELEASE_ASSERT(ctx);
@@ -357,7 +366,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (this->m_upgradeClient == nullptr) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
-        return Exception { SyntaxError, "WebSocket connection failed" };
+        return Exception { SyntaxError, "WebSocket connection failed"_s };
     }
 
     m_state = CONNECTING;
@@ -391,10 +400,10 @@ ExceptionOr<void> WebSocket::send(const String& message)
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
-    // FIXME: WebSocketChannel also has a m_bufferedAmount. Remove that one. This one is the correct one accessed by JS.
-    m_bufferedAmount = saturateAdd(m_bufferedAmount, utf8.length());
-    ASSERT(m_channel);
-    m_channel->send(WTFMove(utf8));
+
+    if (utf8.length() > 0)
+        this->sendWebSocketData<false>(utf8.data(), utf8.length());
+
     return {};
 }
 
@@ -409,9 +418,10 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
-    m_bufferedAmount = saturateAdd(m_bufferedAmount, binaryData.byteLength());
-    ASSERT(m_channel);
-    m_channel->send(binaryData, 0, binaryData.byteLength());
+    char* data = static_cast<char*>(binaryData.data());
+    size_t length = binaryData.byteLength();
+    if (length > 0)
+        this->sendWebSocketData<true>(data, length);
     return {};
 }
 
@@ -427,9 +437,14 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
-    m_bufferedAmount = saturateAdd(m_bufferedAmount, arrayBufferView.byteLength());
     ASSERT(m_channel);
-    m_channel->send(*arrayBufferView.unsharedBuffer(), arrayBufferView.byteOffset(), arrayBufferView.byteLength());
+
+    auto buffer = arrayBufferView.unsharedBuffer();
+    char* baseAddress = reinterpret_cast<char*>(buffer.baseAddress()) + arrayBufferView.byteOffset();
+    size_t length = arrayBufferView.byteLength();
+    if (length > 0)
+        this->sendWebSocketData<true>(baseAddress, length);
+
     return {};
 }
 
@@ -450,8 +465,45 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
 //     return {};
 // }
 
+template<bool isBinary>
+void WebSocket::sendWebSocketData(const char* baseAddress, size_t length)
+{
+    uWS::OpCode opCode = uWS::OpCode::Text;
+
+    if constexpr (isBinary)
+        opCode = uWS::OpCode::Binary;
+
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client: {
+        this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode, false);
+        this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::ClientSSL: {
+        this->m_connectedWebSocket.clientSSL->send({ baseAddress, length }, opCode, false);
+        this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::Server: {
+        this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode, false);
+        this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::ServerSSL: {
+        this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode, false);
+        this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
+        break;
+    }
+    default: {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    }
+}
+
 ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason)
 {
+
+    CString utf8 = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
     int code = optionalCode ? optionalCode.value() : static_cast<int>(WebSocketChannel::CloseEventCodeNotSpecified);
     if (code == WebSocketChannel::CloseEventCodeNotSpecified)
         LOG(Network, "WebSocket %p close() without code and reason", this);
@@ -459,7 +511,6 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         LOG(Network, "WebSocket %p close() code=%d reason='%s'", this, code, reason.utf8().data());
         // if (!(code == WebSocketChannel::CloseEventCodeNormalClosure || (WebSocketChannel::CloseEventCodeMinimumUserDefined <= code && code <= WebSocketChannel::CloseEventCodeMaximumUserDefined)))
         //     return Exception { InvalidAccessError };
-        CString utf8 = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
         if (utf8.length() > maxReasonSizeInBytes) {
             // scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "WebSocket close message is too long."_s);
             return Exception { SyntaxError, "WebSocket close message is too long."_s };
@@ -470,12 +521,45 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         return {};
     if (m_state == CONNECTING) {
         m_state = CLOSING;
-        m_channel->fail("WebSocket is closed before the connection is established."_s);
+        if (m_upgradeClient != nullptr) {
+            void* upgradeClient = m_upgradeClient;
+            m_upgradeClient = nullptr;
+            if (m_isSecure) {
+                Bun_SecureWebSocketUpgradeClient__cancel(upgradeClient);
+            } else {
+                Bun_WebSocketUpgradeClient__cancel(upgradeClient);
+            }
+        }
         return {};
     }
     m_state = CLOSING;
-    if (m_channel)
-        m_channel->close(code, reason);
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client: {
+        this->m_connectedWebSocket.client->end(code, { utf8.data(), utf8.length() });
+        this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::ClientSSL: {
+        this->m_connectedWebSocket.clientSSL->end(code, { utf8.data(), utf8.length() });
+        this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::Server: {
+        this->m_connectedWebSocket.server->end(code, { utf8.data(), utf8.length() });
+        this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::ServerSSL: {
+        this->m_connectedWebSocket.serverSSL->end(code, { utf8.data(), utf8.length() });
+        this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+    this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
+
     return {};
 }
 
@@ -532,7 +616,7 @@ ExceptionOr<void> WebSocket::setBinaryType(const String& binaryType)
         return {};
     }
     // scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "'" + binaryType + "' is not a valid value for binaryType; binaryType remains unchanged.");
-    return Exception { SyntaxError, "'" + binaryType + "' is not a valid value for binaryType; binaryType remains unchanged." };
+    return Exception { SyntaxError, makeString("'"_s, binaryType, "' is not a valid value for binaryType; binaryType remains unchanged."_s) };
 }
 
 EventTargetInterface WebSocket::eventTargetInterface() const
@@ -707,9 +791,12 @@ void WebSocket::didStartClosingHandshake()
 void WebSocket::didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompletionStatus closingHandshakeCompletion, unsigned short code, const String& reason)
 {
     LOG(Network, "WebSocket %p didClose()", this);
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, unhandledBufferedAmount, closingHandshakeCompletion, code, reason] {
-    if (!m_channel)
+    if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::None)
         return;
+
+    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, unhandledBufferedAmount, closingHandshakeCompletion, code, reason] {
+    // if (!m_channel)
+    //     return;
 
     // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
     //     if (auto* inspector = m_channel->channelInspector()) {
@@ -726,10 +813,8 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompl
 
     dispatchEvent(CloseEvent::create(wasClean, code, reason));
 
-    if (m_channel) {
-        m_channel->disconnect();
-        m_channel = nullptr;
-    }
+    this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
+    this->m_upgradeClient = nullptr;
     // m_pendingActivity = nullptr;
     // });
 }
@@ -767,10 +852,37 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
 {
     m_state = CONNECTED;
     this->m_upgradeClient = nullptr;
+    if (m_isSecure) {
+        /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
+        uWS::WebSocket<true, false, WebSocket*>* webSocket = (uWS::WebSocket<true, false, WebSocket*>*)us_socket_context_adopt_socket(1,
+            (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<true>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
+
+        webSocket->init(0, uWS::CompressOptions::disabled, uWS::Backpressure());
+        *webSocket->getExt() = this;
+        this->m_connectedWebSocket.clientSSL = webSocket;
+        this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
+    } else {
+        /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
+        uWS::WebSocket<false, false, WebSocket*>* webSocket = (uWS::WebSocket<false, false, WebSocket*>*)us_socket_context_adopt_socket(1,
+            (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<false>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
+
+        webSocket->init(0, uWS::CompressOptions::disabled, uWS::Backpressure());
+        *webSocket->getExt() = this;
+        this->m_connectedWebSocket.client = webSocket;
+        this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
+    }
+
+    this->didConnect();
 }
 void WebSocket::didFailToConnect(int32_t code)
 {
     m_state = CLOSED;
+
+    // this means we already handled it
+    if (this->m_upgradeClient == nullptr) {
+        return;
+    }
+
     this->m_upgradeClient = nullptr;
 
     switch (code) {
@@ -884,11 +996,11 @@ void WebSocket::didFailToConnect(int32_t code)
 }
 } // namespace WebCore
 
-extern "C" WebSocket__didConnect(WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len)
+extern "C" WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t* socket, char* bufferedData, size_t len)
 {
     webSocket->didConnect(socket, bufferedData, len);
 }
-extern "C" WebSocket__didFailToConnect(WebSocket* webSocket, int32_t errorCode)
+extern "C" WebSocket__didFailToConnect(WebCore::WebSocket* webSocket, int32_t errorCode)
 {
     webSocket->didFailToConnect(socket, errorCode);
 }

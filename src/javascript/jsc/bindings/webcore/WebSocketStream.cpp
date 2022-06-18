@@ -46,7 +46,7 @@ uWS::WebSocketContext* WebSocketStreamBase<SSL, isServer>::registerClientContext
     /* 2 minutes timeout is good */
     static unsigned short idleTimeout = 120;
     /* 64kb backpressure is probably good */
-    static unsigned int maxBackpressure = 64 * 1024;
+    static unsigned int maxBackpressure = 128 * 1024 * 1024;
     static bool closeOnBackpressureLimit = false;
     /* This one depends on kernel timeouts and is a bad default */
     static bool resetIdleTimeoutOnSend = false;
@@ -71,13 +71,29 @@ uWS::WebSocketContext* WebSocketStreamBase<SSL, isServer>::registerClientContext
 
     opts->messageHandler = [](uWS::WebSocket<SSL, isServer, WebCore::WebSocket>* ws, std::string_view input, uWS::OpCode opCode) {
         auto* webSocket = ws->getUserData();
-        webSocket->didReceiveData<uWS::WebSocket<SSL, isServer, WebCore::WebSocket>*>(ws, input.data(), input.length());
+        if (opCode == uWS::OpCode::BINARY) {
+            webSocket->didReceiveBinaryData({ input.data(), input.length() });
+        } else {
+            webSocket->didReceiveMessage(WTF::String::fromUTF8(input.data(), input.length()));
+        }
     };
+
+    // pts->drainHandler = [](uWS::WebSocket<SSL, isServer, WebCore::WebSocket>* ws, std::string_view input, uWS::OpCode opCode) {
+    //     auto* webSocket = ws->getUserData();
+    //     webSocket->didReceiveData(input.data(), input.length());
+    // };
 
     opts->closeHandler = [](uWS::WebSocket<SSL, isServer, WebCore::WebSocket>* ws, int code, std::string_view message) {
         auto* webSocket = ws->getUserData();
-        webSocket->didClose<uWS::WebSocket<SSL, isServer, WebCore::WebSocket>*>(ws, code, message.data(), message.length());
+        webSocket->didClose(
+            ws->getBufferedAmount(),
+            code,
+            WTF::String::fromUTF8(
+                message.data(),
+                message.length()));
     };
+
+    return ctx;
 }
 
 }

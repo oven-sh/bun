@@ -12,7 +12,7 @@ us_socket_context_t* webSocketContext()
 {
     if constexpr (isSSL) {
         if (!m_ssl_client_websockets_ctx) {
-            us_loop_t* loop = (us_loop_t*)uWs::Loop::get();
+            us_loop_t* loop = (us_loop_t*)uWS::Loop::get();
             us_socket_context_options_t opts;
             memset(&opts, 0, sizeof(us_socket_context_t));
             this->m_ssl_client_websockets_ctx = us_create_socket_context(1, loop, sizeof(*ScriptExecutionContext), opts);
@@ -23,7 +23,7 @@ us_socket_context_t* webSocketContext()
         return m_ssl_client_websockets_ctx;
     } else {
         if (!m_client_websockets_ctx) {
-            us_loop_t* loop = (us_loop_t*)uWs::Loop::get();
+            us_loop_t* loop = (us_loop_t*)uWS::Loop::get();
             us_socket_context_options_t opts;
             memset(&opts, 0, sizeof(us_socket_context_t));
             this->m_client_websockets_ctx = us_create_socket_context(0, loop, sizeof(*ScriptExecutionContext), opts);

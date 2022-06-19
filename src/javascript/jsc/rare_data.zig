@@ -7,12 +7,14 @@ const Syscall = @import("./node/syscall.zig");
 const JSC = @import("javascript_core");
 const std = @import("std");
 const BoringSSL = @import("boringssl");
-boring_ssl_engine: ?*BoringSSL.ENGINE = null,
+const WebSocketClientMask = @import("../../http/websocket_http_client.zig").Mask;
 
+boring_ssl_engine: ?*BoringSSL.ENGINE = null,
 editor_context: EditorContext = EditorContext{},
 stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
+websocket_mask: WebSocketClientMask = WebSocketClientMask{},
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!

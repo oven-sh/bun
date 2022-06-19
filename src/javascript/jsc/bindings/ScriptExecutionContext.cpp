@@ -63,18 +63,18 @@ static uWS::WebSocketContext<SSL, false, WebCore::WebSocket*>* registerWebSocket
     auto* opts = ctx->getExt();
 
     /* Maximum message size we can receive */
-    static unsigned int maxPayloadLength = 128 * 1024 * 1024;
+    unsigned int maxPayloadLength = 16 * 1024;
     /* 2 minutes timeout is good */
-    static unsigned short idleTimeout = 120;
+    unsigned short idleTimeout = 120;
     /* 64kb backpressure is probably good */
-    static unsigned int maxBackpressure = 128 * 1024 * 1024;
-    static bool closeOnBackpressureLimit = false;
+    unsigned int maxBackpressure = 64 * 1024;
+    bool closeOnBackpressureLimit = false;
     /* This one depends on kernel timeouts and is a bad default */
-    static bool resetIdleTimeoutOnSend = false;
+    bool resetIdleTimeoutOnSend = false;
     /* A good default, esp. for newcomers */
-    static bool sendPingsAutomatically = true;
+    bool sendPingsAutomatically = false;
     /* Maximum socket lifetime in seconds before forced closure (defaults to disabled) */
-    static unsigned short maxLifetime = 0;
+    unsigned short maxLifetime = 0;
 
     opts->maxPayloadLength = maxPayloadLength;
     opts->maxBackpressure = maxBackpressure;

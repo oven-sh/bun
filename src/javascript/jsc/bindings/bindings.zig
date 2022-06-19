@@ -210,6 +210,10 @@ pub const ZigString = extern struct {
         return JSC.JSValue.fromRef(slice_).getZigString(ctx.ptr());
     }
 
+    pub fn from16Slice(slice_: []const u16) ZigString {
+        return from16(slice_.ptr, slice_.len);
+    }
+
     pub fn from16(slice_: [*]const u16, len: usize) ZigString {
         var str = init(@ptrCast([*]const u8, slice_)[0..len]);
         str.markUTF16();

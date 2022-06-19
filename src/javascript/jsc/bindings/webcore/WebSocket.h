@@ -97,7 +97,7 @@ public:
     void didConnect();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize);
-    void didFailToConnect(int32_t code);
+    void didFailWithErrorCode(int32_t code);
 
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);

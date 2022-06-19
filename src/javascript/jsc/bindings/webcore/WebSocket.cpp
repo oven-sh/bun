@@ -420,8 +420,6 @@ ExceptionOr<void> WebSocket::send(const String& message)
     if (utf8.length() > 0)
         this->sendWebSocketData<false>(utf8.data(), utf8.length());
 
-    delete utf8;
-
     return {};
 }
 
@@ -490,31 +488,34 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length)
     if constexpr (isBinary)
         opCode = uWS::OpCode::BINARY;
 
-    switch (m_connectedWebSocketKind) {
-    case ConnectedWebSocketKind::Client: {
-        this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
-        this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
-        break;
-    }
-    case ConnectedWebSocketKind::ClientSSL: {
-        this->m_connectedWebSocket.clientSSL->send({ baseAddress, length }, opCode);
-        this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
-        break;
-    }
-    case ConnectedWebSocketKind::Server: {
-        this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode);
-        this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
-        break;
-    }
-    case ConnectedWebSocketKind::ServerSSL: {
-        this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode);
-        this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
-        break;
-    }
-    default: {
-        RELEASE_ASSERT_NOT_REACHED();
-    }
-    }
+    this->m_connectedWebSocket.client->cork(
+        [&]() {
+            switch (m_connectedWebSocketKind) {
+            case ConnectedWebSocketKind::Client: {
+                this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
+                this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
+                break;
+            }
+            case ConnectedWebSocketKind::ClientSSL: {
+                this->m_connectedWebSocket.clientSSL->send({ baseAddress, length }, opCode);
+                this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
+                break;
+            }
+            case ConnectedWebSocketKind::Server: {
+                this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode);
+                this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
+                break;
+            }
+            case ConnectedWebSocketKind::ServerSSL: {
+                this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode);
+                this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
+                break;
+            }
+            default: {
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+            }
+        });
 }
 
 ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason)
@@ -856,16 +857,18 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
 
     this->didConnect();
 }
-void WebSocket::didFailToConnect(int32_t code)
+void WebSocket::didFailWithErrorCode(int32_t code)
 {
     m_state = CLOSED;
 
     // this means we already handled it
-    if (this->m_upgradeClient == nullptr) {
+    if (this->m_upgradeClient == nullptr && this->m_connectedWebSocketKind == ConnectedWebSocketKind::None) {
         return;
     }
 
     this->m_upgradeClient = nullptr;
+    this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
+    this->m_connectedWebSocket.client = nullptr;
 
     switch (code) {
     // cancel
@@ -982,7 +985,7 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
 {
     webSocket->didConnect(socket, bufferedData, len);
 }
-extern "C" void WebSocket__didFailToConnect(WebCore::WebSocket* webSocket, int32_t errorCode)
+extern "C" void WebSocket__didFailWithErrorCode(WebCore::WebSocket* webSocket, int32_t errorCode)
 {
-    webSocket->didFailToConnect(errorCode);
+    webSocket->didFailWithErrorCode(errorCode);
 }

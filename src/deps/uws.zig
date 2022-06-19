@@ -70,11 +70,11 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 this.socket,
             ) > 0;
         }
-        pub fn isClosed(this: ThisSocket) c_int {
+        pub fn isClosed(this: ThisSocket) bool {
             return us_socket_is_closed(
                 comptime ssl_int,
                 this.socket,
-            );
+            ) > 0;
         }
         pub fn close(this: ThisSocket, code: c_int, reason: ?*anyopaque) void {
             _ = us_socket_close(
@@ -191,13 +191,38 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 }
             };
 
-            us_socket_context_on_open(ssl_int, ctx, SocketHandler.on_open);
-            us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
-            us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
-            us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
-            us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
-            us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
+            if (comptime @typeInfo(@TypeOf(onOpen)) != .Null)
+                us_socket_context_on_open(ssl_int, ctx, SocketHandler.on_open);
+            if (comptime @typeInfo(@TypeOf(onClose)) != .Null)
+                us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
+            if (comptime @typeInfo(@TypeOf(onData)) != .Null)
+                us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
+            if (comptime @typeInfo(@TypeOf(onWritable)) != .Null)
+                us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
+            if (comptime @typeInfo(@TypeOf(onTimeout)) != .Null)
+                us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
+            if (comptime @typeInfo(@TypeOf(onConnectError)) != .Null)
+                us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
+            if (comptime @typeInfo(@TypeOf(onEnd)) != .Null)
+                us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
+        }
+
+        pub fn adopt(
+            socket: *Socket,
+            socket_ctx: *us_socket_context_t,
+            comptime Context: type,
+            comptime socket_field_name: []const u8,
+            ctx: Context,
+        ) ?*Context {
+            var adopted = Socket{ .socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, @sizeOf(Context)) orelse return null };
+            var holder = adopted.ext(Context) orelse {
+                if (comptime bun.Environment.allow_assert) unreachable;
+                _ = us_socket_close(comptime ssl_int, socket);
+                return null;
+            };
+            holder.* = ctx;
+            @field(holder, socket_field_name) = adopted;
+            return holder;
         }
     };
 }

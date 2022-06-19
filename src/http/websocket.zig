@@ -65,13 +65,30 @@ pub const WebsocketHeader = packed struct {
     }
 
     pub fn packLength(length: usize) u7 {
-        var eight: u7 = 0;
-        eight = switch (length) {
+        return switch (length) {
             0...126 => @truncate(u7, length),
             127...0xFFFF => 126,
             else => 127,
         };
-        return eight;
+    }
+
+    const mask_length = 4;
+    const header_length = 2;
+
+    pub fn lengthByteCount(byte_length: usize) usize {
+        return switch (byte_length) {
+            0...126 => 0,
+            127...0xFFFF => @sizeOf(u16),
+            else => @sizeOf(u64),
+        };
+    }
+
+    pub fn frameSize(byte_length: usize) usize {
+        return header_length + byte_length + lengthByteCount(byte_length);
+    }
+
+    pub fn frameSizeIncludingMask(byte_length: usize) usize {
+        return frameSize(byte_length) + mask_length;
     }
 };
 

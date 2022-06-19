@@ -189,6 +189,8 @@ pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../../http/websocket_http_client.zig").WebSocketHTTPClient;
 pub const WebSocketHTTSPClient = @import("../../../http/websocket_http_client.zig").WebSocketHTTPSClient;
+pub const WebSocketClient = @import("../../../http/websocket_http_client.zig").WebSocketClient;
+pub const WebSocketClientTLS = @import("../../../http/websocket_http_client.zig").WebSocketClientTLS;
 
 pub fn Errorable(comptime Type: type) type {
     return extern struct {
@@ -2510,6 +2512,8 @@ pub const Formatter = ZigConsoleClient.Formatter;
 comptime {
     WebSocketHTTPClient.shim.ref();
     WebSocketHTTSPClient.shim.ref();
+    WebSocketClient.shim.ref();
+    WebSocketClientTLS.shim.ref();
 
     if (!is_bindgen) {
         _ = Process.getTitle;

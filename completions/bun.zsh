@@ -1,4 +1,10 @@
 _bun() {
+    zstyle ':completion:*:*:bun:*' group-name ''
+    zstyle ':completion:*:*:bun-grouped:*' group-name ''
+    
+    zstyle ':completion:*:*:bun::descriptions' format '%F{green}-- %d --%f'
+    zstyle ':completion:*:*:bun-grouped:*' format '%F{green}-- %d --%f'
+    
     local program=bun
     typeset -A opt_args
     local curcontext="$curcontext" state line context
@@ -13,11 +19,11 @@ _bun() {
     cmd)
         local -a scripts_list
         IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes i))
-        compadd $scripts_list && ret=0
+        scripts="scripts:scripts:(($scripts_list))"
 
         main_commands=('add\:"Add a dependency to package.json" bun\:"Generate a bundle" create\:"Create a new project" dev\:"Start a dev server" help\:"Show command help" install\:"Install packages from package.json" remove\:"Remove a dependency from package.json" run\:"Run a script or package bin" upgrade\:"Upgrade to the latest version of bun"')
         main_commands=($main_commands)
-        _alternative "args:bun:(($main_commands))"
+        _alternative "$scripts" "args:bun:(($main_commands))"
         ;;
     args)
         case $line[1] in
@@ -242,22 +248,6 @@ _bun() {
 
                     ;;
 
-                run)
-
-                    # ---- Command: help run
-                    _arguments -s -C \
-                        '1: :->cmd1' \
-                        '2: :->cmd2' \
-                        '--version[Show version and exit]' \
-                        '-V[Show version and exit]' \
-                        '--cwd[Change directory]:cwd' \
-                        '--help[Show command help]' \
-                        '-h[Show command help]' \
-                        '--all[]' &&
-                        ret=0
-
-                    ;;
-
                 create)
 
                     # ---- Command: help create
@@ -332,7 +322,6 @@ _bun() {
                     ;;
 
                 run)
-
                     # ---- Command: help run
                     _arguments -s -C \
                         '1: :->cmd' \
@@ -438,7 +427,6 @@ _bun() {
 
             ;;
         run)
-
             # ---- Command: run
             _arguments -s -C \
                 '1: :->cmd' \
@@ -454,6 +442,7 @@ _bun() {
 
             case $state in
             script)
+                curcontext="${curcontext%:*:*}:bun-grouped"
                 _bun_run_param_script_completion
                 ;;
             other)
@@ -487,23 +476,22 @@ _bun() {
 _bun_run_param_script_completion() {
     local -a scripts_list
     IFS=$'\n' scripts_list=($(SHELL=zsh bun getcompletes s))
-    compadd $scripts_list && ret=0
+    scripts="scripts:scripts:(($scripts_list))"
 
     IFS=$'\n' bunjs=($(SHELL=zsh bun getcompletes j))
     IFS=$'\n' bins=($(SHELL=zsh bun getcompletes b))
 
-    if [ ! -z "$bunjs" -a "$bunjs" != " " ]; then
-        if [ ! -z "$bins" -a "$bins" != " " ]; then
-            compadd $bunjs && ret=0
-            _alternative "args:bin:(($bins))"
+    if [ -n "$bunjs" ] && [ "$bunjs" != " " ]; then
+        if [ -n "$bins" ] && [ "$bins" != " " ]; then
+            _alternative $scripts "files:files:(($bunjs))" "bin:bin:(($bins))"
             return 1
         fi
 
-        _alternative "args:Bun.js:(($bunjs))"
+        _alternative $scripts "args:Bun.js:(($bunjs))"
     fi
 
-    if [ ! -z "$bins" -a "$bins" != " " ]; then
-        _alternative "args:bin:(($bins))"
+    if [ -n "$bins" ] && [ "$bins" != " " ]; then
+        _alternative $scripts "args:bin:(($bins))"
         return 1
     fi
 }

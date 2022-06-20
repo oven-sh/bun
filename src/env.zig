@@ -25,3 +25,4 @@ pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
 pub const allow_assert = isDebug or isTest;
 pub const analytics_url = if (isDebug) "http://localhost:4000/events" else "http://i.bun.sh/events";
+pub const simd = isX86 or isAarch64;

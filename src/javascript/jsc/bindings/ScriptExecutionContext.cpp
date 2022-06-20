@@ -55,73 +55,25 @@ us_socket_context_t* ScriptExecutionContext::webSocketContextNoSSL()
 }
 
 template<bool SSL>
-static uWS::WebSocketContext<SSL, false, WebCore::WebSocket*>* registerWebSocketClientContext(ScriptExecutionContext* script, us_socket_context_t* parent)
+static us_socket_context_t* registerWebSocketClientContext(ScriptExecutionContext* script, us_socket_context_t* parent)
 {
-    uWS::Loop* loop = uWS::Loop::get();
-    uWS::WebSocketContext<SSL, false, WebCore::WebSocket*>* ctx = uWS::WebSocketContext<SSL, false, WebCore::WebSocket*>::createClient(loop, parent);
-
-    auto* opts = ctx->getExt();
-
-    /* Maximum message size we can receive */
-    unsigned int maxPayloadLength = 16 * 1024;
-    /* 2 minutes timeout is good */
-    unsigned short idleTimeout = 120;
-    /* 64kb backpressure is probably good */
-    unsigned int maxBackpressure = 64 * 1024;
-    bool closeOnBackpressureLimit = false;
-    /* This one depends on kernel timeouts and is a bad default */
-    bool resetIdleTimeoutOnSend = false;
-    /* A good default, esp. for newcomers */
-    bool sendPingsAutomatically = false;
-    /* Maximum socket lifetime in seconds before forced closure (defaults to disabled) */
-    unsigned short maxLifetime = 0;
-
-    opts->maxPayloadLength = maxPayloadLength;
-    opts->maxBackpressure = maxBackpressure;
-    opts->closeOnBackpressureLimit = closeOnBackpressureLimit;
-    opts->resetIdleTimeoutOnSend = resetIdleTimeoutOnSend;
-    opts->sendPingsAutomatically = sendPingsAutomatically;
-    // opts->compression = compression;
-    // TODO:
-    opts->compression = uWS::CompressOptions::DISABLED;
-
-    opts->openHandler = [](uWS::WebSocket<SSL, false, WebCore::WebSocket*>* ws) {
-        WebCore::WebSocket* webSocket = *ws->getUserData();
-        webSocket->didConnect();
-    };
-
-    opts->messageHandler = [](uWS::WebSocket<SSL, false, WebCore::WebSocket*>* ws, std::string_view input, uWS::OpCode opCode) {
-        WebCore::WebSocket* webSocket = *ws->getUserData();
-        if (opCode == uWS::OpCode::BINARY) {
-            webSocket->didReceiveBinaryData({ const_cast<unsigned char*>(reinterpret_cast<const unsigned char*>(input.data())), input.length() });
-        } else {
-            webSocket->didReceiveMessage(WTF::String::fromUTF8(input.data(), input.length()));
-        }
-    };
-
-    // pts->drainHandler = [](uWS::WebSocket<SSL, false, WebCore::WebSocket>* ws, std::string_view input, uWS::OpCode opCode) {
-    //    WebCore::WebSocket* webSocket = *ws->getUserData();
-    //     webSocket->didReceiveData(input.data(), input.length());
-    // };
-
-    opts->closeHandler = [](uWS::WebSocket<SSL, false, WebCore::WebSocket*>* ws, int code, std::string_view message) {
-        WebCore::WebSocket* webSocket = *ws->getUserData();
-        webSocket->didClose(
-            ws->getBufferedAmount(),
-            code,
-            WTF::String::fromUTF8(
-                message.data(),
-                message.length()));
-    };
-
-    return ctx;
+    us_loop_t* loop = (us_loop_t*)uWS::Loop::get();
+    if constexpr (SSL) {
+        us_socket_context_t* child = us_create_child_socket_context(1, parent, sizeof(size_t));
+        Bun__WebSocketClientTLS__register(script->jsGlobalObject(), loop, child);
+        return child;
+    } else {
+        us_socket_context_t* child = us_create_child_socket_context(0, parent, sizeof(size_t));
+        Bun__WebSocketClient__register(script->jsGlobalObject(), loop, child);
+        return child;
+    }
 }
 
-uWS::WebSocketContext<false, false, WebSocket*>* ScriptExecutionContext::connectedWebSocketKindClient()
+us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClient()
 {
     return registerWebSocketClientContext<false>(this, webSocketContextNoSSL());
 }
-uWS::WebSocketContext<true, false, WebSocket*>* ScriptExecutionContext::connectedWebSocketKindClientSSL()
+us_socket_context_t* ScriptExecutionContext::connectedWebSocketKindClientSSL()
 {
     return registerWebSocketClientContext<true>(this, webSocketContextSSL());
 }

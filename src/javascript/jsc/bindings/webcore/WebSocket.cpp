@@ -176,11 +176,11 @@ WebSocket::~WebSocket()
 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        this->m_connectedWebSocket.client->end(None);
+        Bun__WebSocketClient__finalize(this->m_connectedWebSocket.client);
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        this->m_connectedWebSocket.clientSSL->end(None);
+        Bun__WebSocketClientTLS__finalize(this->m_connectedWebSocket.clientSSL);
         break;
     }
     case ConnectedWebSocketKind::Server: {
@@ -408,17 +408,17 @@ ExceptionOr<void> WebSocket::send(const String& message)
     LOG(Network, "WebSocket %p send() Sending String '%s'", this, message.utf8().data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
-    auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
     // No exception is raised if the connection was once established but has subsequently been closed.
     if (m_state == CLOSING || m_state == CLOSED) {
+        auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
         size_t payloadSize = utf8.length();
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return {};
     }
 
-    if (utf8.length() > 0)
-        this->sendWebSocketData<false>(utf8.data(), utf8.length());
+    if (message.length() > 0)
+        this->sendWebSocketString(message);
 
     return {};
 }
@@ -437,7 +437,7 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
     char* data = static_cast<char*>(binaryData.data());
     size_t length = binaryData.byteLength();
     if (length > 0)
-        this->sendWebSocketData<true>(data, length);
+        this->sendWebSocketData(data, length);
     return {};
 }
 
@@ -458,7 +458,7 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
     char* baseAddress = reinterpret_cast<char*>(buffer->data()) + arrayBufferView.byteOffset();
     size_t length = arrayBufferView.byteLength();
     if (length > 0)
-        this->sendWebSocketData<true>(baseAddress, length);
+        this->sendWebSocketData(baseAddress, length);
 
     return {};
 }
@@ -480,48 +480,74 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
 //     return {};
 // }
 
-template<bool isBinary>
 void WebSocket::sendWebSocketData(const char* baseAddress, size_t length)
 {
-    uWS::OpCode opCode = uWS::OpCode::TEXT;
+    uWS::OpCode opCode = uWS::OpCode::BINARY;
 
-    if constexpr (isBinary)
-        opCode = uWS::OpCode::BINARY;
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client: {
+        Bun__WebSocketClient__writeBinaryData(this->m_connectedWebSocket.client, reinterpret_cast<const unsigned char*>(baseAddress), length);
+        // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
+        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::ClientSSL: {
+        Bun__WebSocketClientTLS__writeBinaryData(this->m_connectedWebSocket.clientSSL, reinterpret_cast<const unsigned char*>(baseAddress), length);
+        break;
+    }
+    case ConnectedWebSocketKind::Server: {
+        this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode);
+        this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::ServerSSL: {
+        this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode);
+        this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
+        break;
+    }
+    default: {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    }
+}
 
-    this->m_connectedWebSocket.client->cork(
-        [&]() {
-            switch (m_connectedWebSocketKind) {
-            case ConnectedWebSocketKind::Client: {
-                this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
-                this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
-                break;
-            }
-            case ConnectedWebSocketKind::ClientSSL: {
-                this->m_connectedWebSocket.clientSSL->send({ baseAddress, length }, opCode);
-                this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
-                break;
-            }
-            case ConnectedWebSocketKind::Server: {
-                this->m_connectedWebSocket.server->send({ baseAddress, length }, opCode);
-                this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
-                break;
-            }
-            case ConnectedWebSocketKind::ServerSSL: {
-                this->m_connectedWebSocket.serverSSL->send({ baseAddress, length }, opCode);
-                this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
-                break;
-            }
-            default: {
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-            }
-        });
+void WebSocket::sendWebSocketString(const String& message)
+{
+
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client: {
+        auto zigStr = Zig::toZigString(message);
+        Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &zigStr);
+        // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
+        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::ClientSSL: {
+        auto zigStr = Zig::toZigString(message);
+        Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr);
+        break;
+    }
+    case ConnectedWebSocketKind::Server: {
+        auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        this->m_connectedWebSocket.server->send({ utf8.data(), utf8.length() }, uWS::OpCode::TEXT);
+        this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
+        break;
+    }
+    case ConnectedWebSocketKind::ServerSSL: {
+        auto utf8 = message.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+        this->m_connectedWebSocket.serverSSL->send({ utf8.data(), utf8.length() }, uWS::OpCode::TEXT);
+        this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
+        break;
+    }
+    default: {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    }
 }
 
 ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, const String& reason)
 {
 
-    CString utf8 = reason.utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD);
     int code = optionalCode ? optionalCode.value() : static_cast<int>(0);
     if (code == 0)
         LOG(Network, "WebSocket %p close() without code and reason", this);
@@ -529,7 +555,7 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
         LOG(Network, "WebSocket %p close() code=%d reason='%s'", this, code, reason.utf8().data());
         // if (!(code == WebSocketChannel::CloseEventCodeNormalClosure || (WebSocketChannel::CloseEventCodeMinimumUserDefined <= code && code <= WebSocketChannel::CloseEventCodeMaximumUserDefined)))
         //     return Exception { InvalidAccessError };
-        if (utf8.length() > maxReasonSizeInBytes) {
+        if (reason.length() > maxReasonSizeInBytes) {
             // scriptExecutionContext()->addConsoleMessage(MessageSource::JS, MessageLevel::Error, "WebSocket close message is too long."_s);
             return Exception { SyntaxError, "WebSocket close message is too long."_s };
         }
@@ -553,23 +579,25 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     m_state = CLOSING;
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        this->m_connectedWebSocket.client->end(code, { utf8.data(), utf8.length() });
-        this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
+        ZigString reasonZigStr = Zig::toZigString(reason);
+        Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonZigStr);
+        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        this->m_connectedWebSocket.clientSSL->end(code, { utf8.data(), utf8.length() });
-        this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
+        ZigString reasonZigStr = Zig::toZigString(reason);
+        Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonZigStr);
+        // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::Server: {
-        this->m_connectedWebSocket.server->end(code, { utf8.data(), utf8.length() });
-        this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
+        // this->m_connectedWebSocket.server->end(code, { utf8.data(), utf8.length() });
+        // this->m_bufferedAmount = this->m_connectedWebSocket.server->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ServerSSL: {
-        this->m_connectedWebSocket.serverSSL->end(code, { utf8.data(), utf8.length() });
-        this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
+        // this->m_connectedWebSocket.serverSSL->end(code, { utf8.data(), utf8.length() });
+        // this->m_bufferedAmount = this->m_connectedWebSocket.serverSSL->getBufferedAmount();
         break;
     }
     default: {
@@ -832,26 +860,12 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
 {
     this->m_upgradeClient = nullptr;
     if (m_isSecure) {
-        /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-        uWS::WebSocket<true, false, WebSocket*>* webSocket = (uWS::WebSocket<true, false, WebSocket*>*)us_socket_context_adopt_socket(1,
-            (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<true, false>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
-
-        webSocket->AsyncSocket<true>::uncork();
-
-        webSocket->init(0, uWS::CompressOptions::DISABLED, uWS::BackPressure());
-        *webSocket->getUserData() = this;
-        this->m_connectedWebSocket.clientSSL = webSocket;
+        us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<true, false>();
+        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject());
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
     } else {
-        /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
-        uWS::WebSocket<false, false, WebSocket*>* webSocket = (uWS::WebSocket<false, false, WebSocket*>*)us_socket_context_adopt_socket(1,
-            (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<false, false>(), socket, sizeof(uWS::WebSocketData) + sizeof(WebSocket*));
-
-        webSocket->AsyncSocket<false>::uncork();
-
-        webSocket->init(0, uWS::CompressOptions::DISABLED, uWS::BackPressure());
-        *webSocket->getUserData() = this;
-        this->m_connectedWebSocket.client = webSocket;
+        us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<false, false>();
+        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject());
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }
 
@@ -977,6 +991,61 @@ void WebSocket::didFailWithErrorCode(int32_t code)
         didReceiveMessageError(message);
         break;
     }
+
+        // failed_to_allocate_memory
+    case 18: {
+        auto message = MAKE_STATIC_STRING_IMPL("Failed to allocate memory");
+        didReceiveMessageError(message);
+        break;
+    }
+    // control_frame_is_fragmented
+    case 19: {
+        auto message = MAKE_STATIC_STRING_IMPL("Protocol error - control frame is fragmented");
+        didReceiveMessageError(message);
+        break;
+    }
+    // invalid_control_frame
+    case 20: {
+        auto message = MAKE_STATIC_STRING_IMPL("Protocol error - invalid control frame");
+        didReceiveMessageError(message);
+        break;
+    }
+    // compression_unsupported
+    case 21: {
+        auto message = MAKE_STATIC_STRING_IMPL("Compression not implemented yet");
+        didReceiveMessageError(message);
+        break;
+    }
+    // unexpected_mask_from_server
+    case 22: {
+        auto message = MAKE_STATIC_STRING_IMPL("Protocol error - unexpected mask from server");
+        didReceiveMessageError(message);
+        break;
+    }
+    // expected_control_frame
+    case 23: {
+        auto message = MAKE_STATIC_STRING_IMPL("Protocol error - expected control frame");
+        didReceiveMessageError(message);
+        break;
+    }
+    // unsupported_control_frame
+    case 24: {
+        auto message = MAKE_STATIC_STRING_IMPL("Protocol error - unsupported control frame");
+        didReceiveMessageError(message);
+        break;
+    }
+    // unexpected_opcode
+    case 25: {
+        auto message = MAKE_STATIC_STRING_IMPL("Protocol error - unexpected opcode");
+        didReceiveMessageError(message);
+        break;
+    }
+    // invalid_utf8
+    case 26: {
+        auto message = MAKE_STATIC_STRING_IMPL("Server sent invalid UTF8");
+        didReceiveMessageError(message);
+        break;
+    }
     }
 }
 } // namespace WebCore
@@ -985,7 +1054,21 @@ extern "C" void WebSocket__didConnect(WebCore::WebSocket* webSocket, us_socket_t
 {
     webSocket->didConnect(socket, bufferedData, len);
 }
-extern "C" void WebSocket__didFailWithErrorCode(WebCore::WebSocket* webSocket, int32_t errorCode)
+extern "C" void WebSocket__didCloseWithErrorCode(WebCore::WebSocket* webSocket, int32_t errorCode)
 {
     webSocket->didFailWithErrorCode(errorCode);
+}
+
+extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const ZigString* str)
+{
+    WTF::String wtf_str = Zig::toString(*str);
+    if (clone) {
+        wtf_str = wtf_str.isolatedCopy();
+    }
+
+    webSocket->didReceiveMessage(WTFMove(wtf_str));
+}
+extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, uint8_t* bytes, size_t len)
+{
+    webSocket->didReceiveBinaryData({ bytes, len });
 }

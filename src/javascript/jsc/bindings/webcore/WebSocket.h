@@ -105,8 +105,8 @@ public:
 
 private:
     typedef union AnyWebSocket {
-        uWS::WebSocket<false, false, WebCore::WebSocket*>* client;
-        uWS::WebSocket<true, false, WebCore::WebSocket*>* clientSSL;
+        WebSocketClient* client;
+        WebSocketClientTLS* clientSSL;
         uWS::WebSocket<false, true, WebCore::WebSocket*>* server;
         uWS::WebSocket<true, true, WebCore::WebSocket*>* serverSSL;
     } AnyWebSocket;
@@ -138,7 +138,7 @@ private:
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
 
-    template<bool isBinary>
+    void sendWebSocketString(const String& message);
     void sendWebSocketData(const char* data, size_t length);
 
     void failAsynchronously();

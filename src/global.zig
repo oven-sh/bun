@@ -201,3 +201,40 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
         break :brk slice;
     };
 }
+
+pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
+    std.debug.assert(dest.len >= src.len);
+    var input = std.mem.sliceAsBytes(src);
+    var output = std.mem.sliceAsBytes(dest);
+    var input_end = input.ptr + input.len;
+    const output_end = output.ptr + output.len;
+
+    if (@ptrToInt(input.ptr) <= @ptrToInt(output.ptr) and @ptrToInt(output_end) <= @ptrToInt(input_end)) {
+        // input is overlapping with output
+        if (input.len > strings.ascii_vector_size) {
+            const input_end_vectorized = input.ptr + input.len - (input.len % strings.ascii_vector_size);
+            while (input.ptr != input_end_vectorized) {
+                const input_vec = @as(@Vector(strings.ascii_vector_size, u8), input[0..strings.ascii_vector_size].*);
+                output[0..strings.ascii_vector_size].* = input_vec;
+                input = input[strings.ascii_vector_size..];
+                output = output[strings.ascii_vector_size..];
+            }
+        }
+
+        while (input.len >= @sizeOf(usize)) {
+            output[0..@sizeOf(usize)].* = input[0..@sizeOf(usize)].*;
+            input = input[@sizeOf(usize)..];
+            output = output[@sizeOf(usize)..];
+        }
+
+        while (input.ptr != input_end) {
+            output[0] = input[0];
+            input = input[1..];
+            output = output[1..];
+        }
+    } else {
+        @memcpy(output.ptr, input.ptr, input.len);
+    }
+}
+
+pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;

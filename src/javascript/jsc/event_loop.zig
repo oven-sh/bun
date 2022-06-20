@@ -287,7 +287,7 @@ pub const EventLoop = struct {
     concurrent_lock: Lock = Lock.init(),
     global: *JSGlobalObject = undefined,
     virtual_machine: *VirtualMachine = undefined,
-    pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
+    pub const Queue = bun.LinearFifo(Task, .Dynamic);
 
     pub fn tickWithCount(this: *EventLoop) u32 {
         var finished: u32 = 0;

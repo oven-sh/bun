@@ -118,18 +118,18 @@ private:
 
     us_socket_context_t* webSocketContextSSL();
     us_socket_context_t* webSocketContextNoSSL();
-    uWS::WebSocketContext<true, false, WebSocket*>* connectedWebSocketKindClientSSL();
-    uWS::WebSocketContext<false, false, WebSocket*>* connectedWebSocketKindClient();
+    us_socket_context_t* connectedWebSocketKindClientSSL();
+    us_socket_context_t* connectedWebSocketKindClient();
 
     us_socket_context_t* m_ssl_client_websockets_ctx = nullptr;
     us_socket_context_t* m_client_websockets_ctx = nullptr;
 
-    uWS::WebSocketContext<true, false, WebSocket*>* m_connected_ssl_client_websockets_ctx = nullptr;
-    uWS::WebSocketContext<false, false, WebSocket*>* m_connected_client_websockets_ctx = nullptr;
+    us_socket_context_t* m_connected_ssl_client_websockets_ctx = nullptr;
+    us_socket_context_t* m_connected_client_websockets_ctx = nullptr;
 
 public:
     template<bool isSSL, bool isServer>
-    uWS::WebSocketContext<isSSL, isServer, WebSocket*>* connnectedWebSocketContext()
+    us_socket_context_t* connnectedWebSocketContext()
     {
         if constexpr (isSSL) {
             if (!m_connected_ssl_client_websockets_ctx) {

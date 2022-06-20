@@ -48,7 +48,8 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 comptime ssl_int,
                 this.socket,
                 data.ptr,
-                @intCast(c_int, data.len),
+                // truncate to 31 bits since sign bit exists
+                @intCast(c_int, @truncate(u31, data.len)),
                 @as(c_int, @boolToInt(msg_more)),
             );
         }
@@ -214,10 +215,10 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             comptime socket_field_name: []const u8,
             ctx: Context,
         ) ?*Context {
-            var adopted = Socket{ .socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, @sizeOf(Context)) orelse return null };
+            var adopted = ThisSocket{ .socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, @sizeOf(Context)) orelse return null };
             var holder = adopted.ext(Context) orelse {
                 if (comptime bun.Environment.allow_assert) unreachable;
-                _ = us_socket_close(comptime ssl_int, socket);
+                _ = us_socket_close(comptime ssl_int, socket, 0, null);
                 return null;
             };
             holder.* = ctx;

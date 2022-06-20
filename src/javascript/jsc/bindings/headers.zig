@@ -68,6 +68,8 @@ pub const ArrayBufferSink = @import("../webcore/streams.zig").ArrayBufferSink;
 
 pub const WebSocketHTTPClient = bindings.WebSocketHTTPClient;
 pub const WebSocketHTTPSClient = bindings.WebSocketHTTPSClient;
+pub const WebSocketClient = bindings.WebSocketClient;
+pub const WebSocketClientTLS = bindings.WebSocketClientTLS;
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
 pub const ptrdiff_t = c_long;

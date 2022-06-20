@@ -68,3 +68,5 @@ pub const ArrayBufferSink = @import("../webcore/streams.zig").ArrayBufferSink;
 
 pub const WebSocketHTTPClient = bindings.WebSocketHTTPClient;
 pub const WebSocketHTTPSClient = bindings.WebSocketHTTPSClient;
+pub const WebSocketClient = bindings.WebSocketClient;
+pub const WebSocketClientTLS = bindings.WebSocketClientTLS;

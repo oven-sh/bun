@@ -54,20 +54,26 @@ pub const WebsocketHeader = packed struct {
     final: bool = true,
 
     pub fn writeHeader(header: WebsocketHeader, writer: anytype, n: usize) anyerror!void {
-        try writer.writeIntBig(u16, @bitCast(u16, header));
-
-        // Write extended length if needed
-        switch (n) {
-            0...126 => {}, // Included in header
-            127...0xFFFF => try writer.writeIntBig(u16, @truncate(u16, n)),
-            else => try writer.writeIntBig(u64, n),
+        // packed structs are sometimes buggy
+        // lets check it worked right
+        if (comptime Environment.allow_assert) {
+            var buf_ = [2]u8{ 0, 0 };
+            var stream = std.io.fixedBufferStream(&buf_);
+            stream.writer().writeIntBig(u16, @bitCast(u16, header)) catch unreachable;
+            stream.pos = 0;
+            const casted = stream.reader().readIntBig(u16) catch unreachable;
+            std.debug.assert(casted == @bitCast(u16, header));
+            std.debug.assert(std.meta.eql(@bitCast(WebsocketHeader, casted), header));
         }
+
+        try writer.writeIntBig(u16, @bitCast(u16, header));
+        std.debug.assert(header.len == packLength(n));
     }
 
     pub fn packLength(length: usize) u7 {
         return switch (length) {
-            0...126 => @truncate(u7, length),
-            127...0xFFFF => 126,
+            0...125 => @truncate(u7, length),
+            126...0xFFFF => 126,
             else => 127,
         };
     }
@@ -77,8 +83,8 @@ pub const WebsocketHeader = packed struct {
 
     pub fn lengthByteCount(byte_length: usize) usize {
         return switch (byte_length) {
-            0...126 => 0,
-            127...0xFFFF => @sizeOf(u16),
+            0...125 => 0,
+            126...0xFFFF => @sizeOf(u16),
             else => @sizeOf(u64),
         };
     }

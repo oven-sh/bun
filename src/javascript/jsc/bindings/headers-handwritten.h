@@ -189,6 +189,8 @@ typedef struct StringPointer {
 
 typedef void WebSocketHTTPClient;
 typedef void WebSocketHTTPSClient;
+typedef void WebSocketClient;
+typedef void WebSocketClientTLS;
 
 #ifdef __cplusplus
 

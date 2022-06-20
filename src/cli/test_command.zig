@@ -14,6 +14,7 @@ const lex = @import("../js_lexer.zig");
 const logger = @import("../logger.zig");
 
 const FileSystem = @import("../fs.zig").FileSystem;
+const PathName = @import("../fs.zig").PathName;
 const options = @import("../options.zig");
 const js_parser = @import("../js_parser.zig");
 const json_parser = @import("../json_parser.zig");
@@ -47,6 +48,7 @@ pub const CommandLineReporter = struct {
     callback: TestRunner.Callback,
     last_dot: u32 = 0,
     summary: Summary = Summary{},
+    prev_file: u64 = 0,
 
     pub const Summary = struct {
         pass: u32 = 0,
@@ -63,21 +65,6 @@ pub const CommandLineReporter = struct {
         break :brk map;
     };
 
-    fn updateDots(this: *CommandLineReporter) void {
-        const statuses = this.jest.tests.items(.status);
-        var writer = Output.errorWriter();
-        writer.writeAll("\r") catch unreachable;
-        if (Output.enable_ansi_colors_stderr) {
-            for (statuses) |status| {
-                writer.writeAll(dots.get(status).?) catch unreachable;
-            }
-        } else {
-            for (statuses) |_| {
-                writer.writeAll(".") catch unreachable;
-            }
-        }
-    }
-
     pub fn handleUpdateCount(cb: *TestRunner.Callback, _: u32, _: u32) void {
         _ = cb;
     }
@@ -85,18 +72,132 @@ pub const CommandLineReporter = struct {
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {
         // var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
     }
-    pub fn handleTestPass(cb: *TestRunner.Callback, _: Test.ID, expectations: u32) void {
+    pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, parent: ?*Jest.DescribeScope) void {
+        const file_hash = std.hash.Wyhash.hash(0, file);
+
+        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var buffered_writer = std.io.bufferedWriter(writer_);
+        var writer = buffered_writer.writer();
+        defer buffered_writer.flush() catch unreachable;
+
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
-        // this.updateDots();
+
+        var scopes_stack = std.BoundedArray(*Jest.DescribeScope, 64).init(0) catch unreachable;
+        var parent_ = parent;
+
+        if (file_hash != this.prev_file) {
+            this.prev_file = file_hash;
+            const pathname = PathName.init(file);
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt("<r>\n{s}:\n", true), .{pathname.filename}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt("<r>\n{s}:\n", false), .{pathname.filename}) catch unreachable;
+        }
+
+        while (parent_) |scope| {
+            scopes_stack.append(scope) catch break;
+            parent_ = scope.parent;
+        }
+
+        var scopes: []*Jest.DescribeScope = scopes_stack.slice();
+
+        var needs_space = true;
+        for (scopes) |scope| {
+            if (scope.label.len == 0) continue;
+
+            writer.writeAll(" ") catch unreachable;
+            writer.writeAll(scope.label) catch unreachable;
+            writer.writeAll(" > ") catch unreachable;
+            needs_space = false;
+        }
+
+        if (label.len > 0) {
+            if (needs_space) {
+                writer.writeAll("  ") catch unreachable;
+            }
+
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt("<r><b>{s}<r> <r><green>✓<r>\n", true), .{label}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt("<r><b>{s}<r> <r><green>✓<r>\n", false), .{label}) catch unreachable;
+        } else {
+            if (needs_space) {
+                writer.writeAll("  ") catch unreachable;
+            }
+
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt("<r><b><d>test<r> <r><green>✓<r>\n", true), .{}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt("<r><b><d>test<r> <r><green>✓<r>\n", false), .{}) catch unreachable;
+        }
+
+        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
         this.summary.pass += 1;
         this.summary.expectations += expectations;
     }
-    pub fn handleTestFail(cb: *TestRunner.Callback, test_id: Test.ID, _: string, _: string, _: u32) void {
+    pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, file: string, label: string, expectations: u32, parent: ?*Jest.DescribeScope) void {
         // var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+        const file_hash = std.hash.Wyhash.hash(0, file);
+
+        var writer_: std.fs.File.Writer = Output.errorWriter();
+        var buffered_writer = std.io.bufferedWriter(writer_);
+        var writer = buffered_writer.writer();
+        defer buffered_writer.flush() catch unreachable;
+
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+
+        var scopes_stack = std.BoundedArray(*Jest.DescribeScope, 64).init(0) catch unreachable;
+        var parent_ = parent;
+
+        if (file_hash != this.prev_file) {
+            this.prev_file = file_hash;
+            const pathname = PathName.init(file);
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt("<r>\n{s}:\n", true), .{pathname.filename}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt("<r>\n{s}:\n", false), .{pathname.filename}) catch unreachable;
+        }
+
+        while (parent_) |scope| {
+            scopes_stack.append(scope) catch break;
+            parent_ = scope.parent;
+        }
+
+        var scopes: []*Jest.DescribeScope = scopes_stack.slice();
+
+        var needs_space = true;
+        for (scopes) |scope| {
+            if (scope.label.len == 0) continue;
+
+            writer.writeAll(" ") catch unreachable;
+            writer.writeAll(scope.label) catch unreachable;
+            writer.writeAll(" > ") catch unreachable;
+            needs_space = false;
+        }
+
+        if (label.len > 0) {
+            if (needs_space) {
+                writer.writeAll("  ") catch unreachable;
+            }
+
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt("<r><b>{s}<r> <r><red>✗<r>\n", true), .{label}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt("<r><b>{s}<r> <r><red>✗<r>\n", false), .{label}) catch unreachable;
+        } else {
+            if (needs_space) {
+                writer.writeAll("  ") catch unreachable;
+            }
+
+            if (Output.enable_ansi_colors_stderr)
+                writer.print(comptime Output.prettyFmt("<r><b><d>test<r> <r><red>✗<r>\n", true), .{}) catch unreachable
+            else
+                writer.print(comptime Output.prettyFmt("<r><b><d>test<r> <r><red>✗<r>\n", false), .{}) catch unreachable;
+        }
         // this.updateDots();
         this.summary.fail += 1;
-        _ = test_id;
+        this.summary.expectations += expectations;
+        this.jest.tests.items(.status)[id] = TestRunner.Test.Status.fail;
     }
 };
 
@@ -401,13 +502,9 @@ pub const TestCommand = struct {
             else => {},
         }
 
-        reporter.updateDots();
-
         var modules: []*Jest.DescribeScope = reporter.jest.files.items(.module_scope)[file_start..];
         for (modules) |module| {
             module.runTests(vm.global.ref());
         }
-
-        reporter.updateDots();
     }
 };

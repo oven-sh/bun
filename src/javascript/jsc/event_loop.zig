@@ -357,7 +357,9 @@ pub const EventLoop = struct {
                     finished += 1;
                     vm_.active_tasks -|= 1;
                 },
-                else => unreachable,
+                else => if (Environment.allow_assert) {
+                    bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
+                } else unreachable,
             }
         }
 

@@ -66,6 +66,7 @@ pub const TestRunner = struct {
     files: File.List = .{},
     index: File.Map = File.Map{},
     only: bool = false,
+    last_file: u64 = 0,
 
     timeout_seconds: f64 = 5.0,
 
@@ -85,21 +86,20 @@ pub const TestRunner = struct {
     pub const Callback = struct {
         pub const OnUpdateCount = fn (this: *Callback, delta: u32, total: u32) void;
         pub const OnTestStart = fn (this: *Callback, test_id: Test.ID) void;
-        pub const OnTestPass = fn (this: *Callback, test_id: Test.ID, expectations: u32) void;
-        pub const OnTestFail = fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32) void;
+        pub const OnTestUpdate = fn (this: *Callback, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void;
         onUpdateCount: OnUpdateCount,
         onTestStart: OnTestStart,
-        onTestPass: OnTestPass,
-        onTestFail: OnTestFail,
+        onTestPass: OnTestUpdate,
+        onTestFail: OnTestUpdate,
     };
 
-    pub fn reportPass(this: *TestRunner, test_id: Test.ID, expectations: u32) void {
+    pub fn reportPass(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .pass;
-        this.callback.onTestPass(this.callback, test_id, expectations);
+        this.callback.onTestPass(this.callback, test_id, file, label, expectations, parent);
     }
-    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32) void {
+    pub fn reportFailure(this: *TestRunner, test_id: Test.ID, file: string, label: string, expectations: u32, parent: ?*DescribeScope) void {
         this.tests.items(.status)[test_id] = .fail;
-        this.callback.onTestFail(this.callback, test_id, file, label, expectations);
+        this.callback.onTestFail(this.callback, test_id, file, label, expectations, parent);
     }
 
     pub fn addTestCount(this: *TestRunner, count: u32) u32 {
@@ -803,10 +803,7 @@ pub const DescribeScope = struct {
 
         var scope = getAllocator(ctx).create(DescribeScope) catch unreachable;
         scope.* = .{
-            .label = if (label.is16Bit())
-                (strings.toUTF8AllocWithType(getAllocator(ctx), @TypeOf(label.utf16Slice()), label.utf16Slice()) catch unreachable)
-            else
-                label.full(),
+            .label = (label.toSlice(getAllocator(ctx)).cloneIfNeeded() catch unreachable).slice(),
             .parent = this,
             .file_id = this.file_id,
         };
@@ -825,20 +822,28 @@ pub const DescribeScope = struct {
 
         {
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
-            var vm = JSC.VirtualMachine.vm;
-            const promise = JSInternalPromise.resolvedPromise(ctx.ptr(), result);
-            while (promise.status(ctx.ptr().vm()) == JSPromise.Status.Pending) {
-                vm.tick();
-            }
 
-            switch (promise.status(ctx.ptr().vm())) {
-                JSPromise.Status.Fulfilled => {},
-                else => {
-                    exception.* = promise.result(ctx.ptr().vm()).asObjectRef();
-                    return null;
-                },
+            if (result.asPromise() != null or result.asInternalPromise() != null) {
+                var vm = JSC.VirtualMachine.vm;
+
+                const promise = JSInternalPromise.resolvedPromise(ctx.ptr(), result);
+                while (promise.status(ctx.ptr().vm()) == JSPromise.Status.Pending) {
+                    vm.tick();
+                }
+
+                switch (promise.status(ctx.ptr().vm())) {
+                    JSPromise.Status.Fulfilled => {},
+                    else => {
+                        exception.* = promise.result(ctx.ptr().vm()).asObjectRef();
+                        return null;
+                    },
+                }
+            } else if (result.isAnyError(ctx)) {
+                exception.* = result.asObjectRef();
+                return null;
             }
         }
+
         this.runTests(ctx);
         return js.JSValueMakeUndefined(ctx);
     }
@@ -873,9 +878,10 @@ pub const DescribeScope = struct {
             this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
 
             const test_id = i + this.test_id_start;
+
             switch (result) {
-                .pass => |count| Jest.runner.?.reportPass(test_id, count),
-                .fail => |count| Jest.runner.?.reportFailure(test_id, source.path.text, tests[i].label, count),
+                .pass => |count| Jest.runner.?.reportPass(test_id, source.path.text, tests[i].label, count, this),
+                .fail => |count| Jest.runner.?.reportFailure(test_id, source.path.text, tests[i].label, count, this),
                 .pending => @panic("Unexpected pending test"),
             }
 

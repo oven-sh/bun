@@ -22,21 +22,26 @@ pub const LinearFifoBufferType = union(enum) {
 
     /// The buffer is managed dynamically using a `mem.Allocator`.
     Dynamic,
+
+    fn BufferType(comptime buffer_type: @This(), comptime T: type) type {
+        return if (buffer_type == .Static) [buffer_type.Static]T else []T;
+    }
 };
 
 pub fn LinearFifo(
     comptime T: type,
     comptime buffer_type: LinearFifoBufferType,
 ) type {
-    const powers_of_two = switch (buffer_type) {
-        .Static => std.math.isPowerOfTwo(buffer_type.Static),
-        .Slice => false, // Any size slice could be passed in
-        .Dynamic => true, // This could be configurable in future
-    };
-
+    const BufferType = buffer_type.BufferType(T);
     return struct {
+        const powers_of_two = switch (buffer_type) {
+            .Static => std.math.isPowerOfTwo(buffer_type.Static),
+            .Slice => false, // Any size slice could be passed in
+            .Dynamic => true, // This could be configurable in future
+        };
+
         allocator: if (buffer_type == .Dynamic) Allocator else void,
-        buf: if (buffer_type == .Static) [buffer_type.Static]T else []T,
+        buf: BufferType,
         head: usize,
         count: usize,
 
@@ -129,11 +134,13 @@ pub fn LinearFifo(
             if (buffer_type == .Dynamic) {
                 const new_size = if (powers_of_two) math.ceilPowerOfTwo(usize, size) catch return error.OutOfMemory else size;
                 var buf = try self.allocator.alloc(T, new_size);
-                var new_bytes = std.mem.sliceAsBytes(buf);
-                var old_bytes = std.mem.sliceAsBytes(self.readableSlice(0));
-                @memcpy(new_bytes.ptr, old_bytes.ptr, old_bytes.len);
+                if (self.count > 0) {
+                    var new_bytes = std.mem.sliceAsBytes(buf);
+                    var old_bytes = std.mem.sliceAsBytes(self.readableSlice(0));
+                    @memcpy(new_bytes.ptr, old_bytes.ptr, old_bytes.len);
+                    self.allocator.free(self.buf);
+                }
                 self.head = 0;
-                self.allocator.free(self.buf);
                 self.buf = buf;
             } else {
                 return error.OutOfMemory;
@@ -189,21 +196,16 @@ pub fn LinearFifo(
                 }
             }
 
-            if (self.count == count) {
-                self.head = 0;
-                self.count = 0;
+            var head = self.head + count;
+            if (powers_of_two) {
+                // Note it is safe to do a wrapping subtract as
+                // bitwise & with all 1s is a noop
+                head &= self.buf.len -% 1;
             } else {
-                var head = self.head + count;
-                if (powers_of_two) {
-                    // Note it is safe to do a wrapping subtract as
-                    // bitwise & with all 1s is a noop
-                    head &= self.buf.len -% 1;
-                } else {
-                    head %= self.buf.len;
-                }
-                self.head = head;
-                self.count -= count;
+                head %= self.buf.len;
             }
+            self.head = head;
+            self.count -= count;
         }
 
         /// Read the next item from the fifo
@@ -273,7 +275,7 @@ pub fn LinearFifo(
             }
 
             std.debug.assert(slice.len >= size);
-            return slice;
+            return slice[0..size];
         }
 
         /// Update the tail location of the buffer (usually follows use of writable/writableWithSize)

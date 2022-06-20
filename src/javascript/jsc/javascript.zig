@@ -395,6 +395,7 @@ pub const VirtualMachine = struct {
         if (!this.has_enabled_macro_mode) {
             this.has_enabled_macro_mode = true;
             this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
+            this.macro_event_loop.tasks.ensureTotalCapacity(16) catch unreachable;
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
             this.macro_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
@@ -498,7 +499,9 @@ pub const VirtualMachine = struct {
         VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        VirtualMachine.vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         VirtualMachine.vm.regular_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
+        VirtualMachine.vm.regular_event_loop.concurrent_tasks.ensureUnusedCapacity(8) catch unreachable;
         VirtualMachine.vm.event_loop = &VirtualMachine.vm.regular_event_loop;
 
         vm.bundler.macro_context = null;

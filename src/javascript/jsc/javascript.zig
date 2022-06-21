@@ -1232,7 +1232,7 @@ pub const VirtualMachine = struct {
     // }
 
     const main_file_name: string = "bun:main";
-    pub threadlocal var errors_stack: [256]*anyopaque = undefined;
+
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var log = logger.Log.init(vm.bundler.allocator);
         const spec = specifier.slice();
@@ -1309,6 +1309,8 @@ pub const VirtualMachine = struct {
                 return;
             },
             else => {
+                var errors_stack: [256]*anyopaque = undefined;
+
                 var errors = errors_stack[0..@minimum(log.msgs.items.len, errors_stack.len)];
 
                 for (log.msgs.items) |msg, i| {
@@ -2202,7 +2204,7 @@ pub const ResolveError = struct {
     ) js.JSObjectRef {
         var resolve_error = allocator.create(ResolveError) catch unreachable;
         resolve_error.* = ResolveError{
-            .msg = msg,
+            .msg = msg.clone(allocator) catch unreachable,
             .allocator = allocator,
             .referrer = Fs.Path.init(referrer),
         };
@@ -2274,6 +2276,10 @@ pub const ResolveError = struct {
         _: js.ExceptionRef,
     ) js.JSValueRef {
         return ZigString.init(BuildErrorName).toValue(ctx.ptr()).asRef();
+    }
+
+    pub fn finalize(this: *ResolveError) void {
+        this.msg.deinit(bun.default_allocator);
     }
 };
 
@@ -2362,7 +2368,7 @@ pub const BuildError = struct {
     ) js.JSObjectRef {
         var build_error = allocator.create(BuildError) catch unreachable;
         build_error.* = BuildError{
-            .msg = msg,
+            .msg = msg.clone(allocator) catch unreachable,
             // .resolve_result = resolve_result.*,
             .allocator = allocator,
         };

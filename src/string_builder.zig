@@ -3,15 +3,21 @@ const Allocator = @import("std").mem.Allocator;
 const assert = @import("std").debug.assert;
 const copy = @import("std").mem.copy;
 const Env = @import("./env.zig");
-
+const bun = @import("./global.zig");
 const StringBuilder = @This();
+const DebugHashTable = if (Env.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 
 len: usize = 0,
 cap: usize = 0,
 ptr: ?[*]u8 = null,
 
+debug_only_checker: DebugHashTable = DebugHashTable{},
+
 pub fn count(this: *StringBuilder, slice: string) void {
     this.cap += slice.len;
+    if (comptime Env.allow_assert) {
+        _ = this.debug_only_checker.getOrPut(bun.default_allocator, bun.hash(slice)) catch unreachable;
+    }
 }
 
 pub fn allocate(this: *StringBuilder, allocator: Allocator) !void {
@@ -23,15 +29,23 @@ pub fn allocate(this: *StringBuilder, allocator: Allocator) !void {
 pub fn deinit(this: *StringBuilder, allocator: Allocator) void {
     if (this.ptr == null or this.cap == 0) return;
     allocator.free(this.ptr.?[0..this.cap]);
+    if (comptime Env.allow_assert) {
+        this.debug_only_checker.deinit(bun.default_allocator);
+        this.debug_only_checker = .{};
+    }
 }
 
 pub fn append(this: *StringBuilder, slice: string) string {
-    if (Env.allow_assert) {
+    if (comptime Env.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
         assert(this.ptr != null); // must call allocate first
     }
 
-    copy(u8, this.ptr.?[this.len..this.cap], slice);
+    if (comptime Env.allow_assert) {
+        assert(this.debug_only_checker.contains(bun.hash(slice)));
+    }
+
+    bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
     const result = this.ptr.?[this.len..this.cap][0..slice.len];
     this.len += slice.len;
 

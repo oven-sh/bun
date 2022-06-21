@@ -635,12 +635,7 @@ pub const TestScope = struct {
         }
 
         if (js.JSValueIsString(ctx, args[0])) {
-            var label_ = ZigString.init("");
-            JSC.JSValue.fromRef(arguments[0]).toZigString(&label_, ctx.ptr());
-            label = if (label_.is16Bit())
-                (strings.toUTF8AllocWithType(getAllocator(ctx), @TypeOf(label_.utf16Slice()), label_.utf16Slice()) catch unreachable)
-            else
-                label_.full();
+            label = (JSC.JSValue.fromRef(arguments[0]).toSlice(ctx, getAllocator(ctx)).cloneIfNeeded() catch unreachable).slice();
             args = args[1..];
         }
 
@@ -732,15 +727,22 @@ pub const TestScope = struct {
 pub const DescribeScope = struct {
     label: string = "",
     parent: ?*DescribeScope = null,
-    beforeAll: std.ArrayListUnmanaged(js.JSValueRef) = .{},
-    beforeEach: std.ArrayListUnmanaged(js.JSValueRef) = .{},
-    afterEach: std.ArrayListUnmanaged(js.JSValueRef) = .{},
-    afterAll: std.ArrayListUnmanaged(js.JSValueRef) = .{},
+    beforeAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+    beforeEach: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+    afterEach: std.ArrayListUnmanaged(JSC.JSValue) = .{},
+    afterAll: std.ArrayListUnmanaged(JSC.JSValue) = .{},
     test_id_start: TestRunner.Test.ID = 0,
     test_id_len: TestRunner.Test.ID = 0,
     tests: std.ArrayListUnmanaged(TestScope) = .{},
     file_id: TestRunner.File.ID,
     current_test_id: TestRunner.Test.ID = 0,
+
+    pub const LifecycleHook = enum {
+        beforeAll,
+        beforeEach,
+        afterEach,
+        afterAll,
+    };
 
     pub const TestEntry = struct {
         label: string,
@@ -751,6 +753,38 @@ pub const DescribeScope = struct {
 
     pub threadlocal var active: *DescribeScope = undefined;
 
+    const CallbackFn = fn (
+        this: *DescribeScope,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSObjectRef,
+        arguments: []const js.JSValueRef,
+        exception: js.ExceptionRef,
+    ) js.JSObjectRef;
+    fn createCallback(comptime hook: LifecycleHook) CallbackFn {
+        return struct {
+            const this_hook = hook;
+            pub fn run(
+                this: *DescribeScope,
+                ctx: js.JSContextRef,
+                _: js.JSObjectRef,
+                _: js.JSObjectRef,
+                arguments: []const js.JSValueRef,
+                exception: js.ExceptionRef,
+            ) js.JSObjectRef {
+                if (arguments.len == 0 or !JSC.JSValue.c(arguments[0]).isObject() or !JSC.JSValue.c(arguments[0]).isCallable(ctx.vm())) {
+                    JSC.throwInvalidArguments("Expected callback", .{}, ctx, exception);
+                    return null;
+                }
+
+                JSC.JSValue.c(arguments[0]).protect();
+                const name = comptime std.mem.span(@tagName(this_hook));
+                @field(this, name).append(getAllocator(ctx), JSC.JSValue.c(arguments[0])) catch unreachable;
+                return JSC.JSValue.jsBoolean(true).asObjectRef();
+            }
+        }.run;
+    }
+
     pub const Class = NewClass(
         DescribeScope,
         .{
@@ -759,9 +793,10 @@ pub const DescribeScope = struct {
         },
         .{
             .call = describe,
-            .afterAll = .{ .rfn = callAfterAll, .name = "afterAll" },
-            .beforeAll = .{ .rfn = callAfterAll, .name = "beforeAll" },
-            .beforeEach = .{ .rfn = callAfterAll, .name = "beforeEach" },
+            .afterAll = .{ .rfn = createCallback(.afterAll), .name = "afterAll" },
+            .afterEach = .{ .rfn = createCallback(.afterEach), .name = "afterEach" },
+            .beforeAll = .{ .rfn = createCallback(.beforeAll), .name = "beforeAll" },
+            .beforeEach = .{ .rfn = createCallback(.beforeEach), .name = "beforeEach" },
         },
         .{
             .expect = .{ .get = createExpect, .name = "expect" },
@@ -772,6 +807,37 @@ pub const DescribeScope = struct {
             .@"test" = .{ .get = createTest, .name = "test" },
         },
     );
+
+    pub fn execCallback(this: *DescribeScope, ctx: js.JSContextRef, comptime hook: LifecycleHook) JSValue {
+        const name = comptime std.mem.span(@tagName(hook));
+        var hooks: []JSC.JSValue = @field(this, name).items;
+        for (hooks) |cb, i| {
+            if (cb.isEmpty()) continue;
+
+            const err = cb.call(ctx, &.{});
+            if (err.isAnyError(ctx)) {
+                return err;
+            }
+
+            if (comptime hook == .beforeAll or hook == .afterAll) {
+                hooks[i] = JSC.JSValue.zero;
+            }
+        }
+
+        return JSValue.zero;
+    }
+    pub fn runCallback(this: *DescribeScope, ctx: js.JSContextRef, comptime hook: LifecycleHook) JSValue {
+        var parent = this.parent;
+        while (parent) |scope| {
+            const ret = scope.execCallback(ctx, hook);
+            if (!ret.isEmpty()) {
+                return ret;
+            }
+            parent = scope.parent;
+        }
+
+        return this.execCallback(ctx, hook);
+    }
 
     pub fn describe(
         this: *DescribeScope,
@@ -852,7 +918,7 @@ pub const DescribeScope = struct {
         // Step 1. Initialize the test block
 
         const file = this.file_id;
-
+        const allocator = getAllocator(ctx);
         var tests: []TestScope = this.tests.items;
         const end = @truncate(TestRunner.Test.ID, tests.len);
 
@@ -868,16 +934,33 @@ pub const DescribeScope = struct {
 
         var i: TestRunner.Test.ID = 0;
 
+        const beforeAll = this.runCallback(ctx, .beforeAll);
+        if (!beforeAll.isEmpty()) {
+            while (i < end) {
+                Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, this);
+                i += 1;
+            }
+            this.tests.deinit(allocator);
+            return;
+        }
+
         while (i < end) {
             // the test array could resize in the middle of this loop
             this.current_test_id = i;
             var test_ = tests[i];
-            const result = TestScope.run(&test_);
-            tests[i] = test_;
-            // invalidate it
-            this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
+            const beforeEach = this.runCallback(ctx, .beforeEach);
 
             const test_id = i + this.test_id_start;
+
+            if (!beforeEach.isEmpty()) {
+                Jest.runner.?.reportFailure(test_id, source.path.text, tests[i].label, 0, this);
+                ctx.bunVM().defaultErrorHandler(beforeEach, null);
+                i += 1;
+                continue;
+            }
+
+            const result = TestScope.run(&test_);
+            tests[i] = test_;
 
             switch (result) {
                 .pass => |count| Jest.runner.?.reportPass(test_id, source.path.text, tests[i].label, count, this),
@@ -887,7 +970,16 @@ pub const DescribeScope = struct {
 
             i += 1;
         }
-        this.tests.deinit(getAllocator(ctx));
+
+        // invalidate it
+        this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
+
+        const afterAll = this.execCallback(ctx, .afterAll);
+        if (!afterAll.isEmpty()) {
+            ctx.bunVM().defaultErrorHandler(afterAll, null);
+        }
+
+        this.tests.deinit(allocator);
     }
 
     const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);

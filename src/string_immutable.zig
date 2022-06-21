@@ -16,7 +16,11 @@ pub inline fn contains(self: string, str: string) bool {
 }
 
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
-    return comptime std.unicode.utf8ToUtf16LeStringLiteral(str);
+    const Static = struct {
+        pub const literal = std.unicode.utf8ToUtf16LeStringLiteral(str);
+    };
+
+    return Static.literal;
 }
 
 const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
@@ -680,7 +684,7 @@ pub fn eqlLong(a_: string, b: string, comptime check_len: bool) bool {
     return true;
 }
 
-pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) !string {
+pub inline fn append(allocator: std.mem.Allocator, self: string, other: string) ![]u8 {
     return std.fmt.allocPrint(allocator, "{s}{s}", .{ self, other });
 }
 
@@ -1313,7 +1317,7 @@ pub fn elementLengthLatin1IntoUTF16(comptime Type: type, latin1_: Type) usize {
     return count;
 }
 
-pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) ![]const u8 {
+pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8) !Escaped(u8) {
     const Scalar = struct {
         pub const lengths: [std.math.maxInt(u8)]u4 = brk: {
             var values: [std.math.maxInt(u8)]u4 = undefined;
@@ -1364,7 +1368,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             };
         }
 
-        pub inline fn push(comptime len: anytype, chars_: *const [len]u8, allo: std.mem.Allocator) []const u8 {
+        pub inline fn push(comptime len: anytype, chars_: *const [len]u8, allo: std.mem.Allocator) Escaped(u8) {
             const chars = chars_.*;
             var total: usize = 0;
 
@@ -1377,7 +1381,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             }
 
             if (total == len) {
-                return chars_;
+                return .{ .original = void{} };
             }
 
             var output = allo.alloc(u8, total) catch unreachable;
@@ -1386,18 +1390,18 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 head += @This().append(head, chars[i]);
             }
 
-            return output;
+            return Escaped(u8){ .allocated = output };
         }
     };
     switch (latin1.len) {
-        0 => return "",
+        0 => return Escaped(u8){ .static = "" },
         1 => return switch (latin1[0]) {
-            '"' => "&quot;",
-            '&' => "&amp;",
-            '\'' => "&#x27;",
-            '<' => "&lt;",
-            '>' => "&gt;",
-            else => latin1,
+            '"' => Escaped(u8){ .static = "&quot;" },
+            '&' => Escaped(u8){ .static = "&amp;" },
+            '\'' => Escaped(u8){ .static = "&#x27;" },
+            '<' => Escaped(u8){ .static = "&lt;" },
+            '>' => Escaped(u8){ .static = "&gt;" },
+            else => Escaped(u8){ .original = void{} },
         },
         2 => {
             const first: []const u8 = switch (latin1[0]) {
@@ -1417,10 +1421,10 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 else => latin1[1..2],
             };
             if (first.len == 1 and second.len == 1) {
-                return latin1;
+                return Escaped(u8){ .original = {} };
             }
 
-            return strings.append(allocator, first, second);
+            return Escaped(u8){ .allocated = strings.append(allocator, first, second) catch unreachable };
         },
 
         // The simd implementation is slower for inputs less than 32 bytes.
@@ -1631,15 +1635,24 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             }
 
             if (!any_needs_escape) {
-                return latin1;
+                std.debug.assert(buf.capacity == 0);
+                return Escaped(u8){ .original = void{} };
             }
 
-            return buf.toOwnedSlice();
+            return Escaped(u8){ .allocated = buf.toOwnedSlice() };
         },
     }
 }
 
-pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16) ![]const u16 {
+fn Escaped(comptime T: type) type {
+    return union(enum) {
+        static: []const u8,
+        original: void,
+        allocated: []T,
+    };
+}
+
+pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16) !Escaped(u16) {
     const Scalar = struct {
         pub const lengths: [std.math.maxInt(u8)]u4 = brk: {
             var values: [std.math.maxInt(u8)]u4 = undefined;
@@ -1658,14 +1671,16 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
         };
     };
     switch (utf16.len) {
-        0 => return &[_]u16{},
-        1 => return switch (utf16[0]) {
-            '"' => toUTF16Literal("&quot;"),
-            '&' => toUTF16Literal("&amp;"),
-            '\'' => toUTF16Literal("&#x27;"),
-            '<' => toUTF16Literal("&lt;"),
-            '>' => toUTF16Literal("&gt;"),
-            else => utf16,
+        0 => return Escaped(u16){ .static = &[_]u8{} },
+        1 => {
+            switch (utf16[0]) {
+                '"' => return Escaped(u16){ .static = "&quot;" },
+                '&' => return Escaped(u16){ .static = "&amp;" },
+                '\'' => return Escaped(u16){ .static = "&#x27;" },
+                '<' => return Escaped(u16){ .static = "&lt;" },
+                '>' => return Escaped(u16){ .static = "&gt;" },
+                else => return Escaped(u16){ .original = {} },
+            }
         },
         2 => {
             const first_16 = switch (utf16[0]) {
@@ -1687,13 +1702,13 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
             };
 
             if (first_16.ptr == utf16.ptr and second_16.ptr == utf16.ptr + 1) {
-                return utf16;
+                return Escaped(u16){ .original = {} };
             }
 
             var buf = allocator.alloc(u16, first_16.len + second_16.len) catch unreachable;
             std.mem.copy(u16, buf, first_16);
             std.mem.copy(u16, buf[first_16.len..], second_16);
-            return buf;
+            return Escaped(u16){ .allocated = buf };
         },
 
         else => {
@@ -1924,10 +1939,10 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
             }
 
             if (!any_needs_escape) {
-                return utf16;
+                return Escaped(u16){ .original = {} };
             }
 
-            return buf.toOwnedSlice();
+            return Escaped(u16){ .allocated = buf.toOwnedSlice() };
         },
     }
 }

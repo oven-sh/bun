@@ -1,5 +1,9 @@
 import { gc } from "bun";
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { gc } from "./gc";
+
+beforeEach(() => gc());
+afterEach(() => gc());
 
 it("buffer", () => {
   var buf = new Buffer(20);

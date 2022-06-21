@@ -1,9 +1,6 @@
 import { it, describe, expect } from "bun:test";
 import fs from "fs";
-
-function gc() {
-  Bun.gc(true);
-}
+import { gc } from "./gc";
 
 describe("fetch", () => {
   const urls = ["https://example.com", "http://example.com"];

@@ -1,7 +1,12 @@
 import { describe, it, expect } from "bun:test";
+import { gc } from "./gc";
 
 it("syntax", async () => {
+  gc();
+
   const toml = (await import("./toml-fixture.toml")).default;
+  gc();
+
   expect(toml.framework).toBe("next");
   expect(toml.bundle.packages["@emotion/react"]).toBe(true);
   expect(toml.array[0].entry_one).toBe("one");
@@ -21,4 +26,5 @@ it("syntax", async () => {
     "https://registry.mybigcompany.com"
   );
   expect(toml.install.scopes["@mybigcompany3"].three).toBe(4);
+  gc();
 });

@@ -90,7 +90,7 @@ pub const Loc = packed struct {
 };
 
 pub const Location = struct {
-    file: string,
+    file: string = "",
     namespace: string = "file",
     line: i32 = 1, // 1-based
     column: i32 = 0, // 0-based, in bytes
@@ -99,7 +99,51 @@ pub const Location = struct {
     suggestion: ?string = null,
     offset: usize = 0,
 
+    pub fn count(this: Location, builder: *StringBuilder) void {
+        builder.count(this.file);
+        builder.count(this.namespace);
+        if (this.line_text) |text| builder.count(text[0..@minimum(text.len, 690)]);
+        if (this.suggestion) |text| builder.count(text);
+    }
+
+    pub fn clone(this: Location, allocator: std.mem.Allocator) !Location {
+        // mostly to catch undefined memory
+        bun.assertDefined(this.namespace);
+        bun.assertDefined(this.file);
+
+        return Location{
+            .file = try allocator.dupe(u8, this.file),
+            .namespace = this.namespace,
+            .line = this.line,
+            .column = this.column,
+            .length = this.length,
+            .line_text = if (this.line_text != null) try allocator.dupe(u8, this.line_text.?) else null,
+            .suggestion = if (this.suggestion != null) try allocator.dupe(u8, this.suggestion.?) else null,
+            .offset = this.offset,
+        };
+    }
+
+    pub fn cloneWithBuilder(this: Location, string_builder: *StringBuilder) Location {
+        // mostly to catch undefined memory
+        bun.assertDefined(this.namespace);
+        bun.assertDefined(this.file);
+
+        return Location{
+            .file = string_builder.append(this.file),
+            .namespace = this.namespace,
+            .line = this.line,
+            .column = this.column,
+            .length = this.length,
+            .line_text = if (this.line_text != null) string_builder.append(this.line_text.?) else null,
+            .suggestion = if (this.suggestion != null) string_builder.append(this.suggestion.?) else null,
+            .offset = this.offset,
+        };
+    }
+
     pub fn toAPI(this: *const Location) Api.Location {
+        bun.assertDefined(this.file);
+        bun.assertDefined(this.namespace);
+
         return Api.Location{
             .file = this.file,
             .namespace = this.namespace,
@@ -114,7 +158,11 @@ pub const Location = struct {
     // don't really know what's safe to deinit here!
     pub fn deinit(_: *Location, _: std.mem.Allocator) void {}
 
-    pub fn init(file: []u8, namespace: []u8, line: i32, column: i32, length: u32, line_text: ?[]u8, suggestion: ?[]u8) Location {
+    pub fn init(file: string, namespace: string, line: i32, column: i32, length: u32, line_text: ?string, suggestion: ?string) Location {
+        // mostly to catch undefined memory
+        bun.assertDefined(file);
+        bun.assertDefined(namespace);
+
         return Location{
             .file = file,
             .namespace = namespace,
@@ -135,6 +183,10 @@ pub const Location = struct {
                 full_line = full_line[std.math.max(data.column_count, 40) - 40 .. std.math.min(data.column_count + 40, full_line.len - 40) + 40];
             }
 
+            bun.assertDefined(source.path.text);
+            bun.assertDefined(source.path.namespace);
+            bun.assertDefined(full_line);
+
             return Location{
                 .file = source.path.text,
                 .namespace = source.path.namespace,
@@ -148,20 +200,6 @@ pub const Location = struct {
             return null;
         }
     }
-
-    pub fn init_file(file: string, line: i32, column: i32, length: u32, line_text: ?[]u8, suggestion: ?[]u8) Location {
-        var namespace = "file".*;
-
-        return Location{
-            .file = file,
-            .namespace = &namespace,
-            .line = line,
-            .column = column,
-            .length = length,
-            .line_text = line_text,
-            .suggestion = suggestion,
-        };
-    }
 };
 
 pub const Data = struct {
@@ -173,6 +211,25 @@ pub const Data = struct {
         }
 
         allocator.free(d.text);
+    }
+
+    pub fn clone(this: Data, allocator: std.mem.Allocator) !Data {
+        return Data{
+            .text = if (this.text.len > 0) try allocator.dupe(u8, this.text) else "",
+            .location = if (this.location != null) try this.location.?.clone(allocator) else null,
+        };
+    }
+
+    pub fn cloneWithBuilder(this: Data, builder: *StringBuilder) Data {
+        return Data{
+            .text = if (this.text.len > 0) builder.append(this.text) else "",
+            .location = if (this.location != null) this.location.?.cloneWithBuilder(builder) else null,
+        };
+    }
+
+    pub fn count(this: Data, builder: *StringBuilder) void {
+        builder.count(this.text);
+        if (this.location) |loc| loc.count(builder);
     }
 
     pub fn toAPI(this: *const Data) Api.MessageData {
@@ -345,6 +402,41 @@ pub const Msg = struct {
     data: Data,
     metadata: Metadata = .{ .build = 0 },
     notes: ?[]Data = null,
+
+    pub fn count(this: *const Msg, builder: *StringBuilder) void {
+        this.data.count(builder);
+        if (this.notes) |notes| {
+            for (notes) |note| {
+                note.count(builder);
+            }
+        }
+    }
+
+    pub fn clone(this: *const Msg, allocator: std.mem.Allocator) !Msg {
+        return Msg{
+            .kind = this.kind,
+            .data = try this.data.clone(allocator),
+            .metadata = this.metadata,
+            .notes = if (this.notes != null and this.notes.?.len > 0)
+                try bun.clone(this.notes.?, allocator)
+            else
+                null,
+        };
+    }
+
+    pub fn cloneWithBuilder(this: *const Msg, notes: []Data, builder: *StringBuilder) Msg {
+        return Msg{
+            .kind = this.kind,
+            .data = this.data.cloneWithBuilder(builder),
+            .metadata = this.metadata,
+            .notes = if (this.notes != null and this.notes.?.len > 0) brk: {
+                for (this.notes.?) |note, i| {
+                    notes[i] = note.cloneWithBuilder(builder);
+                }
+                break :brk notes[0..this.notes.?.len];
+            } else null,
+        };
+    }
 
     pub const Metadata = union(Tag) {
         build: u0,
@@ -561,9 +653,11 @@ pub const Log = struct {
         });
     }
 
-    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, comptime fmt: string) JSC.JSValue {
+    pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, fmt: string) JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
-        const count = @intCast(u16, @minimum(msgs.len, JSC.VirtualMachine.errors_stack.len));
+        var errors_stack: [256]*anyopaque = undefined;
+
+        const count = @intCast(u16, @minimum(msgs.len, errors_stack.len));
         switch (count) {
             0 => return JSC.JSValue.jsUndefined(),
             1 => {
@@ -574,15 +668,15 @@ pub const Log = struct {
                 for (msgs[0..count]) |msg, i| {
                     switch (msg.metadata) {
                         .build => {
-                            JSC.VirtualMachine.errors_stack[i] = JSC.BuildError.create(global, allocator, msg).?;
+                            errors_stack[i] = JSC.BuildError.create(global, allocator, msg).?;
                         },
                         .resolve => {
-                            JSC.VirtualMachine.errors_stack[i] = JSC.ResolveError.create(global, allocator, msg, "").?;
+                            errors_stack[i] = JSC.ResolveError.create(global, allocator, msg, "").?;
                         },
                     }
                 }
                 const out = JSC.ZigString.init(fmt);
-                const agg = global.createAggregateError(JSC.VirtualMachine.errors_stack[0..count].ptr, count, &out);
+                const agg = global.createAggregateError(errors_stack[0..count].ptr, count, &out);
                 return agg;
             },
         }
@@ -637,21 +731,11 @@ pub const Log = struct {
                     i += 1;
                     j += 1;
                 }) {
-                    const msg = self.msgs.items[i];
-                    if (msg.data.location) |location| {
-                        if (location.line_text) |line_text| {
-
-                            // Naively truncate to 690 characters per line.
-                            // This doesn't catch where an error occurred for extremely long, minified lines.
-                            string_builder.count(line_text[0..std.math.min(line_text.len, 690)]);
-                        }
-                    }
+                    const msg: Msg = self.msgs.items[i];
+                    msg.count(&string_builder);
 
                     if (msg.notes) |notes| {
                         notes_count += notes.len;
-                        for (notes) |note| {
-                            string_builder.count(note.text);
-                        }
                     }
                 }
             }
@@ -668,27 +752,9 @@ pub const Log = struct {
                     i += 1;
                     j += 1;
                 }) {
-                    const msg = self.msgs.items[i];
-
-                    if (msg.data.location) |location| {
-                        if (location.line_text) |line_text| {
-                            other.msgs.items[j].data.location.?.line_text = string_builder.append(
-                                // Naively truncate to 690 characters per line.
-                                // This doesn't catch where an error occurred for extremely long, minified lines.
-                                line_text[0..std.math.min(line_text.len, 690)],
-                            );
-                        }
-                    }
-
-                    if (msg.notes) |notes| {
-                        var start_notes_i: usize = note_i;
-                        for (notes) |note| {
-                            notes_buf[note_i] = note;
-                            notes_buf[note_i].text = string_builder.append(note.text);
-                            note_i += 1;
-                        }
-                        other.msgs.items[j].notes = notes_buf[start_notes_i..note_i];
-                    }
+                    const msg: Msg = self.msgs.items[i];
+                    other.msgs.items[j] = msg.cloneWithBuilder(notes_buf[note_i..], &string_builder);
+                    note_i += (msg.notes orelse &[_]Data{}).len;
                 }
             }
         }
@@ -944,6 +1010,17 @@ pub const Log = struct {
     }
 
     pub inline fn addMsg(self: *Log, msg: Msg) !void {
+        if (comptime Environment.allow_assert) {
+            if (msg.notes) |notes| {
+                bun.assertDefined(notes);
+                for (notes) |note| {
+                    bun.assertDefined(note.text);
+                    if (note.location) |loc| {
+                        bun.assertDefined(loc);
+                    }
+                }
+            }
+        }
         try self.msgs.append(msg);
     }
 

@@ -248,8 +248,9 @@ pub const ResolvedSource = extern struct {
 
 const Mimalloc = @import("../../../allocators/mimalloc.zig");
 
-export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
+export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
     var allocator: std.mem.Allocator = @ptrCast(*std.mem.Allocator, @alignCast(@alignOf(*std.mem.Allocator), allocator_ orelse return)).*;
+    var ptr = ZigString.init(raw[0..len]).slice().ptr;
     if (comptime Environment.allow_assert) {
         std.debug.assert(Mimalloc.mi_check_owned(ptr));
     }
@@ -258,11 +259,12 @@ export fn ZigString__free(ptr: [*]const u8, len: usize, allocator_: ?*anyopaque)
     allocator.free(str);
 }
 
-export fn ZigString__free_global(ptr: [*]const u8, _: usize) void {
+export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
     if (comptime Environment.allow_assert) {
-        std.debug.assert(Mimalloc.mi_check_owned(ptr));
+        std.debug.assert(Mimalloc.mi_check_owned(ZigString.init(ptr[0..len]).slice().ptr));
     }
-    Mimalloc.mi_free(@intToPtr(*anyopaque, @ptrToInt(ptr)));
+    // we must untag the string pointer
+    Mimalloc.mi_free(@intToPtr(*anyopaque, @ptrToInt(ZigString.init(ptr[0..len]).slice().ptr)));
 }
 
 export fn Zig__getAPIGlobals(count: *usize) [*]JSC.C.JSClassRef {

@@ -14,13 +14,13 @@ import { readFileSync } from "fs";
 
 describe("crypto", () => {
   for (let Hash of [MD5, MD4, SHA1, SHA256, SHA384, SHA512, SHA512_256]) {
-    for (let input of [
-      "hello world",
-      "hello world".repeat(20).slice(),
-      "",
-      "a",
+    for (let [input, label] of [
+      ["hello world", '"hello world"'],
+      ["hello world".repeat(20).slice(), '"hello world" x 20'],
+      ["", "empty string"],
+      ["a", '"a"'],
     ]) {
-      describe(input, () => {
+      describe(label, () => {
         gc(true);
 
         it(`${Hash.name} base64`, () => {

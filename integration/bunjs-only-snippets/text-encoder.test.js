@@ -1,7 +1,5 @@
 import { expect, it, describe } from "bun:test";
-function gcTrace() {
-  Bun.gc(true);
-}
+import { gc as gcTrace } from "./gc";
 
 const getByteLength = (str) => {
   // returns the byte length of an utf8 string

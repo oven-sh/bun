@@ -210,7 +210,7 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     const output_end = output.ptr + output.len;
 
     if (@ptrToInt(input.ptr) <= @ptrToInt(output.ptr) and @ptrToInt(output_end) <= @ptrToInt(input_end)) {
-        // input is overlapping with output
+        // // input is overlapping with output
         if (input.len > strings.ascii_vector_size) {
             const input_end_vectorized = input.ptr + input.len - (input.len % strings.ascii_vector_size);
             while (input.ptr != input_end_vectorized) {
@@ -237,4 +237,77 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     }
 }
 
+pub const hasCloneFn = std.meta.trait.multiTrait(.{ std.meta.trait.isContainer, std.meta.trait.hasFn("clone") });
+pub fn cloneWithType(comptime T: type, item: T, allocator: std.mem.Allocator) !T {
+    if (comptime std.meta.trait.isIndexable(T)) {
+        const Child = std.meta.Child(T);
+        assertDefined(item);
+
+        if (comptime hasCloneFn(Child)) {
+            var slice = try allocator.alloc(Child, std.mem.len(item));
+            for (slice) |*val, i| {
+                val.* = try item[i].clone(allocator);
+            }
+            return slice;
+        }
+
+        if (comptime std.meta.trait.isContainer(Child)) {
+            @compileError("Expected clone() to exist for slice child: " ++ @typeName(Child));
+        }
+
+        return try allocator.dupe(Child, item);
+    }
+
+    if (comptime hasCloneFn(T)) {
+        return try item.clone(allocator);
+    }
+
+    @compileError("Expected clone() to exist for " ++ @typeName(T));
+}
+
+pub fn clone(val: anytype, allocator: std.mem.Allocator) !@TypeOf(val) {
+    return cloneWithType(@TypeOf(val), val, allocator);
+}
+pub const StringBuilder = @import("./string_builder.zig");
+
+pub inline fn assertDefined(val: anytype) void {
+    if (comptime !Environment.allow_assert) return;
+    const Type = @TypeOf(val);
+
+    if (comptime @typeInfo(Type) == .Optional) {
+        if (val) |res| {
+            assertDefined(res);
+        }
+        return;
+    }
+
+    if (comptime std.meta.trait.isSlice(Type)) {
+        std.debug.assert(val.len < std.math.maxInt(u32) + 1);
+        std.debug.assert(val.len < std.math.maxInt(u32) + 1);
+        std.debug.assert(val.len < std.math.maxInt(u32) + 1);
+        var slice: []Type = undefined;
+        if (val.len > 0) {
+            std.debug.assert(@ptrToInt(val.ptr) != @ptrToInt(slice.ptr));
+        }
+        return;
+    }
+
+    if (comptime @typeInfo(Type) == .Pointer) {
+        var slice: *Type = undefined;
+        std.debug.assert(@ptrToInt(val) != @ptrToInt(slice));
+        return;
+    }
+
+    if (comptime @typeInfo(Type) == .Struct) {
+        inline for (comptime std.meta.fieldNames(Type)) |name| {
+            assertDefined(@field(val, name));
+        }
+    }
+}
+
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
+
+/// hash a string
+pub fn hash(content: []const u8) u64 {
+    return std.hash.Wyhash.hash(0, content);
+}

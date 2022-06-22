@@ -2068,7 +2068,11 @@ pub fn NewPrinter(
                                     p.print(")");
                                 }
                             } else if (import_record.was_originally_require and import_record.path.is_disabled) {
-                                p.printRequireError(import_record.path.text);
+                                if (import_record.handles_import_errors) {
+                                    p.printRequireError(import_record.path.text);
+                                } else {
+                                    p.printDisabledImport();
+                                }
                                 didPrint = true;
                             }
                         }
@@ -3619,12 +3623,12 @@ pub fn NewPrinter(
                         return p.printBundledImport(record, s);
                     }
 
-                    if (record.wrap_with_to_module) {
-                        const require_ref = p.options.require_ref.?;
+                    if (record.wrap_with_to_module or record.path.is_disabled) {
+                        const require_ref = p.options.require_ref;
 
                         const module_id = record.module_id;
 
-                        if (std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
+                        if (!record.path.is_disabled and std.mem.indexOfScalar(u32, p.imported_module_ids.items, module_id) == null) {
                             p.print("import * as ");
                             p.printModuleId(module_id);
                             p.print(" from \"");
@@ -3637,11 +3641,16 @@ pub fn NewPrinter(
                             p.print("var ");
                             p.printSymbol(s.namespace_ref);
                             p.print(" = ");
-                            p.printSymbol(require_ref);
-                            p.print("(");
-                            p.printModuleId(module_id);
+                            if (!record.path.is_disabled) {
+                                p.printSymbol(require_ref.?);
+                                p.print("(");
+                                p.printModuleId(module_id);
 
-                            p.print(");\n");
+                                p.print(");\n");
+                            } else {
+                                p.printDisabledImport();
+                                p.printSemicolonAfterStatement();
+                            }
                         }
 
                         if (s.items.len > 0 or s.default_name != null) {
@@ -3689,11 +3698,14 @@ pub fn NewPrinter(
                             if (record.contains_import_star) {
                                 p.printSymbol(s.namespace_ref);
                                 p.print(";\n");
-                            } else {
-                                p.printSymbol(require_ref);
+                            } else if (!record.path.is_disabled) {
+                                p.printSymbol(require_ref.?);
                                 p.print("(");
                                 p.printModuleId(module_id);
                                 p.print(");\n");
+                            } else {
+                                p.printDisabledImport();
+                                p.printSemicolonAfterStatement();
                             }
                         }
 
@@ -4250,31 +4262,43 @@ pub fn NewPrinter(
             p.printDecls(keyword, decls, ExprFlag.None());
             p.printSemicolonAfterStatement();
             if (rewrite_esm_to_cjs and is_export and decls.len > 0) {
-                p.printIndent();
-                p.printSpaceBeforeIdentifier();
-                p.print("Object.defineProperties(");
-                p.printModuleExportSymbol();
-                p.print(",{");
-                for (decls) |decl, i| {
-                    p.print("'");
-                    p.printBinding(decl.binding);
-                    p.print("': {get: () => ");
-                    p.printBinding(decl.binding);
-
-                    if (comptime !strings.eqlComptime(keyword, "const")) {
-                        p.print(", set: ($_newValue) => {");
-                        p.printBinding(decl.binding);
-                        p.print(" = $_newValue;}");
+                for (decls) |decl| {
+                    p.printIndent();
+                    p.printSymbol(p.options.runtime_imports.__export.?.ref);
+                    p.print("(");
+                    p.printSpaceBeforeIdentifier();
+                    p.printModuleExportSymbol();
+                    p.print(", ");
+                    switch (decl.binding.data) {
+                        .b_identifier => |ident| {
+                            p.print("{ ");
+                            p.printSymbol(ident.ref);
+                            p.print(": () => (");
+                            p.printSymbol(ident.ref);
+                            p.print(") }");
+                        },
+                        .b_object => |obj| {
+                            p.print("{ ");
+                            for (obj.properties) |prop| {
+                                switch (prop.value.data) {
+                                    .b_identifier => |ident| {
+                                        p.printSymbol(ident.ref);
+                                        p.print(": () => (");
+                                        p.printSymbol(ident.ref);
+                                        p.print("),\n");
+                                    },
+                                    else => {},
+                                }
+                            }
+                            p.print("}");
+                        },
+                        else => {
+                            p.printBinding(decl.binding);
+                        },
                     }
-
-                    p.print(", enumerable: true, configurable: true}");
-
-                    if (i < decls.len - 1) {
-                        p.print(",\n");
-                    }
+                    p.print(")");
+                    p.printSemicolonAfterStatement();
                 }
-                p.print("})");
-                p.printSemicolonAfterStatement();
             }
         }
 

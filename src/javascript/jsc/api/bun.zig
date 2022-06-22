@@ -988,12 +988,6 @@ pub const Class = NewClass(
     .{
         .name = "Bun",
         .read_only = true,
-        .ts = .{
-            .module = .{
-                .path = "bun.js/router",
-                .tsdoc = "Filesystem Router supporting dynamic routes, exact routes, catch-all routes, and optional catch-all routes. Implemented in native code and only available with Bun.js.",
-            },
-        },
     },
     .{
         .match = .{
@@ -1627,76 +1621,74 @@ pub export fn Bun__escapeHTML(
         return ZigString.Empty.toValue(globalObject);
 
     if (zig_str.is16Bit()) {
-        var input_slice = zig_str.utf16SliceAligned();
-        var escaped_html = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
+        const input_slice = zig_str.utf16SliceAligned();
+        const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
             globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
             return JSC.JSValue.jsUndefined();
         };
 
-        if (escaped_html.ptr == input_slice.ptr and escaped_html.len == input_slice.len) {
-            return input_value;
+        switch (escaped) {
+            .static => |val| {
+                return ZigString.init(val).toValue(globalObject);
+            },
+            .original => return input_value,
+            .allocated => |escaped_html| {
+                if (comptime Environment.allow_assert) {
+                    // assert that re-encoding the string produces the same result
+                    std.debug.assert(
+                        std.mem.eql(
+                            u16,
+                            (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false) catch unreachable).?,
+                            escaped_html,
+                        ),
+                    );
+
+                    // assert we do not allocate a new string unnecessarily
+                    std.debug.assert(
+                        !std.mem.eql(
+                            u16,
+                            input_slice,
+                            escaped_html,
+                        ),
+                    );
+
+                    // the output should always be longer than the input
+                    std.debug.assert(escaped_html.len > input_slice.len);
+                }
+
+                return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
+            },
         }
-
-        if (input_slice.len == 1) {
-            // single character escaped strings are statically allocated
-            return ZigString.init(std.mem.sliceAsBytes(escaped_html)).to16BitValue(globalObject);
-        }
-
-        if (comptime Environment.allow_assert) {
-            // assert that re-encoding the string produces the same result
-            std.debug.assert(
-                std.mem.eql(
-                    u16,
-                    (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false) catch unreachable).?,
-                    escaped_html,
-                ),
-            );
-
-            // assert we do not allocate a new string unnecessarily
-            std.debug.assert(
-                !std.mem.eql(
-                    u16,
-                    input_slice,
-                    escaped_html,
-                ),
-            );
-
-            // the output should always be longer than the input
-            std.debug.assert(escaped_html.len > input_slice.len);
-        }
-
-        return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
     } else {
-        var input_slice = zig_str.slice();
-        var escaped_html = strings.escapeHTMLForLatin1Input(globalObject.bunVM().allocator, input_slice) catch {
+        const input_slice = zig_str.slice();
+        const escaped = strings.escapeHTMLForLatin1Input(globalObject.bunVM().allocator, input_slice) catch {
             globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
             return JSC.JSValue.jsUndefined();
         };
 
-        if (escaped_html.ptr == input_slice.ptr and escaped_html.len == input_slice.len) {
-            return input_value;
+        switch (escaped) {
+            .static => |val| {
+                return ZigString.init(val).toValue(globalObject);
+            },
+            .original => return input_value,
+            .allocated => |escaped_html| {
+                if (comptime Environment.allow_assert) {
+                    // the output should always be longer than the input
+                    std.debug.assert(escaped_html.len > input_slice.len);
+
+                    // assert we do not allocate a new string unnecessarily
+                    std.debug.assert(
+                        !std.mem.eql(
+                            u8,
+                            input_slice,
+                            escaped_html,
+                        ),
+                    );
+                }
+
+                return ZigString.init(escaped_html).toExternalValue(globalObject);
+            },
         }
-
-        if (input_slice.len == 1) {
-            // single character escaped strings are statically allocated
-            return ZigString.init(escaped_html).toValue(globalObject);
-        }
-
-        if (comptime Environment.allow_assert) {
-            // the output should always be longer than the input
-            std.debug.assert(escaped_html.len > input_slice.len);
-
-            // assert we do not allocate a new string unnecessarily
-            std.debug.assert(
-                !std.mem.eql(
-                    u8,
-                    input_slice,
-                    escaped_html,
-                ),
-            );
-        }
-
-        return ZigString.init(escaped_html).toExternalValue(globalObject);
     }
 }
 
@@ -2027,10 +2019,14 @@ pub const Unsafe = struct {
                 zig_str.ptr = @ptrCast([*]const u8, @alignCast(@alignOf([*]align(1) const u16), array_buffer.ptr));
                 zig_str.len = array_buffer.len;
                 zig_str.markUTF16();
-                return ZigString.toValue(&zig_str, ctx.ptr()).asObjectRef();
+                // the deinitializer for string causes segfaults
+                // if we don't clone it
+                return ZigString.toValueGC(&zig_str, ctx.ptr()).asObjectRef();
             },
             else => {
-                return ZigString.init(array_buffer.slice()).toValue(ctx.ptr()).asObjectRef();
+                // the deinitializer for string causes segfaults
+                // if we don't clone it
+                return ZigString.init(array_buffer.slice()).toValueGC(ctx.ptr()).asObjectRef();
             },
         }
     }

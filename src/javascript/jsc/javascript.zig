@@ -263,7 +263,12 @@ comptime {
         _ = Bun__getDefaultGlobal;
         _ = Bun__getVM;
         _ = Bun__drainMicrotasks;
+        _ = Bun__queueMicrotask;
     }
+}
+
+pub export fn Bun__queueMicrotask(global: *JSGlobalObject, task: *JSC.CppTask) void {
+    global.bunVM().eventLoop().enqueueTask(Task.init(task));
 }
 
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
@@ -755,6 +760,15 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:fs/promises" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(@embedFile("fs_promises.exports.js") ++ JSC.Node.fs.constants_string),
+                        .specifier = ZigString.init("node:fs/promises"),
+                        .source_url = ZigString.init("node:fs/promises"),
+                        .hash = 0,
+                    };
+                },
                 .@"node:path" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -810,6 +824,83 @@ pub const VirtualMachine = struct {
                         ),
                         .specifier = ZigString.init("node:module"),
                         .source_url = ZigString.init("node:module"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:perf_hooks" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./perf_hooks.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:perf_hooks"),
+                        .source_url = ZigString.init("node:perf_hooks"),
+                        .hash = 0,
+                    };
+                },
+                .@"ws" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./ws.exports.js")),
+                        ),
+                        .specifier = ZigString.init("ws"),
+                        .source_url = ZigString.init("ws"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:timers" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./node_timers.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:timers"),
+                        .source_url = ZigString.init("node:timers"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:timers/promises" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./node_timers_promises.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:timers/promises"),
+                        .source_url = ZigString.init("node:timers/promises"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:streams/web" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./node_streams_web.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:streams/web"),
+                        .source_url = ZigString.init("node:streams/web"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:streams/consumer" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./node_streams_consumer.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:streams/consumer"),
+                        .source_url = ZigString.init("node:streams/consumer"),
+                        .hash = 0,
+                    };
+                },
+                .@"undici" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./undici.exports.js")),
+                        ),
+                        .specifier = ZigString.init("undici"),
+                        .source_url = ZigString.init("undici"),
                         .hash = 0,
                     };
                 },
@@ -2545,24 +2636,40 @@ pub const HardcodedModule = enum {
     @"bun:sqlite",
     @"bun:jsc",
     @"node:module",
+    @"node:perf_hooks",
+    @"ws",
+    @"node:timers",
+    @"node:timers/promises",
+    @"node:streams/web",
+    @"node:streams/consumer",
+    @"node:fs/promises",
+    @"undici",
 
     pub const Map = bun.ComptimeStringMap(
         HardcodedModule,
         .{
             .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
-            .{ "ffi", HardcodedModule.@"bun:ffi" },
-            .{ "bun:main", HardcodedModule.@"bun:main" },
-            .{ "node:fs", HardcodedModule.@"node:fs" },
-            .{ "fs", HardcodedModule.@"node:fs" },
-            .{ "node:path", HardcodedModule.@"node:path" },
-            .{ "path", HardcodedModule.@"node:path" },
-            .{ "node:path/win32", HardcodedModule.@"node:path" },
-            .{ "node:path/posix", HardcodedModule.@"node:path" },
-            .{ "detect-libc", HardcodedModule.@"detect-libc" },
-            .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
-            .{ "node:module", HardcodedModule.@"node:module" },
-            .{ "module", HardcodedModule.@"node:module" },
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
+            .{ "bun:main", HardcodedModule.@"bun:main" },
+            .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
+            .{ "detect-libc", HardcodedModule.@"detect-libc" },
+            .{ "ffi", HardcodedModule.@"bun:ffi" },
+            .{ "fs", HardcodedModule.@"node:fs" },
+            .{ "module", HardcodedModule.@"node:module" },
+            .{ "node:fs", HardcodedModule.@"node:fs" },
+            .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
+            .{ "node:module", HardcodedModule.@"node:module" },
+            .{ "node:path", HardcodedModule.@"node:path" },
+            .{ "node:path/posix", HardcodedModule.@"node:path" },
+            .{ "node:path/win32", HardcodedModule.@"node:path" },
+            .{ "node:perf_hooks", HardcodedModule.@"node:perf_hooks" },
+            .{ "node:streams/consumer", HardcodedModule.@"node:streams/consumer" },
+            .{ "node:streams/web", HardcodedModule.@"node:streams/web" },
+            .{ "node:timers", HardcodedModule.@"node:timers" },
+            .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
+            .{ "path", HardcodedModule.@"node:path" },
+            .{ "undici", HardcodedModule.@"undici" },
+            .{ "ws", HardcodedModule.@"ws" },
         },
     );
     pub const LinkerMap = bun.ComptimeStringMap(
@@ -2570,17 +2677,49 @@ pub const HardcodedModule = enum {
         .{
             .{ "bun:ffi", "bun:ffi" },
             .{ "bun:jsc", "bun:jsc" },
+            .{ "bun:sqlite", "bun:sqlite" },
+            .{ "bun:wrap", "bun:wrap" },
             .{ "detect-libc", "detect-libc" },
             .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
             .{ "ffi", "bun:ffi" },
             .{ "fs", "node:fs" },
-            .{ "node:fs", "node:fs" },
-            .{ "node:path", "node:path" },
-            .{ "path", "node:path" },
-            .{ "bun:wrap", "bun:wrap" },
-            .{ "bun:sqlite", "bun:sqlite" },
-            .{ "node:module", "node:module" },
+            .{ "fs/promises", "node:fs/promises" },
             .{ "module", "node:module" },
+            .{ "node:fs", "node:fs" },
+            .{ "node:fs/promises", "node:fs/promises" },
+            .{ "node:module", "node:module" },
+            .{ "node:path", "node:path" },
+            .{ "node:streams/consumer", "node:streams/consumer" },
+            .{ "node:streams/web", "node:streams/web" },
+            .{ "node:timers", "node:timers" },
+            .{ "node:timers/promises", "node:timers/promises" },
+            .{ "path", "node:path" },
+            .{ "perf_hooks", "node:perf_hooks" },
+            .{ "streams/consumer", "node:streams/consumer" },
+            .{ "streams/web", "node:streams/web" },
+            .{ "timers", "node:timers" },
+            .{ "timers/promises", "node:timers/promises" },
+            .{ "undici", "undici" },
+            .{ "ws", "ws" },
+            .{ "ws/lib/websocket", "ws" },
         },
     );
 };
+
+pub const DisabledModule = bun.ComptimeStringMap(
+    void,
+    .{
+        .{"child_process"},
+        .{"http"},
+        .{"https"},
+        .{"net"},
+        .{"node:child_process"},
+        .{"node:http"},
+        .{"node:https"},
+        .{"node:net"},
+        .{"node:tls"},
+        .{"node:worker_threads"},
+        .{"tls"},
+        .{"worker_threads"},
+    },
+);

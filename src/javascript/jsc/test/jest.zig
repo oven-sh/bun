@@ -195,7 +195,7 @@ pub const Jest = struct {
 pub const Expect = struct {
     test_id: TestRunner.Test.ID,
     scope: *DescribeScope,
-    value: js.JSValueRef,
+    value: JSValue,
     op: Op.Set = Op.Set.init(.{}),
 
     pub const Op = enum(u3) {
@@ -208,7 +208,7 @@ pub const Expect = struct {
     pub fn finalize(
         this: *Expect,
     ) void {
-        js.JSValueUnprotect(VirtualMachine.vm.global.ref(), this.value);
+        this.value.unprotect();
         VirtualMachine.vm.allocator.destroy(this);
     }
 
@@ -367,9 +367,15 @@ pub const Expect = struct {
         }
         this.scope.tests.items[this.test_id].counter.actual += 1;
         const left = JSValue.fromRef(arguments[0]);
-        const right = JSValue.fromRef(this.value);
+        left.ensureStillAlive();
+        const right = this.value;
+        right.ensureStillAlive();
+        const eql = left.isSameValue(right, ctx.ptr());
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(eql == JSC.C.JSValueIsStrictEqual(ctx, left.asObjectRef(), right.asObjectRef()));
+        }
 
-        if (!left.isSameValue(right, ctx.ptr())) {
+        if (!eql) {
             if (comptime Environment.allow_assert) {
                 if (left.isString() and right.isString()) {
                     var left_slice = left.toSlice(ctx, getAllocator(ctx));
@@ -382,6 +388,10 @@ pub const Expect = struct {
 
             var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
             var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
+
+            if (comptime Environment.allow_assert) {
+                Output.prettyErrorln("\nJSType: {s}\nJSType: {s}\n\n", .{ @tagName(left.jsType()), @tagName(right.jsType()) });
+            }
 
             JSC.JSError(
                 getAllocator(ctx),
@@ -421,7 +431,7 @@ pub const Expect = struct {
         this.scope.tests.items[this.test_id].counter.actual += 1;
 
         const expected = JSC.JSValue.fromRef(arguments[0]).toU32();
-        const actual = JSC.JSValue.fromRef(this.value).getLengthOfArray(ctx.ptr());
+        const actual = this.value.getLengthOfArray(ctx.ptr());
         if (expected != actual) {
             JSC.JSError(
                 getAllocator(ctx),
@@ -570,14 +580,14 @@ pub const ExpectPrototype = struct {
             return js.JSValueMakeUndefined(ctx);
         }
         var expect_ = getAllocator(ctx).create(Expect) catch unreachable;
-        if (JSC.JSValue.c(arguments[0]).isCell())
-            js.JSValueProtect(ctx, arguments[0]);
+        const value = JSC.JSValue.c(arguments[0]);
+        value.protect();
         expect_.* = .{
-            .value = arguments[0],
+            .value = value,
             .scope = DescribeScope.active,
             .test_id = DescribeScope.active.current_test_id,
         };
-        expect_.value.?.value().ensureStillAlive();
+        expect_.value.ensureStillAlive();
         return Expect.Class.make(ctx, expect_);
     }
 };
@@ -1011,10 +1021,6 @@ pub const DescribeScope = struct {
             }
         }
     }
-
-    pub const callAfterAll = notImplementedFn;
-    pub const callAfterEach = notImplementedFn;
-    pub const callBeforeAll = notImplementedFn;
 
     pub fn createExpect(
         _: *DescribeScope,

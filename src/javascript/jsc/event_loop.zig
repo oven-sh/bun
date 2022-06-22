@@ -259,6 +259,14 @@ pub const AnyTask = struct {
         };
     }
 };
+
+pub const CppTask = opaque {
+    extern fn Bun__performTask(globalObject: *JSGlobalObject, task: *CppTask) void;
+    pub fn run(this: *CppTask, global: *JSGlobalObject) void {
+        JSC.markBinding();
+        Bun__performTask(global, this);
+    }
+};
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
@@ -274,6 +282,7 @@ pub const Task = TaggedPointerUnion(.{
     AnyTask,
     napi_async_work,
     ThreadSafeFunction,
+    CppTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -287,7 +296,7 @@ pub const EventLoop = struct {
     concurrent_lock: Lock = Lock.init(),
     global: *JSGlobalObject = undefined,
     virtual_machine: *VirtualMachine = undefined,
-    pub const Queue = bun.LinearFifo(Task, .Dynamic);
+    pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 
     pub fn tickWithCount(this: *EventLoop) u32 {
         var finished: u32 = 0;
@@ -354,6 +363,12 @@ pub const EventLoop = struct {
                 @field(Task.Tag, @typeName(AnyTask)) => {
                     var any: *AnyTask = task.get(AnyTask).?;
                     any.run();
+                    finished += 1;
+                    vm_.active_tasks -|= 1;
+                },
+                @field(Task.Tag, @typeName(CppTask)) => {
+                    var any: *CppTask = task.get(CppTask).?;
+                    any.run(global);
                     finished += 1;
                     vm_.active_tasks -|= 1;
                 },

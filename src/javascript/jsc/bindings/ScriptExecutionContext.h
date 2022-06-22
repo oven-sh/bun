@@ -14,8 +14,12 @@
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
 struct WebSocketContext;
-
 }
+
+#ifndef ZIG_GLOBAL_OBJECT_DEFINED
+#include "ZigGlobalObject.h"
+#endif
+
 struct us_socket_t;
 struct us_socket_context_t;
 struct us_loop_t;
@@ -24,42 +28,48 @@ namespace WebCore {
 
 class WebSocket;
 
+class ScriptExecutionContext;
+
+class EventLoopTask {
+    WTF_MAKE_FAST_ALLOCATED;
+
+public:
+    enum CleanupTaskTag { CleanupTask };
+
+    template<typename T, typename = typename std::enable_if<!std::is_base_of<EventLoopTask, T>::value && std::is_convertible<T, Function<void(ScriptExecutionContext&)>>::value>::type>
+    EventLoopTask(T task)
+        : m_task(WTFMove(task))
+        , m_isCleanupTask(false)
+    {
+    }
+
+    EventLoopTask(Function<void()>&& task)
+        : m_task([task = WTFMove(task)](ScriptExecutionContext&) { task(); })
+        , m_isCleanupTask(false)
+    {
+    }
+
+    template<typename T, typename = typename std::enable_if<std::is_convertible<T, Function<void(ScriptExecutionContext&)>>::value>::type>
+    EventLoopTask(CleanupTaskTag, T task)
+        : m_task(WTFMove(task))
+        , m_isCleanupTask(true)
+    {
+    }
+
+    void performTask(ScriptExecutionContext& context)
+    {
+        m_task(context);
+        delete this;
+    }
+    bool isCleanupTask() const { return m_isCleanupTask; }
+
+protected:
+    Function<void(ScriptExecutionContext&)> m_task;
+    bool m_isCleanupTask;
+};
+
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext> {
 public:
-    class Task {
-        WTF_MAKE_FAST_ALLOCATED;
-
-    public:
-        enum CleanupTaskTag { CleanupTask };
-
-        template<typename T, typename = typename std::enable_if<!std::is_base_of<Task, T>::value && std::is_convertible<T, Function<void(ScriptExecutionContext&)>>::value>::type>
-        Task(T task)
-            : m_task(WTFMove(task))
-            , m_isCleanupTask(false)
-        {
-        }
-
-        Task(Function<void()>&& task)
-            : m_task([task = WTFMove(task)](ScriptExecutionContext&) { task(); })
-            , m_isCleanupTask(false)
-        {
-        }
-
-        template<typename T, typename = typename std::enable_if<std::is_convertible<T, Function<void(ScriptExecutionContext&)>>::value>::type>
-        Task(CleanupTaskTag, T task)
-            : m_task(WTFMove(task))
-            , m_isCleanupTask(true)
-        {
-        }
-
-        void performTask(ScriptExecutionContext& context) { m_task(context); }
-        bool isCleanupTask() const { return m_isCleanupTask; }
-
-    protected:
-        Function<void(ScriptExecutionContext&)> m_task;
-        bool m_isCleanupTask;
-    };
-
 public:
     ScriptExecutionContext(JSC::VM* vm, JSC::JSGlobalObject* globalObject)
         : m_vm(vm)
@@ -96,9 +106,10 @@ public:
     // {
     // }
 
-    void postTask(Task&& task)
+    void postTask(Function<void(ScriptExecutionContext&)>&& lambda)
     {
-
+        auto* task = new EventLoopTask(WTFMove(lambda));
+        reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
     } // Executes the task on context's thread asynchronously.
 
     template<typename... Arguments>

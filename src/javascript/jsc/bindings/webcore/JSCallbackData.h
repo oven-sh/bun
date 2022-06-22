@@ -109,11 +109,11 @@ private:
     JSC::Weak<JSC::JSObject> m_callback;
 };
 
-class DeleteCallbackDataTask : public ScriptExecutionContext::Task {
+class DeleteCallbackDataTask : public EventLoopTask {
 public:
     template<typename CallbackDataType>
     explicit DeleteCallbackDataTask(CallbackDataType* data)
-        : ScriptExecutionContext::Task(ScriptExecutionContext::Task::CleanupTask, [data = std::unique_ptr<CallbackDataType>(data)](ScriptExecutionContext&) {
+        : EventLoopTask(EventLoopTask::CleanupTask, [data = std::unique_ptr<CallbackDataType>(data)](ScriptExecutionContext&) {
         })
     {
     }

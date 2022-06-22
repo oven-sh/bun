@@ -13,6 +13,7 @@ class LazyClassStructure;
 namespace WebCore {
 class ScriptExecutionContext;
 class DOMGuardedObject;
+class EventLoopTask;
 }
 
 #include "root.h"
@@ -36,6 +37,8 @@ namespace Zig {
 
 using JSDOMStructureMap = HashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
 using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
+
+#define ZIG_GLOBAL_OBJECT_DEFINED
 
 class GlobalObject : public JSC::JSGlobalObject {
     using Base = JSC::JSGlobalObject;
@@ -110,6 +113,8 @@ public:
 
     WebCore::ScriptExecutionContext* scriptExecutionContext();
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
+
+    void queueTask(WebCore::EventLoopTask* task);
 
     JSDOMStructureMap& structures() WTF_REQUIRES_LOCK(m_gcLock) { return m_structures; }
     JSDOMStructureMap& structures(NoLockingNecessaryTag) WTF_IGNORES_THREAD_SAFETY_ANALYSIS

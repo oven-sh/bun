@@ -2107,6 +2107,17 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.addOpaqueRoot(context);
 }
 
+extern "C" void Bun__queueMicrotask(JSC__JSGlobalObject*, WebCore::EventLoopTask* task);
+extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::EventLoopTask* task)
+{
+    task->performTask(*globalObject->scriptExecutionContext());
+}
+
+void GlobalObject::queueTask(WebCore::EventLoopTask* task)
+{
+    Bun__queueMicrotask(this, task);
+}
+
 DEFINE_VISIT_CHILDREN(GlobalObject);
 
 // void GlobalObject::destroy(JSCell* cell)

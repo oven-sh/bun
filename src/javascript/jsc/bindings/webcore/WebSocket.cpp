@@ -31,7 +31,6 @@
 
 #include "config.h"
 #include "WebSocket.h"
-#include "WebSocketStream.h"
 #include "headers.h"
 // #include "Blob.h"
 #include "CloseEvent.h"
@@ -798,8 +797,7 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
         }
 
         if (auto* context = scriptExecutionContext()) {
-
-            context->postTask([this, message_ = message, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            context->postTask([this, binaryData = binaryData, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
                 protectedThis->dispatchEvent(MessageEvent::create(ArrayBuffer::create(binaryData.data(), binaryData.size()), m_url.string()));
             });
@@ -1039,7 +1037,7 @@ void WebSocket::didFailWithErrorCode(int32_t code)
         break;
     }
 
-        // failed_to_allocate_memory
+    // failed_to_allocate_memory
     case 18: {
         auto message = MAKE_STATIC_STRING_IMPL("Failed to allocate memory");
         didReceiveMessageError(message);

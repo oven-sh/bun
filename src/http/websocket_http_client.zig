@@ -1123,7 +1123,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         // closing frame data is text only.
 
                         // 2 byte close code
-                        if (data.len > 2) {
+                        if (data.len > 2 and receive_body_remain >= 2) {
                             _ = this.consume(data[2..receive_body_remain], receive_body_remain - 2, .Text, true);
                             data = data[receive_body_remain..];
                         }

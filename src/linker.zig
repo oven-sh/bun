@@ -268,6 +268,12 @@ pub const Linker = struct {
                             continue;
                         }
 
+                        if (JSC.DisabledModule.has(import_record.path.text)) {
+                            import_record.path.is_disabled = true;
+                            import_record.wrap_with_to_module = true;
+                            continue;
+                        }
+
                         if (strings.eqlComptime(import_record.path.text, "bun")) {
                             import_record.tag = .bun;
                             continue;

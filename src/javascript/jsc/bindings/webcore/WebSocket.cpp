@@ -723,12 +723,23 @@ void WebSocket::didConnect()
         didClose(0, 0, emptyString());
         return;
     }
-    ASSERT(scriptExecutionContext());
     m_state = OPEN;
-    // m_subprotocol = m_channel->subprotocol();
-    // m_extensions = m_channel->extensions();
-    dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
-    // });
+
+    if (auto* context = scriptExecutionContext()) {
+        if (this->hasEventListeners("open"_s)) {
+            // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
+            dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        } else {
+            context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+                ASSERT(scriptExecutionContext());
+
+                // m_subprotocol = m_channel->subprotocol();
+                // m_extensions = m_channel->extensions();
+                protectedThis->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
+                // });
+            });
+        }
+    }
 }
 
 void WebSocket::didReceiveMessage(String&& message)
@@ -744,8 +755,21 @@ void WebSocket::didReceiveMessage(String&& message)
     //         inspector->didReceiveWebSocketFrame(WebSocketChannelInspector::createFrame(utf8Message.dataAsUInt8Ptr(), utf8Message.length(), WebSocketFrame::OpCode::OpCodeText));
     //     }
     // }
-    ASSERT(scriptExecutionContext());
-    dispatchEvent(MessageEvent::create(WTFMove(message), m_url.string()));
+
+    if (this->hasEventListeners("message"_s)) {
+        // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
+        dispatchEvent(MessageEvent::create(WTFMove(message), m_url.string()));
+        return;
+    }
+
+    if (auto* context = scriptExecutionContext()) {
+
+        context->postTask([this, message_ = message, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            ASSERT(scriptExecutionContext());
+            protectedThis->dispatchEvent(MessageEvent::create(message_, protectedThis->m_url.string()));
+        });
+    }
+
     // });
 }
 
@@ -766,9 +790,23 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
     //     // FIXME: We just received the data from NetworkProcess, and are sending it back. This is inefficient.
     //     dispatchEvent(MessageEvent::create(Blob::create(scriptExecutionContext(), WTFMove(binaryData), emptyString()), SecurityOrigin::create(m_url)->toString()));
     //     break;
-    case BinaryType::ArrayBuffer:
-        dispatchEvent(MessageEvent::create(ArrayBuffer::create(binaryData.data(), binaryData.size()), m_url.string()));
+    case BinaryType::ArrayBuffer: {
+        if (this->hasEventListeners("message"_s)) {
+            // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
+            dispatchEvent(MessageEvent::create(ArrayBuffer::create(binaryData.data(), binaryData.size()), m_url.string()));
+            return;
+        }
+
+        if (auto* context = scriptExecutionContext()) {
+
+            context->postTask([this, message_ = message, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+                ASSERT(scriptExecutionContext());
+                protectedThis->dispatchEvent(MessageEvent::create(ArrayBuffer::create(binaryData.data(), binaryData.size()), m_url.string()));
+            });
+        }
+
         break;
+    }
     }
     // });
 }
@@ -780,16 +818,18 @@ void WebSocket::didReceiveMessageError(WTF::StringImpl::StaticStringImpl* reason
     if (m_state == CLOSED)
         return;
     m_state = CLOSED;
-    ASSERT(scriptExecutionContext());
+    if (auto* context = scriptExecutionContext()) {
+        context->postTask([this, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            ASSERT(scriptExecutionContext());
+            // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
+            //     if (auto* inspector = m_channel->channelInspector())
+            //         inspector->didReceiveWebSocketFrameError(reason);
+            // }
 
-    // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
-    //     if (auto* inspector = m_channel->channelInspector())
-    //         inspector->didReceiveWebSocketFrameError(reason);
-    // }
-
-    // FIXME: As per https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
-    dispatchEvent(CloseEvent::create(false, 0, WTF::String(reason)));
-    // });
+            // FIXME: As per https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
+            dispatchEvent(CloseEvent::create(false, 0, WTF::String(reason)));
+        });
+    }
 }
 
 void WebSocket::didUpdateBufferedAmount(unsigned bufferedAmount)
@@ -832,11 +872,16 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     m_state = CLOSED;
     m_bufferedAmount = unhandledBufferedAmount;
     ASSERT(scriptExecutionContext());
-
-    dispatchEvent(CloseEvent::create(wasClean, code, reason));
-
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
     this->m_upgradeClient = nullptr;
+
+    if (auto* context = scriptExecutionContext()) {
+        context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            ASSERT(scriptExecutionContext());
+            protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));
+        });
+    }
+
     // m_pendingActivity = nullptr;
     // });
 }
@@ -853,7 +898,13 @@ void WebSocket::dispatchErrorEventIfNeeded()
         return;
 
     m_dispatchedErrorEvent = true;
-    dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+
+    if (auto* context = scriptExecutionContext()) {
+        context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            ASSERT(scriptExecutionContext());
+            protectedThis->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        });
+    }
 }
 
 void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize)
@@ -873,12 +924,8 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
 }
 void WebSocket::didFailWithErrorCode(int32_t code)
 {
-    m_state = CLOSED;
-
-    // this means we already handled it
-    if (this->m_upgradeClient == nullptr && this->m_connectedWebSocketKind == ConnectedWebSocketKind::None) {
+    if (m_state == CLOSED)
         return;
-    }
 
     this->m_upgradeClient = nullptr;
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
@@ -1047,6 +1094,8 @@ void WebSocket::didFailWithErrorCode(int32_t code)
         break;
     }
     }
+
+    m_state = CLOSED;
 }
 } // namespace WebCore
 

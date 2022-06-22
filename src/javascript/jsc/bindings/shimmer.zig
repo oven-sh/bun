@@ -126,6 +126,37 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             };
         }
 
+        pub fn thenables(comptime Functions: anytype) [std.meta.fieldNames(@TypeOf(Functions)).len * 2]StaticExport {
+            const FunctionsType = @TypeOf(Functions);
+            return comptime brk: {
+                var functions: [std.meta.fieldNames(FunctionsType).len * 2]StaticExport = undefined;
+                var j: usize = 0;
+                inline for (Functions) |thenable| {
+                    inline for ([_][]const u8{ "resolve", "reject" }) |fn_name| {
+                        const Function = @TypeOf(@field(thenable, fn_name));
+                        if (@typeInfo(Function) != .Fn) {
+                            @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
+                        }
+                        var Fn: std.builtin.TypeInfo.Fn = @typeInfo(Function).Fn;
+                        if (Fn.calling_convention != .C) {
+                            @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
+                        }
+
+                        const export_name = symbolName(fn_name);
+                        functions[j] = StaticExport{
+                            .Type = Function,
+                            .symbol_name = export_name,
+                            .local_name = fn_name,
+                            .Parent = thenable,
+                        };
+                        j += 1;
+                    }
+                }
+
+                break :brk functions;
+            };
+        }
+
         pub inline fn matchNullable(comptime ExpectedReturnType: type, comptime ExternReturnType: type, value: ExternReturnType) ExpectedReturnType {
             if (comptime isNullableType(ExpectedReturnType) != isNullableType(ExternReturnType)) {
                 return value.?;

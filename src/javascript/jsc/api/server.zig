@@ -505,6 +505,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub threadlocal var pool_allocator: std.mem.Allocator = undefined;
 
         pub const RequestContextStackAllocator = NewRequestContextStackAllocator(RequestContext, 2048);
+        pub const name = "HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
+        pub const shim = JSC.Shimmer("Bun", name, @This());
 
         server: *ThisServer,
         resp: *App.Response,
@@ -541,6 +543,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled;
+
+        pub const thenables = shim.thenables(.{
+            PromiseHandler,
+        });
+
+        pub const lazy_static_functions = thenables;
+        pub const Export = lazy_static_functions;
+
+        const PromiseHandler = JSC.Thenable(RequestContext, onResolve, onReject);
 
         pub fn setAbortHandler(this: *RequestContext) void {
             if (this.has_abort_handler) return;
@@ -1196,6 +1207,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             value: JSC.JSValue,
             status: u16,
         ) void {
+            JSC.markBinding();
             if (this.resp.hasResponded()) return;
 
             var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(this.allocator);
@@ -1399,12 +1411,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onPullCallback(this: *anyopaque) void {
             onPull(bun.cast(*RequestContext, this));
         }
+
+        comptime {
+            if (!JSC.is_bindgen) {
+                @export(PromiseHandler.resolve, .{
+                    .name = Export[0].symbol_name,
+                });
+                @export(PromiseHandler.reject, .{
+                    .name = Export[1].symbol_name,
+                });
+            }
+        }
     };
 }
 
 pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
     return struct {
-        const ssl_enabled = ssl_enabled_;
+        pub const ssl_enabled = ssl_enabled_;
         const debug_mode = debug_mode_;
 
         const ThisServer = @This();
@@ -1627,7 +1650,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            if (comptime JSC.is_bindgen) return undefined;
+            JSC.markBinding();
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
@@ -1654,7 +1677,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onSrcRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            if (comptime JSC.is_bindgen) return undefined;
+            JSC.markBinding();
             this.pending_requests += 1;
             defer this.pending_requests -= 1;
             req.setYield(false);
@@ -1684,7 +1707,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            if (comptime JSC.is_bindgen) return undefined;
+            JSC.markBinding();
             this.pending_requests += 1;
             var vm = this.vm;
             req.setYield(false);
@@ -1768,13 +1791,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             if (wait_for_promise) {
                 ctx.setAbortHandler();
-                response_value.then(
-                    this.globalThis,
-                    RequestContext,
-                    ctx,
-                    RequestContext.onResolve,
-                    RequestContext.onReject,
-                );
+
+                RequestContext.PromiseHandler.then(ctx, response_value, this.globalThis);
                 return;
             }
 

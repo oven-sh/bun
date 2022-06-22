@@ -87,39 +87,18 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 }
 
 template<typename PromiseType, bool isInternal>
-static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3))
+static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), void (*ArgFn4)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
 {
-    JSC::Strong<PromiseType> strongValue = { globalObject->vm(), promise };
+
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), [&strongValue, ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
-            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
-
-            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
-            arguments.reserveInitialCapacity(argCount);
-            if (argCount) {
-                for (uint16_t i = 0; i < argCount; ++i) {
-                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
-                }
-            }
-
-            ArgFn3(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
-            strongValue.clear();
+        globalObject->vm(), globalObject, 1, String(), [ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
+            ArgFn3(ctx, globalObject, callFrame);
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
     JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
         globalObject->vm(), globalObject, 1, String(),
-        [&strongValue, ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            auto argCount = static_cast<uint16_t>(callFrame->argumentCount());
-            WTF::Vector<JSC::EncodedJSValue, 16> arguments;
-            arguments.reserveInitialCapacity(argCount);
-            if (argCount) {
-                for (uint16_t i = 0; i < argCount; ++i) {
-                    arguments.uncheckedAppend(JSC::JSValue::encode(callFrame->uncheckedArgument(i)));
-                }
-            }
-
-            ArgFn4(globalObject, ctx, reinterpret_cast<void**>(arguments.data()), argCount);
-            strongValue.clear();
+        [ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+            ArgFn4(ctx, globalObject, callFrame);
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
 
@@ -537,7 +516,7 @@ JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 }
 
 // TODO: prevent this from allocating so much memory
-void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3), void (*ArgFn4)(JSC__JSGlobalObject* arg0, void* arg1, void** arg2, size_t arg3))
+void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), void (*ArgFn4)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
 {
 
     auto* cell = JSC::JSValue::decode(JSValue0).asCell();
@@ -624,8 +603,9 @@ JSC__JSInternalPromise* JSC__VM__reloadModule(JSC__VM* vm, JSC__JSGlobalObject* 
 bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
     JSC__JSGlobalObject* globalObject)
 {
-    return JSC::sameValue(globalObject, JSC::JSValue::decode(JSValue0),
-        JSC::JSValue::decode(JSValue1));
+    JSC::JSValue left = JSC::JSValue::decode(JSValue0);
+    JSC::JSValue right = JSC::JSValue::decode(JSValue1);
+    return JSC::sameValue(globalObject, left, right);
 }
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception

@@ -1340,6 +1340,8 @@ pub const ZigConsoleClient = struct {
                         JSValue.JSType.BigUint64Array,
                         => .TypedArray,
 
+                        .HeapBigInt => .BigInt,
+
                         // None of these should ever exist here
                         // But we're going to check anyway
                         .GetterSetter,
@@ -1367,6 +1369,7 @@ pub const ZigConsoleClient = struct {
                         .StrictEvalActivation,
                         .WithScope,
                         => .NativeCode,
+
                         else => .JSON,
                     },
                     .cell = js_type,
@@ -1610,11 +1613,11 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.toInt64()});
                 },
                 .BigInt => {
-                    var wtf = value.toWTFString(this.globalThis);
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{wtf.slice()});
+                    var out_str = value.getZigString(this.globalThis).slice();
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}n<r>", enable_ansi_colors), .{value.asNumber()});
                 },
                 .Undefined => {
                     writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});
@@ -2510,12 +2513,21 @@ comptime {
 const Bun = @import("../api/bun.zig");
 pub const BunTimer = Bun.Timer;
 pub const Formatter = ZigConsoleClient.Formatter;
+pub const HTTPServerRequestContext = JSC.API.Server.RequestContext;
+pub const HTTPSSLServerRequestContext = JSC.API.SSLServer.RequestContext;
+pub const HTTPDebugServerRequestContext = JSC.API.DebugServer.RequestContext;
+pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugSSLServer.RequestContext;
 
 comptime {
     WebSocketHTTPClient.shim.ref();
     WebSocketHTTSPClient.shim.ref();
     WebSocketClient.shim.ref();
     WebSocketClientTLS.shim.ref();
+
+    HTTPServerRequestContext.shim.ref();
+    HTTPSSLServerRequestContext.shim.ref();
+    HTTPDebugServerRequestContext.shim.ref();
+    HTTPDebugSSLServerRequestContext.shim.ref();
 
     if (!is_bindgen) {
         _ = Process.getTitle;

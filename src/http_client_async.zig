@@ -388,7 +388,7 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn schedule(this: *AsyncHTTP, _: std.mem.Allocator, batch: *ThreadPool.Batch) void {
-        std.debug.assert(NetworkThread.global_loaded.load(.Monotonic) == 1);
+        NetworkThread.init() catch unreachable;
         this.state.store(.scheduled, .Monotonic);
         batch.push(ThreadPool.Batch.from(&this.task));
     }

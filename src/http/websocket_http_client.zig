@@ -857,11 +857,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         fn clearReceiveBuffers(this: *WebSocket, free: bool) void {
-            this.receive_buffer.discard(this.receive_buffer.count);
+            this.receive_buffer.head = 0;
+            this.receive_buffer.count = 0;
+
             if (free) {
                 this.receive_buffer.deinit();
                 this.receive_buffer.buf.len = 0;
             }
+
             this.receive_pending_chunk_len = 0;
             this.receive_body_remain = 0;
         }
@@ -891,7 +894,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     var outstring = JSC.ZigString.Empty;
                     if (utf16_bytes_) |utf16| {
                         outstring = JSC.ZigString.from16Slice(utf16);
-                        outstring.markUTF16();
+                        outstring.mark();
                         JSC.markBinding();
                         WebSocket__didReceiveText(out, false, &outstring);
                     } else {
@@ -1118,7 +1121,13 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                     .close => {
                         // closing frame data is text only.
-                        _ = this.consume(data[0..receive_body_remain], receive_body_remain, .Text, true);
+
+                        // 2 byte close code
+                        if (data.len > 2) {
+                            _ = this.consume(data[2..receive_body_remain], receive_body_remain - 2, .Text, true);
+                            data = data[receive_body_remain..];
+                        }
+
                         this.sendClose();
                         terminated = true;
                         break;

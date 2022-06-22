@@ -70,12 +70,10 @@ pub const Loc = packed struct {
         return if (loc.start == -1) null else loc.*;
     }
 
-    pub inline fn toUsize(self: *const Loc) usize {
-        return @intCast(usize, self.start);
-    }
+    pub const toUsize = i;
 
     pub inline fn i(self: *const Loc) usize {
-        return @intCast(usize, self.start);
+        return @intCast(usize, @maximum(self.start, 0));
     }
 
     pub const Empty = Loc{ .start = -1 };

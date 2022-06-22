@@ -6,3 +6,4 @@
 ./globals.d.ts
 ./path.d.ts
 ./bun-test.d.ts
+./jsc.d.ts

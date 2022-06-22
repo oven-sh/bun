@@ -214,9 +214,12 @@ pub const ZigString = extern struct {
         return from16(slice_.ptr, slice_.len);
     }
 
+    /// Globally-allocated memory only
     pub fn from16(slice_: [*]const u16, len: usize) ZigString {
         var str = init(@ptrCast([*]const u8, slice_)[0..len]);
         str.markUTF16();
+        str.mark();
+        str.assertGlobal();
         return str;
     }
 
@@ -350,7 +353,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn trimmedSlice(this: *const ZigString) []const u8 {
-        return strings.trim(this.ptr[0..@minimum(this.len, std.math.maxInt(u32))], " \r\n");
+        return strings.trim(this.full(), " \r\n");
     }
 
     pub fn toValueAuto(this: *const ZigString, global: *JSGlobalObject) JSValue {
@@ -361,11 +364,27 @@ pub const ZigString = extern struct {
         }
     }
 
+    fn assertGlobalIfNeeded(this: *const ZigString) void {
+        if (comptime bun.Environment.allow_assert) {
+            if (this.isGloballyAllocated()) {
+                this.assertGlobal();
+            }
+        }
+    }
+
+    fn assertGlobal(this: *const ZigString) void {
+        if (comptime bun.Environment.allow_assert) {
+            std.debug.assert(bun.Global.Mimalloc.mi_is_in_heap_region(untagged(this.ptr)) or bun.Global.Mimalloc.mi_check_owned(untagged(this.ptr)));
+        }
+    }
+
     pub fn toValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        this.assertGlobalIfNeeded();
         return shim.cppFn("toValue", .{ this, global });
     }
 
     pub fn toExternalValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        this.assertGlobal();
         return shim.cppFn("toExternalValue", .{ this, global });
     }
 
@@ -387,6 +406,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn to16BitValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
+        this.assertGlobal();
         return shim.cppFn("to16BitValue", .{ this, global });
     }
 
@@ -406,9 +426,9 @@ pub const ZigString = extern struct {
         }
 
         return if (this.is16Bit())
-            C_API.JSStringCreateWithCharactersNoCopy(@ptrCast([*]const u16, @alignCast(@alignOf([*]const u16), this.ptr)), this.len)
+            C_API.JSStringCreateWithCharactersNoCopy(@ptrCast([*]const u16, @alignCast(@alignOf([*]const u16), untagged(this.ptr))), this.len)
         else
-            C_API.JSStringCreateStatic(this.ptr, this.len);
+            C_API.JSStringCreateStatic(untagged(this.ptr), this.len);
     }
 
     pub fn toErrorInstance(this: *const ZigString, global: *JSGlobalObject) JSValue {
@@ -1429,6 +1449,8 @@ pub const SourceCode = extern struct {
     };
 };
 
+pub const Thenables = opaque {};
+
 pub const JSFunction = extern struct {
     pub const shim = Shimmer("JSC", "JSFunction", @This());
     bytes: shim.Bytes,
@@ -1720,6 +1742,8 @@ fn _WTF(comptime str: []const u8) type {
         return opaque {};
     }
 }
+pub const JSNativeFn = fn (*JSGlobalObject, *JSC.CallFrame) callconv(.C) JSValue;
+pub const JSNativeFnWithCtx = fn (?*anyopaque, [*c]JSGlobalObject, ?*JSC.CallFrame) callconv(.C) void;
 
 pub const URL = extern struct {
     pub const shim = Shimmer("WTF", "URL", @This());
@@ -1939,13 +1963,17 @@ pub const String = extern struct {
     };
 };
 
-pub const JSValue = enum(i64) {
-    @"undefined" = 0xa,
+pub const JSValueReprInt = i64;
+pub const JSValue = enum(JSValueReprInt) {
+    zero = 0,
+    @"undefined" = @bitCast(JSValueReprInt, @as(i64, 0xa)),
     _,
+
+    pub const Type = JSValueReprInt;
 
     pub const shim = Shimmer("JSC", "JSValue", @This());
     pub const is_pointer = false;
-    pub const Type = i64;
+
     const cppFn = shim.cppFn;
 
     pub const Encoded = extern union {
@@ -1959,7 +1987,6 @@ pub const JSValue = enum(i64) {
     pub const include = "JavaScriptCore/JSValue.h";
     pub const name = "JSC::JSValue";
     pub const namespace = "JSC";
-    pub const zero = @intToEnum(JSValue, @as(i64, 0));
     pub const JSType = enum(u8) {
         // The Cell value must come before any JS that is a JSCell.
         Cell,
@@ -2200,16 +2227,15 @@ pub const JSValue = enum(i64) {
             ?*JSInternalPromise => asInternalPromise(this),
             ?*JSPromise => asPromise(this),
 
-            u52 => @truncate(u52, this.to(u64)),
+            u52 => @truncate(u52, @intCast(u64, @maximum(this.toInt64(), 0))),
 
-            u64 => @intCast(u64, @maximum(toInt64(this), 0)),
+            u64 => toUInt64NoTruncate(this),
 
             u8 => @truncate(u8, toU32(this)),
             i16 => @truncate(i16, toInt32(this)),
             i8 => @truncate(i8, toInt32(this)),
             i32 => @truncate(i32, toInt32(this)),
 
-            // TODO: BigInt64
             i64 => this.toInt64(),
 
             bool => this.toBoolean(),
@@ -2693,44 +2719,12 @@ pub const JSValue = enum(i64) {
         return cppFn("symbolKeyFor", .{ this, global, str });
     }
 
-    const Thenable = fn (
-        global: [*c]JSGlobalObject,
-        ctx: ?*anyopaque,
-        arguments_ptr: [*c]*anyopaque,
-        arguments_len: usize,
-    ) callconv(.C) void;
-    pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: Thenable, reject: Thenable) void {
+    pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSNativeFnWithCtx, reject: JSNativeFnWithCtx) void {
         return cppFn("_then", .{ this, global, ctx, resolve, reject });
     }
+
     pub fn then(this: JSValue, global: *JSGlobalObject, comptime Then: type, ctx: *Then, comptime onResolve: fn (*Then, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void, comptime onReject: fn (*Then, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void) void {
-        const Handler = struct {
-            fn resolve(
-                globalThis: [*c]JSGlobalObject,
-                ptr: ?*anyopaque,
-                arguments_ptr: [*c]*anyopaque,
-                arguments_len: usize,
-            ) callconv(.C) void {
-                @setRuntimeSafety(false);
-                onResolve(bun.cast(*Then, ptr.?), globalThis, @ptrCast([*]const JSC.JSValue, arguments_ptr)[0..arguments_len]);
-            }
-
-            pub fn reject(
-                globalThis: [*c]JSGlobalObject,
-                ptr: ?*anyopaque,
-                arguments_ptr: [*c]*anyopaque,
-                arguments_len: usize,
-            ) callconv(.C) void {
-                @setRuntimeSafety(false);
-                onReject(bun.cast(*Then, ptr.?), globalThis, @ptrCast([*]const JSC.JSValue, arguments_ptr)[0..arguments_len]);
-            }
-        };
-
-        this._then(
-            global,
-            ctx,
-            Handler.resolve,
-            Handler.reject,
-        );
+        Thenable(Then, onResolve, onReject).then(this, global, ctx);
     }
 
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
@@ -2846,7 +2840,7 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn asBoolean(this: JSValue) bool {
-        return @enumToInt(this) == @bitCast(c_longlong, @as(c_longlong, (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1)));
+        return FFI.JSVALUE_TO_BOOL(.{ .asJSValue = this });
     }
 
     pub fn toInt32(this: JSValue) i32 {
@@ -2864,11 +2858,11 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn asInt32(this: JSValue) i32 {
-        return @bitCast(i32, @truncate(c_int, @enumToInt(this)));
+        return FFI.JSVALUE_TO_INT32(.{ .asJSValue = this });
     }
 
     pub inline fn toU16(this: JSValue) u16 {
-        return @intCast(u16, this.toInt32());
+        return @truncate(u16, this.toU32());
     }
 
     pub inline fn toU32(this: JSValue) u32 {
@@ -3651,3 +3645,29 @@ pub const WTF = struct {
 pub const Callback = struct {
     // zig: Value,
 };
+
+pub fn Thenable(comptime Then: type, comptime onResolve: fn (*Then, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void, comptime onReject: fn (*Then, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void) type {
+    return struct {
+        pub fn resolve(
+            ctx: ?*anyopaque,
+            globalThis: [*c]JSGlobalObject,
+            callframe: ?*JSC.CallFrame,
+        ) callconv(.C) void {
+            @setRuntimeSafety(false);
+            onResolve(@ptrCast(*Then, @alignCast(std.meta.alignment(Then), ctx.?)), globalThis, callframe.?.arguments());
+        }
+
+        pub fn reject(
+            ctx: ?*anyopaque,
+            globalThis: [*c]JSGlobalObject,
+            callframe: ?*JSC.CallFrame,
+        ) callconv(.C) void {
+            @setRuntimeSafety(false);
+            onReject(@ptrCast(*Then, @alignCast(std.meta.alignment(Then), ctx.?)), globalThis, callframe.?.arguments());
+        }
+
+        pub fn then(ctx: *Then, this: JSValue, globalThis: *JSGlobalObject) void {
+            this._then(globalThis, ctx, resolve, reject);
+        }
+    };
+}

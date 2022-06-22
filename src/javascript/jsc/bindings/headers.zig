@@ -120,11 +120,11 @@ pub const JSC__JSInternalPromise = bJSC__JSInternalPromise;
 
 pub const JSC__RegExpPrototype = struct_JSC__RegExpPrototype;
 
+pub const JSC__CallFrame = struct_JSC__CallFrame;
+
 pub const JSC__MapIteratorPrototype = struct_JSC__MapIteratorPrototype;
 
 pub const WebCore__FetchHeaders = struct_WebCore__FetchHeaders;
-
-pub const JSC__CallFrame = struct_JSC__CallFrame;
 pub const WTF__StringView = bWTF__StringView;
 pub const JSC__ThrowScope = bJSC__ThrowScope;
 pub const WTF__StringImpl = bWTF__StringImpl;
@@ -311,7 +311,7 @@ pub extern fn WTF__String__isEmpty(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isExternal(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__isStatic(arg0: [*c]WTF__String) bool;
 pub extern fn WTF__String__length(arg0: [*c]WTF__String) usize;
-pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, [*c]*anyopaque, usize) callconv(.C) void, ArgFn4: ?fn ([*c]JSC__JSGlobalObject, ?*anyopaque, [*c]*anyopaque, usize) callconv(.C) void) void;
+pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn (?*anyopaque, [*c]JSC__JSGlobalObject, ?*JSC__CallFrame) callconv(.C) void, ArgFn4: ?fn (?*anyopaque, [*c]JSC__JSGlobalObject, ?*JSC__CallFrame) callconv(.C) void) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSGlobalObject, arg2: [*c]Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]JSC__JSCell;
 pub extern fn JSC__JSValue__asInternalPromise(JSValue0: JSC__JSValue) [*c]JSC__JSInternalPromise;

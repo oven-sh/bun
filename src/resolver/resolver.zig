@@ -68,8 +68,18 @@ pub const PathPair = struct {
         index: u2,
         ctx: *PathPair,
         pub fn next(i: *Iter) ?*Path {
+            if (i.next_()) |path_| {
+                if (path_.is_disabled) {
+                    return i.next();
+                }
+                return path_;
+            }
+
+            return null;
+        }
+        fn next_(i: *Iter) ?*Path {
             const ind = i.index;
-            i.index += 1;
+            i.index +|= 1;
 
             switch (ind) {
                 0 => return &i.ctx.primary,
@@ -776,7 +786,8 @@ pub const Resolver = struct {
         result.module_type = module_type;
     }
 
-    pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path: string, kind: ast.ImportKind) !?Result {
+    pub fn resolveWithoutSymlinks(r: *ThisResolver, source_dir: string, import_path_: string, kind: ast.ImportKind) !?Result {
+        var import_path = import_path_;
 
         // This implements the module resolution algorithm from node.js, which is
         // described here: https://nodejs.org/api/modules.html#modules_all_together
@@ -986,7 +997,7 @@ pub const Resolver = struct {
                 }
             }
 
-            const source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return null;
+            var source_dir_info = (r.dirInfoCached(source_dir) catch null) orelse return null;
 
             // Support remapping one package path to another via the "browser" field
             if (source_dir_info.getEnclosingBrowserScope()) |browser_scope| {
@@ -998,6 +1009,7 @@ pub const Resolver = struct {
                     )) |remapped| {
                         if (remapped.len == 0) {
                             // "browser": {"module": false}
+                            // does the module exist in the filesystem?
                             if (r.loadNodeModules(import_path, kind, source_dir_info)) |node_module| {
                                 var pair = node_module.path_pair;
                                 pair.primary.is_disabled = true;
@@ -1011,17 +1023,22 @@ pub const Resolver = struct {
                                     .package_json = package_json,
                                     .jsx = r.opts.jsx,
                                 };
+                            } else {
+                                // "browser": {"module": false}
+                                // the module doesn't exist and it's disabled
+                                // so we should just not try to load it
+                                var primary = Path.init(import_path);
+                                primary.is_disabled = true;
+                                return Result{
+                                    .path_pair = PathPair{ .primary = primary },
+                                    .diff_case = null,
+                                    .jsx = r.opts.jsx,
+                                };
                             }
-                        } else {
-                            var primary = Path.init(import_path);
-                            primary.is_disabled = true;
-                            return Result{
-                                .path_pair = PathPair{ .primary = primary },
-                                // this might not be null? i think it is
-                                .diff_case = null,
-                                .jsx = r.opts.jsx,
-                            };
                         }
+
+                        import_path = remapped;
+                        source_dir_info = browser_scope;
                     }
                 }
             }

@@ -390,7 +390,7 @@ base64:
 		rm -rf src/base64/*.{o,ll,bc} && \
 	   $(CC) $(EMIT_LLVM_FOR_RELEASE) $(BUN_CFLAGS) $(OPTIMIZATION_LEVEL) -g -fPIC -c *.c -I$(SRC_DIR)/base64  && \
 	   $(CXX) $(EMIT_LLVM_FOR_RELEASE) $(CXXFLAGS) $(BUN_CFLAGS) -c neonbase64.cc -g -fPIC  && \
-	   $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libbase64.a ./*.{bc,o,ll}
+	   $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libbase64.a ./*.o
 
 # Prevent dependency on libtcc1 so it doesn't do filesystem lookups
 TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"

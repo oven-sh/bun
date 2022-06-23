@@ -38,7 +38,6 @@ it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(
     true
   );
-
   expect("hi").toBe("hi");
   expect(Bun.inspect(1)).toBe("1");
   expect(Bun.inspect(1, "hi")).toBe("1 hi");
@@ -59,7 +58,6 @@ it("inspect", () => {
   expect(Bun.inspect(str)).toBe(str);
   // expect(Bun.inspect(new Headers())).toBe("Headers (0 KB) {}");
   expect(Bun.inspect(new Response()).length > 0).toBe(true);
-
   // expect(
   //   JSON.stringify(
   //     new Headers({
@@ -88,8 +86,11 @@ it("inspect", () => {
         <input type="text" value={"123"} />
       </div>
     )
-  ).toBe(`<div hello="quoted">
+  ).toBe(
+    `
+<div hello="quoted">
   <input type="text" value="123" />
-</div>`);
-  expect(Bun.inspect(BigInt(32)), "32n");
+</div>`.trim()
+  );
+  expect(Bun.inspect(BigInt(32))).toBe("32n");
 });

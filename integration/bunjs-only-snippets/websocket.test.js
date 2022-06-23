@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { unsafe } from "bun";
+import { gc } from "./gc";
 
 const TEST_WEBSOCKET_HOST =
   process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
@@ -27,16 +28,52 @@ describe("WebSocket", () => {
         reject("WebSocket closed");
       };
     });
+    const count = 10;
+
+    // 10 messages in burst
     var promise = new Promise((resolve, reject) => {
+      var remain = count;
       ws.onmessage = (event) => {
+        gc(true);
         expect(event.data).toBe("Hello World!");
-        ws.close();
-        resolve();
+        remain--;
+
+        if (remain <= 0) {
+          ws.onmessage = () => {};
+          resolve();
+        }
       };
       ws.onerror = reject;
-      ws.send("Hello World!");
     });
 
+    for (let i = 0; i < count; i++) {
+      ws.send("Hello World!");
+      gc(true);
+    }
+
     await promise;
+    var echo = 0;
+
+    // 10 messages one at a time
+    function waitForEcho() {
+      return new Promise((resolve, reject) => {
+        gc(true);
+        const msg = `Hello World! ${echo++}`;
+        ws.onmessage = (event) => {
+          expect(event.data).toBe(msg);
+          resolve();
+        };
+        ws.onerror = reject;
+        ws.onclose = reject;
+        ws.send(msg);
+        gc(true);
+      });
+    }
+    gc(true);
+    for (let i = 0; i < count; i++) await waitForEcho();
+    ws.onclose = () => {};
+    ws.onerror = () => {};
+    ws.close();
+    gc(true);
   });
 });

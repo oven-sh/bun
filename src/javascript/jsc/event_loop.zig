@@ -407,6 +407,7 @@ pub const EventLoop = struct {
     // TODO: fix this technical debt
     pub fn tick(this: *EventLoop) void {
         var poller = &this.virtual_machine.poller;
+        var ctx = this.virtual_machine;
         while (true) {
             this.tickConcurrent();
 
@@ -421,6 +422,12 @@ pub const EventLoop = struct {
         }
 
         this.global.vm().releaseWeakRefs();
+
+        if (!ctx.disable_run_us_loop and ctx.us_loop_reference_count > 0 and !ctx.is_us_loop_entered) {
+            ctx.is_us_loop_entered = true;
+            ctx.enterUWSLoop();
+            ctx.is_us_loop_entered = false;
+        }
     }
 
     // TODO: fix this technical debt

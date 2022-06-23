@@ -1523,6 +1523,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (this.listener) |listener| {
                 listener.close();
                 this.listener = null;
+                this.vm.disable_run_us_loop = false;
             }
 
             this.deinitIfWeCan();
@@ -1533,11 +1534,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 if (pool == &this.response_objects_pool) {
                     this.vm.response_objects_pool = null;
                 }
-            }
-
-            // if you run multiple servers simultaneously, this could break it
-            if (this.vm.uws_event_loop != null and uws.Loop.get().? == this.vm.uws_event_loop.?) {
-                this.vm.uws_event_loop = null;
             }
 
             this.app.destroy();
@@ -1646,6 +1642,12 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn run(this: *ThisServer) void {
             // this.app.addServerName(hostname_pattern: [*:0]const u8)
+
+            // we do not increment the reference count here
+            // uWS manages running the loop, so it is unnecessary
+            // this.vm.us_loop_reference_count +|= 1;
+            this.vm.disable_run_us_loop = true;
+
             this.app.run();
         }
 

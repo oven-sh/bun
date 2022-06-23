@@ -64,7 +64,7 @@ pub fn getAddressList(allocator: std.mem.Allocator, name: []const u8, port: u16)
 
 pub var has_warmed = false;
 pub fn warmup() !void {
-    if (has_warmed) return;
+    if (has_warmed or global_loaded.load(.Monotonic) > 0) return;
     has_warmed = true;
     try init();
     global.pool.forceSpawn();

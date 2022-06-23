@@ -112,6 +112,11 @@ public:
         reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
     } // Executes the task on context's thread asynchronously.
 
+    void postTask(EventLoopTask* task)
+    {
+        reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+    } // Executes the task on context's thread asynchronously.
+
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)
     {

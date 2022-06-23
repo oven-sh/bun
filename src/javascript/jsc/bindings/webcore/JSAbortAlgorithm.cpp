@@ -42,7 +42,8 @@ JSAbortAlgorithm::~JSAbortAlgorithm()
     if (!context || context->isContextThread())
         delete m_data;
     else
-        context->postTask(DeleteCallbackDataTask(m_data));
+
+        context->postTask(new DeleteCallbackDataTask(m_data));
 #ifndef NDEBUG
     m_data = nullptr;
 #endif

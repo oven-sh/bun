@@ -173,30 +173,40 @@ pub fn inspect(
         false,
         false,
     );
+    buffered_writer.flush() catch {
+        return JSC.C.JSValueMakeUndefined(ctx);
+    };
 
-    // when it's a small thing, rely on GC to manage the memory
-    if (writer.context.pos < 2048 and array.list.items.len == 0) {
-        var slice = writer.context.buffer[0..writer.context.pos];
-        if (slice.len == 0) {
-            return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
-        }
+    // we are going to always clone to keep things simple for now
+    // the common case here will be stack-allocated, so it should be fine
+    var out = ZigString.init(array.toOwnedSliceLeaky()).withEncoding();
+    const ret = out.toValueGC(ctx);
+    array.deinit();
+    return ret.asObjectRef();
 
-        var zig_str = ZigString.init(slice).withEncoding();
-        return zig_str.toValueGC(ctx.ptr()).asObjectRef();
-    }
+    // // when it's a small thing, rely on GC to manage the memory
+    // if (writer.context.pos < 2048 and array.list.items.len == 0) {
+    //     var slice = writer.context.buffer[0..writer.context.pos];
+    //     if (slice.len == 0) {
+    //         return ZigString.Empty.toValue(ctx.ptr()).asObjectRef();
+    //     }
 
-    // when it's a big thing, we will manage it
-    {
-        writer.context.flush() catch {};
-        var slice = writer.context.context.toOwnedSlice();
+    //     var zig_str =
+    //     return zig_str.toValueGC(ctx.ptr()).asObjectRef();
+    // }
 
-        var zig_str = ZigString.init(slice).withEncoding();
-        if (!zig_str.isUTF8()) {
-            return zig_str.toExternalValue(ctx.ptr()).asObjectRef();
-        } else {
-            return zig_str.toValueGC(ctx.ptr()).asObjectRef();
-        }
-    }
+    // // when it's a big thing, we will manage it
+    // {
+    //     writer.context.flush() catch {};
+    //     var slice = writer.context.context.toOwnedSlice();
+
+    //     var zig_str = ZigString.init(slice).withEncoding();
+    //     if (!zig_str.isUTF8()) {
+    //         return zig_str.toExternalValue(ctx.ptr()).asObjectRef();
+    //     } else {
+    //         return zig_str.toValueGC(ctx.ptr()).asObjectRef();
+    //     }
+    // }
 }
 
 pub fn registerMacro(

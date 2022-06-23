@@ -113,7 +113,8 @@ class DeleteCallbackDataTask : public EventLoopTask {
 public:
     template<typename CallbackDataType>
     explicit DeleteCallbackDataTask(CallbackDataType* data)
-        : EventLoopTask(EventLoopTask::CleanupTask, [data = std::unique_ptr<CallbackDataType>(data)](ScriptExecutionContext&) {
+        : EventLoopTask(EventLoopTask::CleanupTask, [data](ScriptExecutionContext&) mutable {
+            delete data;
         })
     {
     }

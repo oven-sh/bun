@@ -332,6 +332,9 @@ pub const VirtualMachine = struct {
 
     rare_data: ?*JSC.RareData = null,
     poller: JSC.Poller = JSC.Poller{},
+    us_loop_reference_count: usize = 0,
+    disable_run_us_loop: bool = false,
+    is_us_loop_entered: bool = false,
 
     pub fn io(this: *VirtualMachine) *IO {
         if (this.io_ == null) {
@@ -359,6 +362,16 @@ pub const VirtualMachine = struct {
 
     pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
         return this.event_loop;
+    }
+
+    pub fn prepareLoop(this: *VirtualMachine) void {
+        var loop = this.uws_event_loop.?;
+        _ = loop.addPostHandler(*JSC.EventLoop, this.eventLoop(), JSC.EventLoop.tick);
+    }
+
+    pub fn enterUWSLoop(this: *VirtualMachine) void {
+        var loop = this.uws_event_loop.?;
+        loop.run();
     }
 
     pub fn onExit(this: *VirtualMachine) void {

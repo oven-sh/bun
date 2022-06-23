@@ -280,9 +280,9 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
 
-    bool is_secure = m_url.protocolIs("wss");
+    bool is_secure = m_url.protocolIs("wss"_s);
 
-    if (!m_url.protocolIs("ws") && !is_secure) {
+    if (!m_url.protocolIs("ws"_s) && !is_secure) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         return Exception { SyntaxError, makeString("Wrong url scheme for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };

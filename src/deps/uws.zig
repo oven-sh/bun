@@ -276,6 +276,10 @@ pub const Loop = opaque {
         };
     }
 
+    pub fn run(this: *Loop) void {
+         us_loop_run(this);
+    }
+
     extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: fn (ctx: *anyopaque) callconv(.C) void) void;
 
     extern fn uws_get_loop() ?*Loop;

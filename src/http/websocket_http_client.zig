@@ -125,6 +125,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         body_buf: ?*BodyBuf = null,
         body_written: usize = 0,
         websocket_protocol: u64 = 0,
+        event_loop_ref: bool = false,
 
         pub const name = if (ssl) "WebSocketHTTPSClient" else "WebSocketHTTPClient";
 
@@ -140,10 +141,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (vm.uws_event_loop) |other| {
                 std.debug.assert(other == loop);
             }
+            const is_new_loop = vm.uws_event_loop == null;
 
             vm.uws_event_loop = loop;
 
             Socket.configure(ctx, HTTPClient, handleOpen, handleClose, handleData, handleWritable, handleTimeout, handleConnectError, handleEnd);
+            if (is_new_loop) {
+                vm.prepareLoop();
+            }
         }
 
         pub fn connect(
@@ -167,11 +172,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             };
             var host_ = host.toSlice(bun.default_allocator);
             defer host_.deinit();
+            var vm = global.bunVM();
+            vm.us_loop_reference_count +|= 1;
+            client.event_loop_ref = true;
 
             if (Socket.connect(host_.slice(), port, @ptrCast(*uws.us_socket_context_t, socket_ctx), HTTPClient, client, "tcp")) |out| {
                 out.tcp.timeout(120);
                 return out;
             }
+            vm.us_loop_reference_count -|= 1;
 
             client.clearData();
 
@@ -183,6 +192,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.input_body_buf.len = 0;
         }
         pub fn clearData(this: *HTTPClient) void {
+            if (this.event_loop_ref) {
+                this.event_loop_ref = false;
+                JSC.VirtualMachine.vm.us_loop_reference_count -|= 1;
+            }
             this.clearInput();
             if (this.body_buf) |buf| {
                 this.body_buf = null;
@@ -777,6 +790,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         send_buffer: bun.LinearFifo(u8, .Dynamic),
 
         globalThis: *JSC.JSGlobalObject,
+        event_loop_ref: bool = false,
 
         pub const name = if (ssl) "WebSocketClientTLS" else "WebSocketClient";
 
@@ -1436,6 +1450,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             ) orelse return null;
             adopted.send_buffer.ensureTotalCapacity(2048) catch return null;
             adopted.receive_buffer.ensureTotalCapacity(2048) catch return null;
+            adopted.event_loop_ref = true;
+            adopted.globalThis.bunVM().us_loop_reference_count +|= 1;
             _ = globalThis.bunVM().eventLoop().ready_tasks_count.fetchAdd(1, .Monotonic);
             return @ptrCast(
                 *anyopaque,
@@ -1446,12 +1462,18 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         pub fn finalize(this: *WebSocket) callconv(.C) void {
             this.clearData();
 
+            if (this.event_loop_ref) {
+                this.event_loop_ref = false;
+                this.globalThis.bunVM().us_loop_reference_count -|= 1;
+                _ = this.globalThis.bunVM().eventLoop().ready_tasks_count.fetchSub(1, .Monotonic);
+            }
+
+            this.outgoing_websocket = null;
+
             if (this.tcp.isClosed())
                 return;
 
             this.tcp.close(0, null);
-            this.outgoing_websocket = null;
-            _ = this.globalThis.bunVM().eventLoop().ready_tasks_count.fetchSub(1, .Monotonic);
         }
 
         pub const Export = shim.exportFunctions(.{

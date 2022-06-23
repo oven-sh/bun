@@ -11,7 +11,11 @@ describe("WebSocket", () => {
       ws.onopen = resolve;
       ws.onerror = reject;
     });
+    var closed = new Promise((resolve, reject) => {
+      ws.onclose = resolve;
+    });
     ws.close();
+    await closed;
   });
 
   it("should send and receive messages", async () => {
@@ -20,8 +24,7 @@ describe("WebSocket", () => {
       ws.onopen = resolve;
       ws.onerror = reject;
       ws.onclose = () => {
-        expect(ws.bufferedAmount).toBe(0);
-        resolve();
+        reject("WebSocket closed");
       };
     });
     var promise = new Promise((resolve, reject) => {
@@ -31,8 +34,8 @@ describe("WebSocket", () => {
         resolve();
       };
       ws.onerror = reject;
+      ws.send("Hello World!");
     });
-    ws.send("Hello World");
 
     await promise;
   });

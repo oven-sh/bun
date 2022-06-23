@@ -91,7 +91,9 @@ OPENSSL_LINUX_DIR = $(BUN_DEPS_DIR)/openssl/openssl-OpenSSL_1_1_1l
 CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) -DCMAKE_CXX_COMPILER=$(CXX) -DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) 
 CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 
-# Sqlite3 is lazily loaded on macOS
+# SQLite3 is dynamically linked on macOS 
+# it is about 30% faster to use system SQLite3 on macOS (something something kernel page cache)
+# on Linux, it is statically linked
 SQLITE_OBJECT =
 
 
@@ -240,7 +242,7 @@ INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -Isrc/napi
 
 ifeq ($(OS_NAME),linux)
 	INCLUDE_DIRS += $(LINUX_INCLUDE_DIRS)
-	SQLITE_OBJECT = $(realpath $(OBJ_DIR))/sqlite3.o
+	SQLITE_OBJECT = $(realpath $(BUN_DEPS_OUT_DIR))/sqlite3.o
 endif
 
 ifeq ($(OS_NAME),darwin)

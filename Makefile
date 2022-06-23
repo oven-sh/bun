@@ -49,6 +49,7 @@ PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
 DSYMUTIL ?= $(shell which dsymutil || which dsymutil-13)
 WEBKIT_DIR ?= $(realpath src/javascript/jsc/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
+WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
 
 NPM_CLIENT ?= $(shell which bun || which npm)
@@ -92,6 +93,7 @@ CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 
 # Sqlite3 is lazily loaded on macOS
 SQLITE_OBJECT =
+
 
 BITCODE_OR_SECTIONS=-fdata-sections -ffunction-sections
 EMBED_OR_EMIT_BITCODE=-emit-llvm
@@ -204,24 +206,30 @@ SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp) 
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp) 
 SRC_SQLITE_FILES := $(wildcard $(SRC_DIR)/sqlite/*.cpp) 
+SRC_BUILTINS_FILES := $(wildcard  src/javascript/jsc/builtins/*.cpp) 
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
 SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
-BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES)
+BUILTINS_OBJ_FILES := $(patsubst src/javascript/jsc/builtins/%.cpp,$(OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
+BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ \
 		-Isrc/javascript/jsc/bindings/ \
+		-Isrc/javascript/jsc/builtins/ \
 		-Isrc/javascript/jsc/bindings/webcore \
 		-Isrc/javascript/jsc/bindings/sqlite \
+		-Isrc/javascript/jsc/builtins/cpp \
 		-I$(WEBKIT_DIR)/Source/bmalloc  \
 		-I$(WEBKIT_DIR)/Source
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
+						-Isrc/javascript/jsc/builtins/ \
 					  -Isrc/javascript/jsc/bindings/ \
 					  -Isrc/javascript/jsc/bindings/webcore \
 					  -Isrc/javascript/jsc/bindings/sqlite \
+					  -Isrc/javascript/jsc/builtins/cpp \
 					  -I$(ZLIB_INCLUDE_DIR)
 					  
 
@@ -294,7 +302,7 @@ ifeq ($(OS_NAME), darwin)
 SYMBOLS=-exported_symbols_list $(realpath src/symbols.txt)
 PLATFORM_LINKER_FLAGS += -DDU_DISABLE_RENAMING=1 \
 		-lstdc++ \
-		-fno-keep-static-consts -fuse-ld=lld 
+		-fno-keep-static-consts
 endif
 
 ifeq ($(OS_NAME),linux)
@@ -393,23 +401,17 @@ tinycc:
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 		
 generate-builtins:
-	rm -f src/javascript/jsc/bindings/WebCoreBuiltins.cpp src/javascript/jsc/bindings/WebCoreBuiltins.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.cpp src/javascript/jsc/bindings/*Strategy*Builtins* src/javascript/jsc/bindings/*Stream*Builtins* src/javascript/jsc/bindings/WebCore*Builtins* || echo ""
-	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --force 
-	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src/javascript/jsc/bindings/builtins/js)  -o $(realpath src/javascript/jsc/bindings) --framework WebCore --wrappers-only
-	echo '//clang-format off' > /tmp/1.h
-	cat src/javascript/jsc/bindings/JSBufferPrototypeBuiltins.h >> /tmp/1.h
-	cat /tmp/1.h > src/javascript/jsc/bindings/JSBufferPrototypeBuiltins.h 
-	echo '//clang-format off' > /tmp/1.h
-	cat src/javascript/jsc/bindings/JSBufferConstructorBuiltins.h >> /tmp/1.h
-	cat /tmp/1.h > src/javascript/jsc/bindings/JSBufferConstructorBuiltins.h 
-	echo '//clang-format off' > /tmp/1.h
+	rm -f src/javascript/jsc/bindings/*Builtin*.cpp src/javascript/jsc/bindings/*Builtin*.h src/javascript/jsc/bindings/*Builtin*.cpp
+	rm -rf src/javascript/jsc/builtins/cpp
+	mkdir -p src/javascript/jsc/builtins/cpp
+	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/javascript/jsc/builtins/js  -o $(realpath src)/javascript/jsc/builtins/cpp --framework WebCore --force 
+	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/javascript/jsc/builtins/js  -o $(realpath src)/javascript/jsc/builtins/cpp --framework WebCore --wrappers-only
 	echo 'namespace Zig { class GlobalObject; }' >> /tmp/1.h
-	cat /tmp/1.h  src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h > src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1
-	mv src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h.1 src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h
-	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/javascript/jsc/bindings/WebCoreJSBuiltinInternals.h
-# We delete this file because our script already builds all .cpp files
-# We will get duplicate symbols if we don't delete it
-	rm src/javascript/jsc/bindings/WebCoreJSBuiltins.cpp
+	cat /tmp/1.h  src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h > src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h.1
+	mv src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h.1 src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h
+	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h
+	# this is the one we actually build
+	mv src/javascript/jsc/builtins/cpp/*JSBuiltin*.cpp src/javascript/jsc/builtins
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
@@ -967,6 +969,7 @@ jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JSInterfaceJIT.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSInterfaceJIT.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/llint/LLIntData.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/LLIntData.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/FunctionCodeBlock.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/FunctionCodeBlock.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/builtins/BuiltinExecutables.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/BuiltinExecutables.h
 	find $(WEBKIT_RELEASE_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
 # This is a workaround for a JSC bug that impacts aarch64
@@ -984,7 +987,7 @@ jsc-build-mac-compile:
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
 			-DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON \
-			-DCMAKE_BUILD_TYPE=Release \
+			-DCMAKE_BUILD_TYPE=relwithdebuginfo \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DENABLE_FTL_JIT=ON \
 			-G Ninja \
@@ -1021,8 +1024,8 @@ jsc-build-mac-compile-lto:
 		cmake --build $(WEBKIT_RELEASE_DIR_LTO) --config Release --target jsc
 
 jsc-build-mac-compile-debug:
-	mkdir -p $(WEBKIT_RELEASE_DIR) $(WEBKIT_DIR);
-	cd $(WEBKIT_RELEASE_DIR) && \
+	mkdir -p $(WEBKIT_DEBUG_DIR) $(WEBKIT_DIR);
+	cd $(WEBKIT_DEBUG_DIR) && \
 		ICU_INCLUDE_DIRS="$(HOMEBREW_PREFIX)opt/icu4c/include" \
 		cmake \
 			-DPORT="JSCOnly" \
@@ -1038,9 +1041,9 @@ jsc-build-mac-compile-debug:
 			-DENABLE_REMOTE_INSPECTOR=ON \
 			-DUSE_VISIBILITY_ATTRIBUTE=1 \
 			$(WEBKIT_DIR) \
-			$(WEBKIT_RELEASE_DIR) && \
+			$(WEBKIT_DEBUG_DIR) && \
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
-		cmake --build $(WEBKIT_RELEASE_DIR) --config Debug --target jsc
+		cmake --build $(WEBKIT_DEBUG_DIR) --config Debug --target jsc
 
 jsc-build-linux-compile-config:
 	mkdir -p $(WEBKIT_RELEASE_DIR)
@@ -1095,7 +1098,7 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
-jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES)
+jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
 
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles
@@ -1235,6 +1238,16 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		-g3 -c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM) \
+		-g3 -c -o $@ $<
+
+$(OBJ_DIR)/%.o: src/javascript/jsc/builtins/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \

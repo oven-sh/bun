@@ -4737,13 +4737,13 @@ pub fn printmem(comptime format: string, args: anytype) void {
 
 pub const Macro = struct {
     const JavaScript = @import("javascript_core");
-    const JSCBase = @import("./javascript/jsc/base.zig");
+    const JSCBase = @import("./bun.js/base.zig");
     const Resolver = @import("./resolver/resolver.zig").Resolver;
     const isPackagePath = @import("./resolver/resolver.zig").isPackagePath;
     const ResolveResult = @import("./resolver/resolver.zig").Result;
     const DotEnv = @import("./env_loader.zig");
-    const js = @import("./javascript/jsc/javascript_core_c_api.zig");
-    const Zig = @import("./javascript/jsc/bindings/exports.zig");
+    const js = @import("./bun.js/javascript_core_c_api.zig");
+    const Zig = @import("./bun.js/bindings/exports.zig");
     const Bundler = @import("./bundler.zig").Bundler;
     const MacroEntryPoint = @import("./bundler.zig").MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;

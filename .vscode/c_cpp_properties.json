@@ -2,26 +2,24 @@
   "configurations": [
     {
       "name": "Mac",
-      "forcedInclude": [
-        "${workspaceFolder}/src/javascript/jsc/bindings/root.h"
-      ],
+      "forcedInclude": ["${workspaceFolder}/src/bun.js/bindings/root.h"],
       "includePath": [
         "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/",
         "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers",
         "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/*",
         "${workspaceFolder}/src/JavaScript/jsc/bindings/",
         "${workspaceFolder}/src/JavaScript/jsc/WebKit/Source/bmalloc/",
-        "${workspaceFolder}/src/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers/"
+        "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/"
       ],
       "browse": {
         "path": [
-          "${workspaceFolder}/src/javascript/jsc/bindings/*",
+          "${workspaceFolder}/src/bun.js/bindings/*",
           "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/",
           "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers/**",
           "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/*",
           "${workspaceFolder}/src/JavaScript/jsc/bindings/**",
           "${workspaceFolder}/src/JavaScript/jsc/WebKit/Source/bmalloc/**",
-          "${workspaceFolder}/src/javascript/jsc/WebKit/WebKitBuild/Release/ICU/Headers/"
+          "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/"
         ],
         "limitSymbolsToIncludedHeaders": true,
         "databaseFilename": ".vscode/cppdb"

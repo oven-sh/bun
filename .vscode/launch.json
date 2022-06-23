@@ -125,7 +125,7 @@
       "name": "bun routes",
       "program": "bun-debug",
       "args": [],
-      "cwd": "${workspaceFolder}/integration/apps/routing",
+      "cwd": "${workspaceFolder}/test/apps/routing",
       "console": "internalConsole"
     },
     {
@@ -239,7 +239,7 @@
       "name": "wiptest",
       "program": "bun-debug",
       "args": ["wiptest", "transpiler"],
-      "cwd": "${workspaceFolder}/integration",
+      "cwd": "${workspaceFolder}/test",
       "console": "internalConsole"
     },
     {
@@ -293,7 +293,7 @@
       "name": "bun test",
       "program": "bun-debug",
       "args": ["wiptest"],
-      "cwd": "${workspaceFolder}/integration",
+      "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -304,8 +304,8 @@
       "request": "launch",
       "name": "bun test current",
       "program": "bun-debug",
-      "args": ["wiptest", "mmap"],
-      "cwd": "${workspaceFolder}/integration",
+      "args": ["wiptest", "websocket"],
+      "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -352,8 +352,8 @@
       "request": "launch",
       "name": "bun tes2t",
       "program": "bun-debug",
-      "args": ["add", "imagemin-webpack-plugin"],
-      "cwd": "/tmp/testfoo",
+      "args": ["/Users/jarred/Code/bun-invite/server.ts"],
+      "cwd": "/Users/jarred/Code/bun-invite",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -473,7 +473,7 @@
       "name": "Integration Test Dev",
       "program": "bun-debug",
       "args": [],
-      "cwd": "${workspaceFolder}/integration/snippets",
+      "cwd": "${workspaceFolder}/test/snippets",
       "console": "internalConsole"
     },
     {
@@ -563,7 +563,7 @@
       "name": "Integration Test Dev (no hmr)",
       "program": "bun-debug",
       "args": ["--disable-hmr"],
-      "cwd": "${workspaceFolder}/integration/snippets",
+      "cwd": "${workspaceFolder}/test/snippets",
       "console": "internalConsole"
     },
     {

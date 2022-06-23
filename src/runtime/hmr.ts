@@ -18,7 +18,7 @@ if (typeof window !== "undefined") {
     Loading,
     Loaded,
   }
-
+  var registryMap = new Map();
   type HTMLStylableElement = HTMLLinkElement | HTMLStyleElement;
   type CSSHMRInsertionPoint = {
     id: number;
@@ -1411,8 +1411,8 @@ if (typeof window !== "undefined") {
 
       const callbacksStart = performance.now();
       const origUpdaters = oldModule
-        ? oldModule.additional_updaters.slice()
-        : [];
+        ? new Set<CallableFunction>(oldModule.additional_updaters)
+        : new Set<CallableFunction>();
       try {
         switch (this.reloader) {
           case ReloadBehavior.hotReload: {
@@ -1424,7 +1424,8 @@ if (typeof window !== "undefined") {
               oldModule.previousVersion.id === oldModule.id &&
               oldModule.hasSameExports(oldModule.previousVersion);
 
-            if (oldModule) {
+            var thisMod = HMRModule.dependencies.modules[this.module_index];
+            if (oldModule && oldModule._update !== thisMod._update) {
               // ESM-based HMR has a disadvantage against CommonJS HMR
               // ES Namespace objects are not [[Configurable]]
               // That means we have to loop through all previous versions of updated modules that that have unique export names
@@ -1432,19 +1433,21 @@ if (typeof window !== "undefined") {
               // Otherwise, changes will not be reflected properly
               // However, we only need to loop through modules that add or remove exports, i.e. those are ones which have "real" exports
               if (!isOldModuleDead) {
-                HMRModule.dependencies.modules[
-                  this.module_index
-                ].additional_updaters.push(oldModule.update.bind(oldModule));
-                HMRModule.dependencies.modules[
-                  this.module_index
-                ].previousVersion = oldModule;
+                oldModule.boundUpdate ||= oldModule.update.bind(oldModule);
+
+                if (thisMod.additional_updaters)
+                  thisMod.additional_updaters.add(oldModule.boundUpdate);
+                else
+                  thisMod.additional_updaters = new Set([
+                    oldModule.boundUpdate,
+                  ]);
+
+                thisMod.previousVersion = oldModule;
               } else {
-                HMRModule.dependencies.modules[
-                  this.module_index
-                ].previousVersion = oldModule.previousVersion;
-                HMRModule.dependencies.modules[
-                  this.module_index
-                ].additional_updaters = origUpdaters;
+                if (oldModule.previousVersion)
+                  thisMod.previousVersion = oldModule.previousVersion;
+
+                thisMod.additional_updaters = origUpdaters;
               }
             }
 
@@ -1652,13 +1655,21 @@ if (typeof window !== "undefined") {
 
       return true;
     }
-
-    additional_files = [];
-    additional_updaters = [];
-    _update: (exports: Object) => void;
+    #updateFunction;
+    get _update() {
+      return this.#updateFunction;
+    }
+    set _update(value) {
+      this.#updateFunction = value;
+      var existing = registryMap.get(this.file_path);
+    }
+    boundUpdate;
     update() {
-      for (let update of this.additional_updaters) {
-        update(this.exports);
+      var updaters = registryMap.get(this.id);
+      if (updaters?.length) {
+        for (let update of updaters) {
+          update(this.exports);
+        }
       }
 
       this._update(this.exports);

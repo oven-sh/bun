@@ -47,7 +47,7 @@ BUN_BUILD_TAG = bun-v$(PACKAGE_JSON_VERSION)
 BUN_RELEASE_BIN = $(PACKAGE_DIR)/bun
 PRETTIER ?= $(shell which prettier || echo "./node_modules/.bin/prettier")
 DSYMUTIL ?= $(shell which dsymutil || which dsymutil-13)
-WEBKIT_DIR ?= $(realpath src/javascript/jsc/WebKit)
+WEBKIT_DIR ?= $(realpath src/bun.js/WebKit)
 WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
@@ -200,36 +200,36 @@ endif
 HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
 
-SRC_DIR := src/javascript/jsc/bindings
-OBJ_DIR := src/javascript/jsc/bindings-obj
+SRC_DIR := src/bun.js/bindings
+OBJ_DIR := src/bun.js/bindings-obj
 SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp) 
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp) 
 SRC_SQLITE_FILES := $(wildcard $(SRC_DIR)/sqlite/*.cpp) 
-SRC_BUILTINS_FILES := $(wildcard  src/javascript/jsc/builtins/*.cpp) 
+SRC_BUILTINS_FILES := $(wildcard  src/bun.js/builtins/*.cpp) 
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
 SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
-BUILTINS_OBJ_FILES := $(patsubst src/javascript/jsc/builtins/%.cpp,$(OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
+BUILTINS_OBJ_FILES := $(patsubst src/bun.js/builtins/%.cpp,$(OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
 BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ \
-		-Isrc/javascript/jsc/bindings/ \
-		-Isrc/javascript/jsc/builtins/ \
-		-Isrc/javascript/jsc/bindings/webcore \
-		-Isrc/javascript/jsc/bindings/sqlite \
-		-Isrc/javascript/jsc/builtins/cpp \
+		-Isrc/bun.js/bindings/ \
+		-Isrc/bun.js/builtins/ \
+		-Isrc/bun.js/bindings/webcore \
+		-Isrc/bun.js/bindings/sqlite \
+		-Isrc/bun.js/builtins/cpp \
 		-I$(WEBKIT_DIR)/Source/bmalloc  \
 		-I$(WEBKIT_DIR)/Source
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
-						-Isrc/javascript/jsc/builtins/ \
-					  -Isrc/javascript/jsc/bindings/ \
-					  -Isrc/javascript/jsc/bindings/webcore \
-					  -Isrc/javascript/jsc/bindings/sqlite \
-					  -Isrc/javascript/jsc/builtins/cpp \
+						-Isrc/bun.js/builtins/ \
+					  -Isrc/bun.js/bindings/ \
+					  -Isrc/bun.js/bindings/webcore \
+					  -Isrc/bun.js/bindings/sqlite \
+					  -Isrc/bun.js/builtins/cpp \
 					  -I$(ZLIB_INCLUDE_DIR)
 					  
 
@@ -401,17 +401,17 @@ tinycc:
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 		
 generate-builtins:
-	rm -f src/javascript/jsc/bindings/*Builtin*.cpp src/javascript/jsc/bindings/*Builtin*.h src/javascript/jsc/bindings/*Builtin*.cpp
-	rm -rf src/javascript/jsc/builtins/cpp
-	mkdir -p src/javascript/jsc/builtins/cpp
-	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/javascript/jsc/builtins/js  -o $(realpath src)/javascript/jsc/builtins/cpp --framework WebCore --force 
-	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/javascript/jsc/builtins/js  -o $(realpath src)/javascript/jsc/builtins/cpp --framework WebCore --wrappers-only
+	rm -f src/bun.js/bindings/*Builtin*.cpp src/bun.js/bindings/*Builtin*.h src/bun.js/bindings/*Builtin*.cpp
+	rm -rf src/bun.js/builtins/cpp
+	mkdir -p src/bun.js/builtins/cpp
+	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --force 
+	$(shell which python || which python2) $(realpath $(WEBKIT_DIR)/Source/JavaScriptCore/Scripts/generate-js-builtins.py) -i $(realpath src)/bun.js/builtins/js  -o $(realpath src)/bun.js/builtins/cpp --framework WebCore --wrappers-only
 	echo 'namespace Zig { class GlobalObject; }' >> /tmp/1.h
-	cat /tmp/1.h  src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h > src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h.1
-	mv src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h.1 src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h
-	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/javascript/jsc/builtins/cpp/WebCoreJSBuiltinInternals.h
+	cat /tmp/1.h  src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h > src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1
+	mv src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h.1 src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
+	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
 	# this is the one we actually build
-	mv src/javascript/jsc/builtins/cpp/*JSBuiltin*.cpp src/javascript/jsc/builtins
+	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
 
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
@@ -423,8 +423,8 @@ release-types:
 	cd packages/bun-types && npm publish
 
 format:
-	$(PRETTIER) --write integration/bunjs-only-snippets/*.js
-	$(PRETTIER) --write integration/bunjs-only-snippets/solid-dom-fixtures/**/*.js
+	$(PRETTIER) --write test/bun.js/*.js
+	$(PRETTIER) --write test/bun.js/solid-dom-fixtures/**/*.js
 
 lolhtml:
 	cd $(BUN_DEPS_DIR)/lol-html/ && cd $(BUN_DEPS_DIR)/lol-html/c-api && cargo build --release && cp target/release/liblolhtml.a $(BUN_DEPS_OUT_DIR)
@@ -443,7 +443,7 @@ boringssl: boringssl-build boringssl-copy
 boringssl-debug: boringssl-build-debug boringssl-copy
 
 compile-ffi-test:
-	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./integration/bunjs-only-snippets/ffi-test.c
+	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./test/bun.js/ffi-test.c
 
 libbacktrace:
 	cd $(BUN_DEPS_DIR)/libbacktrace && \
@@ -592,14 +592,14 @@ release: all-js jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld
 release-safe: all-js jsc-bindings-mac build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 
 jsc-check:
-	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/javascript/jsc/WebKit -f $(shell pwd)/src/javascript/jsc/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)	
+	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/bun.js/WebKit -f $(shell pwd)/src/bun.js/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)	
 	@ls $(JSC_INCLUDE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit include directory at $(JSC_INCLUDE_DIR)." && exit 1)	
 	@ls $(JSC_LIB)  >/dev/null 2>&1 || (echo "Failed to access WebKit lib directory at $(JSC_LIB)." && exit 1)	
 
 all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
 fmt-cpp:
-	cd src/javascript/jsc/bindings && clang-format *.cpp *.h -i
+	cd src/bun.js/bindings && clang-format *.cpp *.h -i
 
 fmt-zig:
 	cd src && zig fmt **/*.zig
@@ -699,7 +699,7 @@ jsc-build: $(JSC_BUILD_STEPS)
 jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 
 clone-submodules:
-	git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress
+	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 devcontainer: clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev runtime_js_dev
 
@@ -707,26 +707,26 @@ CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 
 
 jsc-bindings-headers: 
-	rm -f /tmp/build-jsc-headers src/javascript/jsc/bindings/headers.zig
-	touch src/javascript/jsc/bindings/headers.zig
-	mkdir -p src/javascript/jsc/bindings-obj/
+	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
+	touch src/bun.js/bindings/headers.zig
+	mkdir -p src/bun.js/bindings-obj/
 	$(ZIG) build headers-obj
 	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES_DEBUG) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)  -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
 	/tmp/build-jsc-headers
-	$(ZIG) translate-c src/javascript/jsc/bindings/headers.h > src/javascript/jsc/bindings/headers.zig
+	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
 	$(ZIG) run misctools/headers-cleaner.zig -lc
-	$(SED) -i '/pub const __darwin/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const __builtin/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const int/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const uint/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const intmax/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const uintmax/d' src/javascript/jsc/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const max_align_t/{N;N;N;d;}' src/javascript/jsc/bindings/headers.zig
-	$(SED) -i '/pub const ZigErrorCode/d' src/javascript/jsc/bindings/headers.zig
-	$(SED) -i '/pub const JSClassRef/d' src/javascript/jsc/bindings/headers.zig
-	cat src/javascript/jsc/bindings/headers.zig > /tmp/headers.zig
-	cat src/javascript/jsc/bindings/headers-replacements.zig /tmp/headers.zig > src/javascript/jsc/bindings/headers.zig
-	$(ZIG) fmt src/javascript/jsc/bindings/headers.zig
+	$(SED) -i '/pub const __darwin/d' src/bun.js/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const __builtin/d' src/bun.js/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const int/d' src/bun.js/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const uint/d' src/bun.js/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const intmax/d' src/bun.js/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const uintmax/d' src/bun.js/bindings/headers.zig || echo "";
+	$(SED) -i '/pub const max_align_t/{N;N;N;d;}' src/bun.js/bindings/headers.zig
+	$(SED) -i '/pub const ZigErrorCode/d' src/bun.js/bindings/headers.zig
+	$(SED) -i '/pub const JSClassRef/d' src/bun.js/bindings/headers.zig
+	cat src/bun.js/bindings/headers.zig > /tmp/headers.zig
+	cat src/bun.js/bindings/headers-replacements.zig /tmp/headers.zig > src/bun.js/bindings/headers.zig
+	$(ZIG) fmt src/bun.js/bindings/headers.zig
 
 
 MIMALLOC_OVERRIDE_FLAG ?= 
@@ -863,70 +863,70 @@ mkdir-dev:
 	mkdir -p $(DEBUG_PACKAGE_DIR)/bin
 
 test-install:
-	cd integration/scripts && $(NPM_CLIENT) install
+	cd test/scripts && $(NPM_CLIENT) install
 
 test-bun-dev:
-	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-dev.sh
-	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-dev-index-html.sh
+	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-dev.sh
+	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-dev-index-html.sh
 	
 test-dev-bun-dev:
-	BUN_BIN=$(DEBUG_BUN) bash integration/apps/bun-dev.sh
-	BUN_BIN=$(DEBUG_BUN) bash integration/apps/bun-dev-index-html.sh
+	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-dev.sh
+	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-dev-index-html.sh
 
 test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev
 
 copy-test-node-modules:
-	rm -rf integration/snippets/package-json-exports/node_modules || echo "";
-	cp -r integration/snippets/package-json-exports/_node_modules_copy integration/snippets/package-json-exports/node_modules || echo "";
+	rm -rf test/snippets/package-json-exports/node_modules || echo "";
+	cp -r test/snippets/package-json-exports/_node_modules_copy test/snippets/package-json-exports/node_modules || echo "";
 kill-bun:
 	-killall -9 bun bun-debug
 
 test-dev-create-next: 
-	BUN_BIN=$(DEBUG_BUN) bash integration/apps/bun-create-next.sh
+	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-create-next.sh
 
 test-dev-create-react: 
-	BUN_BIN=$(DEBUG_BUN) bash integration/apps/bun-create-react.sh
+	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-create-react.sh
 
 test-create-next: 
-	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-create-next.sh
+	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-create-next.sh
 
 test-bun-run: 
-	cd integration/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-run-check.sh
+	cd test/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-run-check.sh
 
 test-bun-install: test-bun-install-git-status
-	cd integration/apps && JS_RUNTIME=$(RELEASE_BUN) NPM_CLIENT=$(RELEASE_BUN) bash ./bun-install.sh
-	cd integration/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-install-utf8.sh
+	cd test/apps && JS_RUNTIME=$(RELEASE_BUN) NPM_CLIENT=$(RELEASE_BUN) bash ./bun-install.sh
+	cd test/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-install-utf8.sh
 
 test-bun-install-git-status:
-	cd integration/apps && JS_RUNTIME=$(RELEASE_BUN) BUN_BIN=$(RELEASE_BUN) bash ./bun-install-lockfile-status.sh
+	cd test/apps && JS_RUNTIME=$(RELEASE_BUN) BUN_BIN=$(RELEASE_BUN) bash ./bun-install-lockfile-status.sh
 
 test-dev-bun-install: test-dev-bun-install-git-status
-	cd integration/apps && JS_RUNTIME=$(DEBUG_BUN) NPM_CLIENT=$(DEBUG_BUN) bash ./bun-install.sh
-	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-utf8.sh
+	cd test/apps && JS_RUNTIME=$(DEBUG_BUN) NPM_CLIENT=$(DEBUG_BUN) bash ./bun-install.sh
+	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-utf8.sh
 
 test-dev-bun-install-git-status:
-	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-lockfile-status.sh
+	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-lockfile-status.sh
 
 test-create-react: 
-	BUN_BIN=$(RELEASE_BUN) bash integration/apps/bun-create-react.sh
+	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-create-react.sh
 	
 test-with-hmr: kill-bun copy-test-node-modules
-	BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
+	BUN_BIN=$(RELEASE_BUN) node test/scripts/browser.js
 
 test-no-hmr: kill-bun copy-test-node-modules
 	-killall bun -9;
-	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(RELEASE_BUN) node integration/scripts/browser.js
+	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(RELEASE_BUN) node test/scripts/browser.js
 
 test-dev-with-hmr: copy-test-node-modules
 	-killall bun-debug -9;
-	BUN_BIN=$(DEBUG_BUN) node integration/scripts/browser.js
+	BUN_BIN=$(DEBUG_BUN) node test/scripts/browser.js
 
 test-dev-no-hmr: copy-test-node-modules
 	-killall bun-debug -9;
-	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(DEBUG_BUN) node integration/scripts/browser.js
+	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(DEBUG_BUN) node test/scripts/browser.js
 
 test-dev-bun-run: 
-	cd integration/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
+	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
 
 test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev
 test-dev-bunjs: 
@@ -1065,7 +1065,7 @@ jsc-build-linux-compile-config:
 			$(WEBKIT_RELEASE_DIR)
 
 # If you get "Error: could not load cache"
-# run  rm -rf src/javascript/jsc/WebKit/CMakeCache.txt
+# run  rm -rf src/bun.js/WebKit/CMakeCache.txt
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
 		cd $(WEBKIT_RELEASE_DIR)  && \
@@ -1084,7 +1084,7 @@ jsc-build-mac-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
 
 clean-jsc:
-	cd src/javascript/jsc/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/javascript/jsc/WebKit/WebKitBuild
+	cd src/bun.js/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/bun.js/WebKit/WebKitBuild
 clean-bindings: 
 	rm -rf $(OBJ_DIR)/*.o
 	rm -rf $(OBJ_DIR)/webcore/*.o
@@ -1207,7 +1207,7 @@ endif
 bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
 
 wasm-return1:
-	zig build-lib -OReleaseSmall integration/bunjs-only-snippets/wasm-return-1-test.zig -femit-bin=integration/bunjs-only-snippets/wasm-return-1-test.wasm -target wasm32-freestanding
+	zig build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
 
 
 
@@ -1247,7 +1247,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
 
-$(OBJ_DIR)/%.o: src/javascript/jsc/builtins/%.cpp
+$(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
@@ -1258,8 +1258,8 @@ $(OBJ_DIR)/%.o: src/javascript/jsc/builtins/%.cpp
 		-g3 -c -o $@ $<
 
 sizegen:
-	$(CXX) src/javascript/jsc/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
-	$(BUN_TMP_DIR)/sizegen > src/javascript/jsc/bindings/sizes.zig
+	$(CXX) src/bun.js/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
+	$(BUN_TMP_DIR)/sizegen > src/bun.js/bindings/sizes.zig
 
 
 # Linux uses bundled SQLite3
@@ -1401,7 +1401,7 @@ run-unit:
 test: build-unit run-unit
 
 integration-test-dev: 
-	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node integration/scripts/browser.js
+	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node test/scripts/browser.js
 
 copy-install:
 	cp src/cli/install.sh ../bun.sh/docs/install.html

@@ -33,6 +33,28 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
         pub fn schedule(task: *ThreadPool.Task) void {
             get().schedule(ThreadPool.Batch.from(task));
         }
+
+        pub fn go(allocator: std.mem.Allocator, comptime Context: type, context: Context, comptime function: fn (Context) void) !void {
+            const TaskType = struct {
+                task: Task,
+                context: Context,
+                allocator: std.mem.Allocator,
+
+                pub fn callback(task: *Task) void {
+                    var this_task = @fieldParentPtr(@This(), "task", task);
+                    function(this_task.context);
+                    this_task.allocator.destroy(this_task);
+                }
+            };
+
+            var task_ = try allocator.create(TaskType);
+            task_.* = .{
+                .task = .{ .callback = TaskType.callback },
+                .context = context,
+                .allocator = allocator,
+            };
+            schedule(&task_.task);
+        }
     };
 }
 

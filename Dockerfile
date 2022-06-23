@@ -428,7 +428,7 @@ ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch6
 ENV CI 1
 ENV BROWSER_EXECUTABLE /usr/bin/chromium
 
-COPY ./integration ${BUN_DIR}/integration
+COPY ./test ${BUN_DIR}/test
 COPY Makefile ${BUN_DIR}/Makefile
 COPY package.json ${BUN_DIR}/package.json
 COPY .docker/run-test.sh ${BUN_DIR}/run-test.sh

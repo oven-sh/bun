@@ -699,12 +699,12 @@ fn NewLexer_(
                         } else if (is_json and lexer.code_point < 0x20) {
                             try lexer.syntaxError();
                         } else if (comptime quote == '"' or quote == '\'') {
-                            // this is only faster at the 800 KB or so mark
-                            // so, pretty good for source maps
-                            // but probably not a lot else
                             const remainder = lexer.source.contents[lexer.current..];
-                            if (remainder.len > 16_000) {
-                                lexer.current += indexOfInterestingCharacterInStringLiteral(remainder, quote) orelse remainder.len;
+                            if (remainder.len >= 4096) {
+                                lexer.current += indexOfInterestingCharacterInStringLiteral(remainder, quote) orelse {
+                                    lexer.step();
+                                    continue;
+                                };
                                 lexer.end = lexer.current -| 1;
                                 lexer.step();
                                 continue;
@@ -3001,7 +3001,7 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
     const backslash = @splat(strings.ascii_vector_size, @as(u8, '\\'));
     const V1x16 = strings.AsciiVectorU1;
 
-    while (strings.ascii_vector_size < text.len) {
+    while (text.len >= strings.ascii_vector_size) {
         const vec: strings.AsciiVector = text[0..strings.ascii_vector_size].*;
 
         const any_significant =
@@ -3010,11 +3010,11 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
             @bitCast(V1x16, quote_ == vec) |
             @bitCast(V1x16, backslash == vec);
 
-        const bitmask = @ptrCast(*const u16, &any_significant).*;
-        const first = @ctz(u16, bitmask);
-
-        if (first < strings.ascii_vector_size) {
-            return first + (text_.len - text.len);
+        if (@reduce(.Max, any_significant) > 0) {
+            const bitmask = @ptrCast(*const u16, &any_significant).*;
+            const first = @ctz(u16, bitmask);
+            std.debug.assert(first < strings.ascii_vector_size);
+            return first + (@ptrToInt(text.ptr) - @ptrToInt(text_.ptr));
         }
         text = text[strings.ascii_vector_size..];
     }

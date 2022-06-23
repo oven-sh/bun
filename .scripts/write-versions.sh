@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euxo pipefail
 
-WEBKIT_VERSION=$(git rev-parse HEAD:./src/javascript/jsc/WebKit)
+WEBKIT_VERSION=$(git rev-parse HEAD:./src/bun.js/WebKit)
 MIMALLOC_VERSION=$(git rev-parse HEAD:./src/deps/mimalloc)
 LIBARCHIVE_VERSION=$(git rev-parse HEAD:./src/deps/libarchive)
 PICOHTTPPARSER_VERSION=$(git rev-parse HEAD:./src/deps/picohttpparser)

@@ -1,7 +1,7 @@
 .vscode/launch.json linguist-generated
 src/api/schema.d.ts linguist-generated
 src/api/schema.js linguist-generated
-src/javascript/jsc/bindings/sqlite/sqlite3.c linguist-vendored
-src/javascript/jsc/bindings/sqlite/sqlite3_local.h linguist-vendored
+src/bun.js/bindings/sqlite/sqlite3.c linguist-vendored
+src/bun.js/bindings/sqlite/sqlite3_local.h linguist-vendored
 *.lockb binary diff=lockb
 *.zig text eol=lf

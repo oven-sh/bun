@@ -183,7 +183,7 @@ bun.js prefers Web API compatibility or node API compatibility instead of design
 - `.env` files automatically load into `process.env` and `Bun.env`
 - top level await
 
-The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/javascript/jsc/bindings/webcore/JSFetchHeaders.cpp#L1).
+The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/bun.js/bindings/webcore/JSFetchHeaders.cpp#L1).
 
 `cat` clone that runs [2x faster than GNU cat](https://twitter.com/jarredsumner/status/1511707890708586496) for large files on Linux
 
@@ -2667,7 +2667,7 @@ const out = encode_png(
 );
 ```
 
-The [auto-generated wrapper](https://github.com/Jarred-Sumner/bun/blob/c6d732eee2721cd6191672cbe2c57fb17c3fffe4/src/javascript/jsc/ffi.exports.js#L146-L148) converts the pointer to a TypedArray
+The [auto-generated wrapper](https://github.com/Jarred-Sumner/bun/blob/c6d732eee2721cd6191672cbe2c57fb17c3fffe4/src/bun.js/ffi.exports.js#L146-L148) converts the pointer to a TypedArray
 
 <details>
 
@@ -2766,7 +2766,7 @@ require("./my-node-module.node");
 import.meta.require("./my-node-module.node");
 ```
 
-Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore builtin function](https://github.com/Jarred-Sumner/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/javascript/jsc/bindings/builtins/js/JSZigGlobalObject.js#L26).
+Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore builtin function](https://github.com/Jarred-Sumner/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/bun.js/bindings/builtins/js/JSZigGlobalObject.js#L26).
 
 ### `Bun.Transpiler`
 
@@ -3092,7 +3092,7 @@ gh auth login
 gh repo clone Jarred-Sumner/bun . -- --depth=1 --progress -j8
 
 # update all submodules except webkit because webkit takes awhile and it's already compiled for you.
-git -c submodule."src/javascript/jsc/WebKit".update=none submodule update --init --recursive --depth=1 --progress
+git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 # Compile bun dependencies (zig is already compiled)
 make devcontainer
@@ -3153,7 +3153,7 @@ make vendor jsc identifier-cache dev
 First ensure the node dependencies are installed
 
 ```bash
-cd integration/snippets
+cd test/snippets
 npm i
 ```
 

@@ -3,7 +3,7 @@
 set -euxo pipefail
 
 bun install
-bun install --cwd ./integration/snippets
-bun install --cwd ./integration/scripts
+bun install --cwd ./test/snippets
+bun install --cwd ./test/scripts
 
 make $BUN_TEST_NAME

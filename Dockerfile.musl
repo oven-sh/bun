@@ -130,9 +130,9 @@
 
 # WORKDIR /bun
 
-# COPY ./integration /bun/integration
-# COPY ./integration/snippets/package-json-exports/_node_modules_copy /bun/integration/snippets/package-json-exports/_node_modules_copy 
-# CMD [ "bash", "-c", "npm install && cd /bun/integration/snippets && npm install && cd /bun && make copy-test-node-modules test-all"]
+# COPY ./test /bun/test
+# COPY ./test/snippets/package-json-exports/_node_modules_copy /bun/test/snippets/package-json-exports/_node_modules_copy 
+# CMD [ "bash", "-c", "npm install && cd /bun/test/snippets && npm install && cd /bun && make copy-test-node-modules test-all"]
 
 
 # # FROM bun

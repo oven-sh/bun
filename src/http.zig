@@ -1452,7 +1452,7 @@ pub const RequestContext = struct {
             handler.start_timer = std.time.Timer.start() catch unreachable;
 
             Output.Source.configureThread();
-            @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
+            @import("bun.js/javascript_core_c_api.zig").JSCInitialize();
 
             js_ast.Stmt.Data.Store.create(bun.default_allocator);
             js_ast.Expr.Data.Store.create(bun.default_allocator);

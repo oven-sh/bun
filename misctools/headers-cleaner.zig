@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub fn main() anyerror!void {
     const headers_zig_file_src: std.builtin.SourceLocation = @src();
-    var paths = [_][]const u8{ std.mem.span(headers_zig_file_src.file), "../../src/javascript/jsc/bindings/headers.zig" };
+    var paths = [_][]const u8{ std.mem.span(headers_zig_file_src.file), "../../src/bun.js/bindings/headers.zig" };
     const headers_zig_file = try std.fs.path.resolve(std.heap.c_allocator, &paths);
     std.debug.print("Writing to {s}", .{headers_zig_file});
     var headers_zig: std.fs.File = try std.fs.openFileAbsolute(headers_zig_file, .{ .mode = .read_write });

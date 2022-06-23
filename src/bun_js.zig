@@ -22,7 +22,7 @@ const panicky = @import("panic_handler.zig");
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
-const configureTransformOptionsForBun = @import("./javascript/jsc/config.zig").configureTransformOptionsForBun;
+const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("cli.zig").Command;
 const bundler = @import("bundler.zig");
 const NodeModuleBundle = @import("node_module_bundle.zig").NodeModuleBundle;
@@ -42,7 +42,7 @@ pub const Run = struct {
 
     pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
         if (comptime JSC.is_bindgen) unreachable;
-        @import("javascript/jsc/javascript_core_c_api.zig").JSCInitialize();
+        @import("bun.js/javascript_core_c_api.zig").JSCInitialize();
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);

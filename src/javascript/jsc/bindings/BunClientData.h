@@ -23,7 +23,7 @@ class DOMWrapperWorld;
 #include "JavaScriptCore/WeakInlines.h"
 #include "JavaScriptCore/IsoSubspacePerVM.h"
 
-#include "BunBuiltins.h"
+#include "WebCoreJSBuiltins.h"
 
 namespace WebCore {
 using namespace JSC;

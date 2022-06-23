@@ -1214,7 +1214,7 @@ wasm-return1:
 
 EMIT_LLVM_FOR_RELEASE=-emit-llvm -flto="full"
 EMIT_LLVM_FOR_DEBUG= 
-EMIT_LLVM=$(EMIT_LLVM_FOR_DEBUG)
+EMIT_LLVM=$(EMIT_LLVM_FOR_RELEASE)
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest

@@ -107,7 +107,6 @@ endif
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH = 
 AR=llvm-ar-13
-SQLITE_OBJECT = $(realpath $(OBJ_DIR))/sqlite3.o
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
@@ -241,6 +240,7 @@ INCLUDE_DIRS := $(UWS_INCLUDE_DIR) -I$(BUN_DEPS_DIR)/mimalloc/include -Isrc/napi
 
 ifeq ($(OS_NAME),linux)
 	INCLUDE_DIRS += $(LINUX_INCLUDE_DIRS)
+	SQLITE_OBJECT = $(realpath $(OBJ_DIR))/sqlite3.o
 endif
 
 ifeq ($(OS_NAME),darwin)

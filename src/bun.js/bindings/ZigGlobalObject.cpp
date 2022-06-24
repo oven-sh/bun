@@ -328,13 +328,13 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure)
     : JSC::JSGlobalObject(vm, structure, &s_globalObjectMethodTable)
+    , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(WebCore::DOMWrapperWorld::create(vm, WebCore::DOMWrapperWorld::Type::Normal))
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(vm)
 
 {
-    m_bunVM = Bun__getVM();
 
     m_scriptExecutionContext = new WebCore::ScriptExecutionContext(&vm, this);
 }
@@ -378,6 +378,8 @@ void GlobalObject::setConsole(void* console)
 }
 
 #pragma mark - Globals
+
+static JSC_DECLARE_HOST_FUNCTION(functionFulfillModuleSync);
 
 JSC_DECLARE_CUSTOM_GETTER(functionLazyLoadStreamProtoypeMap_getter);
 
@@ -1714,7 +1716,38 @@ void GlobalObject::finishCreation(VM& vm)
             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::ArrayBufferSink);
             init.set(prototype);
         });
+    m_importMetaObjectStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            JSC::JSObject* metaProperties = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 10);
+            auto& vm = init.vm;
+            auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            auto clientData = WebCore::clientData(vm);
 
+            metaProperties->putDirect(vm, clientData->builtinNames().filePublicName(), jsEmptyString(vm), 0);
+            metaProperties->putDirect(vm, clientData->builtinNames().dirPublicName(), jsEmptyString(vm), 0);
+            metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), jsEmptyString(vm), 0);
+            metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), jsEmptyString(vm), 0);
+            metaProperties->putDirect(vm, clientData->builtinNames().mainPublicName(), jsBoolean(false), 0);
+            metaProperties->putDirectBuiltinFunction(vm, globalObject,
+                clientData->builtinNames().requirePublicName(), jsZigGlobalObjectRequireCodeGenerator(vm), 0);
+            metaProperties->putDirectBuiltinFunction(vm, globalObject,
+                clientData->builtinNames().loadModulePublicName(), jsZigGlobalObjectLoadModuleCodeGenerator(vm), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+            metaProperties->putDirectBuiltinFunction(vm, globalObject,
+                clientData->builtinNames().requireModulePublicName(), jsZigGlobalObjectRequireModuleCodeGenerator(vm), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+
+            metaProperties->putDirectNativeFunction(vm, globalObject, clientData->builtinNames().resolvePublicName(), 1,
+                functionImportMeta__resolve,
+                NoIntrinsic,
+                JSC::PropertyAttribute::Function | 0);
+            metaProperties->putDirectNativeFunction(
+                vm, globalObject, clientData->builtinNames().resolveSyncPublicName(),
+                1,
+                functionImportMeta__resolveSync,
+                NoIntrinsic,
+                JSC::PropertyAttribute::Function | 0);
+
+            init.set(metaProperties);
+        });
     m_lazyReadableStreamPrototypeMap.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
             auto* map = JSC::JSMap::create(init.owner, init.vm, init.owner->mapStructure());
@@ -1751,7 +1784,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(29);
+    extraStaticGlobals.reserveCapacity(30);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -1844,7 +1877,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.isAbortSignalPrivateName(), JSFunction::create(vm, this, 1, String(), isAbortSignal), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function));
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
 
     extraStaticGlobals.releaseBuffer();
@@ -1855,6 +1888,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.consumeReadableStreamPrivateName(), readableStreamConsumeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.readableStreamToArrayPrivateName(), readableStreamReadableStreamToArrayCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.assignDirectStreamPrivateName(), readableStreamInternalsAssignDirectStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+
+    // putDirectBuiltinFunction(vm, this, builtinNames.loadModulePrivateName(), jsZigGlobalObjectInternalsLoadModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    // putDirectBuiltinFunction(vm, this, builtinNames.requireModulePrivateName(), jsZigGlobalObjectInternalsRequireModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
 
@@ -2096,6 +2132,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
+    thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
 
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
@@ -2200,6 +2237,40 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
     return result;
 }
 
+static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue key = callFrame->argument(0);
+
+    auto moduleKey = key.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(JSC::jsUndefined()));
+
+    if (moduleKey.endsWith(".node"_s)) {
+        throwException(globalObject, scope, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of importSync."_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto specifier = Zig::toZigString(moduleKey);
+    ErrorableResolvedSource res;
+    res.success = false;
+    res.result.err.code = 0;
+    res.result.err.ptr = nullptr;
+
+    Zig__GlobalObject__fetch(&res, globalObject, &specifier, &specifier);
+
+    if (!res.success) {
+        throwException(scope, res.result.err, globalObject);
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    auto provider = Zig::SourceProvider::create(res.result.value);
+    globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
+    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+}
+
 JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue value1, JSValue value2)
@@ -2275,14 +2346,16 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSObject* metaProperties = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    JSC::JSObject* metaProperties = JSC::constructEmptyObject(globalObject, reinterpret_cast<GlobalObject*>(globalObject)->ImportMetaObjectPrototype());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto clientData = WebCore::clientData(vm);
     JSString* keyString = key.toStringOrNull(globalObject);
     if (UNLIKELY(!keyString)) {
-        return metaProperties;
+        RELEASE_AND_RETURN(scope, metaProperties);
     }
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
     auto view = keyString->value(globalObject);
     auto index = view.reverseFind('/', view.length());
     if (index != WTF::notFound) {
@@ -2293,28 +2366,16 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
             JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));
     } else {
         metaProperties->putDirect(vm, clientData->builtinNames().filePublicName(), keyString);
-        metaProperties->putDirect(vm, clientData->builtinNames().dirPublicName(), jsEmptyString(vm));
     }
 
-    metaProperties->putDirect(vm, clientData->builtinNames().resolvePublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
-            clientData->builtinNames().resolvePublicName().string(), functionImportMeta__resolve),
-        JSC::PropertyAttribute::Function | 0);
-    metaProperties->putDirect(vm, clientData->builtinNames().resolveSyncPublicName(),
-        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject), 0,
-            clientData->builtinNames().resolveSyncPublicName().string(), functionImportMeta__resolveSync),
-        JSC::PropertyAttribute::Function | 0);
+    metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), keyString);
+    if (view.startsWith('/')) {
+        metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), JSC::JSValue(JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string())));
+    } else {
+        metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), keyString);
+    }
 
-    metaProperties->putDirectBuiltinFunction(vm, globalObject, clientData->builtinNames().requirePublicName(),
-        jsZigGlobalObjectRequireCodeGenerator(vm),
-        JSC::PropertyAttribute::Builtin | 0);
-
-    metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), key);
-    metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), JSC::JSValue(JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string())));
-
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    return metaProperties;
+    RELEASE_AND_RETURN(scope, metaProperties);
 }
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,

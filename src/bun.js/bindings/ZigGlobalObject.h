@@ -153,6 +153,7 @@ public:
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* ImportMetaObjectPrototype() { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     JSC::Structure* ArrayBufferSinkStructure() { return m_JSArrayBufferSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* ArrayBufferSink() { return m_JSArrayBufferSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue ArrayBufferSinkPrototype() { return m_JSArrayBufferSinkClassStructure.prototypeInitializedOnMainThread(this); }
@@ -183,6 +184,7 @@ private:
     LazyClassStructure m_NapiClassStructure;
     LazyClassStructure m_JSArrayBufferSinkClassStructure;
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

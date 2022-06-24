@@ -52,8 +52,8 @@ export var __toModule = (module) => {
   );
 };
 
-var tagSymbol = Symbol("CommonJSTransformed");
-var cjsRequireSymbol = Symbol("CommonJS");
+var tagSymbol = Symbol.for("CommonJSTransformed");
+var cjsRequireSymbol = Symbol.for("CommonJS");
 export var __commonJS = (cb, name) => {
   var mod;
   var has_run = false;

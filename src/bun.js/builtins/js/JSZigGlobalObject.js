@@ -28,7 +28,7 @@ function require(name) {
   if (typeof name !== "string") {
     @throwTypeError("require() expects a string as its argument");
   }
-
+  
   const resolved = this.resolveSync(name, this.path);
   var requireCache = (globalThis[Symbol.for("_requireCache")] ||= new @Map);
   var cached = requireCache.@get(resolved);
@@ -39,6 +39,7 @@ function require(name) {
 
     return cached;
   }
+
 
   // TODO: remove this hardcoding
   if (resolved.endsWith(".json")) {
@@ -56,7 +57,133 @@ function require(name) {
     var exports = Bun.TOML.parse(fs.readFileSync(resolved, "utf8"));
     requireCache.@set(resolved, exports);
     return exports;
+  } else {
+    var exports = this.requireModule(this, resolved);
+    requireCache.@set(resolved, exports);
+    return exports;
+  }
+}
+
+function loadModule(meta, resolvedSpecifier) {
+  "use strict";
+  var Loader = globalThis.Loader;
+
+  var queue = @createFIFO();
+  var key = resolvedSpecifier;
+  var registry = Loader.registry;
+  while (key) {
+    @fulfillModuleSync(key);
+    var entry = registry.@get(key);
+
+    // entry.fetch is a Promise<SourceCode>
+    // SourceCode is not a string, it's a JSC::SourceCode object
+    // this pulls it out of the promise without delaying by a tick
+    // the promise is already fullfilled by @fullfillModuleSync
+    var sourceCodeObject = @getPromiseInternalField(
+      entry.fetch,
+      @promiseFieldReactionsOrResult
+    );
+
+    // parseModule() returns a Promise, but the value is already fulfilled
+    // so we just pull it out of the promise here once again
+    // But, this time we do it a little more carefully because this is a JSC function call and not bun source code
+    var moduleRecordPromise = Loader.parseModule(key, sourceCodeObject);
+    var module = entry.module;
+    if (!module && moduleRecordPromise && @isPromise(moduleRecordPromise)) {
+      var reactionsOrResult = @getPromiseInternalField(
+        moduleRecordPromise,
+        @promiseFieldReactionsOrResult
+      );
+      var flags = @getPromiseInternalField(
+        moduleRecordPromise,
+        @promiseFieldFlags
+      );
+      var state = flags & @promiseStateMask;
+
+      // this branch should never happen, but just to be safe
+      if (
+        state === @promiseStatePending ||
+        (reactionsOrResult && @isPromise(reactionsOrResult))
+      ) {
+        @throwTypeError(`require() async module \"${key}\" is unsupported`);
+      } else if (state === @promiseStateRejected) {
+        // this branch happens if there is a syntax error and somehow bun didn't catch it
+        // "throw" is unsupported here, so we use "throwTypeError" (TODO: use SyntaxError but preserve the specifier)
+        @throwTypeError(
+          `${
+            reactionsOrResult?.message ?? "An error occurred"
+          } while parsing module \"${key}\"`
+        );
+      }
+      entry.module = module = reactionsOrResult;
+    } else if (moduleRecordPromise && !module) {
+      entry.module = module = moduleRecordPromise;
+    }
+
+    // This is very similar to "requestInstantiate" in ModuleLoader.js in JavaScriptCore.
+    @setStateToMax(entry, @ModuleLink);
+    var dependenciesMap = module.dependenciesMap;
+    var requestedModules = Loader.requestedModules(module);
+    var dependencies = @newArrayWithSize(requestedModules.length);
+
+    for (var i = 0, length = requestedModules.length; i < length; ++i) {
+      var depName = requestedModules[i];
+
+      // optimization: if it starts with a slash then it's an absolute path
+      // we don't need to run the resolver a 2nd time
+      var depKey =
+        depName[0] === "/"
+          ? depName
+          : Loader.resolveSync(depName, key, @undefined);
+      var depEntry = Loader.ensureRegistered(depKey);
+
+      if (depEntry.state < @ModuleLink) {
+        queue.push(depKey);
+      }
+
+      @putByValDirect(dependencies, i, depEntry);
+      dependenciesMap.@set(depName, depEntry);
+    }
+
+    entry.dependencies = dependencies;
+    key = queue.shift();
+    while (key && (registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {
+      key = queue.shift();
+    }
   }
 
-  @throwTypeError(`Dynamic require isn't supported for file type: ${resolved.subsring(resolved.lastIndexOf(".") + 1) || resolved}`);
+  var linkAndEvaluateResult = Loader.linkAndEvaluateModule(
+    resolvedSpecifier,
+    @undefined
+  );
+  if (linkAndEvaluateResult && @isPromise(linkAndEvaluateResult)) {
+    // if you use top-level await, or any dependencies use top-level await, then we throw here
+    // this means the module will still actually load eventually, but that's okay.
+    @throwTypeError(
+      `require() async module \"${resolvedSpecifier}\" is unsupported`
+    );
+  }
+
+  return Loader.registry.@get(resolvedSpecifier);
+
+}
+
+function requireModule(meta, resolved) {
+  "use strict";
+  var Loader = globalThis.Loader;
+  var entry = Loader.registry.@get(resolved);
+
+  if (!entry || !entry.evaluated) {
+    entry = this.loadModule(meta, resolved); 
+  }
+
+  if (!entry || !entry.evaluated || !entry.module) {
+    @throwTypeError(`require() failed to evaluate module \"${resolved}\". This is an internal consistentency error.`);
+  }
+  var exports = Loader.getModuleNamespaceObject(entry.module);
+  var commonJS = exports.default;
+  if (commonJS && @isObject(commonJS) && Symbol.for("CommonJS") in commonJS) {
+    return commonJS();
+  }
+  return exports;
 }

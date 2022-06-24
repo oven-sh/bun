@@ -51,17 +51,33 @@ extern const char* const s_jsZigGlobalObjectRequireCode;
 extern const int s_jsZigGlobalObjectRequireCodeLength;
 extern const JSC::ConstructAbility s_jsZigGlobalObjectRequireCodeConstructAbility;
 extern const JSC::ConstructorKind s_jsZigGlobalObjectRequireCodeConstructorKind;
+extern const char* const s_jsZigGlobalObjectLoadModuleCode;
+extern const int s_jsZigGlobalObjectLoadModuleCodeLength;
+extern const JSC::ConstructAbility s_jsZigGlobalObjectLoadModuleCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsZigGlobalObjectLoadModuleCodeConstructorKind;
+extern const char* const s_jsZigGlobalObjectRequireModuleCode;
+extern const int s_jsZigGlobalObjectRequireModuleCodeLength;
+extern const JSC::ConstructAbility s_jsZigGlobalObjectRequireModuleCodeConstructAbility;
+extern const JSC::ConstructorKind s_jsZigGlobalObjectRequireModuleCodeConstructorKind;
 
 #define WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_DATA(macro) \
     macro(require, jsZigGlobalObjectRequire, 1) \
+    macro(loadModule, jsZigGlobalObjectLoadModule, 2) \
+    macro(requireModule, jsZigGlobalObjectRequireModule, 2) \
 
 #define WEBCORE_BUILTIN_JSZIGGLOBALOBJECT_REQUIRE 1
+#define WEBCORE_BUILTIN_JSZIGGLOBALOBJECT_LOADMODULE 1
+#define WEBCORE_BUILTIN_JSZIGGLOBALOBJECT_REQUIREMODULE 1
 
 #define WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_CODE(macro) \
     macro(jsZigGlobalObjectRequireCode, require, ASCIILiteral(), s_jsZigGlobalObjectRequireCodeLength) \
+    macro(jsZigGlobalObjectLoadModuleCode, loadModule, ASCIILiteral(), s_jsZigGlobalObjectLoadModuleCodeLength) \
+    macro(jsZigGlobalObjectRequireModuleCode, requireModule, ASCIILiteral(), s_jsZigGlobalObjectRequireModuleCodeLength) \
 
 #define WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_FUNCTION_NAME(macro) \
+    macro(loadModule) \
     macro(require) \
+    macro(requireModule) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

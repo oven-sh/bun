@@ -286,16 +286,13 @@ pub const Runtime = struct {
         /// See also https://github.com/babel/babel/pull/2972
         /// See also https://github.com/facebook/react/issues/5138
         jsx_optimization_inline: bool = false,
-
         jsx_optimization_hoist: bool = false,
 
         trim_unused_imports: bool = false,
         should_fold_numeric_constants: bool = false,
 
-        /// inject this at the top of the file?
-        /// ```js
-        /// var require = import.meta.require.bind(import.meta);
-        /// ```
+        /// Use `import.meta.require()` instead of require()? 
+        /// This is only supported in Bun.
         dynamic_require: bool = false,
 
         replace_exports: ReplaceableExport.Map = .{},

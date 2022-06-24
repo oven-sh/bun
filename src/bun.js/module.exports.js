@@ -12,16 +12,6 @@ resolve.paths = () => [];
 function require(pathString) {
   // this refers to an ImportMeta instance
   const resolved = this.resolveSync(pathString);
-  if (
-    !resolved.endsWith(".node") &&
-    !resolved.endsWith(".json") &&
-    !resolved.endsWith(".toml")
-  ) {
-    throw new Error(
-      "Dynamic require() in Bun.js currently only supports .node, .json, and .toml files.\n\tConsider using ESM import() instead."
-    );
-  }
-
   return this.require(resolved);
 }
 
@@ -49,13 +39,13 @@ export function createRequire(filename) {
     // but we don't support windows yet
     process.platform !== "win32" ? "/" : "\\"
   );
-  var customImportMeta = {
-    ...import.meta,
-    path: filenameString,
-    file:
-      lastSlash > -1 ? filenameString.substring(lastSlash + 1) : filenameString,
-    dir: lastSlash > -1 ? filenameString.substring(0, lastSlash) : "",
-  };
+
+  var customImportMeta = Object.create(import.meta);
+  customImportMeta.path = filenameString;
+  customImportMeta.file =
+    lastSlash > -1 ? filenameString.substring(lastSlash + 1) : filenameString;
+  customImportMeta.dir =
+    lastSlash > -1 ? filenameString.substring(0, lastSlash) : "";
 
   if (isURL) {
     customImportMeta.url = filename;

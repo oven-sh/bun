@@ -39,6 +39,7 @@ pub const ExprNodeList = js_ast.ExprNodeList;
 pub const StmtNodeList = js_ast.StmtNodeList;
 pub const BindingNodeList = js_ast.BindingNodeList;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
+const JSC = @import("javascript_core");
 
 fn _disabledAssert(_: bool) void {
     if (!Environment.allow_assert) @compileLog("assert is missing an if (Environment.allow_assert)");
@@ -2424,53 +2425,7 @@ pub const Parser = struct {
         }
 
         const uses_dirname = p.symbols.items[p.dirname_ref.innerIndex()].use_count_estimate > 0;
-        const uses_dynamic_require = p.options.features.dynamic_require and p.symbols.items[p.require_ref.innerIndex()].use_count_estimate > 0;
         const uses_filename = p.symbols.items[p.filename_ref.innerIndex()].use_count_estimate > 0;
-
-        if (uses_dynamic_require) {
-            var declared_symbols = try p.allocator.alloc(js_ast.DeclaredSymbol, 1);
-            var decls = p.allocator.alloc(G.Decl, 1) catch unreachable;
-            var part_stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
-            var exprs = p.allocator.alloc(Expr, 1) catch unreachable;
-            exprs[0] = p.e(E.ImportMeta{}, logger.Loc.Empty);
-            // var require = import.meta.require.bind(import.meta)
-            decls[0] = .{
-                .binding = p.b(B.Identifier{ .ref = p.require_ref }, logger.Loc.Empty),
-                .value = p.e(
-                    E.Call{
-                        .target = p.e(
-                            E.Dot{
-                                .target = p.e(
-                                    E.Dot{
-                                        .target = p.e(E.ImportMeta{}, logger.Loc.Empty),
-                                        .name = "require",
-                                        .name_loc = logger.Loc.Empty,
-                                    },
-                                    logger.Loc.Empty,
-                                ),
-                                .name = "bind",
-                                .name_loc = logger.Loc.Empty,
-                            },
-                            logger.Loc.Empty,
-                        ),
-                        .args = ExprNodeList.init(exprs),
-                    },
-                    logger.Loc.Empty,
-                ),
-            };
-
-            declared_symbols[0] = .{ .ref = p.require_ref, .is_top_level = true };
-
-            part_stmts[0] = p.s(S.Local{
-                .kind = .k_var,
-                .decls = decls,
-            }, logger.Loc.Empty);
-            before.append(js_ast.Part{
-                .stmts = part_stmts,
-                .declared_symbols = declared_symbols,
-                .tag = .dirname_filename,
-            }) catch unreachable;
-        }
 
         if (uses_dirname or uses_filename) {
             const count = @as(usize, @boolToInt(uses_dirname)) + @as(usize, @boolToInt(uses_filename));
@@ -2524,7 +2479,7 @@ pub const Parser = struct {
             exports_kind = .esm;
         } else if (uses_exports_ref or uses_module_ref or p.has_top_level_return) {
             exports_kind = .cjs;
-            if (p.options.transform_require_to_import) {
+            if (p.options.transform_require_to_import or (p.options.features.dynamic_require and !p.options.enable_bundling)) {
                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
 
                 if (p.runtime_imports.__exportDefault == null and p.has_export_default) {
@@ -2696,9 +2651,18 @@ pub const Parser = struct {
                             declared_symbols_i += 1;
 
                             const automatic_identifier = p.e(E.ImportIdentifier{ .ref = automatic_namespace_ref }, loc);
+
+                            // We do not mark this as .require becuase we are already wrapping it manually.
+                            // unless it's bun and you're not bundling
+                            const use_automatic_identifier = (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime);
+                            const import_record_kind = if (use_automatic_identifier or !p.options.features.dynamic_require) ImportKind.internal else ImportKind.require;
+                            const import_record_id = p.addImportRecord(import_record_kind, loc, p.options.jsx.import_source);
+
                             const dot_call_target = brk: {
-                                if (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime) {
+                                if (use_automatic_identifier) {
                                     break :brk automatic_identifier;
+                                } else if (p.options.features.dynamic_require) {
+                                    break :brk p.e(E.Require{ .import_record_index = import_record_id }, loc);
                                 } else {
                                     require_call_args_base[require_call_args_i] = automatic_identifier;
                                     require_call_args_i += 1;
@@ -2770,21 +2734,21 @@ pub const Parser = struct {
                                 decl_i += 1;
                             }
 
-                            // We do not mark this as .require becuase we are already wrapping it manually.
-                            const import_record_id = p.addImportRecord(.internal, loc, p.options.jsx.import_source);
                             p.import_records.items[import_record_id].tag = .jsx_import;
-                            // When everything is CommonJS
-                            // We import JSX like this:
-                            // var {jsxDev} = require("react/jsx-dev")
+                            if (dot_call_target.data != .e_require) {
+                                // When everything is CommonJS
+                                // We import JSX like this:
+                                // var {jsxDev} = require("react/jsx-dev")
+                                jsx_part_stmts[stmt_i] = p.s(S.Import{
+                                    .namespace_ref = automatic_namespace_ref,
+                                    .star_name_loc = loc,
+                                    .is_single_line = true,
+                                    .import_record_index = import_record_id,
+                                }, loc);
 
-                            jsx_part_stmts[stmt_i] = p.s(S.Import{
-                                .namespace_ref = automatic_namespace_ref,
-                                .star_name_loc = loc,
-                                .is_single_line = true,
-                                .import_record_index = import_record_id,
-                            }, loc);
+                                stmt_i += 1;
+                            }
 
-                            stmt_i += 1;
                             p.named_imports.put(
                                 automatic_namespace_ref,
                                 js_ast.NamedImport{
@@ -2802,12 +2766,14 @@ pub const Parser = struct {
 
                         if (jsx_classic_symbol.use_count_estimate > 0) {
                             const classic_identifier = p.e(E.ImportIdentifier{ .ref = classic_namespace_ref }, loc);
-
+                            const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.classic_import_source);
                             const dot_call_target = brk: {
                                 // var react = $aopaSD123();
 
                                 if (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime) {
                                     break :brk classic_identifier;
+                                } else if (p.options.features.dynamic_require) {
+                                    break :brk p.e(E.Require{ .import_record_index = import_record_id }, loc);
                                 } else {
                                     const require_call_args_start = require_call_args_i;
                                     require_call_args_base[require_call_args_i] = classic_identifier;
@@ -2861,15 +2827,19 @@ pub const Parser = struct {
                                 };
                                 decl_i += 1;
                             }
-                            const import_record_id = p.addImportRecord(.require, loc, p.options.jsx.classic_import_source);
-                            jsx_part_stmts[stmt_i] = p.s(S.Import{
-                                .namespace_ref = classic_namespace_ref,
-                                .star_name_loc = loc,
-                                .is_single_line = true,
-                                .import_record_index = import_record_id,
-                            }, loc);
+
+                            if (dot_call_target.data != .e_require) {
+                                jsx_part_stmts[stmt_i] = p.s(S.Import{
+                                    .namespace_ref = classic_namespace_ref,
+                                    .star_name_loc = loc,
+                                    .is_single_line = true,
+                                    .import_record_index = import_record_id,
+                                }, loc);
+                                stmt_i += 1;
+                            }
+
                             p.import_records.items[import_record_id].tag = .jsx_classic;
-                            stmt_i += 1;
+
                             p.named_imports.put(
                                 classic_namespace_ref,
                                 js_ast.NamedImport{
@@ -4229,36 +4199,6 @@ fn NewParser_(
                     }
 
                     const pathname = str.string(p.allocator) catch unreachable;
-
-                    // When we know that we support dynamically requiring this file type
-                    // we can avoid eager loading it
-                    // instead, we can just use the require() function directly.
-                    if (p.options.features.dynamic_require and
-                        !p.options.enable_bundling and
-                        (strings.endsWithComptime(pathname, ".json") or
-                        // strings.endsWithComptime(pathname, ".toml") or
-                        strings.endsWithComptime(pathname, ".node")))
-                    {
-                        p.ignoreUsage(p.require_ref);
-                        var args = p.allocator.alloc(Expr, 1) catch unreachable;
-                        args[0] = arg;
-
-                        return p.e(
-                            E.Call{
-                                .target = p.e(
-                                    E.Dot{
-                                        .target = p.e(E.ImportMeta{}, arg.loc),
-                                        .name = "require",
-                                        .name_loc = arg.loc,
-                                    },
-                                    arg.loc,
-                                ),
-                                .args = js_ast.ExprNodeList.init(args),
-                                .close_paren_loc = arg.loc,
-                            },
-                            arg.loc,
-                        );
-                    }
 
                     const import_record_index = p.addImportRecord(.require, arg.loc, pathname);
                     p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
@@ -14897,6 +14837,24 @@ fn NewParser_(
                             }
                         }
 
+                        if (p.options.features.dynamic_require) {
+                            p.ignoreUsage(p.require_ref);
+                            return p.e(
+                                E.Call{
+                                    .target = p.e(E.Dot{
+                                        .target = p.e(E.ImportMeta{}, expr.loc),
+                                        .name = "require",
+                                        .name_loc = expr.loc,
+                                    }, expr.loc),
+                                    .args = e_.args,
+                                    .close_paren_loc = e_.close_paren_loc,
+                                    .optional_chain = e_.optional_chain,
+                                    .can_be_unwrapped_if_unused = e_.can_be_unwrapped_if_unused,
+                                },
+                                expr.loc,
+                            );
+                        }
+
                         if (p.options.warn_about_unbundled_modules) {
                             const r = js_lexer.rangeOfIdentifier(p.source, e_.target.loc);
                             p.log.addRangeDebug(p.source, r, "This call to \"require\" will not be bundled because it has multiple arguments") catch unreachable;
@@ -18835,7 +18793,7 @@ fn NewParser_(
             this.require_transposer = @TypeOf(this.require_transposer).init(this);
             this.require_resolve_transposer = @TypeOf(this.require_resolve_transposer).init(this);
 
-            if (opts.features.top_level_await) {
+            if (opts.features.top_level_await or comptime only_scan_imports_and_do_not_visit) {
                 this.fn_or_arrow_data_parse.allow_await = .allow_expr;
                 this.fn_or_arrow_data_parse.is_top_level = true;
             }

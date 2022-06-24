@@ -314,6 +314,10 @@ pub const Bundler = struct {
             Analytics.is_ci = true;
         }
 
+        if (strings.eqlComptime(this.env.map.get("BUN_DISABLE_TRANSPILER") orelse "0", "1")) {
+            this.options.disable_transpilation = true;
+        }
+
         Analytics.disabled = Analytics.disabled or this.env.map.get("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null;
     }
 
@@ -1122,7 +1126,7 @@ pub const Bundler = struct {
 
                 var opts = js_parser.Parser.Options.init(jsx, loader);
                 opts.enable_bundling = false;
-                opts.transform_require_to_import = bundler.options.allow_runtime;
+                opts.transform_require_to_import = bundler.options.allow_runtime and !bundler.options.platform.isBun();
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
                 opts.features.should_fold_numeric_constants = platform.isBun();

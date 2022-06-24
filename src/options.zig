@@ -1216,6 +1216,8 @@ pub const BundleOptions = struct {
     tree_shaking: bool = false,
     sourcemap: SourceMapOption = SourceMapOption.none,
 
+    disable_transpilation: bool = false,
+
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
         switch (this.platform) {
             .neutral, .browser => {

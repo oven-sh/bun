@@ -101,6 +101,7 @@ using namespace JSC;
     macro(flush) \
     macro(flushAlgorithm) \
     macro(format) \
+    macro(fulfillModuleSync) \
     macro(get) \
     macro(getInternalWritableStream) \
     macro(handleEvent) \
@@ -125,9 +126,11 @@ using namespace JSC;
     macro(join) \
     macro(kind) \
     macro(lazy) \
-    macro(lazyStreamPrototypeMap) \
     macro(lazyLoad) \
+    macro(lazyStreamPrototypeMap) \
+    macro(loadModule) \
     macro(localStreams) \
+    macro(main) \
     macro(makeDOMException) \
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
@@ -174,6 +177,7 @@ using namespace JSC;
     macro(releaseLock) \
     macro(removeEventListener) \
     macro(require) \
+    macro(requireModule) \
     macro(resolve) \
     macro(resolveSync) \
     macro(resume) \

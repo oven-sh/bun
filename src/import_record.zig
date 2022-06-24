@@ -151,6 +151,7 @@ pub const ImportRecord = struct {
         jsx_classic,
         bun,
         bun_test,
+        hardcoded,
     };
 
     pub const PrintMode = enum {

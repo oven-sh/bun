@@ -210,6 +210,7 @@ pub const Linker = struct {
         comptime allow_import_from_bundle: bool,
         comptime is_bun: bool,
     ) !void {
+        const supports_dynamic_require = comptime is_bun;
         const source_dir = file_path.sourceDir();
         var externals = std.ArrayList(u32).init(linker.allocator);
         var needs_bundle = false;
@@ -264,6 +265,7 @@ pub const Linker = struct {
                     if (comptime is_bun) {
                         if (JSC.HardcodedModule.LinkerMap.get(import_record.path.text)) |replacement| {
                             import_record.path.text = replacement;
+                            import_record.tag = .hardcoded;
                             externals.append(record_index) catch unreachable;
                             continue;
                         }
@@ -271,11 +273,6 @@ pub const Linker = struct {
                         if (JSC.DisabledModule.has(import_record.path.text)) {
                             import_record.path.is_disabled = true;
                             import_record.wrap_with_to_module = true;
-                            continue;
-                        }
-
-                        if (strings.eqlComptime(import_record.path.text, "bun")) {
-                            import_record.tag = .bun;
                             continue;
                         }
 
@@ -486,23 +483,25 @@ pub const Linker = struct {
                             import_path_format,
                         ) catch continue;
 
-                        // If we're importing a CommonJS module as ESM
-                        // We need to do the following transform:
-                        //      import React from 'react';
-                        //      =>
-                        //      import {_require} from 'RUNTIME_IMPORTS';
-                        //      import * as react_module from 'react';
-                        //      var React = _require(react_module).default;
-                        // UNLESS it's a namespace import
-                        // If it's a namespace import, assume it's safe.
-                        // We can do this in the printer instead of creating a bunch of AST nodes here.
-                        // But we need to at least tell the printer that this needs to happen.
-                        if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind)) {
-                            import_record.wrap_with_to_module = true;
-                            import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
+                        if (comptime !supports_dynamic_require) {
+                            // If we're importing a CommonJS module as ESM
+                            // We need to do the following transform:
+                            //      import React from 'react';
+                            //      =>
+                            //      import {_require} from 'RUNTIME_IMPORTS';
+                            //      import * as react_module from 'react';
+                            //      var React = _require(react_module).default;
+                            // UNLESS it's a namespace import
+                            // If it's a namespace import, assume it's safe.
+                            // We can do this in the printer instead of creating a bunch of AST nodes here.
+                            // But we need to at least tell the printer that this needs to happen.
+                            if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind)) {
+                                import_record.wrap_with_to_module = true;
+                                import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
 
-                            result.ast.needs_runtime = true;
-                            needs_require = true;
+                                result.ast.needs_runtime = true;
+                                needs_require = true;
+                            }
                         }
                     } else |err| {
                         switch (err) {
@@ -570,6 +569,7 @@ pub const Linker = struct {
                     }
                 }
             },
+
             else => {},
         }
         if (had_resolve_errors) return error.ResolveError;
@@ -594,34 +594,36 @@ pub const Linker = struct {
             import_records = new_import_records;
         }
 
-        // We _assume_ you're importing ESM.
-        // But, that assumption can be wrong without parsing code of the imports.
-        // That's where in here, we inject
-        // > import {require} from 'bun:wrap';
-        // Since they definitely aren't using require, we don't have to worry about the symbol being renamed.
-        if (needs_require and !result.ast.uses_require_ref) {
-            result.ast.uses_require_ref = true;
-            require_part_import_clauses[0] = js_ast.ClauseItem{
-                .alias = require_alias,
-                .original_name = "",
-                .alias_loc = logger.Loc.Empty,
-                .name = js_ast.LocRef{
+        if (comptime !supports_dynamic_require) {
+            // We _assume_ you're importing ESM.
+            // But, that assumption can be wrong without parsing code of the imports.
+            // That's where in here, we inject
+            // > import {require} from 'bun:wrap';
+            // Since they definitely aren't using require, we don't have to worry about the symbol being renamed.
+            if (needs_require and !result.ast.uses_require_ref) {
+                result.ast.uses_require_ref = true;
+                require_part_import_clauses[0] = js_ast.ClauseItem{
+                    .alias = require_alias,
+                    .original_name = "",
+                    .alias_loc = logger.Loc.Empty,
+                    .name = js_ast.LocRef{
+                        .loc = logger.Loc.Empty,
+                        .ref = result.ast.require_ref,
+                    },
+                };
+
+                require_part_import_statement = js_ast.S.Import{
+                    .namespace_ref = Ref.None,
+                    .items = std.mem.span(&require_part_import_clauses),
+                    .import_record_index = result.ast.runtime_import_record_id.?,
+                };
+                require_part_stmts[0] = js_ast.Stmt{
+                    .data = .{ .s_import = &require_part_import_statement },
                     .loc = logger.Loc.Empty,
-                    .ref = result.ast.require_ref,
-                },
-            };
+                };
 
-            require_part_import_statement = js_ast.S.Import{
-                .namespace_ref = Ref.None,
-                .items = std.mem.span(&require_part_import_clauses),
-                .import_record_index = result.ast.runtime_import_record_id.?,
-            };
-            require_part_stmts[0] = js_ast.Stmt{
-                .data = .{ .s_import = &require_part_import_statement },
-                .loc = logger.Loc.Empty,
-            };
-
-            result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
+                result.ast.prepend_part = js_ast.Part{ .stmts = std.mem.span(&require_part_stmts) };
+            }
         }
     }
 
@@ -778,6 +780,7 @@ pub const Linker = struct {
             .wasm, .file => {
                 import_record.print_mode = .import_path;
             },
+
             else => {},
         }
     }

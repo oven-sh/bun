@@ -49,7 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_jsZigGlobalObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsZigGlobalObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsZigGlobalObjectRequireCodeLength = 1225;
+const int s_jsZigGlobalObjectRequireCodeLength = 1221;
 static const JSC::Intrinsic s_jsZigGlobalObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsZigGlobalObjectRequireCode =
     "(function (name) {\n" \
@@ -57,7 +57,7 @@ const char* const s_jsZigGlobalObjectRequireCode =
     "  if (typeof name !== \"string\") {\n" \
     "    @throwTypeError(\"require() expects a string as its argument\");\n" \
     "  }\n" \
-    "\n" \
+    "  \n" \
     "  const resolved = this.resolveSync(name, this.path);\n" \
     "  var requireCache = (globalThis[Symbol.for(\"_requireCache\")] ||= new @Map);\n" \
     "  var cached = requireCache.@get(resolved);\n" \
@@ -68,6 +68,7 @@ const char* const s_jsZigGlobalObjectRequireCode =
     "\n" \
     "    return cached;\n" \
     "  }\n" \
+    "\n" \
     "\n" \
     "  //\n" \
     "  if (resolved.endsWith(\".json\")) {\n" \
@@ -85,9 +86,124 @@ const char* const s_jsZigGlobalObjectRequireCode =
     "    var exports = Bun.TOML.parse(fs.readFileSync(resolved, \"utf8\"));\n" \
     "    requireCache.@set(resolved, exports);\n" \
     "    return exports;\n" \
+    "  } else {\n" \
+    "    var exports = this.requireModule(this, resolved);\n" \
+    "    requireCache.@set(resolved, exports);\n" \
+    "    return exports;\n" \
+    "  }\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsZigGlobalObjectLoadModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsZigGlobalObjectLoadModuleCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsZigGlobalObjectLoadModuleCodeLength = 2783;
+static const JSC::Intrinsic s_jsZigGlobalObjectLoadModuleCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsZigGlobalObjectLoadModuleCode =
+    "(function (meta, resolvedSpecifier) {\n" \
+    "  \"use strict\";\n" \
+    "    var queue = @createFIFO();\n" \
+    "    var key = resolvedSpecifier;\n" \
+    "    \n" \
+    "    var Loader = globalThis.Loader;\n" \
+    "    var registry = Loader.registry;\n" \
+    "    while (key) {\n" \
+    "      @fulfillModuleSync(key);\n" \
+    "      var entry = registry.@get(key);\n" \
+    "\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      var sourceCodeObject = @getPromiseInternalField(entry.fetch, @promiseFieldReactionsOrResult);\n" \
+    "      \n" \
+    "\n" \
+    "      //\n" \
+    "      //\n" \
+    "      //\n" \
+    "      var moduleRecordPromise = Loader.parseModule(key, sourceCodeObject);\n" \
+    "      var module = entry.module;\n" \
+    "      if (!module && moduleRecordPromise && @isPromise(moduleRecordPromise)) {\n" \
+    "        var reactionsOrResult = @getPromiseInternalField(moduleRecordPromise, @promiseFieldReactionsOrResult);\n" \
+    "        var flags = @getPromiseInternalField(moduleRecordPromise, @promiseFieldFlags);\n" \
+    "        var state = flags & @promiseStateMask;\n" \
+    "\n" \
+    "        //\n" \
+    "        if (state === @promiseStatePending || (reactionsOrResult && @isPromise(reactionsOrResult))) {\n" \
+    "          @throwTypeError(`require() async module \\\"${key}\\\" is unsupported`);\n" \
+    "        \n" \
+    "        } else if (state === @promiseStateRejected) {\n" \
+    "          //\n" \
+    "          //\n" \
+    "          @throwTypeError(`${reactionsOrResult?.message ?? \"An error occurred\"} while parsing module \\\"${key}\\\"`);\n" \
+    "        }\n" \
+    "        entry.module = module = reactionsOrResult;\n" \
+    "      } else if (moduleRecordPromise && !module) {\n" \
+    "        entry.module = module = moduleRecordPromise;\n" \
+    "      }\n" \
+    "\n" \
+    "        //\n" \
+    "        @setStateToMax(entry, @ModuleLink);\n" \
+    "        var dependenciesMap = module.dependenciesMap;\n" \
+    "        var requestedModules = Loader.requestedModules(module);\n" \
+    "        var dependencies = @newArrayWithSize(requestedModules.length);\n" \
+    "        \n" \
+    "        for (var i = 0, length = requestedModules.length; i < length; ++i) {\n" \
+    "            var depName = requestedModules[i];\n" \
+    "\n" \
+    "            //\n" \
+    "            //\n" \
+    "            var depKey = depName[0] === '/' ? depName : Loader.resolveSync(depName, key, @undefined);\n" \
+    "            var depEntry = Loader.ensureRegistered(depKey);\n" \
+    "\n" \
+    "            if (depEntry.state < @ModuleLink) {\n" \
+    "              queue.push(depKey);\n" \
+    "            }\n" \
+    "\n" \
+    "            @putByValDirect(dependencies, i, depEntry);\n" \
+    "            dependenciesMap.@set(depName, depEntry);\n" \
+    "        }\n" \
+    "\n" \
+    "        entry.dependencies = dependencies;\n" \
+    "        key = queue.shift();\n" \
+    "        while (key && ((registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink)) {\n" \
+    "          key = queue.shift();\n" \
+    "        }\n" \
+    "    }\n" \
+    "\n" \
+    "    var linkAndEvaluateResult = Loader.linkAndEvaluateModule(resolvedSpecifier, @undefined);\n" \
+    "    if (linkAndEvaluateResult && @isPromise(linkAndEvaluateResult)) {\n" \
+    "      //\n" \
+    "      //\n" \
+    "      @throwTypeError(`require() async module \\\"${resolvedSpecifier}\\\" is unsupported`);\n" \
+    "    }\n" \
+    "\n" \
+    "    return Loader.registry.@get(resolvedSpecifier);\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsZigGlobalObjectRequireModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsZigGlobalObjectRequireModuleCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_jsZigGlobalObjectRequireModuleCodeLength = 613;
+static const JSC::Intrinsic s_jsZigGlobalObjectRequireModuleCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsZigGlobalObjectRequireModuleCode =
+    "(function (meta, resolved) {\n" \
+    "  \"use strict\";\n" \
+    "  var Loader = globalThis.Loader;\n" \
+    "  var entry = Loader.registry.@get(resolved);\n" \
+    "\n" \
+    "  if (!entry || !entry.evaluated) {\n" \
+    "    entry = this.loadModule(meta, resolved); \n" \
     "  }\n" \
     "\n" \
-    "  @throwTypeError(`Dynamic require isn't supported for file type: ${resolved.subsring(resolved.lastIndexOf(\".\") + 1) || resolved}`);\n" \
+    "  if (!entry || !entry.evaluated || !entry.module) {\n" \
+    "    @throwTypeError(`require() failed to evaluate module \\\"${resolved}\\\". This is an internal consistentency error.`);\n" \
+    "  }\n" \
+    "  var exports = Loader.getModuleNamespaceObject(entry.module);\n" \
+    "  var commonJS = exports.default;\n" \
+    "  if (commonJS && @isObject(commonJS) && Symbol.for(\"CommonJS\") in commonJS) {\n" \
+    "    return commonJS();\n" \
+    "  }\n" \
+    "  return exports;\n" \
     "})\n" \
 ;
 

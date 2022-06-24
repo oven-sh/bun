@@ -633,28 +633,42 @@ pub fn NewPrinter(
         }
 
         fn printBunJestImportStatement(p: *Printer, import: S.Import) void {
-            printInternalBunImport(p, import, "globalThis.Bun.jest(import.meta.path)");
+            if (comptime !is_bun_platform) unreachable;
+
+            printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
         }
 
         fn printGlobalBunImportStatement(p: *Printer, import: S.Import) void {
-            printInternalBunImport(p, import, "globalThis.Bun");
+            if (comptime !is_bun_platform) unreachable;
+            printInternalBunImport(p, import, @TypeOf("globalThis.Bun"), "globalThis.Bun");
         }
 
-        fn printInternalBunImport(p: *Printer, import: S.Import, comptime statement: anytype) void {
-            p.print("var ");
+        fn printHardcodedImportStatement(p: *Printer, import: S.Import) void {
+            if (comptime !is_bun_platform) unreachable;
+            printInternalBunImport(p, import, void, void{});
+        }
+
+        fn printInternalBunImport(p: *Printer, import: S.Import, comptime Statement: type, statement: Statement) void {
+            if (comptime !is_bun_platform) unreachable;
 
             if (import.star_name_loc != null) {
+                p.print("var ");
                 p.printSymbol(import.namespace_ref);
                 p.printSpace();
                 p.print("=");
                 p.printSpaceBeforeIdentifier();
-                p.print(statement);
+                if (comptime Statement == void) {
+                    p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
+                } else {
+                    p.print(statement);
+                }
+
                 p.printSemicolonAfterStatement();
                 p.printIndent();
-                p.print("var ");
             }
 
             if (import.items.len > 0) {
+                p.print("var ");
                 p.print("{ ");
                 if (!import.is_single_line) {
                     p.print("\n");
@@ -691,13 +705,30 @@ pub fn NewPrinter(
                 }
 
                 if (import.star_name_loc == null) {
-                    p.print("} = " ++ statement);
+                    if (comptime Statement == void) {
+                        p.print("} = ");
+                        p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
+                    } else {
+                        p.print("} = ");
+                        p.print(statement);
+                    }
                 } else {
                     p.print("} =");
                     p.printSpaceBeforeIdentifier();
                     p.printSymbol(import.namespace_ref);
                 }
 
+                p.printSemicolonAfterStatement();
+            } else if (import.default_name) |default| {
+                p.print("var ");
+                p.printSymbol(default.ref.?);
+                if (comptime Statement == void) {
+                    p.print(" = ");
+                    p.printRequireOrImportExpr(import.import_record_index, &.{}, Level.lowest, ExprFlag.None());
+                } else {
+                    p.print(" = ");
+                    p.print(statement);
+                }
                 p.printSemicolonAfterStatement();
             }
         }
@@ -1362,7 +1393,12 @@ pub fn NewPrinter(
                     return;
                 }
 
-                p.printSymbol(p.options.require_ref.?);
+                if (comptime is_bun_platform) {
+                    p.print("import.meta.require");
+                } else {
+                    p.printSymbol(p.options.require_ref.?);
+                }
+
                 p.print("(");
                 p.printQuotedUTF8(record.path.text, true);
                 p.print(")");
@@ -3604,18 +3640,20 @@ pub fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
 
                     if (comptime is_bun_platform) {
-                        if (record.tag != .none) {
-                            switch (record.tag) {
-                                .bun_test => {
-                                    p.printBunJestImportStatement(s.*);
-                                    return;
-                                },
-                                .bun => {
-                                    p.printGlobalBunImportStatement(s.*);
-                                    return;
-                                },
-                                else => {},
-                            }
+                        switch (record.tag) {
+                            .bun_test => {
+                                p.printBunJestImportStatement(s.*);
+                                return;
+                            },
+                            .bun => {
+                                p.printGlobalBunImportStatement(s.*);
+                                return;
+                            },
+                            .hardcoded => {
+                                p.printHardcodedImportStatement(s.*);
+                                return;
+                            },
+                            else => {},
                         }
                     }
 

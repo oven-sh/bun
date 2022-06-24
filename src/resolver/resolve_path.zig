@@ -306,7 +306,7 @@ pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
 threadlocal var relative_from_buf: [4096]u8 = undefined;
 threadlocal var relative_to_buf: [4096]u8 = undefined;
 pub fn relative(from: []const u8, to: []const u8) []const u8 {
-    if (FeatureFlags.use_std_path_relative) {
+    if (comptime FeatureFlags.use_std_path_relative) {
         var relative_allocator = std.heap.FixedBufferAllocator.init(&relative_from_buf);
         return relativeAlloc(&relative_allocator.allocator, from, to) catch unreachable;
     } else {

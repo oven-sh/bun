@@ -641,16 +641,25 @@ pub const VirtualMachine = struct {
 
     const shared_library_suffix = if (Environment.isMac) "dylib" else if (Environment.isLinux) "so" else "";
 
-    inline fn _fetch(
+    const FetchFlags = enum {
+        transpile,
+        print_source,
+        print_source_and_clone,
+
+        pub fn disableTranspiling(this: FetchFlags) bool {
+            return this != .transpile;
+        }
+    };
+    fn _fetch(
+        jsc_vm: *VirtualMachine,
         _: *JSGlobalObject,
         _specifier: string,
         _: string,
         log: *logger.Log,
-        comptime disable_transpilying: bool,
+        comptime flags: FetchFlags,
     ) !ResolvedSource {
         std.debug.assert(VirtualMachine.vm_loaded);
-        var jsc_vm = vm;
-
+        const disable_transpilying = comptime flags.disableTranspiling();
         if (jsc_vm.node_modules != null and strings.eqlComptime(_specifier, bun_file_import_path)) {
             // We kind of need an abstraction around this.
             // Basically we should subclass JSC::SourceCode with:
@@ -707,7 +716,8 @@ pub const VirtualMachine = struct {
                     jsx.parse = false;
                     var opts = js_parser.Parser.Options.init(jsx, .js);
                     opts.enable_bundling = false;
-                    opts.transform_require_to_import = true;
+                    opts.transform_require_to_import = false;
+                    opts.features.dynamic_require = true;
                     opts.can_import_from_bundle = bundler.options.node_modules_bundle != null;
                     opts.features.hot_module_reloading = false;
                     opts.features.react_fast_refresh = false;
@@ -1011,7 +1021,11 @@ pub const VirtualMachine = struct {
                 if (comptime disable_transpilying) {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(parse_result.source.contents),
+                        .source_code = switch (comptime flags) {
+                            .print_source_and_clone => ZigString.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
+                            .print_source => ZigString.init(parse_result.source.contents),
+                            else => unreachable,
+                        },
                         .specifier = ZigString.init(specifier),
                         .source_url = ZigString.init(path.text),
                         .hash = 0,
@@ -1340,10 +1354,22 @@ pub const VirtualMachine = struct {
     pub fn fetch(ret: *ErrorableResolvedSource, global: *JSGlobalObject, specifier: ZigString, source: ZigString) callconv(.C) void {
         var log = logger.Log.init(vm.bundler.allocator);
         const spec = specifier.slice();
-        const result = _fetch(global, spec, source.slice(), &log, false) catch |err| {
-            processFetchLog(global, specifier, source, &log, ret, err);
-            return;
-        };
+        // threadlocal is cheaper in linux
+        var jsc_vm: *VirtualMachine = if (comptime Environment.isLinux)
+            vm
+        else
+            global.bunVM();
+
+        const result = if (!jsc_vm.bundler.options.disable_transpilation)
+            @call(.{ .modifier = .always_inline }, _fetch, .{ jsc_vm, global, spec, source.slice(), &log, .transpile }) catch |err| {
+                processFetchLog(global, specifier, source, &log, ret, err);
+                return;
+            }
+        else
+            _fetch(jsc_vm, global, spec, source.slice(), &log, .print_source_and_clone) catch |err| {
+                processFetchLog(global, specifier, source, &log, ret, err);
+                return;
+            };
 
         if (log.errors > 0) {
             processFetchLog(global, specifier, source, &log, ret, error.LinkError);
@@ -1494,22 +1520,28 @@ pub const VirtualMachine = struct {
     }
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) !*JSInternalPromise {
-        try this.entry_point.generate(@TypeOf(this.bundler), &this.bundler, Fs.PathName.init(entry_path), main_file_name);
         this.main = entry_path;
+        try this.entry_point.generate(@TypeOf(this.bundler), &this.bundler, Fs.PathName.init(entry_path), main_file_name);
 
         var promise: *JSInternalPromise = undefined;
-        // We first import the node_modules bundle. This prevents any potential TDZ issues.
-        // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
-        if (this.node_modules != null and !this.has_loaded_node_modules) {
-            this.has_loaded_node_modules = true;
-            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(bun_file_import_path)));
 
-            this.waitForPromise(promise);
-            if (promise.status(this.global.vm()) == .Rejected)
-                return promise;
+        if (!this.bundler.options.disable_transpilation) {
+
+            // We first import the node_modules bundle. This prevents any potential TDZ issues.
+            // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
+            if (this.node_modules != null and !this.has_loaded_node_modules) {
+                this.has_loaded_node_modules = true;
+                promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(bun_file_import_path)));
+
+                this.waitForPromise(promise);
+                if (promise.status(this.global.vm()) == .Rejected)
+                    return promise;
+            }
+
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(main_file_name)));
+        } else {
+            promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
         }
-
-        promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(main_file_name)));
 
         this.waitForPromise(promise);
 
@@ -1798,7 +1830,7 @@ pub const VirtualMachine = struct {
             @maximum(top.position.column_start, 0),
         )) |mapping| {
             var log = logger.Log.init(default_allocator);
-            var original_source = _fetch(this.global, top.source_url.slice(), "", &log, true) catch return;
+            var original_source = _fetch(this, this.global, top.source_url.slice(), "", &log, .print_source) catch return;
             const code = original_source.source_code.slice();
             top.position.line = mapping.original.lines;
             top.position.line_start = mapping.original.lines;
@@ -2688,6 +2720,7 @@ pub const HardcodedModule = enum {
     pub const LinkerMap = bun.ComptimeStringMap(
         string,
         .{
+            .{ "bun", "bun" },
             .{ "bun:ffi", "bun:ffi" },
             .{ "bun:jsc", "bun:jsc" },
             .{ "bun:sqlite", "bun:sqlite" },

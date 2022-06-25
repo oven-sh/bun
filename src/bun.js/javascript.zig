@@ -828,6 +828,17 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:url" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("url.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:url"),
+                        .source_url = ZigString.init("node:url"),
+                        .hash = 0,
+                    };
+                },
                 .@"bun:sqlite" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2674,21 +2685,22 @@ pub const JSPrivateDataTag = JSPrivateDataPtr.Tag;
 
 pub const HardcodedModule = enum {
     @"bun:ffi",
-    @"bun:main",
-    @"node:fs",
-    @"node:path",
-    @"detect-libc",
-    @"bun:sqlite",
     @"bun:jsc",
+    @"bun:main",
+    @"bun:sqlite",
+    @"detect-libc",
+    @"node:fs",
+    @"node:fs/promises",
     @"node:module",
+    @"node:path",
     @"node:perf_hooks",
-    @"ws",
+    @"node:streams/consumer",
+    @"node:streams/web",
     @"node:timers",
     @"node:timers/promises",
-    @"node:streams/web",
-    @"node:streams/consumer",
-    @"node:fs/promises",
+    @"node:url",
     @"undici",
+    @"ws",
 
     pub const Map = bun.ComptimeStringMap(
         HardcodedModule,
@@ -2712,6 +2724,7 @@ pub const HardcodedModule = enum {
             .{ "node:streams/web", HardcodedModule.@"node:streams/web" },
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
+            .{ "node:url", HardcodedModule.@"node:url" },
             .{ "path", HardcodedModule.@"node:path" },
             .{ "undici", HardcodedModule.@"undici" },
             .{ "ws", HardcodedModule.@"ws" },
@@ -2739,6 +2752,7 @@ pub const HardcodedModule = enum {
             .{ "node:streams/web", "node:streams/web" },
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
+            .{ "node:url", "node:url" },
             .{ "path", "node:path" },
             .{ "perf_hooks", "node:perf_hooks" },
             .{ "streams/consumer", "node:streams/consumer" },
@@ -2746,6 +2760,7 @@ pub const HardcodedModule = enum {
             .{ "timers", "node:timers" },
             .{ "timers/promises", "node:timers/promises" },
             .{ "undici", "undici" },
+            .{ "url", "node:url" },
             .{ "ws", "ws" },
             .{ "ws/lib/websocket", "ws" },
         },

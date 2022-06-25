@@ -379,7 +379,6 @@ pub const Options = struct {
     rewrite_require_resolve: bool = true,
     allocator: std.mem.Allocator = default_allocator,
     source_map_handler: ?SourceMapHandler = null,
-
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
 
     // TODO: remove this
@@ -542,6 +541,8 @@ pub fn NewPrinter(
         prev_stmt_tag: Stmt.Tag = .s_empty,
         source_map_builder: SourceMap.Chunk.Builder = undefined,
 
+        symbol_counter: u32 = 0,
+
         const Printer = @This();
 
         pub fn writeAll(p: *Printer, bytes: anytype) anyerror!void {
@@ -585,16 +586,17 @@ pub fn NewPrinter(
         }
 
         pub fn print(p: *Printer, str: anytype) void {
-            switch (@TypeOf(str)) {
+            const StringType = @TypeOf(str);
+            switch (comptime StringType) {
                 comptime_int, u16, u8 => {
-                    p.writer.print(@TypeOf(str), str);
+                    p.writer.print(StringType, str);
                 },
                 [6]u8 => {
                     const span = std.mem.span(&str);
                     p.writer.print(@TypeOf(span), span);
                 },
                 else => {
-                    p.writer.print(@TypeOf(str), str);
+                    p.writer.print(StringType, str);
                 },
             }
         }
@@ -670,10 +672,18 @@ pub fn NewPrinter(
             if (import.items.len > 0) {
                 p.print("var ");
                 p.print("{ ");
+
                 if (!import.is_single_line) {
                     p.print("\n");
                     p.options.indent += 1;
                     p.printIndent();
+                }
+
+                if (import.default_name) |default_name| {
+                    p.print("default:");
+                    p.printSpaceBeforeIdentifier();
+                    p.printSymbol(default_name.ref.?);
+                    p.print(", ");
                 }
 
                 for (import.items) |item, i| {
@@ -687,14 +697,7 @@ pub fn NewPrinter(
                         }
                     }
 
-                    const name = p.renamer.nameForSymbol(item.name.ref.?);
-                    p.printIdentifier(name);
-
-                    if (!strings.eql(name, item.alias)) {
-                        p.print(" : ");
-                        p.printSpace();
-                        p.printClauseAlias(item.alias);
-                    }
+                    p.printClauseItemAs(item, true);
                 }
 
                 if (!import.is_single_line) {
@@ -1438,6 +1441,32 @@ pub fn NewPrinter(
             p.print(quote);
             p.print(str);
             p.print(quote);
+        }
+
+        fn printClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
+            return printClauseItemAs(p, item, false);
+        }
+
+        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as_variable: bool) void {
+            const name = p.renamer.nameForSymbol(item.name.ref.?);
+
+            if (comptime !as_variable) {
+                p.printIdentifier(name);
+
+                if (!strings.eql(name, item.alias)) {
+                    p.print(" as");
+                    p.printSpace();
+                    p.printClauseAlias(item.alias);
+                }
+            } else {
+                p.printClauseAlias(item.alias);
+
+                if (!strings.eql(name, item.alias)) {
+                    p.print(":");
+                    p.printSpace();
+                    p.printIdentifier(name);
+                }
+            }
         }
 
         pub inline fn canPrintIdentifier(_: *Printer, name: string) bool {
@@ -3214,7 +3243,7 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    for (s.items) |*item, i| {
+                    for (s.items) |item, i| {
                         if (i != 0) {
                             p.print(",");
                             if (s.is_single_line) {
@@ -3227,13 +3256,7 @@ pub fn NewPrinter(
                             p.printIndent();
                         }
 
-                        const name = p.renamer.nameForSymbol(item.name.ref.?);
-                        p.printIdentifier(name);
-                        if (!strings.eql(name, item.alias)) {
-                            p.print(" as");
-                            p.printSpace();
-                            p.printClauseAlias(item.alias);
-                        }
+                        p.printClauseItem(item);
                     }
 
                     if (!s.is_single_line) {
@@ -3293,6 +3316,65 @@ pub fn NewPrinter(
                     }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+
+                    const import_record = p.import_records[s.import_record_index];
+
+                    if (comptime is_bun_platform) {
+                        if (import_record.do_commonjs_transform_in_printer) {
+                            assert(s.items.len > 0);
+
+                            p.print("var {");
+                            var symbol_counter: u32 = p.symbol_counter;
+
+                            for (s.items) |item, i| {
+                                if (i > 0) {
+                                    p.print(",");
+                                }
+
+                                p.print(item.original_name);
+                                assert(item.original_name.len > 0);
+                                p.print(":");
+                                // this is unsound
+                                // this is technical debt
+                                // we need to handle symbol collisions for this
+                                p.print("$eXp0rT_");
+                                var buf: [16]u8 = undefined;
+                                p.print(std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(&@bitCast([4]u8, symbol_counter))}) catch unreachable);
+                                symbol_counter +|= 1;
+                            }
+
+                            p.print("}=import.meta.require(");
+                            p.printQuotedUTF8(import_record.path.text, true);
+                            p.print(")");
+                            p.printSemicolonAfterStatement();
+                            p.print("export {");
+
+                            // reset symbol counter back
+                            symbol_counter = p.symbol_counter;
+
+                            for (s.items) |item, i| {
+                                if (i > 0) {
+                                    p.print(",");
+                                }
+
+                                // this is unsound
+                                // this is technical debt
+                                // we need to handle symbol collisions for this
+                                p.print("$eXp0rT_");
+                                var buf: [16]u8 = undefined;
+                                p.print(std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(&@bitCast([4]u8, symbol_counter))}) catch unreachable);
+                                symbol_counter +|= 1;
+                                p.print(" as ");
+                                p.print(item.alias);
+                            }
+
+                            p.print("}");
+                            p.printSemicolonAfterStatement();
+                            p.symbol_counter = symbol_counter;
+                            return;
+                        }
+                    }
+
                     p.print("export");
                     p.printSpace();
                     p.print("{");
@@ -3336,7 +3418,7 @@ pub fn NewPrinter(
                     p.printSpace();
                     p.print("from");
                     p.printSpace();
-                    p.printQuotedUTF8(p.import_records[s.import_record_index].path.text, false);
+                    p.printQuotedUTF8(import_record.path.text, false);
                     p.printSemicolonAfterStatement();
                 },
                 .s_local => |s| {
@@ -3661,7 +3743,7 @@ pub fn NewPrinter(
                         return p.printBundledImport(record, s);
                     }
 
-                    if (record.wrap_with_to_module or record.path.is_disabled) {
+                    if (record.do_commonjs_transform_in_printer or record.path.is_disabled) {
                         const require_ref = p.options.require_ref;
 
                         const module_id = record.module_id;
@@ -3703,13 +3785,7 @@ pub fn NewPrinter(
                                 if (s.items.len > 0) {
                                     p.print(", ");
                                     for (s.items) |item, i| {
-                                        p.print(item.alias);
-                                        const name = p.renamer.nameForSymbol(item.name.ref.?);
-
-                                        if (!strings.eql(name, item.alias)) {
-                                            p.print(": ");
-                                            p.printSymbol(item.name.ref.?);
-                                        }
+                                        p.printClauseItemAs(item, true);
 
                                         if (i < s.items.len - 1) {
                                             p.print(", ");
@@ -3718,12 +3794,7 @@ pub fn NewPrinter(
                                 }
                             } else {
                                 for (s.items) |item, i| {
-                                    p.print(item.alias);
-                                    const name = p.renamer.nameForSymbol(item.name.ref.?);
-                                    if (!strings.eql(name, item.alias)) {
-                                        p.print(":");
-                                        p.printSymbol(item.name.ref.?);
-                                    }
+                                    p.printClauseItemAs(item, true);
 
                                     if (i < s.items.len - 1) {
                                         p.print(", ");
@@ -3817,7 +3888,7 @@ pub fn NewPrinter(
                             p.options.unindent();
                         }
 
-                        for (s.items) |*item, i| {
+                        for (s.items) |item, i| {
                             if (i != 0) {
                                 p.print(",");
                                 if (s.is_single_line) {
@@ -3830,14 +3901,7 @@ pub fn NewPrinter(
                                 p.printIndent();
                             }
 
-                            p.printClauseAlias(item.alias);
-                            const name = p.renamer.nameForSymbol(item.name.ref.?);
-                            if (!strings.eql(name, item.alias)) {
-                                p.printSpace();
-                                p.printSpaceBeforeIdentifier();
-                                p.print("as ");
-                                p.printIdentifier(name);
-                            }
+                            p.printClauseItem(item);
                         }
 
                         if (!s.is_single_line) {

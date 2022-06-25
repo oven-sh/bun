@@ -494,14 +494,14 @@ pub const ClauseItem = struct {
     alias_loc: logger.Loc,
     name: LocRef,
 
-    // This is the original name of the symbol stored in "Name". It's needed for
-    // "SExportClause" statements such as this:
-    //
-    //   export {foo as bar} from 'path'
-    //
-    // In this case both "foo" and "bar" are aliases because it's a re-export.
-    // We need to preserve both aliases in case the symbol is renamed. In this
-    // example, "foo" is "OriginalName" and "bar" is "Alias".
+    /// This is the original name of the symbol stored in "Name". It's needed for
+    /// "SExportClause" statements such as this:
+    ///
+    ///   export {foo as bar} from 'path'
+    ///
+    /// In this case both "foo" and "bar" are aliases because it's a re-export.
+    /// We need to preserve both aliases in case the symbol is renamed. In this
+    /// example, "foo" is "OriginalName" and "bar" is "Alias".
     original_name: string,
 
     pub const default_alias: string = "default";

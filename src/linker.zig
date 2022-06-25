@@ -272,7 +272,7 @@ pub const Linker = struct {
 
                         if (JSC.DisabledModule.has(import_record.path.text)) {
                             import_record.path.is_disabled = true;
-                            import_record.wrap_with_to_module = true;
+                            import_record.do_commonjs_transform_in_printer = true;
                             continue;
                         }
 
@@ -483,22 +483,22 @@ pub const Linker = struct {
                             import_path_format,
                         ) catch continue;
 
-                        if (comptime !supports_dynamic_require) {
-                            // If we're importing a CommonJS module as ESM
-                            // We need to do the following transform:
-                            //      import React from 'react';
-                            //      =>
-                            //      import {_require} from 'RUNTIME_IMPORTS';
-                            //      import * as react_module from 'react';
-                            //      var React = _require(react_module).default;
-                            // UNLESS it's a namespace import
-                            // If it's a namespace import, assume it's safe.
-                            // We can do this in the printer instead of creating a bunch of AST nodes here.
-                            // But we need to at least tell the printer that this needs to happen.
-                            if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind)) {
-                                import_record.wrap_with_to_module = true;
-                                import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
+                        // If we're importing a CommonJS module as ESM
+                        // We need to do the following transform:
+                        //      import React from 'react';
+                        //      =>
+                        //      import {_require} from 'RUNTIME_IMPORTS';
+                        //      import * as react_module from 'react';
+                        //      var React = _require(react_module).default;
+                        // UNLESS it's a namespace import
+                        // If it's a namespace import, assume it's safe.
+                        // We can do this in the printer instead of creating a bunch of AST nodes here.
+                        // But we need to at least tell the printer that this needs to happen.
+                        if (loader != .napi and resolved_import.shouldAssumeCommonJS(import_record.kind)) {
+                            import_record.do_commonjs_transform_in_printer = true;
+                            import_record.module_id = @truncate(u32, std.hash.Wyhash.hash(0, path.pretty));
 
+                            if (comptime !supports_dynamic_require) {
                                 result.ast.needs_runtime = true;
                                 needs_require = true;
                             }

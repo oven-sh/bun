@@ -82,6 +82,7 @@ namespace Zig { class GlobalObject; }
 namespace Zig { class GlobalObject; }
 namespace Zig { class GlobalObject; }
 namespace Zig { class GlobalObject; }
+namespace Zig { class GlobalObject; }
 /*
  * Copyright (c) 2015 Igalia
  * Copyright (c) 2015 Igalia S.L.

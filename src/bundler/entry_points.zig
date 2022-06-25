@@ -183,11 +183,13 @@ pub const ServerEntryPoint = struct {
         const code = try std.fmt.bufPrint(
             &entry.code_buffer,
             \\//Auto-generated file
+            \\var cjsSymbol = Symbol.for("CommonJS");
             \\import * as start from '{s}{s}';
             \\export * from '{s}{s}';
             \\var entryNamespace = start;
-            \\if ('default' in start && "__internalIsCommonJSNamespace" in globalThis && __internalIsCommonJSNamespace(start)) {{
-            \\  entryNamespace = start.default();
+            \\var cjs = start?.default;
+            \\if (cjs && typeof cjs ===  'function' && cjsSymbol in cjs) {{
+            \\  entryNamespace = cjs();
             \\}}
             \\if (typeof entryNamespace?.then === 'function') {{
             \\   entryNamespace = entryNamespace.then((entryNamespace) => {{

@@ -62,6 +62,7 @@ using namespace JSC;
     macro(closedPromise) \
     macro(closedPromiseCapability) \
     macro(code) \
+    macro(commonJSSymbol) \
     macro(connect) \
     macro(consumeReadableStream) \
     macro(controlledReadableStream) \
@@ -177,6 +178,7 @@ using namespace JSC;
     macro(releaseLock) \
     macro(removeEventListener) \
     macro(require) \
+    macro(requireMap) \
     macro(requireModule) \
     macro(resolve) \
     macro(resolveSync) \

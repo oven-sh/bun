@@ -125,8 +125,8 @@ pub const ImportRecord = struct {
     /// calling the "__reExport()" helper function
     calls_run_time_re_export_fn: bool = false,
 
-    /// Tell the printer to wrap this call to "require()" in "__toModule(...)"
-    wrap_with_to_module: bool = false,
+    /// Tell the printer to use runtime code to resolve this import/export
+    do_commonjs_transform_in_printer: bool = false,
 
     /// True for require calls like this: "try { require() } catch {}". In this
     /// case we shouldn't generate an error if the path could not be resolved.

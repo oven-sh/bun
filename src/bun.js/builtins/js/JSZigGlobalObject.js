@@ -30,36 +30,36 @@ function require(name) {
   }
   
   const resolved = this.resolveSync(name, this.path);
-  var requireCache = (globalThis[Symbol.for("_requireCache")] ||= new @Map);
-  var cached = requireCache.@get(resolved);
+  var cached = @requireMap.@get(resolved);
+  const last5 = resolved.substring(resolved.length - 5);
   if (cached) {
-    if (resolved.endsWith(".node")) {
+    if (last5 === ".node") {
       return cached.exports;
     }
 
     return cached;
   }
 
-
+  
   // TODO: remove this hardcoding
-  if (resolved.endsWith(".json")) {
+  if (last5 === ".json") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = JSON.parse(fs.readFileSync(resolved, "utf8"));
-    requireCache.@set(resolved, exports);
+    @requireMap.@set(resolved, exports);
     return exports;
-  } else if (resolved.endsWith(".node")) {
+  } else if (last5 === ".node") {
     var module = { exports: {} };
     globalThis.process.dlopen(module, resolved);
-    requireCache.@set(resolved, module);
+    @requireMap.@set(resolved, module);
     return module.exports;
-  } else if (resolved.endsWith(".toml")) {
+  } else if (last5 === ".toml") {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = Bun.TOML.parse(fs.readFileSync(resolved, "utf8"));
-    requireCache.@set(resolved, exports);
+    @requireMap.@set(resolved, exports);
     return exports;
   } else {
     var exports = this.requireModule(this, resolved);
-    requireCache.@set(resolved, exports);
+    @requireMap.@set(resolved, exports);
     return exports;
   }
 }
@@ -182,7 +182,7 @@ function requireModule(meta, resolved) {
   }
   var exports = Loader.getModuleNamespaceObject(entry.module);
   var commonJS = exports.default;
-  if (commonJS && @isObject(commonJS) && Symbol.for("CommonJS") in commonJS) {
+  if (commonJS && @isObject(commonJS) && @commonJSSymbol in commonJS) {
     return commonJS();
   }
   return exports;

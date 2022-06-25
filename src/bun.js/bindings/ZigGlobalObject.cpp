@@ -1754,6 +1754,12 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(map);
         });
 
+    m_requireMap.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
+            auto* map = JSC::JSMap::create(init.owner, init.vm, init.owner->mapStructure());
+            init.set(map);
+        });
+
     m_JSArrayBufferSinkClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::ArrayBufferSink);
@@ -1784,7 +1790,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     auto& builtinNames = WebCore::builtinNames(vm);
 
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity(30);
+    extraStaticGlobals.reserveCapacity(31);
 
     JSC::Identifier queueMicrotaskIdentifier = JSC::Identifier::fromString(vm, "queueMicrotask"_s);
     extraStaticGlobals.uncheckedAppend(
@@ -1848,6 +1854,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     static NeverDestroyed<const String> BunLazyString(MAKE_STATIC_STRING_IMPL("Bun.lazy"));
+    static NeverDestroyed<const String> CommonJSSymbolKey(MAKE_STATIC_STRING_IMPL("CommonJS"));
     JSC::Identifier BunLazyIdentifier = JSC::Identifier::fromUid(vm.symbolRegistry().symbolForKey(BunLazyString));
     JSC::JSFunction* lazyLoadFunction = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
         BunLazyString, functionLazyLoad);
@@ -1878,6 +1885,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function));
+
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.commonJSSymbolPrivateName(), JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(CommonJSSymbolKey)), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+
     this->addStaticGlobals(extraStaticGlobals.data(), extraStaticGlobals.size());
 
     extraStaticGlobals.releaseBuffer();
@@ -2134,6 +2144,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
+    thisObject->m_requireMap.visit(visitor);
 
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
     visitor.append(thisObject->m_readableStreamToText);

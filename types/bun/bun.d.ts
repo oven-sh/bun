@@ -290,6 +290,36 @@ declare module "bun" {
   export function escapeHTML(input: string | object | number | boolean): string;
 
   /**
+   * Convert a filesystem path to a file:// URL.
+   *
+   * @param path The path to convert.
+   * @returns A {@link URL} with the file:// scheme.
+   *
+   * @example
+   * ```js
+   * const url = Bun.pathToFileURL("/foo/bar.txt");
+   * console.log(url.href); // "file:///foo/bar.txt"
+   *```
+   *
+   * Internally, this function uses WebKit's URL API to
+   * convert the path to a file:// URL.
+   */
+  export function pathToFileURL(path: string): URL;
+
+  /**
+   * Convert a {@link URL} to a filesystem path.
+   * @param url The URL to convert.
+   * @returns A filesystem path.
+   * @throws If the URL is not a file:// URL.
+   * @example
+   * ```js
+   * const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
+   * console.log(path); // "/foo/bar.txt"
+   * ```
+   */
+  export function fileURLToPath(url: URL): string;
+
+  /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
    * This Blob is lazy. That means it won't do any work until you read from it.
@@ -950,9 +980,9 @@ declare module "bun" {
    * This uses a high-resolution monotonic system timer.
    *
    * After 14 weeks of consecutive uptime, this function
-   * returns a `bigint` to prevent overflow
+   * wraps
    */
-  export function nanoseconds(): number | bigint;
+  export function nanoseconds(): number;
 
   /**
    * Generate a heap snapshot for seeing where the heap is being used

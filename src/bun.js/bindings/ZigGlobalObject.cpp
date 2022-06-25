@@ -392,6 +392,17 @@ JSC_DEFINE_CUSTOM_GETTER(functionLazyLoadStreamProtoypeMap_getter,
         thisObject->readableStreamNativeMap());
 }
 
+JSC_DECLARE_CUSTOM_GETTER(functionRequireMap_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(functionRequireMap_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        thisObject->requireMap());
+}
+
 JSC_DECLARE_CUSTOM_GETTER(JSBuffer_getter);
 
 JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
@@ -991,6 +1002,39 @@ JSC_DEFINE_HOST_FUNCTION(functionNoop, (JSC::JSGlobalObject*, JSC::CallFrame*))
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+JSC_DECLARE_HOST_FUNCTION(functionPathToFileURL);
+JSC_DECLARE_HOST_FUNCTION(functionFileURLToPath);
+
+JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& globalObject = *reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto& vm = globalObject.vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto path = JSC::JSValue::encode(callFrame->argument(0));
+
+    JSC::JSString* pathString = JSC::JSValue::decode(path).toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
+
+    auto fileURL = WTF::URL::fileURLWithFileSystemPath(pathString->value(lexicalGlobalObject));
+    auto object = WebCore::DOMURL::create(fileURL.string(), String());
+    auto jsValue = toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, globalObject, throwScope, WTFMove(object));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(jsValue));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto path = JSC::JSValue::encode(callFrame->argument(0));
+    auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(path);
+    if (!domURL) {
+        throwTypeError(globalObject, scope, "Argument must be a URL"_s);
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
+    return JSC::JSValue::encode(JSC::jsString(vm, domURL->href().fileSystemPath()));
+}
+
 JSC_DEFINE_CUSTOM_GETTER(noop_getter, (JSGlobalObject*, EncodedJSValue, PropertyName))
 {
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -1002,6 +1046,9 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
 {
     return true;
 }
+
+static NeverDestroyed<const String> pathToFileURLString(MAKE_STATIC_STRING_IMPL("pathToFileURL"));
+static NeverDestroyed<const String> fileURLToPathString(MAKE_STATIC_STRING_IMPL("fileURLToPath"));
 
 // we're trying out a new way to do this lazy loading
 static JSC_DECLARE_HOST_FUNCTION(functionLazyLoad);
@@ -1021,6 +1068,7 @@ JSC:
         static NeverDestroyed<const String> sqliteString(MAKE_STATIC_STRING_IMPL("sqlite"));
         static NeverDestroyed<const String> bunJSCString(MAKE_STATIC_STRING_IMPL("bun:jsc"));
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
+
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
             switch (moduleName.toInt32(globalObject)) {
@@ -1060,6 +1108,15 @@ JSC:
 
         if (string == bunJSCString) {
             return JSC::JSValue::encode(createJSCModule(globalObject));
+        }
+
+        if (string == pathToFileURLString) {
+            return JSValue::encode(
+                JSFunction::create(vm, globalObject, 1, pathToFileURLString, functionPathToFileURL, NoIntrinsic));
+        }
+        if (string == fileURLToPathString) {
+            return JSValue::encode(
+                JSFunction::create(vm, globalObject, 1, fileURLToPathString, functionFileURLToPath, NoIntrinsic));
         }
 
         if (UNLIKELY(string == noopString)) {
@@ -1913,6 +1970,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamProtoypeMap_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
+    putDirectCustomAccessor(vm, builtinNames.requireMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionRequireMap_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URLSearchParams"_s), JSC::CustomGetterSetter::create(vm, JSURLSearchParams_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
@@ -2056,11 +2116,24 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, pathToFileURLString);
+            object->putDirectNativeFunction(vm, identifier, 1, functionPathToFileURL, NoIntrinsic,
+                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        }
+
+        {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, fileURLToPathString);
+            object->putDirectNativeFunction(vm, identifier, 1, fileURLToPathString, NoIntrinsic,
+                JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+        }
+
+        {
             object->putDirectBuiltinFunction(vm, this, builtinNames.readableStreamToArrayPublicName(), readableStreamReadableStreamToArrayCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
         }
 
         {
-            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "hashCode"_s);
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "stringHashCode"_s);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionHashCode, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }

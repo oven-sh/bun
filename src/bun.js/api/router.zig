@@ -30,6 +30,7 @@ const d = Base.d;
 const FetchEvent = WebCore.FetchEvent;
 const URLPath = @import("../../http/url_path.zig");
 const URL = @import("../../url.zig").URL;
+
 route: *const FilesystemRouter.Match,
 route_holder: FilesystemRouter.Match = undefined,
 needs_deinit: bool = false,

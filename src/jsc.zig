@@ -42,6 +42,8 @@ pub const Node = struct {
     pub const fs = @import("./bun.js/node/node_fs_constant.zig");
 };
 pub const Maybe = Node.Maybe;
+pub const jsNumber = @This().JSValue.jsNumber;
+pub const jsBoolean = @This().JSValue.jsBoolean;
 pub inline fn markBinding() void {
     if (comptime is_bindgen) unreachable;
 }

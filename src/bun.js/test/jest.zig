@@ -788,7 +788,7 @@ pub const DescribeScope = struct {
                 }
 
                 JSC.JSValue.c(arguments[0]).protect();
-                const name = comptime std.mem.span(@tagName(this_hook));
+                const name = comptime @as(string, @tagName(this_hook));
                 @field(this, name).append(getAllocator(ctx), JSC.JSValue.c(arguments[0])) catch unreachable;
                 return JSC.JSValue.jsBoolean(true).asObjectRef();
             }
@@ -819,7 +819,7 @@ pub const DescribeScope = struct {
     );
 
     pub fn execCallback(this: *DescribeScope, ctx: js.JSContextRef, comptime hook: LifecycleHook) JSValue {
-        const name = comptime std.mem.span(@tagName(hook));
+        const name = comptime @as(string, @tagName(hook));
         var hooks: []JSC.JSValue = @field(this, name).items;
         for (hooks) |cb, i| {
             if (cb.isEmpty()) continue;

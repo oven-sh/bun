@@ -627,7 +627,7 @@ pub fn toAST(
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             };
 
-            return toAST(allocator, string, std.mem.span(@tagName(value)));
+            return toAST(allocator, string, @as(string, @tagName(value)));
         },
         .ErrorSet => return try toAST(allocator, []const u8, std.mem.span(@errorName(value))),
         .Union => |Union| {

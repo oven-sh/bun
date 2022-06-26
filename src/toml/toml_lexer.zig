@@ -1110,7 +1110,7 @@ pub const Lexer = struct {
     }
 
     pub fn expected(self: *Lexer, token: T) !void {
-        try self.expectedString(std.mem.span(@tagName(token)));
+        try self.expectedString(@as(string, @tagName(token)));
     }
 
     pub fn unexpected(lexer: *Lexer) !void {

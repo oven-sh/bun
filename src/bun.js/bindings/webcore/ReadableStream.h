@@ -59,7 +59,6 @@ public:
         return guarded();
     }
 
-private:
     ReadableStream(JSDOMGlobalObject& globalObject, JSReadableStream& readableStream)
         : DOMGuarded<JSReadableStream>(globalObject, readableStream)
     {

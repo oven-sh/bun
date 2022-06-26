@@ -40,7 +40,7 @@ using namespace JSC;
     macro(addEventListener) \
     macro(appendFromJS) \
     macro(argv) \
-    macro(assignDirectStream) \
+    macro(assignToStream) \
     macro(associatedReadableByteStreamController) \
     macro(autoAllocateChunkSize) \
     macro(backpressure) \

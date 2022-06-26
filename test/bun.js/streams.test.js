@@ -22,6 +22,21 @@ it("exists globally", () => {
   expect(typeof CountQueuingStrategy).toBe("function");
 });
 
+it("ReadableStream (readMany)", async () => {
+  var stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+      controller.close();
+    },
+    cancel() {},
+  });
+  var reader = stream.getReader();
+  const chunk = await reader.readMany();
+  expect(chunk.value.join("")).toBe("helloworld");
+  expect((await reader.read()).done).toBe(true);
+});
+
 it("ReadableStream (direct)", async () => {
   var stream = new ReadableStream({
     pull(controller) {

@@ -59,8 +59,8 @@ pub inline fn JSVALUE_TO_INT64(arg_value: EncodedJSValue) i64 {
 }
 pub extern fn JSVALUE_TO_UINT64_SLOW(globalObject: ?*anyopaque, value: EncodedJSValue) u64;
 pub extern fn JSVALUE_TO_INT64_SLOW(value: EncodedJSValue) i64;
-pub extern fn UINT64_TO_JSVALUE_SLOW(globalObject: ?*anyopaque, val: u64) EncodedJSValue;
-pub extern fn INT64_TO_JSVALUE_SLOW(globalObject: ?*anyopaque, val: i64) EncodedJSValue;
+pub const UINT64_TO_JSVALUE_SLOW = @import("./bindings.zig").JSValue.fromUInt64NoTruncate;
+pub const INT64_TO_JSVALUE_SLOW = @import("./bindings.zig").JSValue.fromInt64NoTruncate;
 pub inline fn UINT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: u64) EncodedJSValue {
     var globalObject = arg_globalObject;
     const val = arg_val;
@@ -70,7 +70,7 @@ pub inline fn UINT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: u64) Enc
     if (val < @bitCast(c_ulonglong, @as(c_longlong, @as(c_long, 9007199254740991)))) {
         return DOUBLE_TO_JSVALUE(@intToFloat(f64, val));
     }
-    return UINT64_TO_JSVALUE_SLOW(globalObject, val);
+    return UINT64_TO_JSVALUE_SLOW(@ptrCast(*@import("./bindings.zig").JSGlobalObject, globalObject.?), val).asEncoded();
 }
 pub inline fn INT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: i64) EncodedJSValue {
     var globalObject = arg_globalObject;
@@ -81,7 +81,7 @@ pub inline fn INT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: i64) Enco
     if ((val >= @bitCast(c_longlong, @as(c_longlong, -@as(c_long, 9007199254740991)))) and (val <= @bitCast(c_longlong, @as(c_longlong, @as(c_long, 9007199254740991))))) {
         return DOUBLE_TO_JSVALUE(@intToFloat(f64, val));
     }
-    return INT64_TO_JSVALUE_SLOW(globalObject, val);
+    return INT64_TO_JSVALUE_SLOW(@ptrCast(*@import("./bindings.zig").JSGlobalObject, globalObject.?), val).asEncoded();
 }
 pub inline fn INT32_TO_JSVALUE(arg_val: i32) EncodedJSValue {
     return .{ .asInt64 = @bitCast(i64, @as(c_ulonglong, 18446181123756130304) | @bitCast(c_ulonglong, @as(c_ulonglong, @bitCast(u32, arg_val)))) };

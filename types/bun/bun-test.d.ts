@@ -18,7 +18,7 @@
  */
 
 declare module "bun:test" {
-  export function describe(label: string, body: () => {}): any;
+  export function describe(label: string, body: () => void): any;
   export function it(label: string, test: () => void | Promise<any>): any;
   export function test(label: string, test: () => void | Promise<any>): any;
 

@@ -734,7 +734,7 @@ const DocumentHandler = struct {
             else => |kind| {
                 JSC.throwInvalidArguments(
                     "Expected object but received {s}",
-                    .{std.mem.span(@tagName(kind))},
+                    .{@as(string, @tagName(kind))},
                     global.ref(),
                     exception,
                 );
@@ -885,7 +885,7 @@ const ElementHandler = struct {
             else => |kind| {
                 JSC.throwInvalidArguments(
                     "Expected object but received {s}",
-                    .{std.mem.span(@tagName(kind))},
+                    .{@as(string, @tagName(kind))},
                     global.ref(),
                     exception,
                 );

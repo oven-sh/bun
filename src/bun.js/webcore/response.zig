@@ -1103,6 +1103,10 @@ pub const Blob = struct {
     pub const SizeType = u52;
     pub const max_size = std.math.maxInt(SizeType);
 
+    pub fn isDetached(this: *const Blob) bool {
+        return this.store == null;
+    }
+
     const CopyFilePromiseHandler = struct {
         promise: *JSPromise,
         globalThis: *JSGlobalObject,
@@ -3820,7 +3824,7 @@ pub const Body = struct {
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
 
-            if (value.readable) |*readable| {
+            if (value.readable) |readable| {
                 // switch (readable.ptr) {
                 //     .JavaScript
                 // }

@@ -49,7 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableStreamInitializeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInitializeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInitializeReadableStreamCodeLength = 2501;
+const int s_readableStreamInitializeReadableStreamCodeLength = 2783;
 static const JSC::Intrinsic s_readableStreamInitializeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInitializeReadableStreamCode =
     "(function (underlyingSource, strategy)\n" \
@@ -90,14 +90,17 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "    if (@getByIdDirectPrivate(underlyingSource, \"pull\") !== @undefined && !isLazy) {\n" \
     "        const size = @getByIdDirectPrivate(strategy, \"size\");\n" \
     "        const highWaterMark = @getByIdDirectPrivate(strategy, \"highWaterMark\");\n" \
+    "        @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n" \
     "        @setupReadableStreamDefaultController(this, underlyingSource, size, highWaterMark !== @undefined ? highWaterMark : 1, @getByIdDirectPrivate(underlyingSource, \"start\"), @getByIdDirectPrivate(underlyingSource, \"pull\"), @getByIdDirectPrivate(underlyingSource, \"cancel\"));\n" \
     "        \n" \
     "        return this;\n" \
     "    }\n" \
     "    if (isDirect) {\n" \
+    "        @putByIdDirectPrivate(this, \"underlyingSource\", underlyingSource);\n" \
     "        @putByIdDirectPrivate(this, \"start\", () => @createReadableStreamController(this, underlyingSource, strategy));\n" \
     "    } else if (isLazy) {\n" \
     "        const autoAllocateChunkSize = underlyingSource.autoAllocateChunkSize;\n" \
+    "        @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n" \
     "\n" \
     "        \n" \
     "        @putByIdDirectPrivate(this, \"start\", () => {\n" \
@@ -107,6 +110,7 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "            }\n" \
     "        });\n" \
     "    } else {\n" \
+    "        @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n" \
     "        @putByIdDirectPrivate(this, \"start\", @undefined);\n" \
     "        @createReadableStreamController(this, underlyingSource, strategy);\n" \
     "    }\n" \

@@ -13,6 +13,8 @@
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
 
+#define ZIG_REPR_TYPE uint64_t
+
 
 // /* 7.18.1.1  Exact-width integer types */
 typedef unsigned char uint8_t;
@@ -80,6 +82,8 @@ typedef union EncodedJSValue {
 
   void* asPtr;
   double asDouble;
+
+  ZIG_REPR_TYPE asZigRepr;
 } EncodedJSValue;
 
 EncodedJSValue ValueUndefined = { TagValueUndefined };
@@ -244,7 +248,7 @@ static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) {
 }
 
 #ifndef IS_CALLBACK
-void* JSFunctionCall(void* globalObject, void* callFrame);
+ZIG_REPR_TYPE JSFunctionCall(void* globalObject, void* callFrame);
 
 #endif
 

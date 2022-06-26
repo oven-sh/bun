@@ -265,7 +265,7 @@ pub const Linker = struct {
                     if (comptime is_bun) {
                         if (JSC.HardcodedModule.LinkerMap.get(import_record.path.text)) |replacement| {
                             import_record.path.text = replacement;
-                            import_record.tag = .hardcoded;
+                            import_record.tag = if (strings.eqlComptime(replacement, "bun")) ImportRecord.Tag.bun else .hardcoded;
                             externals.append(record_index) catch unreachable;
                             continue;
                         }

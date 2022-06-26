@@ -213,7 +213,7 @@ pub const Routes = struct {
     }
 
     fn match(this: *Routes, allocator: std.mem.Allocator, pathname_: string, comptime MatchContext: type, ctx: MatchContext) ?*Route {
-        var pathname = std.mem.trimLeft(u8, pathname_, "/");
+        const pathname = std.mem.trimLeft(u8, pathname_, "/");
 
         if (pathname.len == 0) {
             return this.index;

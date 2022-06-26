@@ -310,7 +310,7 @@ declare module "bun" {
    * Convert a {@link URL} to a filesystem path.
    * @param url The URL to convert.
    * @returns A filesystem path.
-   * @throws If the URL is not a file:// URL.
+   * @throws If the URL is not a URL.
    * @example
    * ```js
    * const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
@@ -318,6 +318,23 @@ declare module "bun" {
    * ```
    */
   export function fileURLToPath(url: URL): string;
+
+  interface Sink<T> {
+    write(chunk: string | ArrayBufferView | ArrayBuffer): number;
+    drain(): Promise<number> | number;
+    end(): T;
+  }
+
+  /**
+   * Fast incremental writer that becomes an ArrayBuffer on end().
+   */
+  export class ArrayBufferSink implements Sink<ArrayBuffer> {
+    constructor({ stream = false, asUint8Array = false, highWaterMark = 2048 });
+
+    write(chunk: string | ArrayBufferView | ArrayBuffer): number;
+    drain(): number;
+    end(): ArrayBuffer;
+  }
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.

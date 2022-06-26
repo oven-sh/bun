@@ -1182,7 +1182,7 @@ pub const VirtualMachine = struct {
             return;
         } else if (HardcodedModule.Map.get(specifier)) |result| {
             ret.result = null;
-            ret.path = std.mem.span(@tagName(result));
+            ret.path = @as(string, @tagName(result));
             return;
         }
 

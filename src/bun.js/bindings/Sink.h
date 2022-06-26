@@ -7,9 +7,11 @@ enum SinkID : uint8_t {
     TextSink = 1,
     FileSink = 2,
     HTMLRewriterSink = 3,
+    HTTPResponseSink = 4,
+    HTTPSResponseSink = 5,
 
 };
 static constexpr unsigned numberOfSinkIDs
-    = 4;
+    = 6;
 
 }

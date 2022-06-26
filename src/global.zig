@@ -105,6 +105,9 @@ pub inline fn constStrToU8(s: []const u8) []u8 {
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.MAX_PATH_BYTES;
 
 pub inline fn cast(comptime To: type, value: anytype) To {
+    if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
+        return @intToPtr(To, @bitCast(usize, value));
+    }
     return @ptrCast(To, @alignCast(@alignOf(To), value));
 }
 

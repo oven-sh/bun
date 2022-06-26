@@ -89,7 +89,7 @@ const char* const s_readableStreamDefaultReaderCancelCode =
 
 const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamDefaultReaderReadManyCodeLength = 3414;
+const int s_readableStreamDefaultReaderReadManyCodeLength = 3712;
 static const JSC::Intrinsic s_readableStreamDefaultReaderReadManyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamDefaultReaderReadManyCode =
     "(function ()\n" \
@@ -128,6 +128,11 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);\n" \
     "                }\n" \
     "            }\n" \
+    "        } else {\n" \
+    "            values[0] = values[0].value;\n" \
+    "            for (var i = 1; i < values.length; i++) {\n" \
+    "                values[i] = values[i].value;\n" \
+    "            }\n" \
     "        }\n" \
     "        \n" \
     "        @resetQueue(@getByIdDirectPrivate(controller, \"queue\"));\n" \
@@ -157,6 +162,10 @@ const char* const s_readableStreamDefaultReaderReadManyCode =
     "                if (!(@ArrayBuffer.@isView(buf) || buf instanceof @ArrayBuffer)) {\n" \
     "                    value[i] = new @Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);\n" \
     "                }\n" \
+    "            }\n" \
+    "        } else {\n" \
+    "            for (var i = 1; i < value.length; i++) {\n" \
+    "                value[i] = value[i].value;\n" \
     "            }\n" \
     "        }\n" \
     "        \n" \

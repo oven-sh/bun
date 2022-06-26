@@ -1,4 +1,4 @@
-const classes = ["ArrayBufferSink"];
+const classes = ["ArrayBufferSink", "HTTPResponseSink", "HTTPSResponseSink"];
 const SINK_COUNT = 5;
 
 function names(name) {
@@ -157,8 +157,6 @@ function header() {
 
 JSC_DECLARE_CUSTOM_GETTER(function${name}__getter);
 
-
-
         `;
   }
 
@@ -305,7 +303,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartDirectStream, (JSC::JSGlobalObject * lexic
       isFirst ? "" : "else"
     } if (WebCore::${controller}* ${name}Controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue())) {
         if (${name}Controller->wrapped() == nullptr) {
-            scope.throwException(globalObject, JSC::createTypeError(globalObject, "Controller is already closed"_s));
+            scope.throwException(globalObject, JSC::createTypeError(globalObject, "Cannot start stream with closed controller"_s));
             return JSC::JSValue::encode(JSC::jsUndefined());
         }
 
@@ -360,7 +358,6 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
 
     void *ptr = controller->wrapped();
     if (ptr == nullptr) {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Controller is already closed"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
@@ -368,6 +365,29 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     ${name}__close(lexicalGlobalObject, ptr);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
+
+JSC_DECLARE_HOST_FUNCTION(${controller}__end);
+JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    WebCore::${controller}* controller = JSC::jsDynamicCast<WebCore::${controller}*>(callFrame->thisValue());
+    if (!controller) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    void *ptr = controller->wrapped();
+    if (ptr == nullptr) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    controller->detach();
+    return ${name}__endWithSink(ptr, lexicalGlobalObject);
+}
+
 
 JSC_DECLARE_HOST_FUNCTION(${name}__doClose);
 JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
@@ -384,7 +404,6 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
 
     void *ptr = sink->wrapped();
     if (ptr == nullptr) {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Controller is already closed"_s));
         return JSC::JSValue::encode(JSC::jsUndefined());
     }
 
@@ -409,7 +428,7 @@ static const HashTableValue ${controllerPrototypeName}TableValues[]
       = {
             { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${controller}__close), (intptr_t)(0) } },
             { "drain"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__drain), (intptr_t)(1) } },
-            { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__end), (intptr_t)(0) } },
+            { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${controller}__end), (intptr_t)(0) } },
             { "start"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__start), (intptr_t)(1) } },
             { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(${name}__write), (intptr_t)(1) } },
         };
@@ -724,43 +743,89 @@ extern "C" void* ${name}__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue
     return nullptr;
 }
 
-extern "C" JSC__JSValue ${name}__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, int32_t *bunNativeTag, void** bunNativePtr)
+extern "C" void ${name}__detachPtr(JSC__JSValue JSValue0)
+{
+    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(JSValue0))) {
+        sink->detach();
+        return;
+    }
+        
+
+    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(JSValue0))) {
+        controller->detach();
+        return;
+    }
+}
+
+extern "C" JSC__JSValue ${name}__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue stream, void* sinkPtr, void **controllerValue)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
     auto clientData = WebCore::clientData(vm);
     JSC::JSObject *readableStream = JSC::JSValue::decode(stream).getObject();
-
-    if (JSC::JSValue tag = readableStream->get(globalObject, clientData->builtinNames().bunNativeTypePrivateName())) {
-        if (tag.isInt32()) {
-            int32_t tagNumber = tag.toInt32(arg0);
-            if (tagNumber > 0 && tagNumber < 5) {
-                *bunNativeTag = tagNumber;
-                *bunNativePtr = reinterpret_cast<void*>(bitwise_cast<uintptr_t>(readableStream->get(globalObject, clientData->builtinNames().bunNativePtrPrivateName()).asNumber()));
-                return JSC::JSValue::encode(JSC::jsNull());
-            }
-        }
-    }
+    auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSC::JSValue prototype = globalObject->${controllerPrototypeName}();
     JSC::Structure* structure = WebCore::${controller}::createStructure(vm, globalObject, prototype);
     WebCore::${controller} *controller = WebCore::${controller}::create(vm, globalObject, structure, sinkPtr);
-
-    JSC::JSObject *function = globalObject->getDirect(vm, clientData->builtinNames().assignDirectStreamPrivateName()).getObject();
+    *controllerValue = reinterpret_cast<void*>(JSC::JSValue::encode(controller));
+    JSC::JSObject *function = globalObject->getDirect(vm, clientData->builtinNames().assignToStreamPrivateName()).getObject();
     auto callData = JSC::getCallData(function);
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::JSValue::decode(stream));
     arguments.append(controller);
 
     auto result = JSC::call(arg0, function, callData, JSC::jsUndefined(), arguments);
+    if (scope.exception())
+        return JSC::JSValue::encode(scope.exception());
+
     return JSC::JSValue::encode(result);
 }
 
+extern "C" void ${name}__onReady(JSC__JSValue controllerValue, JSC__JSValue amt, JSC__JSValue offset)
+{
+    WebCore::${controller}* controller = JSC::jsCast<WebCore::${controller}*>(JSC::JSValue::decode(controllerValue).getObject());
 
+    JSC::JSFunction *function = controller->m_onPull.get();
+    if (function == nullptr)
+        return;
+    JSC::JSGlobalObject *globalObject = controller->globalObject();
+
+    auto callData = JSC::getCallData(function);
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(controller);
+    arguments.append(JSC::JSValue::decode(amt));
+    arguments.append(JSC::JSValue::decode(offset));
+
+    JSC::call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+}
+
+extern "C" void ${name}__onStart(JSC__JSValue controllerValue)
+{
+
+}
+
+extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reason)
+{
+    WebCore::${controller}* controller = JSC::jsCast<WebCore::${controller}*>(JSC::JSValue::decode(controllerValue).getObject());
+
+    JSC::JSFunction *function = controller->m_onClose.get();
+    if (function == nullptr)
+        return;
+    // only call close once
+    controller->m_onClose.clear();
+    JSC::JSGlobalObject *globalObject = controller->globalObject();
+
+    auto callData = JSC::getCallData(function);
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(controller);
+    arguments.append(JSC::JSValue::decode(reason));
+    JSC::call(globalObject, function, callData, JSC::jsUndefined(), arguments);
+}
 
 `;
-    return templ;
   }
+  return templ;
 }
 
 await Bun.write(import.meta.dir + "/bindings/JSSink.h", header());

@@ -185,6 +185,8 @@ pub const JSReadableStreamFile = JSC.WebCore.FileBlobLoader.Source.JSReadableStr
 
 // Sinks
 pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
+pub const JSHTTPSResponseSink = JSC.WebCore.HTTPSResponseSink.JSSink;
+pub const JSHTTPResponseSink = JSC.WebCore.HTTPResponseSink.JSSink;
 
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPClient;
@@ -2540,6 +2542,8 @@ comptime {
         NodePath.shim.ref();
         JSReadableStreamBlob.shim.ref();
         JSArrayBufferSink.shim.ref();
+        JSHTTPResponseSink.shim.ref();
+        JSHTTPSResponseSink.shim.ref();
 
         JSReadableStreamFile.shim.ref();
         _ = ZigString__free;

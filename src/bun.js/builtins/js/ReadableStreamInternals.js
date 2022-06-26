@@ -601,10 +601,106 @@ function isReadableStreamDefaultController(controller)
 
 
 @globalPrivate
-function assignDirectStream() {
+function assignToStream(stream, sink) {
     "use strict";
 
-    var stream = this;
+    // The stream is either a direct stream or a "default" JS stream
+    const underlyingSource = @getByIdDirectPrivate(stream, "underlyingSource");
+
+    // we know it's a direct stream when @underlyingSource is set
+    if (underlyingSource) {
+        var originalClose = underlyingSource.close;
+        var reader;
+        var close = (reason) => {
+            originalClose && originalClose(reason);
+            try {
+                reader && reader.releaseLock();
+            } catch (e) {}
+            @readableStreamClose(stream, reason);
+            
+        }
+        var pull = underlyingSource.pull;
+       
+        @putByIdDirectPrivate(stream, "readableStreamController", sink);
+        @putByIdDirectPrivate(stream, "start", @undefined);
+        @putByIdDirectPrivate(stream, "underlyingSource", @undefined);
+
+        @startDirectStream.@call(sink, stream, pull, close);
+
+        if (!pull) {
+            close();
+            return;
+        }
+
+        if (!@isCallable(pull)) {
+            close();
+            @throwTypeError("pull is not a function");
+            return;
+        }
+
+        // lock the stream, relying on close() or end() to eventaully close it
+        reader = stream.getReader();
+
+        pull(sink);
+        return;
+    }
+
+   
+    return (async function() {
+        "use strict";
+
+        var didClose = false;
+
+
+        try {
+            var reader = stream.getReader();
+            reader.closed.then(() => {
+                if (!didClose && sink) {
+                    didClose = true;
+                    sink.end();
+                }
+            }, (e) => {
+                if (!didClose && sink) {
+                    didClose = true;
+                    sink.close(e);
+                }
+            });
+
+            var many = reader.readMany();
+            if (many && @isPromise(many)) {
+                many = await many;
+            }
+
+            if (many.done) {
+                didClose = true;
+                sink.end();
+                return;
+            }
+
+            sink.start();
+            var wroteCount = many.value.length;
+            for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {
+                sink.write(values[i]);
+            }
+
+            if (wroteCount > 0) {
+                sink.drain();
+            }
+            
+            while (true) {
+                var result = await reader.read();
+                if (result.done) {
+                    didClose = true;
+                    return sink.end();
+                }
+
+                sink.write(result.value);
+            }
+        } catch (e) {
+            globalThis.console.error(e);
+
+        }
+    })();
 }
 
 
@@ -645,7 +741,7 @@ function handleDirectStreamErrorReject(e) {
     return @Promise.@reject(e);
 }
 
-function onPullDirectStream(controller)
+function onPullArrayBufferSink(controller)
 {
     
     "use strict";
@@ -853,7 +949,7 @@ function initializeArrayBufferStream(underlyingSource, highWaterMark)
 
     var controller = {
         @underlyingSource: underlyingSource,
-        @pull: @onPullDirectStream,
+        @pull: @onPullArrayBufferSink,
         @controlledReadableStream: this,
         @sink: sink,
         close: @onCloseDirectStream,

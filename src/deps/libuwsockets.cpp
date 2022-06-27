@@ -724,6 +724,16 @@ void uws_res_end(int ssl, uws_res_t *res, const char *data, size_t length,
   }
 }
 
+void uws_res_end_stream(int ssl, uws_res_t *res, bool close_connection) {
+  if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+    uwsRes->endWithoutBody(std::nullopt, close_connection);
+  } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+    uwsRes->endWithoutBody(std::nullopt, close_connection);
+  }
+}
+
 void uws_res_pause(int ssl, uws_res_t *res) {
   if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
@@ -810,10 +820,10 @@ void uws_res_end_without_body(int ssl, uws_res_t *res) {
 bool uws_res_write(int ssl, uws_res_t *res, const char *data, size_t length) {
   if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-    return uwsRes->write(std::string_view(data));
+    return uwsRes->write(std::string_view(data, length));
   }
   uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-  return uwsRes->write(std::string_view(data));
+  return uwsRes->write(std::string_view(data, length));
 }
 uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res) {
   if (ssl) {

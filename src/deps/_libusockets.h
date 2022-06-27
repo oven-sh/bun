@@ -245,6 +245,7 @@ void uws_res_write_header(int ssl, uws_res_t *res, const char *key,
 void uws_res_write_header_int(int ssl, uws_res_t *res, const char *key,
                               size_t key_length, uint64_t value);
 void uws_res_end_without_body(int ssl, uws_res_t *res);
+void uws_res_end_stream(int ssl, uws_res_t *res, bool close_connection);
 bool uws_res_write(int ssl, uws_res_t *res, const char *data, size_t length);
 uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res);
 bool uws_res_has_responded(int ssl, uws_res_t *res);

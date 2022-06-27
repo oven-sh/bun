@@ -875,6 +875,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn writeStatus(this: *RequestContext, status: u16) void {
             var status_text_buf: [48]u8 = undefined;
+            std.debug.assert(!this.has_written_status);
+            this.has_written_status = true;
 
             if (status == 302) {
                 this.resp.writeStatus("302 Found");
@@ -1073,7 +1075,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .socket_fd = if (!this.aborted) this.resp.getNativeHandle() else -999,
             };
 
-            this.resp.runCorked(*RequestContext, renderMetadataAndNewline, this);
+            this.resp.runCorkedWithType(*RequestContext, renderMetadataAndNewline, this);
 
             if (this.blob.size == 0) {
                 this.cleanupAndFinalizeAfterSendfile();
@@ -1221,10 +1223,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             },
 
                             .JavaScript, .Direct => {
-                                if (this.has_abort_handler)
-                                    this.resp.runCorked(*RequestContext, renderMetadata, this)
-                                else
+                                // uWS automatically adds the status line if needed
+                                // we want to batch network calls as much as possible
+                                if (!(this.response_ptr.?.statusCode() == 200 or this.response_headers == null)) {
                                     this.renderMetadata();
+                                }
 
                                 stream.value.ensureStillAlive();
                                 var response_stream = this.allocator.create(ResponseStream.JSSink) catch unreachable;
@@ -1243,11 +1246,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 signal.clear();
                                 std.debug.assert(signal.isDead());
 
-                                const assignment_result: JSValue = ResponseStream.JSSink.assignToStream(
-                                    this.server.globalThis,
-                                    stream.value,
-                                    response_stream,
-                                    @ptrCast(**anyopaque, &signal.ptr),
+                                const assignment_result: JSValue = this.resp.corked(
+                                    ResponseStream.JSSink.assignToStream,
+                                    .{
+                                        this.server.globalThis,
+                                        stream.value,
+                                        response_stream,
+                                        @ptrCast(**anyopaque, &signal.ptr),
+                                    },
                                 );
 
                                 // assert that it was updated
@@ -1381,7 +1387,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn doRenderBlob(this: *RequestContext) void {
             if (this.has_abort_handler)
-                this.resp.runCorked(*RequestContext, renderMetadata, this)
+                this.resp.runCorkedWithType(*RequestContext, renderMetadata, this)
             else
                 this.renderMetadata();
 
@@ -1481,9 +1487,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 204
             else
                 status;
-
-            std.debug.assert(!this.has_written_status);
-            this.has_written_status = true;
 
             this.writeStatus(status);
             var needs_content_type = true;

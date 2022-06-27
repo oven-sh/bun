@@ -1472,7 +1472,11 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
             };
 
             var any_needs_escape = false;
-            var buf: std.ArrayList(u8) = undefined;
+            var buf: std.ArrayList(u8) = std.ArrayList(u8){
+                .items = &.{},
+                .capacity = 0,
+                .allocator = allocator,
+            };
 
             if (comptime Environment.isAarch64 or Environment.isX64) {
                 // pass #1: scan for any characters that need escaping
@@ -1488,6 +1492,8 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                         @bitCast(AsciiVectorU1, (vec == vecs[3])) |
                         @bitCast(AsciiVectorU1, (vec == vecs[4]))) == 1)
                     {
+                        std.debug.assert(buf.capacity == 0);
+
                         buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
                         const copy_len = @ptrToInt(remaining.ptr) - @ptrToInt(latin1.ptr);
                         @memcpy(buf.items.ptr, latin1.ptr, copy_len);
@@ -1599,6 +1605,8 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 scan_and_allocate_lazily: while (ptr != end) : (ptr += 1) {
                     switch (ptr[0]) {
                         '"', '&', '\'', '<', '>' => |c| {
+                            std.debug.assert(buf.capacity == 0);
+
                             buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + @as(usize, Scalar.lengths[c]));
                             const copy_len = @ptrToInt(ptr) - @ptrToInt(latin1.ptr);
                             @memcpy(buf.items.ptr, latin1.ptr, copy_len - 1);

@@ -951,6 +951,7 @@ function initializeTextStream(underlyingSource, highWaterMark)
     var estimatedLength = 0;
     var closingPromise = @newPromise();
     var calledDone = false;
+    
     var sink = {
         start() {
 

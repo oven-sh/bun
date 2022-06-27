@@ -193,6 +193,36 @@ it("should work for a hello world", async () => {
   server.stop();
 });
 
+it("should work for a blob", async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+  const textToExpect = readFileSync(fixture, "utf-8");
+
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      return new Response(new Blob([textToExpect]));
+    },
+  });
+  const response = await fetch(`http://localhost:${server.port}`);
+  expect(await response.text()).toBe(textToExpect);
+  server.stop();
+});
+
+it("should work for a blob stream", async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+  const textToExpect = readFileSync(fixture, "utf-8");
+
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      return new Response(new Blob([textToExpect]).stream());
+    },
+  });
+  const response = await fetch(`http://localhost:${server.port}`);
+  expect(await response.text()).toBe(textToExpect);
+  server.stop();
+});
+
 it("should work for a file", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
@@ -201,6 +231,21 @@ it("should work for a file", async () => {
     port: port++,
     fetch(req) {
       return new Response(file(fixture));
+    },
+  });
+  const response = await fetch(`http://localhost:${server.port}`);
+  expect(await response.text()).toBe(textToExpect);
+  server.stop();
+});
+
+it("should work for a file stream", async () => {
+  const fixture = resolve(import.meta.dir, "./fetch.js.txt");
+  const textToExpect = readFileSync(fixture, "utf-8");
+
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      return new Response(file(fixture).stream());
     },
   });
   const response = await fetch(`http://localhost:${server.port}`);
@@ -234,7 +279,7 @@ it("fetch should work with headers", async () => {
 });
 
 var count = 200;
-it(`should work for a file ${count} times`, async () => {
+it(`should work for a file ${count} times serial`, async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");
   var ran = 0;

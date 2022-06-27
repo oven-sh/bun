@@ -277,7 +277,7 @@ pub const Loop = opaque {
     }
 
     pub fn run(this: *Loop) void {
-         us_loop_run(this);
+        us_loop_run(this);
     }
 
     extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: fn (ctx: *anyopaque) callconv(.C) void) void;
@@ -852,7 +852,31 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_on_data(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
             }
 
-            pub fn runCorked(
+            pub fn endStream(res: *Response, close_connection: bool) void {
+                uws_res_end_stream(ssl_flag, res.downcast(), close_connection);
+            }
+
+            pub fn corked(
+                res: *Response,
+                comptime Function: anytype,
+                args: anytype,
+            ) @typeInfo(@TypeOf(Function)).Fn.return_type.? {
+                const Wrapper = struct {
+                    opts: @TypeOf(args),
+                    result: @typeInfo(@TypeOf(Function)).Fn.return_type.? = undefined,
+                    pub fn run(this: *@This()) void {
+                        this.result = @call(.{}, Function, this.opts);
+                    }
+                };
+                var wrapped = Wrapper{
+                    .opts = args,
+                    .result = undefined,
+                };
+                runCorkedWithType(res, *Wrapper, Wrapper.run, &wrapped);
+                return wrapped.result;
+            }
+
+            pub fn runCorkedWithType(
                 res: *Response,
                 comptime UserDataType: type,
                 comptime handler: fn (UserDataType) void,
@@ -937,6 +961,7 @@ pub fn NewApp(comptime ssl: bool) type {
         };
     };
 }
+extern fn uws_res_end_stream(ssl: c_int, res: *uws_res, close_connection: bool) void;
 extern fn uws_res_prepare_for_sendfile(ssl: c_int, res: *uws_res) void;
 extern fn uws_res_get_native_handle(ssl: c_int, res: *uws_res) *Socket;
 extern fn uws_create_app(ssl: c_int, options: us_socket_context_options_t) *uws_app_t;

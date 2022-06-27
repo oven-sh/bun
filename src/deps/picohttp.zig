@@ -3,6 +3,7 @@ const c = @import("picohttpparser.zig");
 const ExactSizeMatcher = @import("../exact_size_matcher.zig").ExactSizeMatcher;
 const Match = ExactSizeMatcher(2);
 const Output = @import("../global.zig").Output;
+const Environment = @import("../global.zig").Environment;
 
 const fmt = std.fmt;
 
@@ -103,9 +104,9 @@ pub const Response = struct {
     }
 
     pub fn parseParts(buf: []const u8, src: []Header, offset: ?*usize) !Response {
-        var minor_version: c_int = undefined;
-        var status_code: c_int = undefined;
-        var status: []const u8 = undefined;
+        var minor_version: c_int = 1;
+        var status_code: c_int = 0;
+        var status: []const u8 = "";
         var num_headers: usize = src.len;
 
         const rc = c.phr_parse_response(
@@ -121,7 +122,10 @@ pub const Response = struct {
         );
 
         return switch (rc) {
-            -1 => error.Malformed_HTTP_Response,
+            -1 => if (comptime Environment.allow_assert) brk: {
+                Output.debug("Malformed HTTP response:\n{s}", .{buf});
+                break :brk error.Malformed_HTTP_Response;
+            } else error.Malformed_HTTP_Response,
             -2 => brk: {
                 offset.?.* += buf.len;
 
@@ -131,7 +135,7 @@ pub const Response = struct {
                 .minor_version = @intCast(usize, minor_version),
                 .status_code = @intCast(usize, status_code),
                 .status = status,
-                .headers = src[0..num_headers],
+                .headers = src[0..@minimum(num_headers, src.len)],
                 .bytes_read = rc,
             },
         };

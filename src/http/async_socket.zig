@@ -15,6 +15,8 @@ const SOCKET_FLAGS: u32 = @import("../http_client_async.zig").SOCKET_FLAGS;
 const getAllocator = @import("../http_client_async.zig").getAllocator;
 const OPEN_SOCKET_FLAGS: u32 = @import("../http_client_async.zig").OPEN_SOCKET_FLAGS;
 
+const log = Output.scoped(.AsyncSocket, true);
+
 const SSLFeatureFlags = struct {
     pub const early_data_enabled = true;
 };
@@ -291,6 +293,8 @@ pub inline fn bufferedReadAmount(_: *AsyncSocket) usize {
 pub fn read(
     this: *AsyncSocket,
     bytes: []u8,
+    /// offset is necessary here to be consistent with HTTPS
+    /// HTTPs must have the same buffer pointer for each read
     offset: u64,
 ) RecvError!u64 {
     this.read_context = bytes;
@@ -303,7 +307,7 @@ pub fn read(
         Reader.on_read,
         &this.read_completion,
         this.socket,
-        bytes,
+        bytes[original_read_offset..],
     );
 
     suspend {
@@ -314,6 +318,15 @@ pub fn read(
         this.err = null;
         return @errSetCast(RecvError, err);
     }
+
+    log(
+        \\recv(offset: {d}, len: {d}, read_offset: {d})
+        \\
+    , .{
+        offset,
+        bytes[original_read_offset..].len,
+        this.read_offset,
+    });
 
     return this.read_offset - original_read_offset;
 }

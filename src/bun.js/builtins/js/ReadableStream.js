@@ -139,10 +139,38 @@ function readableStreamToArray(stream) {
 function readableStreamToText(stream) {
     "use strict";
 
+    // this is a direct stream
+    var underlyingSource = @getByIdDirectPrivate(stream, "underlyingSource");
+    if (underlyingSource !== @undefined) {
+       
+        const promise = @initializeTextStream.@call(stream, underlyingSource, @undefined);
+        var reader = stream.getReader();
+        return (async function() {
+            while (@getByIdDirectPrivate(stream, "state") === @streamReadable) {
+                var thisResult = await reader.read();
+                if (thisResult.done) {
+                    break;
+                }
+            }
+
+            try {
+                reader.releaseLock();
+            } catch(e) {
+            }
+    
+            return await promise;
+        })();
+    }
+
     // TODO: optimize this to skip the extra ArrayBuffer
-    return globalThis.Bun.readableStreamToArrayBuffer(stream).@then(function(arrayBuffer) {
-        return new globalThis.TextDecoder().decode(arrayBuffer);
-    });
+    var toArrayBuffer = globalThis.Bun.readableStreamToArrayBuffer(stream);
+    if (toArrayBuffer && @isPromise(toArrayBuffer)) {
+        return toArrayBuffer.@then(function(arrayBuffer) {
+            return new globalThis.TextDecoder().decode(arrayBuffer);
+        });
+    }
+
+    return new globalThis.TextDecoder().decode(arrayBuffer);
 }
 
 @globalPrivate
@@ -150,14 +178,24 @@ function readableStreamToJSON(stream) {
     "use strict";
 
     // TODO: optimize this to skip the extra ArrayBuffer
-    return globalThis.Bun.readableStreamToArrayBuffer(stream).@then(function(arrayBuffer) {
-        return globalThis.JSON.parse(new globalThis.TextDecoder().decode(arrayBuffer));
-    });
+    return @readableStreamToText(stream).@then(globalThis.JSON.parse);
 }
 
 @globalPrivate
 function readableStreamToBlob(stream) {
     "use strict";
+
+    var underlyingSource = @getByIdDirectPrivate(stream, "underlyingSource");
+    if (underlyingSource != @undefined) {
+        var toArrayBuffer = globalThis.Bun.readableStreamToArrayBuffer(stream);
+        if (toArrayBuffer && @isPromise(toArrayBuffer)) {
+            return toArrayBuffer.@then(function(arrayBuffer) {
+                return new globalThis.Blob([arrayBuffer]);
+            });
+        }
+
+        return new globalThis.Blob([toArrayBuffer]);
+    }
 
  
     const array = @readableStreamToArray(stream);

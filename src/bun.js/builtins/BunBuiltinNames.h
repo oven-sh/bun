@@ -115,6 +115,7 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
+    macro(initializeTextStream) \
     macro(initializeWith) \
     macro(internalStream) \
     macro(internalWritable) \

@@ -764,7 +764,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 
 const JSC::ConstructAbility s_readableStreamInternalsAssignToStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsAssignToStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsAssignToStreamCodeLength = 2534;
+const int s_readableStreamInternalsAssignToStreamCodeLength = 2607;
 static const JSC::Intrinsic s_readableStreamInternalsAssignToStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsAssignToStreamCode =
     "(function (stream, sink) {\n" \
@@ -786,12 +786,6 @@ const char* const s_readableStreamInternalsAssignToStreamCode =
     "            \n" \
     "        }\n" \
     "        var pull = underlyingSource.pull;\n" \
-    "       \n" \
-    "        @putByIdDirectPrivate(stream, \"readableStreamController\", sink);\n" \
-    "        @putByIdDirectPrivate(stream, \"start\", @undefined);\n" \
-    "        @putByIdDirectPrivate(stream, \"underlyingSource\", @undefined);\n" \
-    "\n" \
-    "        @startDirectStream.@call(sink, stream, pull, close);\n" \
     "\n" \
     "        if (!pull) {\n" \
     "            close();\n" \
@@ -803,6 +797,12 @@ const char* const s_readableStreamInternalsAssignToStreamCode =
     "            @throwTypeError(\"pull is not a function\");\n" \
     "            return;\n" \
     "        }\n" \
+    "       \n" \
+    "        @putByIdDirectPrivate(stream, \"readableStreamController\", sink);\n" \
+    "        @putByIdDirectPrivate(stream, \"start\", @undefined);\n" \
+    "        @putByIdDirectPrivate(stream, \"underlyingSource\", @undefined);\n" \
+    "\n" \
+    "        @startDirectStream.@call(sink, stream, pull, close);\n" \
     "\n" \
     "        //\n" \
     "        reader = stream.getReader();\n" \
@@ -816,37 +816,32 @@ const char* const s_readableStreamInternalsAssignToStreamCode =
     "        \"use strict\";\n" \
     "\n" \
     "        var didClose = false;\n" \
-    "\n" \
-    "\n" \
     "        try {\n" \
     "            var reader = stream.getReader();\n" \
-    "            reader.closed.then(() => {\n" \
-    "                if (!didClose && sink) {\n" \
-    "                    didClose = true;\n" \
-    "                    sink.end();\n" \
-    "                }\n" \
-    "            }, (e) => {\n" \
-    "                if (!didClose && sink) {\n" \
-    "                    didClose = true;\n" \
-    "                    sink.close(e);\n" \
-    "                }\n" \
-    "            });\n" \
     "\n" \
     "            var many = reader.readMany();\n" \
     "            if (many && @isPromise(many)) {\n" \
     "                many = await many;\n" \
     "            }\n" \
-    "\n" \
     "            if (many.done) {\n" \
     "                didClose = true;\n" \
     "                sink.end();\n" \
     "                return;\n" \
     "            }\n" \
     "\n" \
-    "            sink.start();\n" \
+    "            \n" \
     "            var wroteCount = many.value.length;\n" \
+    "            sink.start();\n" \
     "            for (var i = 0, values = many.value, length = many.value.length; i < length; i++) {\n" \
     "                sink.write(values[i]);\n" \
+    "            }\n" \
+    "\n" \
+    "            var streamState = @getByIdDirectPrivate(stream, \"state\");\n" \
+    "\n" \
+    "\n" \
+    "            if (streamState === @streamClosed) {\n" \
+    "                didClose = true;\n" \
+    "                return sink.end();\n" \
     "            }\n" \
     "\n" \
     "            if (wroteCount > 0) {\n" \
@@ -855,6 +850,7 @@ const char* const s_readableStreamInternalsAssignToStreamCode =
     "            \n" \
     "            while (true) {\n" \
     "                var result = await reader.read();\n" \
+    "\n" \
     "                if (result.done) {\n" \
     "                    didClose = true;\n" \
     "                    return sink.end();\n" \
@@ -863,8 +859,16 @@ const char* const s_readableStreamInternalsAssignToStreamCode =
     "                sink.write(result.value);\n" \
     "            }\n" \
     "        } catch (e) {\n" \
-    "            globalThis.console.error(e);\n" \
+    "            if (sink && !didClose) {\n" \
+    "                didClose = true;\n" \
+    "                try {\n" \
+    "                    sink.close();\n" \
+    "                } catch(j) {\n" \
+    "                    throw j;\n" \
+    "                }\n" \
+    "            }\n" \
     "\n" \
+    "            throw e;\n" \
     "        }\n" \
     "    })();\n" \
     "})\n" \
@@ -919,11 +923,11 @@ const char* const s_readableStreamInternalsHandleDirectStreamErrorRejectCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_readableStreamInternalsOnPullArrayBufferSinkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_readableStreamInternalsOnPullArrayBufferSinkCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsOnPullArrayBufferSinkCodeLength = 1701;
-static const JSC::Intrinsic s_readableStreamInternalsOnPullArrayBufferSinkCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamInternalsOnPullArrayBufferSinkCode =
+const JSC::ConstructAbility s_readableStreamInternalsOnPullDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamInternalsOnPullDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamInternalsOnPullDirectStreamCodeLength = 1701;
+static const JSC::Intrinsic s_readableStreamInternalsOnPullDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamInternalsOnPullDirectStreamCode =
     "(function (controller)\n" \
     "{\n" \
     "    \n" \
@@ -1143,9 +1147,158 @@ const char* const s_readableStreamInternalsOnDrainDirectStreamCode =
     "})\n" \
 ;
 
+const JSC::ConstructAbility s_readableStreamInternalsInitializeTextStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamInternalsInitializeTextStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamInternalsInitializeTextStreamCodeLength = 3832;
+static const JSC::Intrinsic s_readableStreamInternalsInitializeTextStreamCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamInternalsInitializeTextStreamCode =
+    "(function (underlyingSource, highWaterMark)\n" \
+    "{\n" \
+    "    \"use strict\";\n" \
+    "\n" \
+    "    var sink;\n" \
+    "    var fifo = @createFIFO();\n" \
+    "    var hasString = false;\n" \
+    "    var hasBuffer = false;\n" \
+    "    var rope = '';\n" \
+    "    var estimatedLength = 0;\n" \
+    "    var closingPromise = @newPromise();\n" \
+    "    var calledDone = false;\n" \
+    "    var sink = {\n" \
+    "        start() {\n" \
+    "\n" \
+    "        },\n" \
+    "        write(chunk) {\n" \
+    "            if (typeof chunk === 'string') {\n" \
+    "                if (chunk.length > 0) {\n" \
+    "                    rope += chunk;\n" \
+    "                    hasString = true;\n" \
+    "                    estimatedLength += chunk.length;\n" \
+    "                    //\n" \
+    "                }\n" \
+    "\n" \
+    "                return chunk.length;\n" \
+    "            }\n" \
+    "\n" \
+    "            if (!chunk || !@isObject(chunk) || !(@ArrayBuffer.@isView(chunk) || chunk instanceof @ArrayBuffer)) {\n" \
+    "                @throwTypeError(\"Expected text, ArrayBuffer or ArrayBufferView\");\n" \
+    "            }\n" \
+    "\n" \
+    "            const byteLength = chunk.byteLength;\n" \
+    "            if (byteLength > 0) {\n" \
+    "                hasBuffer = true;\n" \
+    "                if (rope.length > 0) {\n" \
+    "                    fifo.push(rope);\n" \
+    "                    rope = '';\n" \
+    "                }\n" \
+    "                fifo.push(chunk);\n" \
+    "            }\n" \
+    "            estimatedLength += byteLength;\n" \
+    "            return byteLength;\n" \
+    "\n" \
+    "        },\n" \
+    "\n" \
+    "        drain() {\n" \
+    "            return 0;\n" \
+    "        },\n" \
+    "\n" \
+    "        end() {\n" \
+    "            if (calledDone) {\n" \
+    "                return \"\";\n" \
+    "            }\n" \
+    "            return sink.fulfill();\n" \
+    "        },\n" \
+    "\n" \
+    "        fulfill() {\n" \
+    "            calledDone = true;\n" \
+    "            const result = sink.finishInternal();\n" \
+    "            @fulfillPromise(closingPromise, result);\n" \
+    "            return result;\n" \
+    "        },\n" \
+    "\n" \
+    "        finishInternal() {\n" \
+    "            if (!hasString && !hasBuffer) {\n" \
+    "                return \"\";\n" \
+    "            }\n" \
+    "\n" \
+    "            if (hasString && !hasBuffer) {\n" \
+    "                return rope;\n" \
+    "            }\n" \
+    "\n" \
+    "            if (hasBuffer && !hasString) {\n" \
+    "                return new globalThis.TextDecoder().decode(\n" \
+    "                    globalThis.Bun.concatArrayBuffers(fifo.toArray(false)));\n" \
+    "            }\n" \
+    "\n" \
+    "            //\n" \
+    "            var array = fifo.toArray(false);\n" \
+    "            \n" \
+    "            var arrayBufferSink = new globalThis.Bun.ArrayBufferSink();\n" \
+    "            arrayBufferSink.start({\n" \
+    "                highWaterMark: estimatedLength,\n" \
+    "                asUint8Array: true,\n" \
+    "            });\n" \
+    "            for (let item of array) {\n" \
+    "                arrayBufferSink.write(\n" \
+    "                    item\n" \
+    "                );\n" \
+    "            }\n" \
+    "            if (rope.length > 0) {\n" \
+    "                arrayBufferSink.write(rope);\n" \
+    "            }\n" \
+    "\n" \
+    "            return new globalThis.TextDecoder().decode(\n" \
+    "                arrayBufferSink.end()\n" \
+    "            );\n" \
+    "        },\n" \
+    "\n" \
+    "        close() {\n" \
+    "            try {\n" \
+    "                if (!calledDone) {\n" \
+    "                    calledDone = true;\n" \
+    "                    sink.fulfill();\n" \
+    "                }\n" \
+    "            } catch(e) {\n" \
+    "\n" \
+    "            } finally {\n" \
+    "                fifo.clear();\n" \
+    "                rope = '';\n" \
+    "                hasString = false;\n" \
+    "                hasBuffer = false;\n" \
+    "                estimatedLength = 0;\n" \
+    "            }\n" \
+    "        }\n" \
+    "    };\n" \
+    "\n" \
+    "    var controller = {\n" \
+    "        @underlyingSource: underlyingSource,\n" \
+    "        @pull: @onPullDirectStream,\n" \
+    "        @controlledReadableStream: this,\n" \
+    "        @sink: sink,\n" \
+    "        close: @onCloseDirectStream,\n" \
+    "        write: sink.write,\n" \
+    "        error: @handleDirectStreamError,\n" \
+    "        end: @onCloseDirectStream,\n" \
+    "        @close: @onCloseDirectStream,\n" \
+    "        drain: @onDrainDirectStream,\n" \
+    "        _pendingRead: @undefined,\n" \
+    "        _deferClose: 0,\n" \
+    "        _deferDrain: 0,\n" \
+    "        _deferCloseReason: @undefined,\n" \
+    "        _handleError: @undefined,\n" \
+    "    };\n" \
+    "   \n" \
+    "    \n" \
+    "    @putByIdDirectPrivate(this, \"readableStreamController\", controller);\n" \
+    "    @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n" \
+    "    @putByIdDirectPrivate(this, \"start\", @undefined);\n" \
+    "    return closingPromise;\n" \
+    "})\n" \
+;
+
 const JSC::ConstructAbility s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsInitializeArrayBufferStreamCodeLength = 933;
+const int s_readableStreamInternalsInitializeArrayBufferStreamCodeLength = 930;
 static const JSC::Intrinsic s_readableStreamInternalsInitializeArrayBufferStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode =
     "(function (underlyingSource, highWaterMark)\n" \
@@ -1162,7 +1315,7 @@ const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode =
     "\n" \
     "    var controller = {\n" \
     "        @underlyingSource: underlyingSource,\n" \
-    "        @pull: @onPullArrayBufferSink,\n" \
+    "        @pull: @onPullDirectStream,\n" \
     "        @controlledReadableStream: this,\n" \
     "        @sink: sink,\n" \
     "        close: @onCloseDirectStream,\n" \

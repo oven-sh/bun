@@ -170,41 +170,79 @@ const char* const s_readableStreamReadableStreamToArrayCode =
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToTextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToTextCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToTextCodeLength = 215;
+const int s_readableStreamReadableStreamToTextCodeLength = 1080;
 static const JSC::Intrinsic s_readableStreamReadableStreamToTextCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToTextCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
     "\n" \
     "    //\n" \
-    "    return globalThis.Bun.readableStreamToArrayBuffer(stream).@then(function(arrayBuffer) {\n" \
-    "        return new globalThis.TextDecoder().decode(arrayBuffer);\n" \
-    "    });\n" \
+    "    var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n" \
+    "    if (underlyingSource !== @undefined) {\n" \
+    "       \n" \
+    "        const promise = @initializeTextStream.@call(stream, underlyingSource, @undefined);\n" \
+    "        var reader = stream.getReader();\n" \
+    "        return (async function() {\n" \
+    "            while (@getByIdDirectPrivate(stream, \"state\") === @streamReadable) {\n" \
+    "                var thisResult = await reader.read();\n" \
+    "                if (thisResult.done) {\n" \
+    "                    break;\n" \
+    "                }\n" \
+    "            }\n" \
+    "\n" \
+    "            try {\n" \
+    "                reader.releaseLock();\n" \
+    "            } catch(e) {\n" \
+    "            }\n" \
+    "    \n" \
+    "            return await promise;\n" \
+    "        })();\n" \
+    "    }\n" \
+    "\n" \
+    "    //\n" \
+    "    var toArrayBuffer = globalThis.Bun.readableStreamToArrayBuffer(stream);\n" \
+    "    if (toArrayBuffer && @isPromise(toArrayBuffer)) {\n" \
+    "        return toArrayBuffer.@then(function(arrayBuffer) {\n" \
+    "            return new globalThis.TextDecoder().decode(arrayBuffer);\n" \
+    "        });\n" \
+    "    }\n" \
+    "\n" \
+    "    return new globalThis.TextDecoder().decode(arrayBuffer);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToJSONCodeLength = 238;
+const int s_readableStreamReadableStreamToJSONCodeLength = 121;
 static const JSC::Intrinsic s_readableStreamReadableStreamToJSONCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToJSONCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
     "\n" \
     "    //\n" \
-    "    return globalThis.Bun.readableStreamToArrayBuffer(stream).@then(function(arrayBuffer) {\n" \
-    "        return globalThis.JSON.parse(new globalThis.TextDecoder().decode(arrayBuffer));\n" \
-    "    });\n" \
+    "    return @readableStreamToText(stream).@then(globalThis.JSON.parse);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToBlobCodeLength = 367;
+const int s_readableStreamReadableStreamToBlobCodeLength = 834;
 static const JSC::Intrinsic s_readableStreamReadableStreamToBlobCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToBlobCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
+    "\n" \
+    "    var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n" \
+    "    if (underlyingSource != @undefined) {\n" \
+    "        var toArrayBuffer = globalThis.Bun.readableStreamToArrayBuffer(stream);\n" \
+    "        if (toArrayBuffer && @isPromise(toArrayBuffer)) {\n" \
+    "            return toArrayBuffer.@then(function(arrayBuffer) {\n" \
+    "                return new globalThis.Blob([arrayBuffer]);\n" \
+    "            });\n" \
+    "        }\n" \
+    "\n" \
+    "        return new globalThis.Blob([toArrayBuffer]);\n" \
+    "    }\n" \
     "\n" \
     " \n" \
     "    const array = @readableStreamToArray(stream);\n" \

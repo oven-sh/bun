@@ -339,6 +339,47 @@ pub fn print(comptime fmt: string, args: anytype) void {
     }
 }
 
+/// Debug-only logs which should not appear in release mode
+const _log_fn = fn (comptime fmt: string, args: anytype) callconv(.Inline) void;
+pub fn scoped(comptime tag: @Type(.EnumLiteral), comptime disabled: bool) _log_fn {
+    const disable = comptime !Environment.isDebug or disabled;
+
+    if (comptime disable) {
+        return struct {
+            pub inline fn log(comptime _: string, _: anytype) void {}
+        }.log;
+    }
+
+    return struct {
+        const BufferedWriter = Source.BufferedStream;
+        var buffered_writer: BufferedWriter = undefined;
+        var out: BufferedWriter.Writer = undefined;
+        var out_set = false;
+        /// Debug-only logs which should not appear in release mode
+        pub inline fn log(comptime fmt: string, args: anytype) void {
+            if (!out_set) {
+                buffered_writer = .{
+                    .unbuffered_writer = writer(),
+                };
+                out = buffered_writer.writer();
+                out_set = true;
+            }
+
+            if (comptime fmt[fmt.len - 1] != '\n') {
+                return log(fmt ++ "\n", args);
+            }
+
+            if (Output.enable_ansi_colors_stderr) {
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, true), args) catch unreachable;
+                buffered_writer.flush() catch unreachable;
+            } else {
+                out.print(comptime prettyFmt("<r><d>[" ++ @tagName(tag) ++ "]<r> " ++ fmt, false), args) catch unreachable;
+                buffered_writer.flush() catch unreachable;
+            }
+        }
+    }.log;
+}
+
 // Valid colors:
 // <black>
 // <blue>

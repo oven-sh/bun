@@ -306,7 +306,7 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* 
 {
     JSC::VM& vm = globalObject->vm();
 
-    JSC::JSObject* result = JSC::createError(globalObject, toString(*str));
+    JSC::JSObject* result = JSC::createError(globalObject, toStringCopy(*str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return JSC::JSValue(result);

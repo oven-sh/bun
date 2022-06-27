@@ -215,17 +215,20 @@ typedef struct PicoHTTPHeaders {
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(JSC__JSGlobalObject* arg0, const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
-    Vector<KeyValuePair<String, String>> pairs;
-    pairs.reserveCapacity(pico_headers.len);
-    for (size_t i = 0; i < pico_headers.len; i++) {
-        WTF::String name = WTF::String(pico_headers.ptr[i].name, pico_headers.ptr[i].name_len);
-        WTF::String value = WTF::String(pico_headers.ptr[i].value, pico_headers.ptr[i].value_len);
-        pairs.uncheckedAppend(KeyValuePair<String, String>(name, value));
+    RefPtr<WebCore::FetchHeaders> headers = adoptRef(*new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} }));
+
+    if (pico_headers.len > 0) {
+        Vector<KeyValuePair<String, String>> pairs;
+        pairs.reserveCapacity(pico_headers.len);
+        for (size_t i = 0; i < pico_headers.len; i++) {
+            WTF::String name = WTF::String(pico_headers.ptr[i].name, pico_headers.ptr[i].name_len);
+            WTF::String value = WTF::String(pico_headers.ptr[i].value, pico_headers.ptr[i].value_len);
+            pairs.uncheckedAppend(KeyValuePair<String, String>(name, value));
+        }
+        headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
+        pairs.releaseBuffer();
     }
 
-    RefPtr<WebCore::FetchHeaders> headers = adoptRef(*new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} }));
-    headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
-    pairs.releaseBuffer();
     return headers.leakRef();
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)

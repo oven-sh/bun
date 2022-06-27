@@ -563,7 +563,7 @@ pub const FetchHeaders = opaque {
     }
 
     const PicoHeaders = extern struct {
-        ptr: *const anyopaque,
+        ptr: ?*const anyopaque,
         len: usize,
     };
 

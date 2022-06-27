@@ -1288,6 +1288,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     }
 
                                     this.finalize();
+
                                     return;
                                 }
 

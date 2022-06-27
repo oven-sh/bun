@@ -1887,6 +1887,7 @@ void GlobalObject::finishCreation(VM& vm)
         });
 
     addBuiltinGlobals(vm);
+    setRemoteDebuggingEnabled(false);
 
     RELEASE_ASSERT(classInfo());
 }

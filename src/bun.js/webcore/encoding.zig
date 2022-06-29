@@ -58,16 +58,12 @@ pub const TextEncoder = struct {
             ) catch {
                 return JSC.toInvalidArguments("Out of memory", .{}, ctx);
             };
-            return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJS(ctx, null);
+            return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(ctx, null);
         } else {
-            // latin1 always has the same length as utf-8
-            // so we can use the Gigacage to allocate the buffer
-            var array = JSC.JSValue.createUninitializedUint8Array(ctx.ptr(), zig_str.len);
-            var buffer = array.asArrayBuffer(ctx.ptr()) orelse
+            const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, []const u8, zig_str.slice()) catch {
                 return JSC.toInvalidArguments("Out of memory", .{}, ctx);
-            const result = strings.copyLatin1IntoUTF8(buffer.slice(), []const u8, zig_str.slice());
-            std.debug.assert(result.written == zig_str.len);
-            return array;
+            };
+            return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(ctx, null);
         }
 
         unreachable;
@@ -77,40 +73,37 @@ pub const TextEncoder = struct {
     // This keeps us from an extra string temporary allocation
     const RopeStringEncoder = struct {
         globalThis: *JSGlobalObject,
-        allocator: std.mem.Allocator,
-        buffer_value: JSC.JSValue,
-        slice: []u8,
+        buf: []u8,
         tail: usize = 0,
-        any_utf16: bool = false,
+        any_non_ascii: bool = false,
 
         pub fn append8(it: *JSC.JSString.Iterator, ptr: [*]const u8, len: u32) callconv(.C) void {
             var this = bun.cast(*RopeStringEncoder, it.data.?);
-            // we use memcpy here instead of encoding
-            // SIMD only has an impact for long strings
-            // so in a case like this, the fastest path is to memcpy
-            // and then later, we can use the SIMD version
-            @memcpy(this.slice.ptr + this.tail, ptr, len);
-            this.tail += len;
+            const result = strings.copyLatin1IntoUTF8StopOnNonASCII(this.buf[this.tail..], []const u8, ptr[0..len], true);
+            if (result.read == std.math.maxInt(u32) and result.written == std.math.maxInt(u32)) {
+                it.stop = 1;
+                this.any_non_ascii = true;
+            } else {
+                this.tail += result.written;
+            }
         }
         pub fn append16(it: *JSC.JSString.Iterator, _: [*]const u16, _: u32) callconv(.C) void {
             var this = bun.cast(*RopeStringEncoder, it.data.?);
-            this.any_utf16 = true;
+            this.any_non_ascii = true;
             it.stop = 1;
-            return;
         }
         pub fn write8(it: *JSC.JSString.Iterator, ptr: [*]const u8, len: u32, offset: u32) callconv(.C) void {
             var this = bun.cast(*RopeStringEncoder, it.data.?);
-            // we use memcpy here instead of encoding
-            // SIMD only has an impact for long strings
-            // so in a case like this, the fastest path is to memcpy
-            // and then later, we can use the SIMD version
-            @memcpy(this.slice.ptr + offset, ptr, len);
+            const result = strings.copyLatin1IntoUTF8StopOnNonASCII(this.buf[offset..], []const u8, ptr[0..len], true);
+            if (result.read == std.math.maxInt(u32) and result.written == std.math.maxInt(u32)) {
+                it.stop = 1;
+                this.any_non_ascii = true;
+            }
         }
         pub fn write16(it: *JSC.JSString.Iterator, _: [*]const u16, _: u32, _: u32) callconv(.C) void {
             var this = bun.cast(*RopeStringEncoder, it.data.?);
-            this.any_utf16 = true;
+            this.any_non_ascii = true;
             it.stop = 1;
-            return;
         }
 
         pub fn iter(this: *RopeStringEncoder) JSC.JSString.Iterator {
@@ -125,8 +118,9 @@ pub const TextEncoder = struct {
         }
     };
 
-    // This fast path is only suitable for Latin-1 strings.
+    // This fast path is only suitable for ASCII strings
     // It's not suitable for UTF-16 strings, because getting the byteLength is unpredictable
+    // It also isn't usable for latin1 strings which contain non-ascii characters
     pub export fn TextEncoder__encodeRopeString(
         globalThis: *JSGlobalObject,
         rope_str: *JSC.JSString,
@@ -134,21 +128,18 @@ pub const TextEncoder = struct {
         var ctx = globalThis.ref();
         if (comptime Environment.allow_assert) std.debug.assert(rope_str.is8Bit());
         var array = JSC.JSValue.createUninitializedUint8Array(ctx.ptr(), rope_str.length());
+        array.ensureStillAlive();
         var encoder = RopeStringEncoder{
             .globalThis = globalThis,
-            .allocator = bun.default_allocator,
-            .buffer_value = array,
-            .slice = (array.asArrayBuffer(globalThis) orelse return JSC.JSValue.jsUndefined()).slice(),
+            .buf = (array.asArrayBuffer(globalThis) orelse return JSC.JSValue.jsUndefined()).slice(),
         };
         var iter = encoder.iter();
+        array.ensureStillAlive();
         rope_str.iterator(globalThis, &iter);
+        array.ensureStillAlive();
 
-        if (encoder.any_utf16) {
+        if (encoder.any_non_ascii) {
             return JSC.JSValue.jsUndefined();
-        }
-
-        if (comptime !bun.FeatureFlags.latin1_is_now_ascii) {
-            strings.replaceLatin1WithUTF8(encoder.slice);
         }
 
         return array;

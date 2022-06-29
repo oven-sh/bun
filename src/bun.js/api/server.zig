@@ -1255,6 +1255,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                         @ptrCast(**anyopaque, &signal.ptr),
                                     },
                                 );
+                                assignment_result.ensureStillAlive();
 
                                 // assert that it was updated
                                 std.debug.assert(!signal.isDead());
@@ -1292,74 +1293,80 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     return;
                                 }
 
-                                // it returns a Promise when it goes through ReadableStreamDefaultReader
-                                if (assignment_result.asPromise()) |promise| {
-                                    Output.debug("response_stream returned a promise", .{});
-                                    switch (promise.status(this.server.globalThis.vm())) {
-                                        .Pending => {
-                                            // TODO: should this timeout?
-                                            this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);
-                                            const AwaitPromise = struct {
-                                                pub fn onResolve(req: *RequestContext, _: *JSGlobalObject, _: []const JSC.JSValue) void {
-                                                    Output.debug("response_stream promise resolved", .{});
-                                                    if (!req.resp.hasResponded()) {
-                                                        req.renderMissing();
-                                                        return;
+                                if (!assignment_result.isEmptyOrUndefinedOrNull()) {
+                                    assignment_result.ensureStillAlive();
+                                    // it returns a Promise when it goes through ReadableStreamDefaultReader
+                                    if (assignment_result.asPromise()) |promise| {
+                                        Output.debug("response_stream returned a promise", .{});
+                                        switch (promise.status(this.server.globalThis.vm())) {
+                                            .Pending => {
+                                                // TODO: should this timeout?
+                                                this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);
+                                                const AwaitPromise = struct {
+                                                    pub fn onResolve(req: *RequestContext, _: *JSGlobalObject, _: []const JSC.JSValue) void {
+                                                        Output.debug("response_stream promise resolved", .{});
+                                                        if (!req.resp.hasResponded()) {
+                                                            req.renderMissing();
+                                                            return;
+                                                        }
+                                                        req.finalize();
                                                     }
-                                                    req.finalize();
-                                                }
-                                                pub fn onReject(req: *RequestContext, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void {
-                                                    Output.debug("response_stream promise rejected", .{});
-                                                    if (args.len > 0) {
-                                                        req.handleReject(args[0]);
-                                                        return;
+                                                    pub fn onReject(req: *RequestContext, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void {
+                                                        Output.debug("response_stream promise rejected", .{});
+                                                        if (args.len > 0) {
+                                                            req.handleReject(args[0]);
+                                                            return;
+                                                        }
+
+                                                        const fallback = JSC.SystemError{
+                                                            .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_UNHANDLED_ERROR))),
+                                                            .message = ZigString.init("Unhandled error in ReadableStream"),
+                                                        };
+                                                        req.handleReject(fallback.toErrorInstance(globalThis));
                                                     }
-
-                                                    const fallback = JSC.SystemError{
-                                                        .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_UNHANDLED_ERROR))),
-                                                        .message = ZigString.init("Unhandled error in ReadableStream"),
-                                                    };
-                                                    req.handleReject(fallback.toErrorInstance(globalThis));
-                                                }
-                                            };
-                                            assignment_result.then(
-                                                this.server.globalThis,
-                                                RequestContext,
-                                                this,
-                                                AwaitPromise.onResolve,
-                                                AwaitPromise.onReject,
-                                            );
-                                            // the response_stream should be GC'd
-                                            return;
-                                        },
-                                        .Fulfilled => {
-                                            this.aborted = this.aborted or response_stream.sink.aborted;
-                                            response_stream.detach();
-
-                                            this.allocator.destroy(response_stream);
-
-                                            _ = promise.result(this.server.globalThis.vm());
-                                            if (!this.resp.hasResponded()) {
-                                                this.renderMissing();
+                                                };
+                                                assignment_result.then(
+                                                    this.server.globalThis,
+                                                    RequestContext,
+                                                    this,
+                                                    AwaitPromise.onResolve,
+                                                    AwaitPromise.onReject,
+                                                );
+                                                // the response_stream should be GC'd
                                                 return;
-                                            }
-                                            this.finalize();
-                                            return;
-                                        },
-                                        .Rejected => {
-                                            this.aborted = this.aborted or response_stream.sink.aborted;
-                                            response_stream.detach();
-                                            this.allocator.destroy(response_stream);
+                                            },
+                                            .Fulfilled => {
+                                                this.aborted = this.aborted or response_stream.sink.aborted;
+                                                response_stream.detach();
 
-                                            this.handleReject(promise.result(this.server.globalThis.vm()));
-                                            return;
-                                        },
+                                                this.allocator.destroy(response_stream);
+
+                                                _ = promise.result(this.server.globalThis.vm());
+                                                if (!this.resp.hasResponded()) {
+                                                    this.renderMissing();
+                                                    return;
+                                                }
+                                                this.finalize();
+                                                return;
+                                            },
+                                            .Rejected => {
+                                                this.aborted = this.aborted or response_stream.sink.aborted;
+                                                response_stream.detach();
+                                                this.allocator.destroy(response_stream);
+
+                                                this.handleReject(promise.result(this.server.globalThis.vm()));
+                                                return;
+                                            },
+                                        }
                                     }
-                                    return;
                                 }
 
                                 if (this.aborted) {
+                                    response_stream.detach();
+                                    stream.cancel(this.server.globalThis);
+                                    response_stream.sink.done = true;
                                     this.finalizeForAbort();
+                                    response_stream.sink.finalize();
                                     return;
                                 }
 
@@ -1560,6 +1567,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 bytes.len,
             )) {
                 this.resp.onWritable(*RequestContext, onWritableBytes, this);
+                // given a blob, we might not have set an abort handler yet
+                this.setAbortHandler();
                 return;
             }
 

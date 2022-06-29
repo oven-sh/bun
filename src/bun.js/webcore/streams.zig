@@ -244,6 +244,8 @@ pub const StreamStart = union(Tag) {
         as_uint8array: bool,
         stream: bool,
     },
+    HTTPSResponseSink: void,
+    HTTPResponseSink: void,
     ready: void,
 
     pub const Tag = enum {
@@ -251,6 +253,8 @@ pub const StreamStart = union(Tag) {
         err,
         chunk_size,
         ArrayBufferSink,
+        HTTPSResponseSink,
+        HTTPResponseSink,
         ready,
     };
 
@@ -322,6 +326,21 @@ pub const StreamStart = union(Tag) {
                             .as_uint8array = as_uint8array,
                             .stream = stream,
                         },
+                    };
+                }
+            },
+            .HTTPSResponseSink, .HTTPResponseSink => {
+                var empty = true;
+                var chunk_size: JSC.WebCore.Blob.SizeType = 2048;
+
+                if (value.get(globalThis, "highWaterMark")) |chunkSize| {
+                    empty = false;
+                    chunk_size = @intCast(JSC.WebCore.Blob.SizeType, @maximum(256, @truncate(i51, chunkSize.toInt64())));
+                }
+
+                if (!empty) {
+                    return .{
+                        .chunk_size = chunk_size,
                     };
                 }
             },
@@ -1372,6 +1391,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         signal: Signal = .{},
         pending_drain: ?*JSC.JSPromise = null,
         globalThis: *JSGlobalObject = undefined,
+        highWaterMark: Blob.SizeType = 2048,
 
         requested_end: bool = false,
 
@@ -1475,17 +1495,34 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return false;
         }
 
-        pub fn start(this: *@This(), _: StreamStart) JSC.Node.Maybe(void) {
-            log("start()", .{});
-
+        pub fn start(this: *@This(), stream_start: StreamStart) JSC.Node.Maybe(void) {
             if (this.res.hasResponded()) {
                 this.done = true;
                 this.signal.close(null);
                 return .{ .result = {} };
             }
 
+            this.buffer.len = 0;
+
+            switch (stream_start) {
+                .chunk_size => |chunk_size| {
+                    if (chunk_size > 0) {
+                        this.highWaterMark = chunk_size;
+                    }
+                },
+                else => {},
+            }
+
+            var list = this.buffer.listManaged(this.allocator);
+            list.clearRetainingCapacity();
+            list.ensureTotalCapacityPrecise(this.highWaterMark) catch return .{ .err = JSC.Node.Syscall.Error.oom };
+            this.buffer.update(list);
+
             this.done = false;
             this.signal.start();
+
+            log("start({d})", .{this.highWaterMark});
+
             return .{ .result = {} };
         }
 
@@ -1528,34 +1565,40 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             const bytes = data.slice();
-
+            const len = @truncate(Blob.SizeType, bytes.len);
             log("write({d})", .{bytes.len});
 
             if (!this.hasBackpressure()) {
-                if (this.buffer.len == 0) {
+                if (this.buffer.len == 0 and len >= this.highWaterMark) {
                     // fast path:
                     // - large-ish chunk
                     // - no backpressure
                     if (this.send(bytes)) {
-                        this.handleWrote(bytes.len);
-                        return .{ .owned = @truncate(Blob.SizeType, bytes.len) };
+                        this.handleWrote(len);
+                        return .{ .owned = len };
                     }
 
                     _ = this.buffer.write(this.allocator, bytes) catch {
                         return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
                     };
-                } else {
-                    // kinda fast path:
-                    // - combined chunk is large enough to flush automatically
-                    // - no backpressure
+                } else if (this.buffer.len + len >= this.highWaterMark) {
+                    // TODO: attempt to write both in a corked buffer?
                     _ = this.buffer.write(this.allocator, bytes) catch {
                         return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
                     };
-                    const readable = this.readableSlice();
-                    if (this.send(readable)) {
-                        this.handleWrote(readable.len);
-                        return .{ .owned = @truncate(Blob.SizeType, readable.len) };
+                    const slice = this.readableSlice();
+                    if (this.send(slice)) {
+                        this.handleWrote(slice.len);
+                        this.buffer.len = 0;
+                        return .{ .owned = len };
                     }
+                } else {
+                    // queue the data
+                    // do not send it
+                    _ = this.buffer.write(this.allocator, bytes) catch {
+                        return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                    };
+                    return .{ .owned = len };
                 }
 
                 this.res.onWritable(*@This(), onWritable, this);
@@ -1565,7 +1608,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 };
             }
 
-            return .{ .owned = @truncate(Blob.SizeType, bytes.len) };
+            return .{ .owned = len };
         }
         pub const writeBytes = write;
         pub fn writeLatin1(this: *@This(), data: StreamResult) StreamResult.Writable {
@@ -1580,34 +1623,51 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             }
 
             const bytes = data.slice();
+            const len = @truncate(Blob.SizeType, bytes.len);
             log("writeLatin1({d})", .{bytes.len});
 
             if (!this.hasBackpressure()) {
-                if (this.buffer.len == 0 and strings.isAllASCII(bytes)) {
-                    // fast path:
-                    // - large-ish chunk
-                    // - no backpressure
-                    if (this.send(bytes)) {
-                        this.handleWrote(bytes.len);
-                        return .{ .owned = @truncate(Blob.SizeType, bytes.len) };
+                if (this.buffer.len == 0 and len >= this.highWaterMark) {
+                    var do_send = true;
+                    // common case
+                    if (strings.isAllASCII(bytes)) {
+                        // fast path:
+                        // - large-ish chunk
+                        // - no backpressure
+                        if (this.send(bytes)) {
+                            this.handleWrote(bytes.len);
+                            return .{ .owned = len };
+                        }
+                        do_send = false;
                     }
 
-                    // we already checked it's all ascii
-                    _ = this.buffer.write(this.allocator, bytes) catch {
+                    _ = this.buffer.writeLatin1(this.allocator, bytes) catch {
                         return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
                     };
-                } else if (this.buffer.len == 0) {
+
+                    if (do_send) {
+                        if (this.send(this.readableSlice())) {
+                            this.handleWrote(bytes.len);
+                            return .{ .owned = len };
+                        }
+                    }
+                } else if (this.buffer.len + len >= this.highWaterMark) {
                     // kinda fast path:
                     // - combined chunk is large enough to flush automatically
                     // - no backpressure
-                    const reported = this.buffer.writeLatin1(this.allocator, bytes) catch {
+                    _ = this.buffer.writeLatin1(this.allocator, bytes) catch {
                         return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
                     };
                     const readable = this.readableSlice();
                     if (this.send(readable)) {
                         this.handleWrote(readable.len);
-                        return .{ .owned = @as(Blob.SizeType, reported) };
+                        return .{ .owned = len };
                     }
+                } else {
+                    _ = this.buffer.writeLatin1(this.allocator, bytes) catch {
+                        return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                    };
+                    return .{ .owned = len };
                 }
 
                 this.res.onWritable(*@This(), onWritable, this);
@@ -1617,7 +1677,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 };
             }
 
-            return .{ .owned = @truncate(Blob.SizeType, bytes.len) };
+            return .{ .owned = len };
         }
         pub fn writeUTF16(this: *@This(), data: StreamResult) StreamResult.Writable {
             if (this.done or this.requested_end) {
@@ -1643,12 +1703,15 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 };
 
                 const readable = this.readableSlice();
-                if (this.send(readable)) {
-                    this.handleWrote(readable.len);
-                    return .{ .owned = @truncate(Blob.SizeType, written) };
-                }
 
-                this.res.onWritable(*@This(), onWritable, this);
+                if (readable.len >= this.highWaterMark) {
+                    if (this.send(readable)) {
+                        this.handleWrote(readable.len);
+                        return .{ .owned = @truncate(Blob.SizeType, written) };
+                    }
+
+                    this.res.onWritable(*@This(), onWritable, this);
+                }
             } else {
                 written = this.buffer.writeUTF16(this.allocator, @alignCast(2, std.mem.bytesAsSlice(u16, bytes))) catch {
                     return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };

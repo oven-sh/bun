@@ -1019,80 +1019,91 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
     var list = list_;
     while (latin1.len > 0) {
         try list.ensureUnusedCapacity(latin1.len);
-        // assert our starting capcaicty is at least latin1
         var buf = list.items.ptr[i..list.capacity];
 
         inner: {
-            while (latin1.len >= ascii_vector_size) {
-                const vec: AsciiVector = latin1[0..ascii_vector_size].*;
+            if (latin1.len >= ascii_vector_size) {
+                const start_ptr = @ptrToInt(buf.ptr);
+                const start_ptr_latin1 = @ptrToInt(latin1.ptr);
+                const end_ptr = @ptrToInt(latin1.ptr + latin1.len - (latin1.len % ascii_vector_size));
 
-                if (@reduce(.Max, vec) > 127) {
-                    const Int = u64;
-                    const size = @sizeOf(Int);
+                while (@ptrToInt(latin1.ptr) < end_ptr) {
+                    const vec: AsciiVector = latin1[0..ascii_vector_size].*;
 
-                    // zig or LLVM doesn't do @ctz nicely with SIMD
-                    if (comptime ascii_vector_size >= 8) {
-                        {
-                            const bytes = @bitCast(Int, latin1[0..size].*);
-                            // https://dotat.at/@/2022-06-27-tolower-swar.html
-                            const mask = bytes & 0x8080808080808080;
+                    if (@reduce(.Max, vec) > 127) {
+                        const Int = u64;
+                        const size = @sizeOf(Int);
+                        buf.len -= @ptrToInt(buf.ptr) - start_ptr;
+                        latin1.len -= @ptrToInt(latin1.ptr) - start_ptr_latin1;
 
-                            if (mask > 0) {
-                                const first_set_byte = @ctz(Int, mask) / 8;
-                                if (comptime Environment.allow_assert) {
-                                    assert(latin1[first_set_byte] >= 127);
-                                    var j: usize = 0;
-                                    while (j < first_set_byte) : (j += 1) {
-                                        assert(latin1[j] < 127);
+                        // zig or LLVM doesn't do @ctz nicely with SIMD
+                        if (comptime ascii_vector_size >= 8) {
+                            {
+                                const bytes = @bitCast(Int, latin1[0..size].*);
+                                // https://dotat.at/@/2022-06-27-tolower-swar.html
+                                const mask = bytes & 0x8080808080808080;
+
+                                if (mask > 0) {
+                                    const first_set_byte = @ctz(Int, mask) / 8;
+                                    if (comptime Environment.allow_assert) {
+                                        assert(latin1[first_set_byte] >= 127);
+                                        var j: usize = 0;
+                                        while (j < first_set_byte) : (j += 1) {
+                                            assert(latin1[j] < 127);
+                                        }
                                     }
+
+                                    buf[0..size].* = @bitCast([size]u8, bytes);
+                                    buf = buf[first_set_byte..];
+                                    latin1 = latin1[first_set_byte..];
+                                    break :inner;
                                 }
 
                                 buf[0..size].* = @bitCast([size]u8, bytes);
-                                buf = buf[first_set_byte..];
-                                latin1 = latin1[first_set_byte..];
-                                break :inner;
+                                latin1 = latin1[size..];
+                                buf = buf[size..];
                             }
 
-                            buf[0..size].* = @bitCast([size]u8, bytes);
-                            latin1 = latin1[size..];
-                            buf = buf[size..];
-                        }
+                            if (comptime ascii_vector_size >= 16) {
+                                const bytes = @bitCast(Int, latin1[0..size].*);
+                                // https://dotat.at/@/2022-06-27-tolower-swar.html
+                                const mask = bytes & 0x8080808080808080;
 
-                        if (comptime ascii_vector_size >= 16) {
-                            const bytes = @bitCast(Int, latin1[0..size].*);
-                            // https://dotat.at/@/2022-06-27-tolower-swar.html
-                            const mask = bytes & 0x8080808080808080;
-
-                            if (mask > 0) {
-                                const first_set_byte = @ctz(Int, mask) / 8;
-                                if (comptime Environment.allow_assert) {
-                                    assert(latin1[first_set_byte] >= 127);
-                                    var j: usize = 0;
-                                    while (j < first_set_byte) : (j += 1) {
-                                        assert(latin1[j] < 127);
+                                if (mask > 0) {
+                                    const first_set_byte = @ctz(Int, mask) / 8;
+                                    if (comptime Environment.allow_assert) {
+                                        assert(latin1[first_set_byte] >= 127);
+                                        var j: usize = 0;
+                                        while (j < first_set_byte) : (j += 1) {
+                                            assert(latin1[j] < 127);
+                                        }
                                     }
-                                }
 
-                                buf[0..size].* = @bitCast([size]u8, bytes);
-                                buf = buf[first_set_byte..];
-                                latin1 = latin1[first_set_byte..];
-                                break :inner;
+                                    buf[0..size].* = @bitCast([size]u8, bytes);
+                                    buf = buf[first_set_byte..];
+                                    latin1 = latin1[first_set_byte..];
+                                    break :inner;
+                                }
                             }
                         }
-
                         unreachable;
                     }
-                }
 
-                buf[0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[0..ascii_vector_size].*;
-                latin1 = latin1[ascii_vector_size..];
-                buf = buf[ascii_vector_size..];
+                    buf[0..ascii_vector_size].* = @bitCast([ascii_vector_size]u8, vec)[0..ascii_vector_size].*;
+                    latin1.ptr += ascii_vector_size;
+                    buf.ptr += ascii_vector_size;
+                }
+                buf.len -= @ptrToInt(buf.ptr) - start_ptr;
+                latin1.len -= @ptrToInt(latin1.ptr) - start_ptr_latin1;
             }
 
             {
                 const Int = u64;
                 const size = @sizeOf(Int);
-                while (latin1.len >= size) {
+                const latin1_end_ptr = latin1.ptr + latin1.len - (latin1.len % size);
+                const start_ptr = @ptrToInt(buf.ptr);
+                const start_ptr_latin1 = @ptrToInt(latin1.ptr);
+                while (latin1.ptr != latin1_end_ptr) {
                     const bytes = @bitCast(Int, latin1[0..size].*);
                     // https://dotat.at/@/2022-06-27-tolower-swar.html
                     const mask = bytes & 0x8080808080808080;
@@ -1108,67 +1119,51 @@ pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list
                         }
 
                         buf[0..size].* = @bitCast([size]u8, bytes);
-                        buf = buf[first_set_byte..];
-                        latin1 = latin1[first_set_byte..];
+                        buf.ptr += first_set_byte;
+                        latin1.ptr += first_set_byte;
+                        buf.len -= @ptrToInt(buf.ptr) - start_ptr;
+                        latin1.len -= @ptrToInt(latin1.ptr) - start_ptr_latin1;
                         break :inner;
                     }
 
                     buf[0..size].* = @bitCast([size]u8, bytes);
-                    latin1 = latin1[size..];
-                    buf = buf[size..];
+                    latin1.ptr += size;
+                    buf.ptr += size;
                 }
+                buf.len -= @ptrToInt(buf.ptr) - start_ptr;
+                latin1.len -= @ptrToInt(latin1.ptr) - start_ptr_latin1;
             }
 
             {
-                const Int = u32;
-                const size = @sizeOf(Int);
-                while (latin1.len >= size) {
-                    const bytes = @bitCast(Int, latin1[0..size].*);
-                    // https://dotat.at/@/2022-06-27-tolower-swar.html
-                    const mask = bytes & 0x80808080;
+                assert(latin1.len < 8);
+                const end = latin1.ptr + latin1.len;
+                const start_ptr = @ptrToInt(buf.ptr);
+                const start_ptr_latin1 = @ptrToInt(latin1.ptr);
 
-                    if (mask > 0) {
-                        const first_set_byte = @ctz(Int, mask) / 8;
-                        if (comptime Environment.allow_assert) {
-                            assert(latin1[first_set_byte] >= 127);
-                            var j: usize = 0;
-                            while (j < first_set_byte) : (j += 1) {
-                                assert(latin1[j] < 127);
-                            }
-                        }
-
-                        buf[0..size].* = @bitCast([size]u8, bytes);
-                        buf = buf[first_set_byte..];
-                        latin1 = latin1[first_set_byte..];
-                        break :inner;
-                    }
-
-                    buf[0..size].* = @bitCast([size]u8, bytes);
-                    latin1 = latin1[size..];
-                    buf = buf[size..];
+                while (latin1.ptr != end and latin1.ptr[0] <= 127) {
+                    buf.ptr[0] = latin1.ptr[0];
+                    buf.ptr += 1;
+                    latin1.ptr += 1;
                 }
-            }
 
-            while (latin1.len >= 1 and latin1[0] < 127) {
-                buf[0] = latin1[0];
-                latin1 = latin1[1..];
-                buf = buf[1..];
+                buf.len -= @ptrToInt(buf.ptr) - start_ptr;
+                latin1.len -= @ptrToInt(latin1.ptr) - start_ptr_latin1;
             }
         }
 
-        i = @ptrToInt(buf.ptr) - @ptrToInt(list.items.ptr);
-        list.items.len = i;
+        while (latin1.len > 0 and latin1[0] > 127) {
+            i = @ptrToInt(buf.ptr) - @ptrToInt(list.items.ptr);
+            list.items.len = i;
 
-        while (latin1.len > 0 and latin1[0] >= 127) {
             try list.ensureUnusedCapacity(2 + latin1.len);
             buf = list.items.ptr[i..list.capacity];
             buf[0..2].* = latin1ToCodepointBytesAssumeNotASCII(latin1[0]);
             latin1 = latin1[1..];
             buf = buf[2..];
-
-            i = @ptrToInt(buf.ptr) - @ptrToInt(list.items.ptr);
-            list.items.len = i;
         }
+
+        i = @ptrToInt(buf.ptr) - @ptrToInt(list.items.ptr);
+        list.items.len = i;
     }
 
     return list;
@@ -1296,6 +1291,60 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
 
                 if (@reduce(.Max, vec) > 127) {
                     if (comptime stop) return .{ .written = std.math.maxInt(u32), .read = std.math.maxInt(u32) };
+
+                    // zig or LLVM doesn't do @ctz nicely with SIMD
+                    if (comptime ascii_vector_size >= 8) {
+                        const Int = u64;
+                        const size = @sizeOf(Int);
+
+                        {
+                            const bytes = @bitCast(Int, latin1[0..size].*);
+                            // https://dotat.at/@/2022-06-27-tolower-swar.html
+                            const mask = bytes & 0x8080808080808080;
+
+                            if (mask > 0) {
+                                const first_set_byte = @ctz(Int, mask) / 8;
+                                if (comptime Environment.allow_assert) {
+                                    assert(latin1[first_set_byte] >= 127);
+                                    var j: usize = 0;
+                                    while (j < first_set_byte) : (j += 1) {
+                                        assert(latin1[j] < 127);
+                                    }
+                                }
+
+                                buf[0..size].* = @bitCast([size]u8, bytes);
+                                buf = buf[first_set_byte..];
+                                latin1 = latin1[first_set_byte..];
+                                break :inner;
+                            }
+
+                            buf[0..size].* = @bitCast([size]u8, bytes);
+                            latin1 = latin1[size..];
+                            buf = buf[size..];
+                        }
+
+                        if (comptime ascii_vector_size >= 16) {
+                            const bytes = @bitCast(Int, latin1[0..size].*);
+                            // https://dotat.at/@/2022-06-27-tolower-swar.html
+                            const mask = bytes & 0x8080808080808080;
+
+                            if (mask > 0) {
+                                const first_set_byte = @ctz(Int, mask) / 8;
+                                if (comptime Environment.allow_assert) {
+                                    assert(latin1[first_set_byte] >= 127);
+                                    var j: usize = 0;
+                                    while (j < first_set_byte) : (j += 1) {
+                                        assert(latin1[j] < 127);
+                                    }
+                                }
+
+                                buf[0..size].* = @bitCast([size]u8, bytes);
+                                buf = buf[first_set_byte..];
+                                latin1 = latin1[first_set_byte..];
+                                break :inner;
+                            }
+                        }
+                    }
                     break;
                 }
 
@@ -1338,40 +1387,19 @@ pub fn copyLatin1IntoUTF8StopOnNonASCII(buf_: []u8, comptime Type: type, latin1_
             }
 
             {
-                const Int = u32;
-                const size = @sizeOf(Int);
-                while (@minimum(buf.len, latin1.len) >= size) {
-                    const bytes = @bitCast(Int, latin1[0..size].*);
-                    const mask = bytes & 0x80808080;
+                const end = latin1.ptr + latin1.len;
+                assert(@ptrToInt(latin1.ptr + 8) > @ptrToInt(end));
+                const start_ptr = @ptrToInt(buf.ptr);
+                const start_ptr_latin1 = @ptrToInt(latin1.ptr);
 
-                    if (mask > 0) {
-                        const first_set_byte = @ctz(Int, mask) / 8;
-                        if (comptime stop) return .{ .written = std.math.maxInt(u32), .read = std.math.maxInt(u32) };
-
-                        if (comptime Environment.allow_assert) {
-                            assert(latin1[first_set_byte] >= 127);
-                            var j: usize = 0;
-                            while (j < first_set_byte) : (j += 1) {
-                                assert(latin1[j] < 127);
-                            }
-                        }
-
-                        buf[0..size].* = @bitCast([size]u8, bytes);
-                        buf = buf[first_set_byte..];
-                        latin1 = latin1[first_set_byte..];
-                        break :inner;
-                    }
-
-                    buf[0..size].* = @bitCast([size]u8, bytes);
-                    latin1 = latin1[size..];
-                    buf = buf[size..];
+                while (latin1.ptr != end and latin1.ptr[0] <= 127) {
+                    buf.ptr[0] = latin1.ptr[0];
+                    buf.ptr += 1;
+                    latin1.ptr += 1;
                 }
-            }
 
-            while (@minimum(buf.len, latin1.len) >= 1 and latin1[0] < 127) {
-                buf[0] = latin1[0];
-                latin1 = latin1[1..];
-                buf = buf[1..];
+                buf.len -= @ptrToInt(buf.ptr) - start_ptr;
+                latin1.len -= @ptrToInt(latin1.ptr) - start_ptr_latin1;
             }
         }
 
@@ -2479,106 +2507,111 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
     var remaining = slice;
 
     if (comptime Environment.isAarch64 or Environment.isX64) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+        if (remaining.len >= ascii_vector_size) {
+            const remaining_start = remaining.ptr;
+            const remaining_end = remaining.ptr + remaining.len - (remaining.len % ascii_vector_size);
 
-            if (@reduce(.Max, vec) > 127) {
-                const Int = u64;
-                const size = @sizeOf(Int);
-                {
-                    const bytes = @bitCast(Int, remaining[0..size].*);
-                    // https://dotat.at/@/2022-06-27-tolower-swar.html
-                    const mask = bytes & 0x8080808080808080;
+            while (remaining.ptr != remaining_end) {
+                const vec: AsciiVector = remaining[0..ascii_vector_size].*;
 
-                    if (mask > 0) {
-                        const first_set_byte = @ctz(Int, mask) / 8;
-                        if (comptime Environment.allow_assert) {
-                            assert(remaining[first_set_byte] >= 127);
-                            var j: usize = 0;
-                            while (j < first_set_byte) : (j += 1) {
-                                assert(remaining[j] < 127);
+                if (@reduce(.Max, vec) > 127) {
+                    const Int = u64;
+                    const size = @sizeOf(Int);
+                    remaining.len -= @ptrToInt(remaining.ptr) - @ptrToInt(remaining_start);
+
+                    {
+                        const bytes = @bitCast(Int, remaining[0..size].*);
+                        // https://dotat.at/@/2022-06-27-tolower-swar.html
+                        const mask = bytes & 0x8080808080808080;
+
+                        if (mask > 0) {
+                            const first_set_byte = @ctz(Int, mask) / 8;
+                            if (comptime Environment.allow_assert) {
+                                assert(remaining[first_set_byte] > 127);
+                                var j: usize = 0;
+                                while (j < first_set_byte) : (j += 1) {
+                                    assert(remaining[j] <= 127);
+                                }
                             }
+
+                            return @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
                         }
-
-                        return @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
+                        remaining = remaining[size..];
                     }
-                }
-                {
-                    const bytes = @bitCast(Int, remaining[size..][0..size].*);
-                    const mask = bytes & 0x8080808080808080;
+                    {
+                        const bytes = @bitCast(Int, remaining[0..size].*);
+                        const mask = bytes & 0x8080808080808080;
 
-                    if (mask > 0) {
-                        const first_set_byte = @ctz(Int, mask) / 8;
-                        if (comptime Environment.allow_assert) {
-                            assert(remaining[first_set_byte] >= 127);
-                            var j: usize = 0;
-                            while (j < first_set_byte) : (j += 1) {
-                                assert(remaining[j] < 127);
+                        if (mask > 0) {
+                            const first_set_byte = @ctz(Int, mask) / 8;
+                            if (comptime Environment.allow_assert) {
+                                assert(remaining[first_set_byte] > 127);
+                                var j: usize = 0;
+                                while (j < first_set_byte) : (j += 1) {
+                                    assert(remaining[j] <= 127);
+                                }
                             }
-                        }
 
-                        return 8 + @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
+                            return @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
+                        }
                     }
+                    unreachable;
                 }
-                break;
+
+                // the more intuitive way, using slices, produces worse codegen
+                // specifically: it subtracts the length at the end of the loop
+                // we don't need to do that
+                // we only need to subtract the length once at the very end
+                remaining.ptr += ascii_vector_size;
             }
-
-            remaining = remaining[ascii_vector_size..];
+            remaining.len -= @ptrToInt(remaining.ptr) - @ptrToInt(remaining_start);
         }
     }
 
     {
         const Int = u64;
         const size = @sizeOf(Int);
-        while (remaining.len >= size) {
-            const bytes = @bitCast(Int, remaining[0..size].*);
-            // https://dotat.at/@/2022-06-27-tolower-swar.html
-            const mask = bytes & 0x8080808080808080;
+        const remaining_start = remaining.ptr;
+        const remaining_end = remaining.ptr + remaining.len - (remaining.len % size);
 
-            if (mask > 0) {
-                const first_set_byte = @ctz(Int, mask) / 8;
-                if (comptime Environment.allow_assert) {
-                    assert(remaining[first_set_byte] >= 127);
-                    var j: usize = 0;
-                    while (j < first_set_byte) : (j += 1) {
-                        assert(remaining[j] < 127);
+        if (comptime Environment.isAarch64 or Environment.isX64) {
+            // these assertions exist more so for LLVM
+            assert(remaining.len < ascii_vector_size);
+            assert(@ptrToInt(remaining.ptr + ascii_vector_size) > @ptrToInt(remaining_end));
+        }
+
+        if (remaining.len >= size) {
+            while (remaining.ptr != remaining_end) {
+                const bytes = @bitCast(Int, remaining[0..size].*);
+                // https://dotat.at/@/2022-06-27-tolower-swar.html
+                const mask = bytes & 0x8080808080808080;
+
+                if (mask > 0) {
+                    remaining.len -= @ptrToInt(remaining.ptr) - @ptrToInt(remaining_start);
+                    const first_set_byte = @ctz(Int, mask) / 8;
+                    if (comptime Environment.allow_assert) {
+                        assert(remaining[first_set_byte] > 127);
+                        var j: usize = 0;
+                        while (j < first_set_byte) : (j += 1) {
+                            assert(remaining[j] <= 127);
+                        }
                     }
+
+                    return @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
                 }
 
-                return @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
+                remaining.ptr += size;
             }
-
-            remaining = remaining[size..];
+            remaining.len -= @ptrToInt(remaining.ptr) - @ptrToInt(remaining_start);
         }
     }
 
-    {
-        const Int = u32;
-        const size = @sizeOf(Int);
-        while (remaining.len >= size) {
-            const bytes = @bitCast(Int, remaining[0..size].*);
-            const mask = bytes & 0x80808080;
+    assert(remaining.len < 8);
 
-            if (mask > 0) {
-                const first_set_byte = @ctz(Int, mask) / 8;
-                if (comptime Environment.allow_assert) {
-                    assert(remaining[first_set_byte] >= 127);
-                    var j: usize = 0;
-                    while (j < first_set_byte) : (j += 1) {
-                        assert(remaining[j] < 127);
-                    }
-                }
-
-                return @as(u32, first_set_byte) + @intCast(u32, slice.len - remaining.len);
-            }
-
-            remaining = remaining[size..];
-        }
-    }
-
-    for (remaining) |char, i| {
-        if (char > 127) {
-            return @truncate(u32, i + (slice.len - remaining.len));
+    for (remaining) |*char| {
+        if (char.* > 127) {
+            // try to prevent it from reading the length of the slice
+            return @truncate(u32, @ptrToInt(char) - @ptrToInt(slice.ptr));
         }
     }
 
@@ -2932,52 +2965,61 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
     var remaining = slice;
 
     if (comptime Environment.isAarch64 or Environment.isX64) {
-        while (remaining.len >= ascii_u16_vector_size) {
-            const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
-            const max_value = @reduce(.Max, vec);
+        const end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_u16_vector_size);
+        if (remaining.len > ascii_u16_vector_size) {
+            const remaining_start = remaining.ptr;
+            while (remaining.ptr != end_ptr) {
+                const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
+                const max_value = @reduce(.Max, vec);
 
-            if (comptime check_min) {
-                // by using @reduce here, we make it only do one comparison
-                // @reduce doesn't tell us the index though
-                const min_value = @reduce(.Min, vec);
-                if (min_value < 0x20 or max_value > 127) {
-                    // this is really slow
-                    // it does it element-wise for every single u8 on the vector
-                    // instead of doing the SIMD instructions
-                    // it removes a loop, but probably is slower in the end
-                    const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
-                        @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
-                    const bitmask = @ptrCast(*const u16, &cmp).*;
-                    const first = @ctz(u16, bitmask);
+                if (comptime check_min) {
+                    // by using @reduce here, we make it only do one comparison
+                    // @reduce doesn't tell us the index though
+                    const min_value = @reduce(.Min, vec);
+                    if (min_value < 0x20 or max_value > 127) {
+                        remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
 
-                    return @intCast(u32, @as(u32, first) +
-                        @intCast(u32, slice.len - remaining.len));
+                        // this is really slow
+                        // it does it element-wise for every single u8 on the vector
+                        // instead of doing the SIMD instructions
+                        // it removes a loop, but probably is slower in the end
+                        const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
+                            @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
+                        const bitmask: u16 = @ptrCast(*const u16, &cmp).*;
+                        const first = @ctz(u16, bitmask);
+
+                        return @intCast(u32, @as(u32, first) +
+                            @intCast(u32, slice.len - remaining.len));
+                    }
+                } else if (comptime !check_min) {
+                    if (max_value > 127) {
+                        remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
+
+                        const cmp = vec > max_u16_ascii;
+                        const bitmask = @ptrCast(*const u16, &cmp).*;
+                        const first = @ctz(u16, bitmask);
+
+                        return @intCast(u32, @as(u32, first) +
+                            @intCast(u32, slice.len - remaining.len));
+                    }
                 }
-            } else if (comptime !check_min) {
-                if (max_value > 127) {
-                    const cmp = vec > max_u16_ascii;
-                    const bitmask = @ptrCast(*const u16, &cmp).*;
-                    const first = @ctz(u16, bitmask);
 
-                    return @intCast(u32, @as(u32, first) +
-                        @intCast(u32, slice.len - remaining.len));
-                }
+                remaining.ptr += ascii_u16_vector_size;
             }
-
-            remaining = remaining[ascii_u16_vector_size..];
+            remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
         }
     }
 
     if (comptime check_min) {
-        for (remaining) |char, i| {
+        for (remaining) |char| {
             if (char > 127 or char < 0x20) {
-                return @truncate(u32, i + (slice.len - remaining.len));
+                return @truncate(u32, (@ptrToInt(std.mem.sliceAsBytes(remaining).ptr) - @ptrToInt(std.mem.sliceAsBytes(slice).ptr)) / 2);
             }
         }
     } else {
-        for (remaining) |char, i| {
+        for (remaining) |char| {
             if (char > 127) {
-                return @truncate(u32, i + (slice.len - remaining.len));
+                return @truncate(u32, (@ptrToInt(std.mem.sliceAsBytes(remaining).ptr) - @ptrToInt(std.mem.sliceAsBytes(slice).ptr)) / 2);
             }
         }
     }

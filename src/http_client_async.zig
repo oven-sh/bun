@@ -1023,7 +1023,6 @@ pub fn processResponse(this: *HTTPClient, comptime report_progress: bool, compti
             }
 
             this.body_size = @truncate(u32, body_out_str.list.items.len);
-            std.debug.assert(body_out_str.list.items.len == buffer.list.items.len);
 
             return response;
         }

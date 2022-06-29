@@ -697,7 +697,7 @@ pub fn NewPrinter(
                         }
                     }
 
-                    p.printClauseItemAs(item, true);
+                    p.printClauseItemAs(item, .@"var");
                 }
 
                 if (!import.is_single_line) {
@@ -1444,21 +1444,24 @@ pub fn NewPrinter(
         }
 
         fn printClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
-            return printClauseItemAs(p, item, false);
+            return printClauseItemAs(p, item, .@"import");
         }
 
-        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as_variable: bool) void {
+        fn printExportClauseItem(p: *Printer, item: js_ast.ClauseItem) void {
+            return printClauseItemAs(p, item, .@"export");
+        }
+
+        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.EnumLiteral)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
-            if (comptime !as_variable) {
-                p.printIdentifier(name);
+            if (comptime as == .@"import") {
+                p.printClauseAlias(item.alias);
 
                 if (!strings.eql(name, item.alias)) {
-                    p.print(" as");
-                    p.printSpace();
-                    p.printClauseAlias(item.alias);
+                    p.print(" as ");
+                    p.printIdentifier(name);
                 }
-            } else {
+            } else if (comptime as == .@"var") {
                 p.printClauseAlias(item.alias);
 
                 if (!strings.eql(name, item.alias)) {
@@ -1466,6 +1469,15 @@ pub fn NewPrinter(
                     p.printSpace();
                     p.printIdentifier(name);
                 }
+            } else if (comptime as == .@"export") {
+                p.printIdentifier(name);
+
+                if (!strings.eql(name, item.alias)) {
+                    p.print(" as ");
+                    p.printClauseAlias(item.alias);
+                }
+            } else {
+                @compileError("Unknown as");
             }
         }
 
@@ -3256,7 +3268,7 @@ pub fn NewPrinter(
                             p.printIndent();
                         }
 
-                        p.printClauseItem(item);
+                        p.printExportClauseItem(item);
                     }
 
                     if (!s.is_single_line) {
@@ -3385,7 +3397,7 @@ pub fn NewPrinter(
                         p.printSpace();
                     }
 
-                    for (s.items) |*item, i| {
+                    for (s.items) |item, i| {
                         if (i != 0) {
                             p.print(",");
                             if (s.is_single_line) {
@@ -3397,13 +3409,7 @@ pub fn NewPrinter(
                             p.printNewline();
                             p.printIndent();
                         }
-                        const name = p.renamer.nameForSymbol(item.name.ref.?);
-                        p.printIdentifier(name);
-                        if (!strings.eql(name, item.alias)) {
-                            p.print(" as");
-                            p.printSpace();
-                            p.printClauseAlias(item.alias);
-                        }
+                        p.printExportClauseItem(item);
                     }
 
                     if (!s.is_single_line) {
@@ -3785,7 +3791,7 @@ pub fn NewPrinter(
                                 if (s.items.len > 0) {
                                     p.print(", ");
                                     for (s.items) |item, i| {
-                                        p.printClauseItemAs(item, true);
+                                        p.printClauseItemAs(item, .@"var");
 
                                         if (i < s.items.len - 1) {
                                             p.print(", ");
@@ -3794,7 +3800,7 @@ pub fn NewPrinter(
                                 }
                             } else {
                                 for (s.items) |item, i| {
-                                    p.printClauseItemAs(item, true);
+                                    p.printClauseItemAs(item, .@"var");
 
                                     if (i < s.items.len - 1) {
                                         p.print(", ");

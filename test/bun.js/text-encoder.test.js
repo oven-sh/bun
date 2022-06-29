@@ -69,6 +69,31 @@ describe("TextDecoder", () => {
 });
 
 describe("TextEncoder", () => {
+  it("should encode latin1 text with non-ascii latin1 characters", () => {
+    var text = "H©ell©o Wor©ld!";
+
+    gcTrace(true);
+    const encoder = new TextEncoder();
+    const encoded = encoder.encode(text);
+    gcTrace(true);
+    const into = new Uint8Array(100);
+    const out = encoder.encodeInto(text, into);
+    gcTrace(true);
+    expect(out.read).toBe(text.length);
+
+    expect(encoded instanceof Uint8Array).toBe(true);
+    const result = [
+      72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169,
+      108, 100, 33,
+    ];
+    for (let i = 0; i < result.length; i++) {
+      expect(encoded[i]).toBe(result[i]);
+      expect(into[i]).toBe(result[i]);
+    }
+    expect(encoded.length).toBe(result.length);
+    expect(out.written).toBe(result.length);
+  });
+
   it("should encode latin1 text", () => {
     gcTrace(true);
     const text = "Hello World!";
@@ -124,6 +149,34 @@ describe("TextEncoder", () => {
       expect(encoded[i]).toBe(into[i]);
     }
     expect(encoded.length).toBe(getByteLength(text));
+  });
+
+  it("should encode latin1 rope text with non-ascii latin1 characters", () => {
+    var text = "H©ell©o";
+    text += " ";
+    text += "Wor©ld!";
+
+    gcTrace(true);
+    const encoder = new TextEncoder();
+    const encoded = encoder.encode(text);
+    gcTrace(true);
+    const into = new Uint8Array(100);
+    const out = encoder.encodeInto(text, into);
+    gcTrace(true);
+    expect(out.read).toBe(text.length);
+
+    expect(encoded instanceof Uint8Array).toBe(true);
+    const result = [
+      72, 194, 169, 101, 108, 108, 194, 169, 111, 32, 87, 111, 114, 194, 169,
+      108, 100, 33,
+    ];
+
+    for (let i = 0; i < result.length; i++) {
+      expect(encoded[i]).toBe(into[i]);
+      expect(encoded[i]).toBe(result[i]);
+    }
+    expect(encoded.length).toBe(result.length);
+    expect(out.written).toBe(encoded.length);
   });
 
   it("should encode utf-16 text", () => {

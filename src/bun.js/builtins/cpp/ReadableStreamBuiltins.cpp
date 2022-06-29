@@ -49,7 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableStreamInitializeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInitializeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInitializeReadableStreamCodeLength = 2783;
+const int s_readableStreamInitializeReadableStreamCodeLength = 3256;
 static const JSC::Intrinsic s_readableStreamInitializeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInitializeReadableStreamCode =
     "(function (underlyingSource, strategy)\n" \
@@ -74,6 +74,7 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "    @putByIdDirectPrivate(this, \"storedError\", @undefined);\n" \
     "    \n" \
     "    @putByIdDirectPrivate(this, \"disturbed\", false);\n" \
+    "\n" \
     "    \n" \
     "    //\n" \
     "    @putByIdDirectPrivate(this, \"readableStreamController\", null);\n" \
@@ -90,6 +91,7 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "    if (@getByIdDirectPrivate(underlyingSource, \"pull\") !== @undefined && !isLazy) {\n" \
     "        const size = @getByIdDirectPrivate(strategy, \"size\");\n" \
     "        const highWaterMark = @getByIdDirectPrivate(strategy, \"highWaterMark\");\n" \
+    "        @putByIdDirectPrivate(this, \"highWaterMark\", highWaterMark);\n" \
     "        @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n" \
     "        @setupReadableStreamDefaultController(this, underlyingSource, size, highWaterMark !== @undefined ? highWaterMark : 1, @getByIdDirectPrivate(underlyingSource, \"start\"), @getByIdDirectPrivate(underlyingSource, \"pull\"), @getByIdDirectPrivate(underlyingSource, \"cancel\"));\n" \
     "        \n" \
@@ -97,10 +99,13 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "    }\n" \
     "    if (isDirect) {\n" \
     "        @putByIdDirectPrivate(this, \"underlyingSource\", underlyingSource);\n" \
+    "        @putByIdDirectPrivate(this, \"highWaterMark\", @getByIdDirectPrivate(strategy, \"highWaterMark\"));\n" \
     "        @putByIdDirectPrivate(this, \"start\", () => @createReadableStreamController(this, underlyingSource, strategy));\n" \
     "    } else if (isLazy) {\n" \
     "        const autoAllocateChunkSize = underlyingSource.autoAllocateChunkSize;\n" \
+    "        @putByIdDirectPrivate(this, \"highWaterMark\", @undefined);\n" \
     "        @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n" \
+    "        @putByIdDirectPrivate(this, \"highWaterMark\", autoAllocateChunkSize || @getByIdDirectPrivate(strategy, \"highWaterMark\"));\n" \
     "\n" \
     "        \n" \
     "        @putByIdDirectPrivate(this, \"start\", () => {\n" \
@@ -111,6 +116,7 @@ const char* const s_readableStreamInitializeReadableStreamCode =
     "        });\n" \
     "    } else {\n" \
     "        @putByIdDirectPrivate(this, \"underlyingSource\", @undefined);\n" \
+    "        @putByIdDirectPrivate(this, \"highWaterMark\", @getByIdDirectPrivate(strategy, \"highWaterMark\"));\n" \
     "        @putByIdDirectPrivate(this, \"start\", @undefined);\n" \
     "        @createReadableStreamController(this, underlyingSource, strategy);\n" \
     "    }\n" \
@@ -122,46 +128,58 @@ const char* const s_readableStreamInitializeReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToArrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToArrayCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToArrayCodeLength = 883;
+const int s_readableStreamReadableStreamToArrayCodeLength = 1366;
 static const JSC::Intrinsic s_readableStreamReadableStreamToArrayCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToArrayCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    if (!stream || @getByIdDirectPrivate(stream, \"state\") === @streamClosed) {\n" \
-    "        return null;\n" \
+    "    //\n" \
+    "    var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n" \
+    "    if (underlyingSource !== @undefined) {    \n" \
+    "        const promise = @initializeArrayStream.@call(stream, underlyingSource, @undefined);\n" \
+    "        var reader = stream.getReader();\n" \
+    "        return (async function() {\n" \
+    "            while (@getByIdDirectPrivate(stream, \"state\") === @streamReadable) {\n" \
+    "                var thisResult = await reader.read();\n" \
+    "                if (thisResult.done) {\n" \
+    "                    break;\n" \
+    "                }\n" \
+    "            }\n" \
+    "\n" \
+    "            try {\n" \
+    "                reader.releaseLock();\n" \
+    "            } catch(e) {\n" \
+    "            }\n" \
+    "\n" \
+    "            return await promise;\n" \
+    "        })();\n" \
     "    }\n" \
+    "\n" \
     "    var reader = stream.getReader();\n" \
     "    var manyResult = reader.readMany();\n" \
     "    \n" \
     "    async function processManyResult(result) {\n" \
     "        \n" \
     "        if (result.done) {\n" \
-    "            return null;\n" \
+    "            return [];\n" \
     "        }\n" \
     "\n" \
     "        var chunks = result.value || [];\n" \
     "        \n" \
     "        while (true) {\n" \
     "            var thisResult = await reader.read();\n" \
-    "            \n" \
     "            if (thisResult.done) {\n" \
-    "                return chunks;\n" \
+    "                break;\n" \
     "            }\n" \
-    "            \n" \
-    "            chunks.push(thisResult.value);\n" \
+    "            chunks = chunks.concat(thisResult.value);\n" \
     "        }\n" \
     "\n" \
     "        return chunks;\n" \
-    "    };\n" \
-    "\n" \
+    "    }\n" \
     "\n" \
     "    if (manyResult && @isPromise(manyResult)) {\n" \
     "        return manyResult.@then(processManyResult);\n" \
-    "    }\n" \
-    "\n" \
-    "    if (manyResult && manyResult.done) {\n" \
-    "        return null;\n" \
     "    }\n" \
     "\n" \
     "    return processManyResult(manyResult);\n" \
@@ -213,13 +231,12 @@ const char* const s_readableStreamReadableStreamToTextCode =
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToJSONCodeLength = 121;
+const int s_readableStreamReadableStreamToJSONCodeLength = 114;
 static const JSC::Intrinsic s_readableStreamReadableStreamToJSONCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToJSONCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    //\n" \
     "    return @readableStreamToText(stream).@then(globalThis.JSON.parse);\n" \
     "})\n" \
 ;
@@ -257,53 +274,6 @@ const char* const s_readableStreamReadableStreamToBlobCode =
     "\n" \
     "        return new globalThis.Blob(chunks);\n" \
     "    });\n" \
-    "})\n" \
-;
-
-const JSC::ConstructAbility s_readableStreamReadableStreamToArrayPublicCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_readableStreamReadableStreamToArrayPublicCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToArrayPublicCodeLength = 841;
-static const JSC::Intrinsic s_readableStreamReadableStreamToArrayPublicCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_readableStreamReadableStreamToArrayPublicCode =
-    "(function (stream) {\n" \
-    "    \"use strict\";\n" \
-    "\n" \
-    "    if (@getByIdDirectPrivate(stream, \"state\") === @streamClosed) {\n" \
-    "        return [];\n" \
-    "    }\n" \
-    "    var reader = stream.getReader();\n" \
-    "\n" \
-    "    var manyResult = reader.readMany();\n" \
-    "\n" \
-    "    var processManyResult = (0, (async function(result) {\n" \
-    "        if (result.done) {\n" \
-    "            return [];\n" \
-    "        }\n" \
-    "\n" \
-    "        var chunks = result.value || [];\n" \
-    "        \n" \
-    "        while (true) {\n" \
-    "            var thisResult = await reader.read();\n" \
-    "            if (thisResult.done) {\n" \
-    "                return chunks;\n" \
-    "            }\n" \
-    "\n" \
-    "            chunks.push(thisResult.value);\n" \
-    "        }\n" \
-    "\n" \
-    "        return chunks;\n" \
-    "    }));\n" \
-    "\n" \
-    "\n" \
-    "    if (manyResult && @isPromise(manyResult)) {\n" \
-    "        return manyResult.then(processManyResult);\n" \
-    "    }\n" \
-    "\n" \
-    "    if (manyResult && manyResult.done) {\n" \
-    "        return [];\n" \
-    "    }\n" \
-    "\n" \
-    "    return processManyResult(manyResult);\n" \
     "})\n" \
 ;
 

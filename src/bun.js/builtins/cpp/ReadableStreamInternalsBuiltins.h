@@ -183,6 +183,10 @@ extern const char* const s_readableStreamInternalsInitializeTextStreamCode;
 extern const int s_readableStreamInternalsInitializeTextStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsInitializeTextStreamCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamInternalsInitializeTextStreamCodeConstructorKind;
+extern const char* const s_readableStreamInternalsInitializeArrayStreamCode;
+extern const int s_readableStreamInternalsInitializeArrayStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsInitializeArrayStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsInitializeArrayStreamCodeConstructorKind;
 extern const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode;
 extern const int s_readableStreamInternalsInitializeArrayBufferStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructAbility;
@@ -299,6 +303,7 @@ extern const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeCon
     macro(onCloseDirectStream, readableStreamInternalsOnCloseDirectStream, 1) \
     macro(onDrainDirectStream, readableStreamInternalsOnDrainDirectStream, 0) \
     macro(initializeTextStream, readableStreamInternalsInitializeTextStream, 2) \
+    macro(initializeArrayStream, readableStreamInternalsInitializeArrayStream, 2) \
     macro(initializeArrayBufferStream, readableStreamInternalsInitializeArrayBufferStream, 2) \
     macro(readableStreamError, readableStreamInternalsReadableStreamError, 2) \
     macro(readableStreamDefaultControllerShouldCallPull, readableStreamInternalsReadableStreamDefaultControllerShouldCallPull, 1) \
@@ -354,6 +359,7 @@ extern const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeCon
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONCLOSEDIRECTSTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONDRAINDIRECTSTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_INITIALIZETEXTSTREAM 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_INITIALIZEARRAYSTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_INITIALIZEARRAYBUFFERSTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMERROR 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_READABLESTREAMDEFAULTCONTROLLERSHOULDCALLPULL 1
@@ -410,6 +416,7 @@ extern const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeCon
     macro(readableStreamInternalsOnCloseDirectStreamCode, onCloseDirectStream, ASCIILiteral(), s_readableStreamInternalsOnCloseDirectStreamCodeLength) \
     macro(readableStreamInternalsOnDrainDirectStreamCode, onDrainDirectStream, ASCIILiteral(), s_readableStreamInternalsOnDrainDirectStreamCodeLength) \
     macro(readableStreamInternalsInitializeTextStreamCode, initializeTextStream, ASCIILiteral(), s_readableStreamInternalsInitializeTextStreamCodeLength) \
+    macro(readableStreamInternalsInitializeArrayStreamCode, initializeArrayStream, ASCIILiteral(), s_readableStreamInternalsInitializeArrayStreamCodeLength) \
     macro(readableStreamInternalsInitializeArrayBufferStreamCode, initializeArrayBufferStream, ASCIILiteral(), s_readableStreamInternalsInitializeArrayBufferStreamCodeLength) \
     macro(readableStreamInternalsReadableStreamErrorCode, readableStreamError, ASCIILiteral(), s_readableStreamInternalsReadableStreamErrorCodeLength) \
     macro(readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCode, readableStreamDefaultControllerShouldCallPull, ASCIILiteral(), s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeLength) \
@@ -438,6 +445,7 @@ extern const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeCon
     macro(handleDirectStreamError) \
     macro(handleDirectStreamErrorReject) \
     macro(initializeArrayBufferStream) \
+    macro(initializeArrayStream) \
     macro(initializeTextStream) \
     macro(isReadableStream) \
     macro(isReadableStreamDefaultController) \

@@ -67,10 +67,6 @@ extern const char* const s_readableStreamReadableStreamToBlobCode;
 extern const int s_readableStreamReadableStreamToBlobCodeLength;
 extern const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind;
-extern const char* const s_readableStreamReadableStreamToArrayPublicCode;
-extern const int s_readableStreamReadableStreamToArrayPublicCodeLength;
-extern const JSC::ConstructAbility s_readableStreamReadableStreamToArrayPublicCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamReadableStreamToArrayPublicCodeConstructorKind;
 extern const char* const s_readableStreamConsumeReadableStreamCode;
 extern const int s_readableStreamConsumeReadableStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility;
@@ -114,7 +110,6 @@ extern const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind;
     macro(readableStreamToText, readableStreamReadableStreamToText, 1) \
     macro(readableStreamToJSON, readableStreamReadableStreamToJSON, 1) \
     macro(readableStreamToBlob, readableStreamReadableStreamToBlob, 1) \
-    macro(readableStreamToArrayPublic, readableStreamReadableStreamToArrayPublic, 1) \
     macro(consumeReadableStream, readableStreamConsumeReadableStream, 3) \
     macro(createEmptyReadableStream, readableStreamCreateEmptyReadableStream, 0) \
     macro(createNativeReadableStream, readableStreamCreateNativeReadableStream, 3) \
@@ -130,7 +125,6 @@ extern const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind;
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOTEXT 1
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOJSON 1
 #define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOBLOB 1
-#define WEBCORE_BUILTIN_READABLESTREAM_READABLESTREAMTOARRAYPUBLIC 1
 #define WEBCORE_BUILTIN_READABLESTREAM_CONSUMEREADABLESTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAM_CREATEEMPTYREADABLESTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAM_CREATENATIVEREADABLESTREAM 1
@@ -147,7 +141,6 @@ extern const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind;
     macro(readableStreamReadableStreamToTextCode, readableStreamToText, ASCIILiteral(), s_readableStreamReadableStreamToTextCodeLength) \
     macro(readableStreamReadableStreamToJSONCode, readableStreamToJSON, ASCIILiteral(), s_readableStreamReadableStreamToJSONCodeLength) \
     macro(readableStreamReadableStreamToBlobCode, readableStreamToBlob, ASCIILiteral(), s_readableStreamReadableStreamToBlobCodeLength) \
-    macro(readableStreamReadableStreamToArrayPublicCode, readableStreamToArrayPublic, ASCIILiteral(), s_readableStreamReadableStreamToArrayPublicCodeLength) \
     macro(readableStreamConsumeReadableStreamCode, consumeReadableStream, ASCIILiteral(), s_readableStreamConsumeReadableStreamCodeLength) \
     macro(readableStreamCreateEmptyReadableStreamCode, createEmptyReadableStream, ASCIILiteral(), s_readableStreamCreateEmptyReadableStreamCodeLength) \
     macro(readableStreamCreateNativeReadableStreamCode, createNativeReadableStream, ASCIILiteral(), s_readableStreamCreateNativeReadableStreamCodeLength) \
@@ -169,7 +162,6 @@ extern const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind;
     macro(pipeThrough) \
     macro(pipeTo) \
     macro(readableStreamToArray) \
-    macro(readableStreamToArrayPublic) \
     macro(readableStreamToBlob) \
     macro(readableStreamToJSON) \
     macro(readableStreamToText) \

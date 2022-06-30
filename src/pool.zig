@@ -146,6 +146,14 @@ pub fn ObjectPool(
             unreachable;
         }
 
+        pub fn full() bool {
+            if (comptime max_count == 0) return false;
+            return data().loaded and data().count >= max_count;
+        }
+
+        pub fn has() bool {
+            return data().loaded and data().list.first != null;
+        }
         pub fn get(allocator: std.mem.Allocator) *LinkedList.Node {
             if (data().loaded) {
                 if (data().list.popFirst()) |node| {

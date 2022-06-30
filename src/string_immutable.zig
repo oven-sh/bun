@@ -1428,32 +1428,47 @@ pub fn replaceLatin1WithUTF8(buf_: []u8) void {
 
 pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
     var latin1 = latin1_;
-    var count: usize = 0;
-    while (latin1.len > 0) {
-        var read: usize = 0;
+    var total_non_ascii_count: usize = 0;
 
-        while (latin1.len > ascii_vector_size) {
+    const latin1_last = latin1.ptr + latin1.len;
+    while (latin1.ptr != latin1_last) {
+        const wrapped_len = latin1.len - (latin1.len % ascii_vector_size);
+        const latin1_end = latin1.ptr + wrapped_len;
+        while (latin1.ptr != latin1_end) {
             const vec: AsciiVector = latin1[0..ascii_vector_size].*;
 
             if (@reduce(.Max, vec) > 127) {
-                break;
+                const Int = u64;
+                const size = @sizeOf(Int);
+
+                const bytes = [2]Int{
+                    @bitCast(Int, latin1[0..size].*) & 0x8080808080808080,
+                    @bitCast(Int, latin1[size .. 2 * size].*) & 0x8080808080808080,
+                };
+
+                const non_ascii_count = ((@popCount(Int, bytes[0]) / 8) + (@popCount(Int, bytes[1]) / 8));
+                total_non_ascii_count += non_ascii_count;
             }
 
-            latin1 = latin1[ascii_vector_size..];
-            count += ascii_vector_size;
+            latin1.ptr += ascii_vector_size;
+        }
+        latin1.len -= wrapped_len;
+
+        if (latin1.len >= 8) {
+            const bytes = @bitCast(u64, latin1[0..8].*) & 0x8080808080808080;
+            total_non_ascii_count += @popCount(u64, bytes) / 8;
+            latin1 = latin1[8..];
         }
 
-        while (read < latin1.len and latin1[read] < 0x80) : (read += 1) {}
-
-        count += read;
-        latin1 = latin1[read..];
-        if (latin1.len > 0) {
-            latin1 = latin1[1..];
-            count += 2;
+        while (latin1.ptr != latin1_last) {
+            total_non_ascii_count += @as(usize, @boolToInt(latin1.ptr[0] > 127));
+            latin1.ptr += 1;
         }
     }
 
-    return count;
+    // each non-ascii latin1 character becomes 2 UTF8 characters
+    // since latin1_.len is the original length, we only need to add up the number of non-ascii characters to get the final count
+    return latin1_.len + total_non_ascii_count;
 }
 
 const JSC = @import("javascript_core");

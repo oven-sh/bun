@@ -452,6 +452,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
   end     ${`${name}__end`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
   start   ${`${name}__start`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
   write   ${`${name}__write`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
+  
 @end
 */
 
@@ -645,6 +646,7 @@ void ${prototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalOb
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, ${className}::info(), ${className}PrototypeTableValues, *this);
+    putDirect(vm, JSC::Identifier::fromString(vm, "sinkId"_s), JSC::jsNumber(${className}::Sink), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -652,6 +654,7 @@ void ${controllerPrototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, ${controller}::info(), ${controller}PrototypeTableValues, *this);
+    putDirect(vm, JSC::Identifier::fromString(vm, "sinkId"_s), JSC::jsNumber(${className}::Sink), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

@@ -1636,7 +1636,7 @@ pub const CreateCommand = struct {
             \\<d>#<r><b> To get started, run:<r>
             \\
             \\  <b><cyan>cd {s}<r>
-            \\  <b><cyan>bun<r>
+            \\  <b><cyan>bun dev<r>
             \\
             \\
         , .{

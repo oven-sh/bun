@@ -329,7 +329,13 @@ declare module "bun" {
    * Fast incremental writer that becomes an ArrayBuffer on end().
    */
   export class ArrayBufferSink implements Sink<ArrayBuffer> {
-    constructor({ stream = false, asUint8Array = false, highWaterMark = 2048 });
+    constructor();
+
+    start({
+      stream = false,
+      asUint8Array = false,
+      highWaterMark = 2048,
+    } = {}): void;
 
     write(chunk: string | ArrayBufferView | ArrayBuffer): number;
     drain(): number;

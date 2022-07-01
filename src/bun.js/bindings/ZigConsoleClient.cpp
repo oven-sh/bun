@@ -57,8 +57,6 @@ void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
     Ref<ScriptArguments>&& arguments)
 {
     JSC::VM& vm = globalObject->vm();
-    JSC::GCDeferralContext deferralContext(vm);
-    JSC::DisallowGC disallowGC;
     auto args = arguments.ptr();
     JSC__JSValue jsArgs[255];
 
@@ -69,7 +67,7 @@ void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
         jsArgs[i] = JSC::JSValue::encode(val);
     }
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
     Zig__ConsoleClient__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type),
         static_cast<uint32_t>(level), globalObject, jsArgs,
         count);

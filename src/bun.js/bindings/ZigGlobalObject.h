@@ -173,6 +173,16 @@ public:
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
 
+    JSC::JSObject* processObject()
+    {
+        return m_processObject.getInitializedOnMainThread(this);
+    }
+
+    JSC::JSObject* processEnvObject()
+    {
+        return m_processEnvObject.getInitializedOnMainThread(this);
+    }
+
     void* bunVM() { return m_bunVM; }
     bool isThreadLocalDefaultGlobalObject = false;
 
@@ -180,6 +190,7 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
+    mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
 
 private:
     void addBuiltinGlobals(JSC::VM&);
@@ -203,8 +214,11 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPResponseControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_importMetaObjectStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_processObject;
+    LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
+    JSClassRef m_dotEnvClassRef;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;

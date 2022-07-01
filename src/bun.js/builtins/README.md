@@ -1,5 +1,16 @@
 # JavaScript Builtins
 
+TLDR:
+
+```bash
+# Delete the built files
+make clean-bindings generate-bindings && \
+    # Compile all the C++ files which live in ../bindings
+    make jsc-bindings-mac -j10 && \
+    # Re-link the binary without compiling zig (so it's faster)
+    make bun-link-lld-debug
+```
+
 JavaScript files in [./js](./js) use JavaScriptCore's builtins syntax
 
 ```js

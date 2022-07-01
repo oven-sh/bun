@@ -35,9 +35,9 @@
 
 #include "ByteLengthQueuingStrategyBuiltins.cpp"
 #include "CountQueuingStrategyBuiltins.cpp"
+#include "ImportMetaObjectBuiltins.cpp"
 #include "JSBufferConstructorBuiltins.cpp"
 #include "JSBufferPrototypeBuiltins.cpp"
-#include "JSZigGlobalObjectBuiltins.cpp"
 #include "ReadableByteStreamControllerBuiltins.cpp"
 #include "ReadableByteStreamInternalsBuiltins.cpp"
 #include "ReadableStreamBYOBReaderBuiltins.cpp"

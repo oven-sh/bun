@@ -56,6 +56,7 @@ pub const TextEncoder = struct {
         // unless it's huge
         // JSC will GC Uint8Array that occupy less than 512 bytes
         // so it's extra good for that case
+        // this also means there won't be reallocations for small strings
         var buf: [2048]u8 = undefined;
 
         var ctx = globalThis.ref();

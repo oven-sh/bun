@@ -104,53 +104,11 @@ function readableStreamToArray(stream) {
 
     // this is a direct stream
     var underlyingSource = @getByIdDirectPrivate(stream, "underlyingSource");
-    if (underlyingSource !== @undefined) {    
-        const promise = @initializeArrayStream.@call(stream, underlyingSource, @undefined);
-        var reader = stream.getReader();
-        return (async function() {
-            while (@getByIdDirectPrivate(stream, "state") === @streamReadable) {
-                var thisResult = await reader.read();
-                if (thisResult.done) {
-                    break;
-                }
-            }
-
-            try {
-                reader.releaseLock();
-            } catch(e) {
-            }
-
-            return await promise;
-        })();
+    if (underlyingSource !== @undefined) {
+        return @readableStreamToArrayDirect(stream, underlyingSource);
     }
 
-    var reader = stream.getReader();
-    var manyResult = reader.readMany();
-    
-    async function processManyResult(result) {
-        
-        if (result.done) {
-            return [];
-        }
-
-        var chunks = result.value || [];
-        
-        while (true) {
-            var thisResult = await reader.read();
-            if (thisResult.done) {
-                break;
-            }
-            chunks = chunks.concat(thisResult.value);
-        }
-
-        return chunks;
-    }
-
-    if (manyResult && @isPromise(manyResult)) {
-        return manyResult.@then(processManyResult);
-    }
-
-    return processManyResult(manyResult);
+    return @readableStreamIntoArray(stream);
 }
 
 @globalPrivate
@@ -160,73 +118,37 @@ function readableStreamToText(stream) {
     // this is a direct stream
     var underlyingSource = @getByIdDirectPrivate(stream, "underlyingSource");
     if (underlyingSource !== @undefined) {
-       
-        const promise = @initializeTextStream.@call(stream, underlyingSource, @undefined);
-        var reader = stream.getReader();
-        return (async function() {
-            while (@getByIdDirectPrivate(stream, "state") === @streamReadable) {
-                var thisResult = await reader.read();
-                if (thisResult.done) {
-                    break;
-                }
-            }
-
-            try {
-                reader.releaseLock();
-            } catch(e) {
-            }
-    
-            return await promise;
-        })();
+        return @readableStreamToTextDirect(stream, underlyingSource);
     }
 
-    // TODO: optimize this to skip the extra ArrayBuffer
-    var toArrayBuffer = globalThis.Bun.readableStreamToArrayBuffer(stream);
-    if (toArrayBuffer && @isPromise(toArrayBuffer)) {
-        return toArrayBuffer.@then(function(arrayBuffer) {
-            return new globalThis.TextDecoder().decode(arrayBuffer);
-        });
+    return @readableStreamIntoText(stream);
+}
+
+@globalPrivate
+function readableStreamToArrayBuffer(stream) {
+    "use strict";
+
+    // this is a direct stream
+    var underlyingSource = @getByIdDirectPrivate(stream, "underlyingSource");
+
+    if (underlyingSource !== @undefined) {
+        return @readableStreamToArrayBufferDirect(stream, underlyingSource);
     }
 
-    return new globalThis.TextDecoder().decode(arrayBuffer);
+    return globalThis.Bun.readableStreamToArray(stream).@then(globalThis.Bun.concatArrayBuffers);
 }
 
 @globalPrivate
 function readableStreamToJSON(stream) {
     "use strict";
 
-    return @readableStreamToText(stream).@then(globalThis.JSON.parse);
+    return globalThis.Bun.readableStreamToText(stream).@then(globalThis.JSON.parse);
 }
 
 @globalPrivate
 function readableStreamToBlob(stream) {
     "use strict";
-
-    var underlyingSource = @getByIdDirectPrivate(stream, "underlyingSource");
-    if (underlyingSource != @undefined) {
-        var toArrayBuffer = globalThis.Bun.readableStreamToArrayBuffer(stream);
-        if (toArrayBuffer && @isPromise(toArrayBuffer)) {
-            return toArrayBuffer.@then(function(arrayBuffer) {
-                return new globalThis.Blob([arrayBuffer]);
-            });
-        }
-
-        return new globalThis.Blob([toArrayBuffer]);
-    }
-
- 
-    const array = @readableStreamToArray(stream);
-    if (array === null) {
-        return new globalThis.Blob();
-    }
-
-    return array.@then(function(chunks) {
-        if (chunks === null || chunks.length === 0) {
-            return new globalThis.Blob();
-        }
-
-        return new globalThis.Blob(chunks);
-    });
+    return @Promise.resolve(globalThis.Bun.readableStreamToArray(stream)).@then(array => new Blob(array));
 }
 
 @globalPrivate
@@ -459,7 +381,7 @@ function pipeTo(destination)
 
     // FIXME: https://bugs.webkit.org/show_bug.cgi?id=159869.
     // Built-in generator should be able to parse function signature to compute the function length correctly.
-    let options = arguments[1];
+    let options = @argument(1);
 
     let preventClose = false;
     let preventAbort = false;

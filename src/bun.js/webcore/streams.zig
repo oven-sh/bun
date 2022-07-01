@@ -1749,6 +1749,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             return .{ .owned = @truncate(Blob.SizeType, written) };
         }
 
+        // In this case, it's always an error
         pub fn end(this: *@This(), err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
             log("end({s})", .{err});
 
@@ -1770,7 +1771,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (readable.len == 0) {
                 this.signal.close(err);
                 this.done = true;
-                this.res.endStream(false);
+                // we do not close the stream here
+                // this.res.endStream(false);
                 this.finalize();
                 return .{ .result = {} };
             }
@@ -1778,6 +1780,10 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (!this.hasBackpressure()) {
                 if (this.send(readable)) {
                     this.handleWrote(readable.len);
+                    this.signal.close(err);
+                    this.done = true;
+                    this.res.endStream(false);
+                    this.finalize();
                     return .{ .result = {} };
                 }
 
@@ -1852,6 +1858,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             this.finalize();
         }
 
+        // This can be called _many_ times for the same instance
+        // so it must zero out state instead of make it
         pub fn finalize(this: *@This()) void {
             log("finalize()", .{});
 
@@ -1866,7 +1874,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.buffer = bun.ByteList.init("");
                 this.pooled_buffer = null;
                 pooled.release();
-            } else if (!ByteListPool.full()) {
+            } else if (this.buffer.cap == 0) {} else if (!ByteListPool.full()) {
                 var entry = ByteListPool.get(this.allocator);
                 entry.data = this.buffer;
                 this.buffer = bun.ByteList.init("");

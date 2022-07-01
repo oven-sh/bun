@@ -46,35 +46,35 @@ class FunctionExecutable;
 
 namespace WebCore {
 
-/* JSZigGlobalObject */
-extern const char* const s_jsZigGlobalObjectRequireCode;
-extern const int s_jsZigGlobalObjectRequireCodeLength;
-extern const JSC::ConstructAbility s_jsZigGlobalObjectRequireCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsZigGlobalObjectRequireCodeConstructorKind;
-extern const char* const s_jsZigGlobalObjectLoadModuleCode;
-extern const int s_jsZigGlobalObjectLoadModuleCodeLength;
-extern const JSC::ConstructAbility s_jsZigGlobalObjectLoadModuleCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsZigGlobalObjectLoadModuleCodeConstructorKind;
-extern const char* const s_jsZigGlobalObjectRequireModuleCode;
-extern const int s_jsZigGlobalObjectRequireModuleCodeLength;
-extern const JSC::ConstructAbility s_jsZigGlobalObjectRequireModuleCodeConstructAbility;
-extern const JSC::ConstructorKind s_jsZigGlobalObjectRequireModuleCodeConstructorKind;
+/* ImportMetaObject */
+extern const char* const s_importMetaObjectRequireCode;
+extern const int s_importMetaObjectRequireCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind;
+extern const char* const s_importMetaObjectLoadModuleCode;
+extern const int s_importMetaObjectLoadModuleCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind;
+extern const char* const s_importMetaObjectRequireModuleCode;
+extern const int s_importMetaObjectRequireModuleCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectRequireModuleCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectRequireModuleCodeConstructorKind;
 
-#define WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_DATA(macro) \
-    macro(require, jsZigGlobalObjectRequire, 1) \
-    macro(loadModule, jsZigGlobalObjectLoadModule, 2) \
-    macro(requireModule, jsZigGlobalObjectRequireModule, 2) \
+#define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_DATA(macro) \
+    macro(require, importMetaObjectRequire, 1) \
+    macro(loadModule, importMetaObjectLoadModule, 2) \
+    macro(requireModule, importMetaObjectRequireModule, 2) \
 
-#define WEBCORE_BUILTIN_JSZIGGLOBALOBJECT_REQUIRE 1
-#define WEBCORE_BUILTIN_JSZIGGLOBALOBJECT_LOADMODULE 1
-#define WEBCORE_BUILTIN_JSZIGGLOBALOBJECT_REQUIREMODULE 1
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIRE 1
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_LOADMODULE 1
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIREMODULE 1
 
-#define WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_CODE(macro) \
-    macro(jsZigGlobalObjectRequireCode, require, ASCIILiteral(), s_jsZigGlobalObjectRequireCodeLength) \
-    macro(jsZigGlobalObjectLoadModuleCode, loadModule, ASCIILiteral(), s_jsZigGlobalObjectLoadModuleCodeLength) \
-    macro(jsZigGlobalObjectRequireModuleCode, requireModule, ASCIILiteral(), s_jsZigGlobalObjectRequireModuleCodeLength) \
+#define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(macro) \
+    macro(importMetaObjectRequireCode, require, ASCIILiteral(), s_importMetaObjectRequireCodeLength) \
+    macro(importMetaObjectLoadModuleCode, loadModule, ASCIILiteral(), s_importMetaObjectLoadModuleCodeLength) \
+    macro(importMetaObjectRequireModuleCode, requireModule, ASCIILiteral(), s_importMetaObjectRequireModuleCodeLength) \
 
-#define WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_FUNCTION_NAME(macro) \
+#define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(macro) \
     macro(loadModule) \
     macro(require) \
     macro(requireModule) \
@@ -82,16 +82,16 @@ extern const JSC::ConstructorKind s_jsZigGlobalObjectRequireModuleCodeConstructo
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
 
-WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
 #undef DECLARE_BUILTIN_GENERATOR
 
-class JSZigGlobalObjectBuiltinsWrapper : private JSC::WeakHandleOwner {
+class ImportMetaObjectBuiltinsWrapper : private JSC::WeakHandleOwner {
 public:
-    explicit JSZigGlobalObjectBuiltinsWrapper(JSC::VM& vm)
+    explicit ImportMetaObjectBuiltinsWrapper(JSC::VM& vm)
         : m_vm(vm)
-        WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
+        WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(INITIALIZE_BUILTIN_NAMES)
 #define INITIALIZE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) , m_##name##Source(JSC::makeSource(StringImpl::createWithoutCopying(s_##name, length), { }))
-        WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
+        WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(INITIALIZE_BUILTIN_SOURCE_MEMBERS)
 #undef INITIALIZE_BUILTIN_SOURCE_MEMBERS
     {
     }
@@ -99,28 +99,28 @@ public:
 #define EXPOSE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
     JSC::UnlinkedFunctionExecutable* name##Executable(); \
     const JSC::SourceCode& name##Source() const { return m_##name##Source; }
-    WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(EXPOSE_BUILTIN_EXECUTABLES)
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
-    WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
 
     void exportNames();
 
 private:
     JSC::VM& m_vm;
 
-    WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(DECLARE_BUILTIN_NAMES)
 
 #define DECLARE_BUILTIN_SOURCE_MEMBERS(name, functionName, overriddenName, length) \
     JSC::SourceCode m_##name##Source;\
     JSC::Weak<JSC::UnlinkedFunctionExecutable> m_##name##Executable;
-    WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DECLARE_BUILTIN_SOURCE_MEMBERS)
 #undef DECLARE_BUILTIN_SOURCE_MEMBERS
 
 };
 
 #define DEFINE_BUILTIN_EXECUTABLES(name, functionName, overriddenName, length) \
-inline JSC::UnlinkedFunctionExecutable* JSZigGlobalObjectBuiltinsWrapper::name##Executable() \
+inline JSC::UnlinkedFunctionExecutable* ImportMetaObjectBuiltinsWrapper::name##Executable() \
 {\
     if (!m_##name##Executable) {\
         JSC::Identifier executableName = functionName##PublicName();\
@@ -130,13 +130,13 @@ inline JSC::UnlinkedFunctionExecutable* JSZigGlobalObjectBuiltinsWrapper::name##
     }\
     return m_##name##Executable.get();\
 }
-WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
+WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-inline void JSZigGlobalObjectBuiltinsWrapper::exportNames()
+inline void ImportMetaObjectBuiltinsWrapper::exportNames()
 {
 #define EXPORT_FUNCTION_NAME(name) m_vm.propertyNames->appendExternalName(name##PublicName(), name##PrivateName());
-    WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
+    WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(EXPORT_FUNCTION_NAME)
 #undef EXPORT_FUNCTION_NAME
 }
 

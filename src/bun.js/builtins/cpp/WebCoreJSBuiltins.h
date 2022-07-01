@@ -37,9 +37,9 @@
 
 #include "ByteLengthQueuingStrategyBuiltins.h"
 #include "CountQueuingStrategyBuiltins.h"
+#include "ImportMetaObjectBuiltins.h"
 #include "JSBufferConstructorBuiltins.h"
 #include "JSBufferPrototypeBuiltins.h"
-#include "JSZigGlobalObjectBuiltins.h"
 #include "ReadableByteStreamControllerBuiltins.h"
 #include "ReadableByteStreamInternalsBuiltins.h"
 #include "ReadableStreamBYOBReaderBuiltins.h"
@@ -65,9 +65,9 @@ public:
         : m_vm(vm)
         , m_byteLengthQueuingStrategyBuiltins(m_vm)
         , m_countQueuingStrategyBuiltins(m_vm)
+        , m_importMetaObjectBuiltins(m_vm)
         , m_jsBufferConstructorBuiltins(m_vm)
         , m_jsBufferPrototypeBuiltins(m_vm)
-        , m_jsZigGlobalObjectBuiltins(m_vm)
         , m_readableByteStreamControllerBuiltins(m_vm)
         , m_readableByteStreamInternalsBuiltins(m_vm)
         , m_readableStreamBuiltins(m_vm)
@@ -93,9 +93,9 @@ public:
 
     ByteLengthQueuingStrategyBuiltinsWrapper& byteLengthQueuingStrategyBuiltins() { return m_byteLengthQueuingStrategyBuiltins; }
     CountQueuingStrategyBuiltinsWrapper& countQueuingStrategyBuiltins() { return m_countQueuingStrategyBuiltins; }
+    ImportMetaObjectBuiltinsWrapper& importMetaObjectBuiltins() { return m_importMetaObjectBuiltins; }
     JSBufferConstructorBuiltinsWrapper& jsBufferConstructorBuiltins() { return m_jsBufferConstructorBuiltins; }
     JSBufferPrototypeBuiltinsWrapper& jsBufferPrototypeBuiltins() { return m_jsBufferPrototypeBuiltins; }
-    JSZigGlobalObjectBuiltinsWrapper& jsZigGlobalObjectBuiltins() { return m_jsZigGlobalObjectBuiltins; }
     ReadableByteStreamControllerBuiltinsWrapper& readableByteStreamControllerBuiltins() { return m_readableByteStreamControllerBuiltins; }
     ReadableByteStreamInternalsBuiltinsWrapper& readableByteStreamInternalsBuiltins() { return m_readableByteStreamInternalsBuiltins; }
     ReadableStreamBuiltinsWrapper& readableStreamBuiltins() { return m_readableStreamBuiltins; }
@@ -116,9 +116,9 @@ private:
     JSC::VM& m_vm;
     ByteLengthQueuingStrategyBuiltinsWrapper m_byteLengthQueuingStrategyBuiltins;
     CountQueuingStrategyBuiltinsWrapper m_countQueuingStrategyBuiltins;
+    ImportMetaObjectBuiltinsWrapper m_importMetaObjectBuiltins;
     JSBufferConstructorBuiltinsWrapper m_jsBufferConstructorBuiltins;
     JSBufferPrototypeBuiltinsWrapper m_jsBufferPrototypeBuiltins;
-    JSZigGlobalObjectBuiltinsWrapper m_jsZigGlobalObjectBuiltins;
     ReadableByteStreamControllerBuiltinsWrapper m_readableByteStreamControllerBuiltins;
     ReadableByteStreamInternalsBuiltinsWrapper m_readableByteStreamInternalsBuiltins;
     ReadableStreamBuiltinsWrapper m_readableStreamBuiltins;

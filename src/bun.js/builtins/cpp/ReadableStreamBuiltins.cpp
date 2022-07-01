@@ -128,7 +128,7 @@ const char* const s_readableStreamInitializeReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToArrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToArrayCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToArrayCodeLength = 1366;
+const int s_readableStreamReadableStreamToArrayCodeLength = 294;
 static const JSC::Intrinsic s_readableStreamReadableStreamToArrayCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToArrayCode =
     "(function (stream) {\n" \
@@ -136,59 +136,17 @@ const char* const s_readableStreamReadableStreamToArrayCode =
     "\n" \
     "    //\n" \
     "    var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n" \
-    "    if (underlyingSource !== @undefined) {    \n" \
-    "        const promise = @initializeArrayStream.@call(stream, underlyingSource, @undefined);\n" \
-    "        var reader = stream.getReader();\n" \
-    "        return (async function() {\n" \
-    "            while (@getByIdDirectPrivate(stream, \"state\") === @streamReadable) {\n" \
-    "                var thisResult = await reader.read();\n" \
-    "                if (thisResult.done) {\n" \
-    "                    break;\n" \
-    "                }\n" \
-    "            }\n" \
-    "\n" \
-    "            try {\n" \
-    "                reader.releaseLock();\n" \
-    "            } catch(e) {\n" \
-    "            }\n" \
-    "\n" \
-    "            return await promise;\n" \
-    "        })();\n" \
+    "    if (underlyingSource !== @undefined) {\n" \
+    "        return @readableStreamToArrayDirect(stream, underlyingSource);\n" \
     "    }\n" \
     "\n" \
-    "    var reader = stream.getReader();\n" \
-    "    var manyResult = reader.readMany();\n" \
-    "    \n" \
-    "    async function processManyResult(result) {\n" \
-    "        \n" \
-    "        if (result.done) {\n" \
-    "            return [];\n" \
-    "        }\n" \
-    "\n" \
-    "        var chunks = result.value || [];\n" \
-    "        \n" \
-    "        while (true) {\n" \
-    "            var thisResult = await reader.read();\n" \
-    "            if (thisResult.done) {\n" \
-    "                break;\n" \
-    "            }\n" \
-    "            chunks = chunks.concat(thisResult.value);\n" \
-    "        }\n" \
-    "\n" \
-    "        return chunks;\n" \
-    "    }\n" \
-    "\n" \
-    "    if (manyResult && @isPromise(manyResult)) {\n" \
-    "        return manyResult.@then(processManyResult);\n" \
-    "    }\n" \
-    "\n" \
-    "    return processManyResult(manyResult);\n" \
+    "    return @readableStreamIntoArray(stream);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToTextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToTextCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToTextCodeLength = 1080;
+const int s_readableStreamReadableStreamToTextCodeLength = 292;
 static const JSC::Intrinsic s_readableStreamReadableStreamToTextCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToTextCode =
     "(function (stream) {\n" \
@@ -197,83 +155,52 @@ const char* const s_readableStreamReadableStreamToTextCode =
     "    //\n" \
     "    var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n" \
     "    if (underlyingSource !== @undefined) {\n" \
-    "       \n" \
-    "        const promise = @initializeTextStream.@call(stream, underlyingSource, @undefined);\n" \
-    "        var reader = stream.getReader();\n" \
-    "        return (async function() {\n" \
-    "            while (@getByIdDirectPrivate(stream, \"state\") === @streamReadable) {\n" \
-    "                var thisResult = await reader.read();\n" \
-    "                if (thisResult.done) {\n" \
-    "                    break;\n" \
-    "                }\n" \
-    "            }\n" \
-    "\n" \
-    "            try {\n" \
-    "                reader.releaseLock();\n" \
-    "            } catch(e) {\n" \
-    "            }\n" \
-    "    \n" \
-    "            return await promise;\n" \
-    "        })();\n" \
+    "        return @readableStreamToTextDirect(stream, underlyingSource);\n" \
     "    }\n" \
+    "\n" \
+    "    return @readableStreamIntoText(stream);\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_readableStreamReadableStreamToArrayBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_readableStreamReadableStreamToArrayBufferCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_readableStreamReadableStreamToArrayBufferCodeLength = 354;
+static const JSC::Intrinsic s_readableStreamReadableStreamToArrayBufferCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_readableStreamReadableStreamToArrayBufferCode =
+    "(function (stream) {\n" \
+    "    \"use strict\";\n" \
     "\n" \
     "    //\n" \
-    "    var toArrayBuffer = globalThis.Bun.readableStreamToArrayBuffer(stream);\n" \
-    "    if (toArrayBuffer && @isPromise(toArrayBuffer)) {\n" \
-    "        return toArrayBuffer.@then(function(arrayBuffer) {\n" \
-    "            return new globalThis.TextDecoder().decode(arrayBuffer);\n" \
-    "        });\n" \
+    "    var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n" \
+    "\n" \
+    "    if (underlyingSource !== @undefined) {\n" \
+    "        return @readableStreamToArrayBufferDirect(stream, underlyingSource);\n" \
     "    }\n" \
     "\n" \
-    "    return new globalThis.TextDecoder().decode(arrayBuffer);\n" \
+    "    return globalThis.Bun.readableStreamToArray(stream).@then(globalThis.Bun.concatArrayBuffers);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToJSONCodeLength = 114;
+const int s_readableStreamReadableStreamToJSONCodeLength = 128;
 static const JSC::Intrinsic s_readableStreamReadableStreamToJSONCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToJSONCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    return @readableStreamToText(stream).@then(globalThis.JSON.parse);\n" \
+    "    return globalThis.Bun.readableStreamToText(stream).@then(globalThis.JSON.parse);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamReadableStreamToBlobCodeLength = 834;
+const int s_readableStreamReadableStreamToBlobCodeLength = 149;
 static const JSC::Intrinsic s_readableStreamReadableStreamToBlobCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToBlobCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
-    "\n" \
-    "    var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n" \
-    "    if (underlyingSource != @undefined) {\n" \
-    "        var toArrayBuffer = globalThis.Bun.readableStreamToArrayBuffer(stream);\n" \
-    "        if (toArrayBuffer && @isPromise(toArrayBuffer)) {\n" \
-    "            return toArrayBuffer.@then(function(arrayBuffer) {\n" \
-    "                return new globalThis.Blob([arrayBuffer]);\n" \
-    "            });\n" \
-    "        }\n" \
-    "\n" \
-    "        return new globalThis.Blob([toArrayBuffer]);\n" \
-    "    }\n" \
-    "\n" \
-    " \n" \
-    "    const array = @readableStreamToArray(stream);\n" \
-    "    if (array === null) {\n" \
-    "        return new globalThis.Blob();\n" \
-    "    }\n" \
-    "\n" \
-    "    return array.@then(function(chunks) {\n" \
-    "        if (chunks === null || chunks.length === 0) {\n" \
-    "            return new globalThis.Blob();\n" \
-    "        }\n" \
-    "\n" \
-    "        return new globalThis.Blob(chunks);\n" \
-    "    });\n" \
+    "    return @Promise.resolve(globalThis.Bun.readableStreamToArray(stream)).@then(array => new Blob(array));\n" \
     "})\n" \
 ;
 
@@ -545,7 +472,7 @@ const char* const s_readableStreamPipeToCode =
     "\n" \
     "    //\n" \
     "    //\n" \
-    "    let options = arguments[1];\n" \
+    "    let options = @argument(1);\n" \
     "\n" \
     "    let preventClose = false;\n" \
     "    let preventAbort = false;\n" \

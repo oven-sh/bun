@@ -32,6 +32,23 @@ class EventLoopTask;
 #include "DOMConstructors.h"
 #include "DOMWrapperWorld-class.h"
 #include "DOMIsoSubspaces.h"
+// #include "EventTarget.h"
+
+// namespace WebCore {
+// class GlobalEventTarget : public EventTargetWithInlineData, public ContextDestructionObserver {
+//     WTF_MAKE_ISO_ALLOCATED(GlobalEventTarget);
+
+// public:
+//     static Ref<GlobalEventTarget> create(ScriptExecutionContext&);
+
+//     EventTargetInterface eventTargetInterface() const final { return DOMWindowEventTargetInterfaceType; }
+//     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
+//     void refEventTarget() final {}
+//     void derefEventTarget() final {}
+//     void eventListenersDidChange() final;
+// };
+
+// }
 
 namespace Zig {
 
@@ -153,7 +170,6 @@ public:
     WebCore::JSBuiltinInternalFunctions& builtinInternalFunctions() { return m_builtinInternalFunctions; }
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* ImportMetaObjectPrototype() { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* ArrayBufferSinkStructure() { return m_JSArrayBufferSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* ArrayBufferSink() { return m_JSArrayBufferSinkClassStructure.constructorInitializedOnMainThread(this); }
@@ -213,11 +229,12 @@ private:
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPResponseControllerPrototype;
-    LazyProperty<JSGlobalObject, JSObject> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
+    // LazyProperty<JSGlobalObject, WebCore::JSEventTarget> m_eventTarget;
+
     JSClassRef m_dotEnvClassRef;
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);

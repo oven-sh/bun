@@ -34,7 +34,7 @@
 // builtins by the script: Source/JavaScriptCore/Scripts/generate-js-builtins.py
 
 #include "config.h"
-#include "JSZigGlobalObjectBuiltins.h"
+#include "ImportMetaObjectBuiltins.h"
 
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapInlines.h>
@@ -47,11 +47,11 @@
 
 namespace WebCore {
 
-const JSC::ConstructAbility s_jsZigGlobalObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_jsZigGlobalObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsZigGlobalObjectRequireCodeLength = 1162;
-static const JSC::Intrinsic s_jsZigGlobalObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsZigGlobalObjectRequireCode =
+const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_importMetaObjectRequireCodeLength = 1162;
+static const JSC::Intrinsic s_importMetaObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectRequireCode =
     "(function (name) {\n" \
     "  \"use strict\";\n" \
     "  if (typeof name !== \"string\") {\n" \
@@ -94,11 +94,11 @@ const char* const s_jsZigGlobalObjectRequireCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_jsZigGlobalObjectLoadModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_jsZigGlobalObjectLoadModuleCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsZigGlobalObjectLoadModuleCodeLength = 2750;
-static const JSC::Intrinsic s_jsZigGlobalObjectLoadModuleCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsZigGlobalObjectLoadModuleCode =
+const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_importMetaObjectLoadModuleCodeLength = 2750;
+static const JSC::Intrinsic s_importMetaObjectLoadModuleCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectLoadModuleCode =
     "(function (meta, resolvedSpecifier) {\n" \
     "  \"use strict\";\n" \
     "  var Loader = globalThis.Loader;\n" \
@@ -204,11 +204,11 @@ const char* const s_jsZigGlobalObjectLoadModuleCode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_jsZigGlobalObjectRequireModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_jsZigGlobalObjectRequireModuleCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_jsZigGlobalObjectRequireModuleCodeLength = 606;
-static const JSC::Intrinsic s_jsZigGlobalObjectRequireModuleCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsZigGlobalObjectRequireModuleCode =
+const JSC::ConstructAbility s_importMetaObjectRequireModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_importMetaObjectRequireModuleCodeConstructorKind = JSC::ConstructorKind::None;
+const int s_importMetaObjectRequireModuleCodeLength = 606;
+static const JSC::Intrinsic s_importMetaObjectRequireModuleCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_importMetaObjectRequireModuleCode =
     "(function (meta, resolved) {\n" \
     "  \"use strict\";\n" \
     "  var Loader = globalThis.Loader;\n" \
@@ -235,9 +235,9 @@ const char* const s_jsZigGlobalObjectRequireModuleCode =
 JSC::FunctionExecutable* codeName##Generator(JSC::VM& vm) \
 {\
     JSVMClientData* clientData = static_cast<JSVMClientData*>(vm.clientData); \
-    return clientData->builtinFunctions().jsZigGlobalObjectBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().jsZigGlobalObjectBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
+    return clientData->builtinFunctions().importMetaObjectBuiltins().codeName##Executable()->link(vm, nullptr, clientData->builtinFunctions().importMetaObjectBuiltins().codeName##Source(), std::nullopt, s_##codeName##Intrinsic); \
 }
-WEBCORE_FOREACH_JSZIGGLOBALOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
+WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)
 #undef DEFINE_BUILTIN_GENERATOR
 
 

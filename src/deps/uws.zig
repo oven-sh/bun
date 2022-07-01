@@ -823,6 +823,10 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_on_aborted(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
             }
 
+            pub fn clearAborted(res: *Response) void {
+                uws_res_on_aborted(ssl_flag, res.downcast(), null, null);
+            }
+
             pub fn onData(
                 res: *Response,
                 comptime UserDataType: type,

@@ -6,8 +6,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <uws/src/App.h>
-#include <uws/src/AsyncSocket.h>
 
 #ifndef STRING_POINTER
 #define STRING_POINTER

@@ -1,8 +1,12 @@
 
+#include <mimalloc-new-delete.h>
+
 #include "_libusockets.h"
 
-#include <string_view>
 #include <uws/src/App.h>
+#include <uws/src/AsyncSocket.h>
+
+#include <string_view>
 #include <uws/uSockets/src/internal/internal.h>
 
 extern "C" {
@@ -865,12 +869,20 @@ void uws_res_on_aborted(int ssl, uws_res_t *res,
                         void *opcional_data) {
   if (ssl) {
     uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-    uwsRes->onAborted(
-        [handler, res, opcional_data] { handler(res, opcional_data); });
+    if (handler) {
+      uwsRes->onAborted(
+          [handler, res, opcional_data] { handler(res, opcional_data); });
+    } else {
+      uwsRes->onAborted(nullptr);
+    }
   } else {
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    uwsRes->onAborted(
-        [handler, res, opcional_data] { handler(res, opcional_data); });
+    if (handler) {
+      uwsRes->onAborted(
+          [handler, res, opcional_data] { handler(res, opcional_data); });
+    } else {
+      uwsRes->onAborted(nullptr);
+    }
   }
 }
 

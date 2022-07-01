@@ -8,7 +8,8 @@ import {
 } from "bun";
 import { describe, expect, it } from "bun:test";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
-import { gc } from "./gc";
+// import { gc } from "./gc";
+function gc() {}
 import { renderToReadableStream as renderToReadableStreamBun } from "./reactdom-bun";
 
 Object.defineProperty(renderToReadableStreamBrowser, "name", {
@@ -19,104 +20,81 @@ Object.defineProperty(renderToReadableStreamBun, "name", {
 });
 var port = 8908;
 
+const fixtures = [
+  // Needs at least six variations
+  // - < 8 chars, latin1
+  // - 8+ chars, latin1
+  // - 16+ chars, latin1
+  // - < 8 chars, utf16
+  // - 8+ chars, utf16
+  // - 16+ chars, utf16
+  ["<a>b</a>", <a>b</a>],
+  ["<span>Hello World!</span>", <span>Hello World!</span>],
+  ["<a></a>", <a />],
+  ["<span>😋</span>", <span>😋</span>],
+  ["<a>😋</a>", <a>😋</a>],
+  ["<span>Hello World! 😋</span>", <span>Hello World! 😋</span>],
+  [
+    "<span>Hello World!</span>😋",
+    <>
+      <span>Hello World!</span>😋
+    </>,
+  ],
+  [
+    "<span>😋Hello World!</span>",
+    <>
+      <span>😋Hello World!</span>
+    </>,
+  ],
+  ["😋", <>😋</>],
+  ["l😋l", <>l😋l</>],
+  ["lo😋", <>lo😋</>],
+  ["😋lo", <>😋lo</>],
+  [
+    "😋<span>Hello World!</span>",
+    <>
+      😋
+      <span>Hello World!</span>
+    </>,
+  ],
+  [
+    "😋😋😋😋<span>Hello World!</span>",
+    <>
+      😋😋😋😋
+      <span>Hello World!</span>
+    </>,
+  ],
+  ["<span>Hello😋😋😋😋World!</span>", <span>Hello😋😋😋😋World!</span>],
+  [
+    "<span>Hello World!</span>😋😋😋😋",
+    <>
+      <span>Hello World!</span>
+      😋😋😋😋
+    </>,
+  ],
+  [
+    "😋L😋l😋L😋<span>Alternating latin1 &amp; utf16</span>",
+    <>
+      😋L😋l😋L😋<span>Alternating latin1 &amp; utf16</span>
+    </>,
+  ],
+  ["<span>Hello😋L😋l😋L😋World!</span>", <span>Hello😋L😋l😋L😋World!</span>],
+  [
+    "<span>Hello World!</span>😋L😋l😋L😋",
+    <>
+      <span>Hello World!</span>
+      😋L😋l😋L😋
+    </>,
+  ],
+];
+
 describe("ReactDOM", () => {
   for (let renderToReadableStream of [
     renderToReadableStreamBun,
     renderToReadableStreamBrowser,
   ]) {
-    for (let [inputString, reactElement] of [
-      // Needs at least six variations
-      // - < 8 chars, latin1
-      // - 8+ chars, latin1
-      // - 16+ chars, latin1
-      // - < 8 chars, utf16
-      // - 8+ chars, utf16
-      // - 16+ chars, utf16
-      ["<a>b</a>", <a>b</a>],
-      ["<span>Hello World!</span>", <span>Hello World!</span>],
-      ["<a></a>", <a />],
-      ["<span>😋</span>", <span>😋</span>],
-      ["<a>😋</a>", <a>😋</a>],
-      ["<span>Hello World! 😋</span>", <span>Hello World! 😋</span>],
-      [
-        "<span>Hello World!</span>😋",
-        <>
-          <span>Hello World!</span>😋
-        </>,
-      ],
-      [
-        "<span>😋Hello World!</span>",
-        <>
-          <span>😋Hello World!</span>
-        </>,
-      ],
-      ["😋", <>😋</>],
-      ["l😋l", <>l😋l</>],
-      ["lo😋", <>lo😋</>],
-      ["😋lo", <>😋lo</>],
-      [
-        "😋<span>Hello World!</span>",
-        <>
-          😋
-          <span>Hello World!</span>
-        </>,
-      ],
-      [
-        "😋😋😋😋<span>Hello World!</span>",
-        <>
-          😋😋😋😋
-          <span>Hello World!</span>
-        </>,
-      ],
-      ["<span>Hello😋😋😋😋World!</span>", <span>Hello😋😋😋😋World!</span>],
-      [
-        "<span>Hello World!</span>😋😋😋😋",
-        <>
-          <span>Hello World!</span>
-          😋😋😋😋
-        </>,
-      ],
-      [
-        "😋L😋l😋L😋<span>Alternating latin1 &amp; utf16</span>",
-        <>
-          😋L😋l😋L😋<span>Alternating latin1 &amp; utf16</span>
-        </>,
-      ],
-      [
-        "<span>Hello😋L😋l😋L😋World!</span>",
-        <span>Hello😋L😋l😋L😋World!</span>,
-      ],
-      [
-        "<span>Hello World!</span>😋L😋l😋L😋",
-        <>
-          <span>Hello World!</span>
-          😋L😋l😋L😋
-        </>,
-      ],
-    ])
+    for (let [inputString, reactElement] of fixtures)
       describe(`${renderToReadableStream.name}(${inputString})`, () => {
-        it.only("http server, 1 request", async () => {
-          var server;
-          try {
-            server = serve({
-              port: port++,
-              async fetch(req) {
-                return new Response(await renderToReadableStream(reactElement));
-              },
-            });
-            const resp = await fetch("http://localhost:" + server.port + "/");
-            expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(
-              inputString
-            );
-            gc();
-          } catch (e) {
-            throw e;
-          } finally {
-            server?.stop();
-            gc();
-          }
-        });
-
         it("Response.text()", async () => {
           const stream = await renderToReadableStream(reactElement);
           gc();
@@ -202,40 +180,70 @@ describe("ReactDOM", () => {
           expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
         });
-
-        // it("http server, 100 requests", async () => {
-        //   var server;
-        //   try {
-        //     server = serve({
-        //       port: port++,
-        //       async fetch(req) {
-        //         return new Response(await renderToReadableStream(reactElement));
-        //       },
-        //     });
-        //     var total = 0;
-        //     gc();
-        //     while (total++ < 100) {
-        //       var attempt = total;
-        //       const response = await fetch(
-        //         "http://localhost:" + server.port + "/"
-        //       );
-        //       gc();
-        //       const result = await response.text();
-        //       try {
-        //         expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
-        //       } catch (e) {
-        //         e.message += "\nAttempt: " + attempt;
-        //         throw e;
-        //       }
-
-        //       gc();
-        //     }
-        //   } catch (e) {
-        //     throw e;
-        //   } finally {
-        //     server.stop();
-        //   }
-        // });
       });
   }
+  // for (let renderToReadableStream of [
+  //   renderToReadableStreamBun,
+  //   renderToReadableStreamBrowser,
+  // ]) {
+  //   for (let [inputString, reactElement] of fixtures) {
+  //     describe(`${renderToReadableStream.name}(${inputString})`, () => {
+  //       it("http server, 1 request", async () => {
+  //         var server;
+  //         try {
+  //           server = serve({
+  //             port: port++,
+  //             async fetch(req) {
+  //               return new Response(await renderToReadableStream(reactElement));
+  //             },
+  //           });
+  //           const resp = await fetch("http://localhost:" + server.port + "/");
+  //           expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(
+  //             inputString
+  //           );
+  //           gc();
+  //         } catch (e) {
+  //           throw e;
+  //         } finally {
+  //           server?.stop();
+  //           gc();
+  //         }
+  //       });
+  //       const count = 4;
+  //       it(`http server, ${count} requests`, async () => {
+  //         var server;
+  //         try {
+  //           server = serve({
+  //             port: port++,
+  //             async fetch(req) {
+  //               return new Response(await renderToReadableStream(reactElement));
+  //             },
+  //           });
+  //           var total = 0;
+  //           gc();
+  //           while (total++ < count) {
+  //             var attempt = total;
+  //             const response = await fetch(
+  //               "http://localhost:" + server.port + "/"
+  //             );
+  //             gc();
+  //             const result = await response.text();
+  //             try {
+  //               expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
+  //             } catch (e) {
+  //               e.message += "\nAttempt: " + attempt;
+  //               throw e;
+  //             }
+
+  //             gc();
+  //           }
+  //         } catch (e) {
+  //           throw e;
+  //         } finally {
+  //           server.stop();
+  //         }
+  //       });
+  //     });
+  //   }
+  // }
 });

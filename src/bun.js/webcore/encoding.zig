@@ -49,21 +49,57 @@ pub const TextEncoder = struct {
         globalThis: *JSGlobalObject,
         zig_str: *const ZigString,
     ) JSValue {
+        // as much as possible, rely on JSC to own the memory
+        // their code is more battle-tested than bun's code
+        // so we do a stack allocation here
+        // and then copy into JSC memory
+        // unless it's huge
+        // JSC will GC Uint8Array that occupy less than 512 bytes
+        // so it's extra good for that case
+        var buf: [2048]u8 = undefined;
+
         var ctx = globalThis.ref();
         if (zig_str.is16Bit()) {
-            var bytes = strings.toUTF8AllocWithType(
-                default_allocator,
-                @TypeOf(zig_str.utf16Slice()),
-                zig_str.utf16Slice(),
-            ) catch {
-                return JSC.toInvalidArguments("Out of memory", .{}, ctx);
-            };
-            return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(ctx, null);
+            const slice = zig_str.utf16Slice();
+            // max utf16 -> utf8 length
+            if (slice.len <= buf.len / 4) {
+                const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice);
+                const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
+                std.debug.assert(result.written <= buf.len);
+                std.debug.assert(result.read == slice.len);
+                const array_buffer = uint8array.asArrayBuffer(globalThis).?;
+                std.debug.assert(result.written == array_buffer.len);
+                @memcpy(array_buffer.slice().ptr, &buf, result.written);
+                return uint8array;
+            } else {
+                var bytes = strings.toUTF8AllocWithType(
+                    default_allocator,
+                    @TypeOf(slice),
+                    slice,
+                ) catch {
+                    return JSC.toInvalidArguments("Out of memory", .{}, ctx);
+                };
+                return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(ctx, null);
+            }
         } else {
-            const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, []const u8, zig_str.slice()) catch {
-                return JSC.toInvalidArguments("Out of memory", .{}, ctx);
-            };
-            return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(ctx, null);
+            const slice = zig_str.slice();
+
+            if (slice.len <= buf.len / 2) {
+                const result = strings.copyLatin1IntoUTF8(&buf, []const u8, slice);
+                const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
+                std.debug.assert(result.written <= buf.len);
+                std.debug.assert(result.read == slice.len);
+                const array_buffer = uint8array.asArrayBuffer(globalThis).?;
+                std.debug.assert(result.written == array_buffer.len);
+                @memcpy(array_buffer.slice().ptr, &buf, result.written);
+                return uint8array;
+            } else {
+                const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, []const u8, slice) catch {
+                    return JSC.toInvalidArguments("Out of memory", .{}, ctx);
+                };
+                std.debug.assert(bytes.len >= slice.len);
+                return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(ctx, null);
+            }
         }
 
         unreachable;
@@ -125,13 +161,19 @@ pub const TextEncoder = struct {
         globalThis: *JSGlobalObject,
         rope_str: *JSC.JSString,
     ) JSValue {
-        var ctx = globalThis.ref();
         if (comptime Environment.allow_assert) std.debug.assert(rope_str.is8Bit());
-        var array = JSC.JSValue.createUninitializedUint8Array(ctx.ptr(), rope_str.length());
-        array.ensureStillAlive();
+        var stack_buf: [2048]u8 = undefined;
+        var buf_to_use: []u8 = &stack_buf;
+        const length = rope_str.length();
+        var array: JSValue = JSValue.zero;
+        if (length > stack_buf.len / 2) {
+            array = JSC.JSValue.createUninitializedUint8Array(globalThis, length);
+            array.ensureStillAlive();
+            buf_to_use = array.asArrayBuffer(globalThis).?.slice();
+        }
         var encoder = RopeStringEncoder{
             .globalThis = globalThis,
-            .buf = (array.asArrayBuffer(globalThis) orelse return JSC.JSValue.jsUndefined()).slice(),
+            .buf = buf_to_use,
         };
         var iter = encoder.iter();
         array.ensureStillAlive();
@@ -140,6 +182,12 @@ pub const TextEncoder = struct {
 
         if (encoder.any_non_ascii) {
             return JSC.JSValue.jsUndefined();
+        }
+
+        if (array.isEmpty()) {
+            array = JSC.JSValue.createUninitializedUint8Array(globalThis, length);
+            array.ensureStillAlive();
+            @memcpy(array.asArrayBuffer(globalThis).?.ptr, buf_to_use.ptr, length);
         }
 
         return array;

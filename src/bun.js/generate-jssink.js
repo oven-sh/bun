@@ -90,6 +90,7 @@ function header() {
 
             void detach() {
                 m_sinkPtr = nullptr;
+
             }                       
 
             static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);                                                                                                                   
@@ -137,6 +138,9 @@ function header() {
                 void* wrapped() const { return m_sinkPtr; }    
                 void detach() {
                     m_sinkPtr = nullptr;
+                    m_onPull.clear();
+                    m_onClose.clear();
+                    m_weakReadableStream.clear();
                 }
 
                 void start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSFunction *onPull, JSC::JSFunction *onClose);

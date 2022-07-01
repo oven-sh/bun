@@ -3,9 +3,88 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-var port = 40000;
+var port = 40001;
+
+class TestPass extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "TestPass";
+  }
+}
 
 describe("streaming", () => {
+  describe("error handler", () => {
+    it("throw on pull reports an error and close the connection", async () => {
+      var server;
+      try {
+        var pass = false;
+        server = serve({
+          port: port++,
+          development: false,
+          error(e) {
+            pass = true;
+            return new Response("fail", { status: 500 });
+          },
+
+          fetch(req) {
+            return new Response(
+              new ReadableStream({
+                pull(controller) {
+                  throw new Error("error");
+                },
+              })
+            );
+          },
+        });
+
+        const response = await fetch(`http://localhost:${server.port}`);
+        if (response.status > 0) expect(response.status).toBe(500);
+        expect(await response.text()).toBe("fail");
+        expect(pass).toBe(true);
+      } catch (e) {
+        throw e;
+      } finally {
+        server?.stop();
+      }
+    });
+
+    it("throw on pull after writing should not call the error handler", async () => {
+      var server;
+      try {
+        var pass = true;
+        server = serve({
+          port: port++,
+          development: false,
+          error(e) {
+            pass = false;
+            return new Response("fail", { status: 500 });
+          },
+
+          fetch(req) {
+            return new Response(
+              new ReadableStream({
+                pull(controller) {
+                  controller.enqueue("such fail");
+                  throw new Error("error");
+                },
+              })
+            );
+          },
+        });
+
+        const response = await fetch(`http://localhost:${server.port}`);
+        // connection terminated
+        if (response.status > 0) expect(response.status).toBe(200);
+        expect(await response.text()).toBe("such fail");
+        expect(pass).toBe(true);
+      } catch (e) {
+        throw e;
+      } finally {
+        server?.stop();
+      }
+    });
+  });
+
   it("text from JS, one chunk", async () => {
     const relative = new URL("./fetch.js.txt", import.meta.url);
     const textToExpect = readFileSync(relative, "utf-8");
@@ -51,6 +130,68 @@ describe("streaming", () => {
     const response = await fetch(`http://localhost:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
     server.stop();
+  });
+
+  it("text from JS throws on start no error handler", async () => {
+    var server;
+    try {
+      var pass = false;
+      server = serve({
+        port: port++,
+        development: false,
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                throw new TestPass("Test Passed");
+              },
+            })
+          );
+        },
+      });
+
+      const response = await fetch(`http://localhost:${server.port}`);
+      expect(response.status).toBe(500);
+    } catch (e) {
+      if (!e || !(e instanceof TestPass)) {
+        throw e;
+      }
+    } finally {
+      server?.stop();
+    }
+  });
+
+  it("text from JS throws on start has error handler", async () => {
+    var server;
+    try {
+      var pass = false;
+      server = serve({
+        port: port++,
+        development: false,
+        error(e) {
+          pass = true;
+          return new Response("Fail", { status: 500 });
+        },
+        fetch(req) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                throw new Error("error");
+              },
+            })
+          );
+        },
+      });
+
+      const response = await fetch(`http://localhost:${server.port}`);
+      expect(response.status).toBe(500);
+      expect(await response.text()).toBe("Fail");
+      expect(pass).toBe(true);
+    } catch (e) {
+      throw e;
+    } finally {
+      server?.stop();
+    }
   });
 
   it("text from JS, 2 chunks, with delay", async () => {
@@ -287,6 +428,51 @@ it(`should work for a file ${count} times serial`, async () => {
     port: port++,
     async fetch(req) {
       return new Response(file(fixture));
+    },
+  });
+
+  // this gets stuck if run about 200 times awaiting all the promises
+  // when the promises are run altogether, instead of one at a time
+  // it's hard to say if this only happens here due to some weird stuff with the test runner
+  // or if it's "real" issue
+  for (let i = 0; i < count; i++) {
+    const response = await fetch(`http://localhost:${server.port}`);
+    expect(await response.text()).toBe(textToExpect);
+  }
+
+  server.stop();
+});
+
+var count = 50;
+it(`should work for text ${count} times serial`, async () => {
+  const textToExpect = "hello";
+  var ran = 0;
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      return new Response(textToExpect);
+    },
+  });
+
+  // this gets stuck if run about 200 times awaiting all the promises
+  // when the promises are run altogether, instead of one at a time
+  // it's hard to say if this only happens here due to some weird stuff with the test runner
+  // or if it's "real" issue
+  for (let i = 0; i < count; i++) {
+    const response = await fetch(`http://localhost:${server.port}`);
+    expect(await response.text()).toBe(textToExpect);
+  }
+
+  server.stop();
+});
+
+it(`should work for ArrayBuffer ${count} times serial`, async () => {
+  const textToExpect = "hello";
+  var ran = 0;
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      return new Response(new TextEncoder().encode(textToExpect));
     },
   });
 

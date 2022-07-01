@@ -1459,7 +1459,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (!result.isEmptyOrUndefinedOrNull()) {
                     if (result.isError() or result.isAggregateError(this.server.globalThis)) {
-                        this.runErrorHandler(result);
+                        this.finishRunningErrorHandler(result, status);
                         return;
                     } else if (result.as(Response)) |response| {
                         this.render(response);

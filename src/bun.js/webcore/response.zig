@@ -1283,6 +1283,7 @@ pub const Blob = struct {
         exception: js.ExceptionRef,
     ) js.JSObjectRef {
         var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+        defer args.deinit();
         // accept a path or a blob
         var path_or_blob = PathOrBlob.fromJS(ctx, &args, exception) orelse {
             exception.* = JSC.toInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{}, ctx).asObjectRef();
@@ -3177,11 +3178,15 @@ pub const Blob = struct {
             var promise = handler.promise;
             var globalThis = handler.globalThis;
             bun.default_allocator.destroy(handler);
+            const value = promise.asValue(globalThis);
+            value.ensureStillAlive();
             switch (count) {
                 .err => |err| {
+                    value.unprotect();
                     promise.reject(globalThis, err.toErrorInstance(globalThis));
                 },
                 .result => |wrote| {
+                    value.unprotect();
                     promise.resolve(globalThis, JSC.JSValue.jsNumberFromUint64(wrote));
                 },
             }

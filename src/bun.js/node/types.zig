@@ -415,7 +415,8 @@ pub const PathLike = union(Tag) {
 
                 if (!Valid.pathString(zig_str, ctx, exception)) return null;
 
-                arguments.protectEat();
+                arguments.eat();
+                arg.ensureStillAlive();
 
                 if (zig_str.is16Bit()) {
                     var printed = std.mem.span(std.fmt.allocPrintZ(arguments.arena.allocator(), "{}", .{zig_str}) catch unreachable);

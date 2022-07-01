@@ -42,7 +42,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
                 .promise = JSValue.createInternalPromise(globalThis),
                 .globalThis = globalThis,
             };
-            js.JSValueProtect(globalThis.ref(), this.promise.asObjectRef());
+            this.promise.protect();
             VirtualMachine.vm.active_tasks +|= 1;
             return this;
         }
@@ -55,6 +55,8 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 
         pub fn runFromJS(this: This) void {
             var promise_value = this.promise;
+            promise_value.ensureStillAlive();
+            promise_value.unprotect();
             var promise = promise_value.asInternalPromise() orelse {
                 if (comptime @hasDecl(Context, "deinit")) {
                     @call(.{}, Context.deinit, .{this.ctx});
@@ -64,7 +66,6 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
 
             var ctx = this.ctx;
 
-            js.JSValueUnprotect(this.globalThis.ref(), promise_value.asObjectRef());
             ctx.then(promise);
         }
 

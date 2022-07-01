@@ -101,7 +101,15 @@ pub extern fn JSValueToBoolean(ctx: JSContextRef, value: JSValueRef) bool;
 pub extern fn JSValueToNumber(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) f64;
 pub extern fn JSValueToStringCopy(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSStringRef;
 pub extern fn JSValueToObject(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSObjectRef;
-pub extern fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void;
+
+pub inline fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void {
+    const Wrapped = struct {
+        pub extern fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void;
+    };
+    // wrapper exists to make it easier to set a breakpoint
+    Wrapped.JSValueProtect(ctx, value);
+}
+
 pub extern fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void;
 pub const JSPropertyAttributes = enum(c_uint) {
     kJSPropertyAttributeNone = 0,

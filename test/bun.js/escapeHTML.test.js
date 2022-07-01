@@ -101,5 +101,14 @@ describe("escapeHTML", () => {
     expect(escapeHTML("😊".repeat(100))).toBe("😊".repeat(100));
     expect(escapeHTML("😊<".repeat(100))).toBe("😊&lt;".repeat(100));
     expect(escapeHTML("<😊>".repeat(100))).toBe("&lt;😊&gt;".repeat(100));
+    expect(escapeHTML("😊")).toBe("😊");
+    expect(escapeHTML("😊😊")).toBe("😊😊");
+    expect(escapeHTML("😊lo")).toBe("😊lo");
+    expect(escapeHTML("lo😊")).toBe("lo😊");
+
+    expect(escapeHTML(" ".repeat(32) + "😊")).toBe(" ".repeat(32) + "😊");
+    expect(escapeHTML(" ".repeat(32) + "😊😊")).toBe(" ".repeat(32) + "😊😊");
+    expect(escapeHTML(" ".repeat(32) + "😊lo")).toBe(" ".repeat(32) + "😊lo");
+    expect(escapeHTML(" ".repeat(32) + "lo😊")).toBe(" ".repeat(32) + "lo😊");
   });
 });

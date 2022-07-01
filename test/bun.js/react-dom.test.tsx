@@ -4,6 +4,7 @@ import {
   readableStreamToArrayBuffer,
   readableStreamToBlob,
   readableStreamToText,
+  serve,
 } from "bun";
 import { describe, expect, it } from "bun:test";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
@@ -21,7 +22,7 @@ var port = 8908;
 describe("ReactDOM", () => {
   for (let renderToReadableStream of [
     renderToReadableStreamBun,
-    // renderToReadableStreamBrowser,
+    renderToReadableStreamBrowser,
   ]) {
     for (let [inputString, reactElement] of [
       // Needs at least six variations
@@ -49,6 +50,10 @@ describe("ReactDOM", () => {
           <span>😋Hello World!</span>
         </>,
       ],
+      ["😋", <>😋</>],
+      ["l😋l", <>l😋l</>],
+      ["lo😋", <>lo😋</>],
+      ["😋lo", <>😋lo</>],
       [
         "😋<span>Hello World!</span>",
         <>
@@ -90,6 +95,28 @@ describe("ReactDOM", () => {
       ],
     ])
       describe(`${renderToReadableStream.name}(${inputString})`, () => {
+        it.only("http server, 1 request", async () => {
+          var server;
+          try {
+            server = serve({
+              port: port++,
+              async fetch(req) {
+                return new Response(await renderToReadableStream(reactElement));
+              },
+            });
+            const resp = await fetch("http://localhost:" + server.port + "/");
+            expect((await resp.text()).replaceAll("<!-- -->", "")).toBe(
+              inputString
+            );
+            gc();
+          } catch (e) {
+            throw e;
+          } finally {
+            server?.stop();
+            gc();
+          }
+        });
+
         it("Response.text()", async () => {
           const stream = await renderToReadableStream(reactElement);
           gc();
@@ -98,7 +125,7 @@ describe("ReactDOM", () => {
           try {
             const text = await response.text();
             gc();
-            expect(text).toBe(inputString);
+            expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();
           } catch (e) {
             console.log(e.stack);
@@ -113,7 +140,7 @@ describe("ReactDOM", () => {
           gc();
           const text = new TextDecoder().decode(await response.arrayBuffer());
           gc();
-          expect(text).toBe(inputString);
+          expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
         });
 
@@ -124,7 +151,7 @@ describe("ReactDOM", () => {
           gc();
           const text = await (await response.blob()).text();
           gc();
-          expect(text).toBe(inputString);
+          expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
         });
 
@@ -133,7 +160,7 @@ describe("ReactDOM", () => {
           gc();
           const text = await readableStreamToText(stream);
           gc();
-          expect(text).toBe(inputString);
+          expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
         });
 
@@ -144,7 +171,7 @@ describe("ReactDOM", () => {
             const blob = await readableStreamToBlob(stream);
             const text = await blob.text();
             gc();
-            expect(text).toBe(inputString);
+            expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
             gc();
           } catch (e) {
             console.error(e.message);
@@ -162,7 +189,7 @@ describe("ReactDOM", () => {
               ? array.join("")
               : new TextDecoder().decode(concatArrayBuffers(array));
           gc();
-          expect(text).toBe(inputString);
+          expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
         });
 
@@ -172,31 +199,9 @@ describe("ReactDOM", () => {
           const arrayBuffer = await readableStreamToArrayBuffer(stream);
           const text = new TextDecoder().decode(arrayBuffer);
           gc();
-          expect(text).toBe(inputString);
+          expect(text.replaceAll("<!-- -->", "")).toBe(inputString);
           gc();
         });
-
-        // it("http server, 1 request", async () => {
-        //   var server;
-        //   try {
-        //     server = serve({
-        //       port: port++,
-        //       async fetch(req) {
-        //         return new Response(
-        //           await renderToReadableStream(reactElement)
-        //         );
-        //       },
-        //     });
-        //     const resp = await fetch("http://localhost:" + server.port + "/");
-        //     expect(await resp.text()).toBe(inputString);
-        //     gc();
-        //   } catch (e) {
-        //     throw e;
-        //   } finally {
-        //     server.stop();
-        //     gc();
-        //   }
-        // });
 
         // it("http server, 100 requests", async () => {
         //   var server;
@@ -204,9 +209,7 @@ describe("ReactDOM", () => {
         //     server = serve({
         //       port: port++,
         //       async fetch(req) {
-        //         return new Response(
-        //           await renderToReadableStream(reactElement)
-        //         );
+        //         return new Response(await renderToReadableStream(reactElement));
         //       },
         //     });
         //     var total = 0;
@@ -219,7 +222,7 @@ describe("ReactDOM", () => {
         //       gc();
         //       const result = await response.text();
         //       try {
-        //         expect(result).toBe(inputString);
+        //         expect(result.replaceAll("<!-- -->", "")).toBe(inputString);
         //       } catch (e) {
         //         e.message += "\nAttempt: " + attempt;
         //         throw e;

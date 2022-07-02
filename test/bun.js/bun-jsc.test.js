@@ -18,6 +18,7 @@ import {
   numberOfDFGCompiles,
   releaseWeakRefs,
   totalCompileTime,
+  getProtectedObjects,
   reoptimizationRetryCount,
   drainMicrotasks,
   startRemoteDebugger,
@@ -93,6 +94,15 @@ describe("bun:jsc", () => {
     drainMicrotasks();
   });
   it("startRemoteDebugger", () => {
-    startRemoteDebugger("");
+    try {
+      startRemoteDebugger("");
+    } catch (e) {
+      if (process.platform !== "darwin") {
+        throw e;
+      }
+    }
+  });
+  it("getProtectedObjects", () => {
+    expect(getProtectedObjects().length > 0).toBe(true);
   });
 });

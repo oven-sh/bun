@@ -14,6 +14,7 @@ declare module "bun:jsc" {
     globalObjectCount: number;
     protectedGlobalObjectCount: number;
     objectTypeCounts: Record<string, number>;
+    protectedObjectTypeCounts: Record<string, number>;
   };
   export function memoryUsage(): {
     current: number;

@@ -197,8 +197,21 @@ const ClassInfo JSCMemoryFootprint::s_info = { "MemoryFootprint"_s, &Base::s_inf
 JSC_DECLARE_HOST_FUNCTION(functionMemoryUsageStatistics);
 JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics, (JSGlobalObject * globalObject, CallFrame*))
 {
-    auto contextRef = toRef(globalObject);
-    return JSValue::encode(toJS(JSGetMemoryUsageStatistics(contextRef)));
+
+    auto& vm = globalObject->vm();
+    JSC::DisallowGC disallowGC;
+
+    // this is a C API function
+    auto* stats = toJS(JSGetMemoryUsageStatistics(toRef(globalObject)));
+
+    // This is missing from the C API
+    JSC::JSObject* protectedCounts = constructEmptyObject(globalObject);
+    auto typeCounts = *vm.heap.protectedObjectTypeCounts();
+    for (auto& it : typeCounts)
+        protectedCounts->putDirect(vm, Identifier::fromLatin1(vm, it.key), jsNumber(it.value));
+
+    stats->putDirect(vm, Identifier::fromLatin1(vm, "protectedObjectTypeCounts"_s), protectedCounts);
+    return JSValue::encode(stats);
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);

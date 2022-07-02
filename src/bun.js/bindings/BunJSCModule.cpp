@@ -289,6 +289,19 @@ JSC_DEFINE_HOST_FUNCTION(functionTotalCompileTime, (JSGlobalObject*, CallFrame*)
     return JSValue::encode(jsNumber(JIT::totalCompileTime().milliseconds()));
 }
 
+JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);
+JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects, (JSGlobalObject * globalObject, CallFrame*))
+{
+    MarkedArgumentBuffer list;
+    size_t result = 0;
+    globalObject->vm().heap.forEachProtectedCell(
+        [&](JSCell* cell) {
+            list.append(cell);
+        });
+    RELEASE_ASSERT(!list.hasOverflowed());
+    return JSC::JSValue::encode(constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list));
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionReoptimizationRetryCount);
 JSC_DEFINE_HOST_FUNCTION(functionReoptimizationRetryCount, (JSGlobalObject*, CallFrame* callFrame))
 {
@@ -320,7 +333,7 @@ JSC::JSObject* createJSCModule(JSC::JSGlobalObject* globalObject)
 
     {
         JSC::ObjectInitializationScope initializationScope(vm);
-        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 21);
+        object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 22);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "callerSourceOrigin"_s), 1, functionCallerSourceOrigin, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "describe"_s), 1, functionDescribe, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "describeArray"_s), 1, functionDescribeArray, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
@@ -342,6 +355,7 @@ JSC::JSObject* createJSCModule(JSC::JSGlobalObject* globalObject)
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setRandomSeed"_s), 1, functionSetRandomSeed, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startRemoteDebugger"_s), 2, functionStartRemoteDebugger, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "totalCompileTime"_s), 1, functionTotalCompileTime, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getProtectedObjects"_s), 1, functionGetProtectedObjects, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
     }
 
     return object;

@@ -29,7 +29,7 @@ const http = @import("../../http.zig");
 const NodeFallbackModules = @import("../../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../../analytics/analytics_thread.zig");
-const ZigString = @import("../../jsc.zig").ZigString;
+const ZigString = @import("javascript_core").ZigString;
 const Runtime = @import("../../runtime.zig");
 const Router = @import("./router.zig");
 const ImportRecord = ast.ImportRecord;
@@ -37,39 +37,39 @@ const DotEnv = @import("../../env_loader.zig");
 const ParseResult = @import("../../bundler.zig").ParseResult;
 const PackageJSON = @import("../../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../../resolver/package_json.zig").MacroMap;
-const WebCore = @import("../../jsc.zig").WebCore;
+const WebCore = @import("javascript_core").WebCore;
 const Request = WebCore.Request;
 const Response = WebCore.Response;
 const Headers = WebCore.Headers;
 const Fetch = WebCore.Fetch;
 const HTTP = @import("http");
 const FetchEvent = WebCore.FetchEvent;
-const js = @import("../../jsc.zig").C;
-const JSC = @import("../../jsc.zig");
+const js = @import("javascript_core").C;
+const JSC = @import("javascript_core");
 const JSError = @import("../base.zig").JSError;
 const MarkedArrayBuffer = @import("../base.zig").MarkedArrayBuffer;
 const getAllocator = @import("../base.zig").getAllocator;
-const JSValue = @import("../../jsc.zig").JSValue;
+const JSValue = @import("javascript_core").JSValue;
 const NewClass = @import("../base.zig").NewClass;
-const Microtask = @import("../../jsc.zig").Microtask;
-const JSGlobalObject = @import("../../jsc.zig").JSGlobalObject;
-const ExceptionValueRef = @import("../../jsc.zig").ExceptionValueRef;
-const JSPrivateDataPtr = @import("../../jsc.zig").JSPrivateDataPtr;
-const ZigConsoleClient = @import("../../jsc.zig").ZigConsoleClient;
-const Node = @import("../../jsc.zig").Node;
-const ZigException = @import("../../jsc.zig").ZigException;
-const ZigStackTrace = @import("../../jsc.zig").ZigStackTrace;
-const ErrorableResolvedSource = @import("../../jsc.zig").ErrorableResolvedSource;
-const ResolvedSource = @import("../../jsc.zig").ResolvedSource;
-const JSPromise = @import("../../jsc.zig").JSPromise;
-const JSInternalPromise = @import("../../jsc.zig").JSInternalPromise;
-const JSModuleLoader = @import("../../jsc.zig").JSModuleLoader;
-const JSPromiseRejectionOperation = @import("../../jsc.zig").JSPromiseRejectionOperation;
-const Exception = @import("../../jsc.zig").Exception;
-const ErrorableZigString = @import("../../jsc.zig").ErrorableZigString;
-const ZigGlobalObject = @import("../../jsc.zig").ZigGlobalObject;
-const VM = @import("../../jsc.zig").VM;
-const JSFunction = @import("../../jsc.zig").JSFunction;
+const Microtask = @import("javascript_core").Microtask;
+const JSGlobalObject = @import("javascript_core").JSGlobalObject;
+const ExceptionValueRef = @import("javascript_core").ExceptionValueRef;
+const JSPrivateDataPtr = @import("javascript_core").JSPrivateDataPtr;
+const ZigConsoleClient = @import("javascript_core").ZigConsoleClient;
+const Node = @import("javascript_core").Node;
+const ZigException = @import("javascript_core").ZigException;
+const ZigStackTrace = @import("javascript_core").ZigStackTrace;
+const ErrorableResolvedSource = @import("javascript_core").ErrorableResolvedSource;
+const ResolvedSource = @import("javascript_core").ResolvedSource;
+const JSPromise = @import("javascript_core").JSPromise;
+const JSInternalPromise = @import("javascript_core").JSInternalPromise;
+const JSModuleLoader = @import("javascript_core").JSModuleLoader;
+const JSPromiseRejectionOperation = @import("javascript_core").JSPromiseRejectionOperation;
+const Exception = @import("javascript_core").Exception;
+const ErrorableZigString = @import("javascript_core").ErrorableZigString;
+const ZigGlobalObject = @import("javascript_core").ZigGlobalObject;
+const VM = @import("javascript_core").VM;
+const JSFunction = @import("javascript_core").JSFunction;
 const Config = @import("../config.zig");
 const URL = @import("../../url.zig").URL;
 const Transpiler = @import("./transpiler.zig");
@@ -1236,7 +1236,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 stream.value.ensureStillAlive();
                                 stream.value.unprotect();
                                 var response_stream = this.allocator.create(ResponseStream.JSSink) catch unreachable;
-                                this.sink = response_stream;
                                 response_stream.* = ResponseStream.JSSink{
                                     .sink = .{
                                         .res = this.resp,
@@ -1245,6 +1244,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     },
                                 };
                                 var signal = &response_stream.sink.signal;
+                                this.sink = response_stream;
+
                                 signal.* = ResponseStream.JSSink.SinkSignal.init(JSValue.zero);
 
                                 // explicitly set it to a dead pointer
@@ -1278,7 +1279,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     if (!this.aborted) this.resp.clearAborted();
                                     response_stream.detach();
                                     this.sink = null;
-                                    this.allocator.destroy(response_stream);
+                                    response_stream.sink.destroy();
                                     return this.handleReject(assignment_result);
                                 }
 
@@ -1287,14 +1288,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     this.resp.hasResponded())
                                 {
                                     if (!this.aborted) this.resp.clearAborted();
+                                    const wrote_anything = response_stream.sink.wrote > 0;
                                     streamLog("is done", .{});
+                                    const responded = this.resp.hasResponded();
+
                                     response_stream.detach();
                                     this.sink = null;
-                                    this.allocator.destroy(response_stream);
-
-                                    if (!this.resp.hasResponded()) {
+                                    response_stream.sink.destroy();
+                                    if (!responded and !wrote_anything and !this.aborted) {
                                         this.renderMissing();
                                         return;
+                                    } else if (wrote_anything and !responded and !this.aborted) {
+                                        this.resp.endStream(false);
                                     }
 
                                     this.finalize();
@@ -1309,35 +1314,49 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                         const AwaitPromise = struct {
                                             pub fn onResolve(req: *RequestContext, _: *JSGlobalObject, _: []const JSC.JSValue) void {
                                                 streamLog("onResolve", .{});
+                                                var wrote_anything = false;
+
                                                 if (req.sink) |wrapper| {
-                                                    wrapper.sink.pending_drain = null;
+                                                    wrapper.sink.pending_flush = null;
                                                     wrapper.sink.done = true;
                                                     req.aborted = req.aborted or wrapper.sink.aborted;
+                                                    wrote_anything = wrapper.sink.wrote > 0;
                                                     wrapper.sink.finalize();
                                                     wrapper.detach();
                                                     req.sink = null;
-                                                    req.allocator.destroy(wrapper);
+                                                    wrapper.sink.destroy();
                                                 }
-                                                if (!req.resp.hasResponded()) {
-                                                    if (!req.aborted) req.resp.clearAborted();
 
-                                                    req.renderMissing();
+                                                if (req.aborted) {
+                                                    req.finalizeForAbort();
                                                     return;
                                                 }
+
+                                                const responded = req.resp.hasResponded();
+
+                                                if (!responded and !wrote_anything) {
+                                                    req.resp.clearAborted();
+                                                    req.renderMissing();
+                                                    return;
+                                                } else if (!responded and wrote_anything and !req.aborted) {
+                                                    req.resp.clearAborted();
+                                                    req.resp.endStream(false);
+                                                }
+
                                                 req.finalize();
                                             }
                                             pub fn onReject(req: *RequestContext, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void {
                                                 var wrote_anything = req.has_written_status;
 
                                                 if (req.sink) |wrapper| {
-                                                    wrapper.sink.pending_drain = null;
+                                                    wrapper.sink.pending_flush = null;
                                                     wrapper.sink.done = true;
                                                     wrote_anything = wrote_anything or wrapper.sink.wrote > 0;
                                                     req.aborted = req.aborted or wrapper.sink.aborted;
                                                     wrapper.sink.finalize();
                                                     wrapper.detach();
                                                     req.sink = null;
-                                                    req.allocator.destroy(wrapper);
+                                                    wrapper.sink.destroy();
                                                 }
 
                                                 streamLog("onReject({s})", .{wrote_anything});
@@ -1515,6 +1534,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             value: JSC.JSValue,
             status: u16,
         ) void {
+            JSC.markBinding();
             if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
                 this.has_called_error_handler = true;
                 var args = [_]JSC.C.JSValueRef{value.asObjectRef()};

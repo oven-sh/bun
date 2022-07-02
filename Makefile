@@ -31,6 +31,7 @@ endif
 
 AR=
 
+BUN_OR_NODE = $(shell which bun || which node)
 
 CXX_VERSION=c++2a
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
@@ -156,25 +157,28 @@ ENABLE_MIMALLOC ?= 1
 _MIMALLOC_FILE = libmimalloc.o
 _MIMALLOC_INPUT_PATH = CMakeFiles/mimalloc-obj.dir/src/static.c.o
 _MIMALLOC_DEBUG_FILE = libmimalloc-debug.a
+_MIMALLOC_OBJECT_FILE = 1
+_MIMALLOC_LINK = $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 DEFAULT_LINKER_FLAGS =
 
 JSC_BUILD_STEPS :=
 ifeq ($(OS_NAME),linux)
 	JSC_BUILD_STEPS += jsc-build-linux
+	_MIMALLOC_LINK = $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 DEFAULT_LINKER_FLAGS= -pthread -ldl 
 endif
 ifeq ($(OS_NAME),darwin)
+    _MIMALLOC_OBJECT_FILE = 0
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
 	_MIMALLOC_FILE = libmimalloc.a
 	_MIMALLOC_INPUT_PATH = libmimalloc.a
+	_MIMALLOC_LINK = -lmimalloc
 endif
 
 MIMALLOC_FILE=
 MIMALLOC_INPUT_PATH=
-MIMALLOC_FILE_PATH=
 ifeq ($(ENABLE_MIMALLOC), 1)
 MIMALLOC_FILE=$(_MIMALLOC_FILE)
-MIMALLOC_FILE_PATH=$(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 MIMALLOC_INPUT_PATH=$(_MIMALLOC_INPUT_PATH)
 endif
 
@@ -325,7 +329,7 @@ ifeq ($(OS_NAME), darwin)
 	SHARED_LIB_EXTENSION = .dylib
 endif
 
-ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO = \
 		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
 		-L$(BUN_DEPS_OUT_DIR) \
 		-llolhtml \
@@ -333,7 +337,8 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MIMALLOC_FILE_PATH) \
 		-larchive \
 		-lssl \
 		-lbase64 \
-		-ltcc 
+		-ltcc \
+		$(_MIMALLOC_LINK)
 
 ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 
@@ -377,6 +382,7 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 
 
 BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES) $(BINDINGS_OBJ)
+BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES_DEBUG) $(BINDINGS_OBJ)
 
 BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(BINDINGS_OBJ)
 
@@ -715,18 +721,7 @@ jsc-bindings-headers:
 	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES_DEBUG) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)  -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
 	/tmp/build-jsc-headers
 	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
-	$(ZIG) run misctools/headers-cleaner.zig -lc
-	$(SED) -i '/pub const __darwin/d' src/bun.js/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const __builtin/d' src/bun.js/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const int/d' src/bun.js/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const uint/d' src/bun.js/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const intmax/d' src/bun.js/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const uintmax/d' src/bun.js/bindings/headers.zig || echo "";
-	$(SED) -i '/pub const max_align_t/{N;N;N;d;}' src/bun.js/bindings/headers.zig
-	$(SED) -i '/pub const ZigErrorCode/d' src/bun.js/bindings/headers.zig
-	$(SED) -i '/pub const JSClassRef/d' src/bun.js/bindings/headers.zig
-	cat src/bun.js/bindings/headers.zig > /tmp/headers.zig
-	cat src/bun.js/bindings/headers-replacements.zig /tmp/headers.zig > src/bun.js/bindings/headers.zig
+	$(BUN_OR_NODE) misctools/headers-cleaner.js
 	$(ZIG) fmt src/bun.js/bindings/headers.zig
 
 
@@ -1186,6 +1181,16 @@ bun-link-lld-release:
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
 
+bun-link-lld-release-no-lto:
+	$(CXX) $(BUN_LLD_FLAGS_FAST) $(SYMBOLS) \
+		$(BUN_RELEASE_BIN).o \
+		-o $(BUN_RELEASE_BIN) \
+		-W \
+		$(OPTIMIZATION_LEVEL) $(RELEASE_FLAGS)
+	rm -rf $(BUN_RELEASE_BIN).dSYM
+	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
+
+
 ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym:
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
@@ -1205,6 +1210,7 @@ endif
 
 
 bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
+bun-relink-fast: bun-relink-copy bun-link-lld-release-no-lto
 
 wasm-return1:
 	zig build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
@@ -1218,7 +1224,7 @@ generate-sink:
 
 EMIT_LLVM_FOR_RELEASE=-emit-llvm -flto="full"
 EMIT_LLVM_FOR_DEBUG= 
-EMIT_LLVM=$(EMIT_LLVM_FOR_RELEASE)
+EMIT_LLVM=$(EMIT_LLVM_FOR_DEBUG)
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest

@@ -173,10 +173,6 @@ pub const ZigErrorType = extern struct {
     }
 };
 
-/// do not use this reference directly, use JSC.Node.Readable
-pub const NodeReadableStream = JSC.Node.Readable.State;
-/// do not use this reference directly, use JSC.Node.Writable
-pub const NodeWritableStream = JSC.Node.Writable.State;
 pub const NodePath = JSC.Node.Path;
 
 // Web Streams
@@ -2521,24 +2517,22 @@ pub const HTTPDebugServerRequestContext = JSC.API.DebugServer.RequestContext;
 pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugSSLServer.RequestContext;
 
 comptime {
-    WebSocketHTTPClient.shim.ref();
-    WebSocketHTTSPClient.shim.ref();
-    WebSocketClient.shim.ref();
-    WebSocketClientTLS.shim.ref();
-
-    HTTPServerRequestContext.shim.ref();
-    HTTPSSLServerRequestContext.shim.ref();
-    HTTPDebugServerRequestContext.shim.ref();
-    HTTPDebugSSLServerRequestContext.shim.ref();
-
     if (!is_bindgen) {
+        WebSocketHTTPClient.shim.ref();
+        WebSocketHTTSPClient.shim.ref();
+        WebSocketClient.shim.ref();
+        WebSocketClientTLS.shim.ref();
+
+        HTTPServerRequestContext.shim.ref();
+        HTTPSSLServerRequestContext.shim.ref();
+        HTTPDebugServerRequestContext.shim.ref();
+        HTTPDebugSSLServerRequestContext.shim.ref();
+
         _ = Process.getTitle;
         _ = Process.setTitle;
         _ = Zig__getAPIGlobals;
         _ = Zig__getAPIConstructors;
-        NodeReadableStream.shim.ref();
         Bun.Timer.shim.ref();
-        NodeWritableStream.shim.ref();
         NodePath.shim.ref();
         JSReadableStreamBlob.shim.ref();
         JSArrayBufferSink.shim.ref();

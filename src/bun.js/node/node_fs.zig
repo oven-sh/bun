@@ -2306,8 +2306,6 @@ const Return = struct {
     pub const WatchFile = void;
     pub const Utimes = void;
 
-    pub const CreateReadStream = *JSC.Node.Stream;
-    pub const CreateWriteStream = *JSC.Node.Stream;
     pub const Chown = void;
     pub const Lutimes = void;
 };
@@ -3611,47 +3609,10 @@ pub const NodeFS = struct {
         _ = flavor;
         return Maybe(Return.Watch).todo;
     }
-    pub fn createReadStream(this: *NodeFS, args: Arguments.CreateReadStream, comptime flavor: Flavor) Maybe(Return.CreateReadStream) {
-        _ = args;
-        _ = this;
-        _ = flavor;
-        var stream = bun.default_allocator.create(JSC.Node.Stream) catch unreachable;
-        stream.* = JSC.Node.Stream{
-            .sink = .{
-                .readable = JSC.Node.Readable{
-                    .stream = stream,
-                    .globalObject = args.global_object,
-                },
-            },
-            .sink_type = .readable,
-            .content = undefined,
-            .content_type = undefined,
-            .allocator = bun.default_allocator,
-        };
-
-        args.file.copyToStream(args.flags, args.autoClose, args.mode, bun.default_allocator, stream) catch unreachable;
-        args.copyToState(&stream.sink.readable.state);
-        return Maybe(Return.CreateReadStream){ .result = stream };
+    pub fn createReadStream(_: *NodeFS, _: Arguments.CreateReadStream, comptime _: Flavor) Maybe(Return.CreateReadStream) {
+        return Maybe(Return.CreateReadStream).todo;
     }
-    pub fn createWriteStream(this: *NodeFS, args: Arguments.CreateWriteStream, comptime flavor: Flavor) Maybe(Return.CreateWriteStream) {
-        _ = args;
-        _ = this;
-        _ = flavor;
-        var stream = bun.default_allocator.create(JSC.Node.Stream) catch unreachable;
-        stream.* = JSC.Node.Stream{
-            .sink = .{
-                .writable = JSC.Node.Writable{
-                    .stream = stream,
-                    .globalObject = args.global_object,
-                },
-            },
-            .sink_type = .writable,
-            .content = undefined,
-            .content_type = undefined,
-            .allocator = bun.default_allocator,
-        };
-        args.file.copyToStream(args.flags, args.autoClose, args.mode, bun.default_allocator, stream) catch unreachable;
-        args.copyToState(&stream.sink.writable.state);
-        return Maybe(Return.CreateWriteStream){ .result = stream };
+    pub fn createWriteStream(_: *NodeFS, _: Arguments.CreateWriteStream, comptime _: Flavor) Maybe(Return.CreateWriteStream) {
+        return Maybe(Return.CreateWriteStream).todo;
     }
 };

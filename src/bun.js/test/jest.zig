@@ -376,16 +376,6 @@ pub const Expect = struct {
         }
 
         if (!eql) {
-            if (comptime Environment.allow_assert) {
-                if (left.isString() and right.isString()) {
-                    var left_slice = left.toSlice(ctx, getAllocator(ctx));
-                    defer left_slice.deinit();
-                    var right_slice = right.toSlice(ctx, getAllocator(ctx));
-                    defer right_slice.deinit();
-                    std.debug.assert(!strings.eqlLong(left_slice.slice(), right_slice.slice(), true));
-                }
-            }
-
             var lhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
             var rhs_formatter: JSC.ZigConsoleClient.Formatter = JSC.ZigConsoleClient.Formatter{ .globalThis = ctx.ptr() };
 
@@ -688,7 +678,7 @@ pub const TestScope = struct {
             js.JSValueUnprotect(vm.global.ref(), this.callback);
             this.callback = null;
         }
-
+        JSC.markBinding();
         const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), this.callback, null, 0, null);
 
         if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
@@ -897,6 +887,7 @@ pub const DescribeScope = struct {
         active = this;
 
         {
+            JSC.markBinding();
             var result = js.JSObjectCallAsFunctionReturnValue(ctx, callback, thisObject, 0, null);
 
             if (result.asPromise() != null or result.asInternalPromise() != null) {

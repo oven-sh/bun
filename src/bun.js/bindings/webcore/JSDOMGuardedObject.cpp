@@ -26,7 +26,6 @@
 #include "config.h"
 #include "JSDOMGuardedObject.h"
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -35,13 +34,12 @@ DOMGuardedObject::DOMGuardedObject(JSDOMGlobalObject& globalObject, JSCell& guar
     , m_guarded(&guarded)
     , m_globalObject(&globalObject)
 {
-    globalObject.vm().writeBarrier(&globalObject, &guarded);
     if (globalObject.vm().heap.mutatorShouldBeFenced()) {
         Locker locker { globalObject.gcLock() };
         globalObject.guardedObjects().add(this);
-        return;
-    }
-    globalObject.guardedObjects(NoLockingNecessary).add(this);
+    } else
+        globalObject.guardedObjects(NoLockingNecessary).add(this);
+    globalObject.vm().writeBarrier(&globalObject, &guarded);
 }
 
 DOMGuardedObject::~DOMGuardedObject()
@@ -54,12 +52,11 @@ void DOMGuardedObject::clear()
     ASSERT(!m_guarded || m_globalObject);
     removeFromGlobalObject();
     m_guarded.clear();
-    m_globalObject.clear();
 }
 
 void DOMGuardedObject::removeFromGlobalObject()
 {
-    if (!m_guarded || !m_globalObject)
+    if (!m_globalObject)
         return;
 
     if (m_globalObject->vm().heap.mutatorShouldBeFenced()) {
@@ -67,6 +64,8 @@ void DOMGuardedObject::removeFromGlobalObject()
         m_globalObject->guardedObjects().remove(this);
     } else
         m_globalObject->guardedObjects(NoLockingNecessary).remove(this);
+
+    m_globalObject.clear();
 }
 
 void DOMGuardedObject::contextDestroyed()

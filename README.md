@@ -2,16 +2,17 @@
 
 bun is a new:
 
+- JavaScript runtime with [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several Web APIs builtin. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
 - JavaScript/TypeScript/JSX transpiler
 - JavaScript & CSS bundler
-- Development server with 60fps Hot Module Reloading (& WIP support for React Fast Refresh)
-- JavaScript Runtime Environment (powered by JavaScriptCore, what WebKit/Safari uses)
 - Task runner for package.json scripts
 - npm-compatible package manager
 
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
 
 **bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#not-implemented-yet).
+
+Today, bun's primary focus is bun.js: bun's JavaScript runtime.
 
 ## Install
 
@@ -170,7 +171,7 @@ export default {
 
 </details>
 
-bun.js prefers Web API compatibility or node API compatibility instead of designing new APIs when possible.
+bun.js prefers Web API compatibility instead of designing new APIs when possible. bun.js also implements some Node.js APIs.
 
 - TypeScript & JSX support is builtin, powered by Bun's JavaScript transpiler
 - ESM & CommonJS modules are supported (internally, bun.js uses ESM)
@@ -190,14 +191,47 @@ The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safar
 ```js
 // cat.js
 import { resolve } from "path";
-const { write, stdout, file } = Bun;
-const { argv } = process;
+import { write, stdout, file, argv } from "bun";
 
 const path = resolve(argv.at(-1));
-// file(path) returns a Blob - https://developer.mozilla.org/en-US/docs/Web/API/Blob
-await write(stdout, file(path));
+
+await write(
+  // stdout is a Blob
+  stdout,
+  // file(path) returns a Blob - https://developer.mozilla.org/en-US/docs/Web/API/Blob
+  file(path)
+);
 
 // bun ./cat.js ./path-to-file
+```
+
+Server-side render React:
+
+```js
+// requires Bun v0.1.0 or later
+// react-ssr.tsx
+import { renderToReadableStream } from "react-dom/server";
+
+export default {
+  port: 3000,
+  async fetch(request: Request) {
+    return new Response(
+      await renderToReadableStream(
+        <html>
+          <head>
+            <title>Hello World</title>
+          </head>
+          <body>
+            <h1>Hello from React!</h1>
+            <p>The date is {new Intl.DateTimeFormat().format(new Date())}</p>
+          </body>
+        </html>
+      )
+    );
+  },
+};
+
+// bun react-ssr.tsx
 ```
 
 There are some more examples in the [examples](./examples) folder.
@@ -437,26 +471,26 @@ From there, make sure to import the `dist/tailwind.css` file (or what you chose 
 
 bun is a project with incredibly large scope, and it’s early days.
 
-| Feature                                                                               | In              |
-| ------------------------------------------------------------------------------------- | --------------- |
-| [Hash components for Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)    | JSX Transpiler  |
-| Source Maps                                                                           | JavaScript      |
-| Source Maps                                                                           | CSS             |
-| JavaScript Minifier                                                                   | JS Transpiler   |
-| CSS Minifier                                                                          | CSS             |
-| CSS Parser (it only bundles)                                                          | CSS             |
-| Tree-shaking                                                                          | JavaScript      |
-| Tree-shaking                                                                          | CSS             |
-| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json         | TS Transpiler   |
-| [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html) | TS Transpiler   |
-| `@jsxPragma` comments                                                                 | JS Transpiler   |
-| JSX source file name                                                                  | JS Transpiler   |
-| Sharing `.bun` files                                                                  | bun             |
-| [workspace: dependencies](https://github.com/Jarred-Sumner/bun/issues/83)             | Package manager |
-| [git: dependencies](https://github.com/Jarred-Sumner/bun/issues/82)                   | Package manager |
-| [github: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                | Package manager |
-| [link: dependencies](https://github.com/Jarred-Sumner/bun/issues/81)                  | Package manager |
-| Dates & timestamps                                                                    | TOML parser     |
+You can see [Bun's Roadmap](https://github.com/Jarred-Sumner/bun/issues/159), but here are some additional things that are planned:
+
+| Feature                                                                               | In             |
+| ------------------------------------------------------------------------------------- | -------------- |
+| Web Streams with Fetch API                                                            | Bun.js         |
+| Web Streams with HTMLRewriter                                                         | Bun.js         |
+| WebSocket Server                                                                      | Bun.js         |
+| [Hash components for Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)    | JSX Transpiler |
+| Source Maps                                                                           | JS Bundler     |
+| Source Maps                                                                           | CSS            |
+| JavaScript Minifier                                                                   | JS Transpiler  |
+| CSS Minifier                                                                          | CSS            |
+| CSS Parser (it only bundles)                                                          | CSS            |
+| Tree-shaking                                                                          | JavaScript     |
+| Tree-shaking                                                                          | CSS            |
+| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json         | TS Transpiler  |
+| [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html) | TS Transpiler  |
+| `@jsxPragma` comments                                                                 | JS Transpiler  |
+| Sharing `.bun` files                                                                  | bun            |
+| Dates & timestamps                                                                    | TOML parser    |
 
 <small>
 JS Transpiler == JavaScript Transpiler
@@ -477,14 +511,6 @@ Today, bun is mostly focused on compatibility with existing frameworks & tooling
 Ideally, most projects can use bun with their existing tooling while making few changes to their codebase. For frontend work, that means using bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it’s not far from the status quo.
 
 Longer-term, bun intends to replace Node.js, Webpack, Babel, and PostCSS (in production).
-
-## Benchmarks
-
-TODO: update this section with runtime benchmarks
-
-**CSS**: [bun is 14x faster](./bench/hot-module-reloading/css-stress-test) than Next.js at hot reloading CSS. TODO: compare Vite
-
-**JavaScript**: TODO
 
 ## Configuration
 

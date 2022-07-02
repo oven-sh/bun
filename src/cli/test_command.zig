@@ -362,7 +362,7 @@ pub const TestCommand = struct {
         } else {
             Output.prettyError("<r>", .{});
         }
-        Output.prettyError(" {d:5>} expectations\n", .{reporter.summary.expectations});
+        if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expectations\n", .{reporter.summary.expectations});
 
         Output.prettyError(
             \\ Ran {d} tests across {d} files 
@@ -450,7 +450,7 @@ pub const TestCommand = struct {
         switch (promise.status(vm.global.vm())) {
             .Rejected => {
                 var result = promise.result(vm.global.vm());
-                vm.defaultErrorHandler(result, null);
+                vm.runErrorHandler(result, null);
                 return;
             },
             else => {},

@@ -448,7 +448,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
   close   ${`${name}__doClose`.padEnd(
     padding + 8
   )} ReadOnly|DontDelete|Function 0
-  drain   ${`${name}__drain`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
+  flush   ${`${name}__flush`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
   end     ${`${name}__end`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
   start   ${`${name}__start`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
   write   ${`${name}__write`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
@@ -462,7 +462,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
   close    ${`${controller}__close`.padEnd(
     protopad + 4
   )}  ReadOnly|DontDelete|Function 0
-  drain    ${`${name}__drain`.padEnd(
+  flush    ${`${name}__flush`.padEnd(
     protopad + 4
   )}  ReadOnly|DontDelete|Function 1
   end      ${`${controller}__end`.padEnd(

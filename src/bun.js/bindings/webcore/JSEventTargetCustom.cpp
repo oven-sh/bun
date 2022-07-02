@@ -55,8 +55,8 @@ EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
     //     return &jsCast<JSWindowProxy*>(asObject(value))->wrapped();
     // if (value.inherits<JSDOMWindow>())
     //     return &jsCast<JSDOMWindow*>(asObject(value))->wrapped();
-    // if (value.inherits<JSWorkerGlobalScope>())
-    //     return &jsCast<JSWorkerGlobalScope*>(asObject(value))->wrapped();
+    // if (value.inherits<JSDOMGlobalObject>())
+    // return &jsCast<JSDOMGlobalObject*>(asObject(value))->wrapped();
     if (value.inherits<JSEventTarget>())
         return &jsCast<JSEventTarget*>(asObject(value))->wrapped();
     return nullptr;
@@ -66,8 +66,8 @@ std::unique_ptr<JSEventTargetWrapper> jsEventTargetCast(VM& vm, JSValue thisValu
 {
     if (auto* target = jsDynamicCast<JSEventTarget*>(thisValue))
         return makeUnique<JSEventTargetWrapper>(target->wrapped(), *target);
-    // if (auto* window = toJSDOMGlobalObject<JSDOMWindow>(vm, thisValue))
-    //     return makeUnique<JSEventTargetWrapper>(window->wrapped(), *window);
+    // if (auto* window = toJSDOMGlobalObject<JSDOMGlobalObject>(vm, thisValue))
+    //     return makeUnique<JSEventTargetWrapper>(*window, *window);
     // if (auto* scope = toJSDOMGlobalObject<JSWorkerGlobalScope>(vm, thisValue))
     //     return makeUnique<JSEventTargetWrapper>(scope->wrapped(), *scope);
     return nullptr;

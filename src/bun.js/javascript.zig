@@ -1354,7 +1354,7 @@ pub const VirtualMachine = struct {
     // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
     //     const result = promise.result(global.vm());
     //     if (@enumToInt(VirtualMachine.vm.last_error_jsvalue) != @enumToInt(result)) {
-    //         VirtualMachine.vm.defaultErrorHandler(result, null);
+    //         VirtualMachine.vm.runErrorHandler(result, null);
     //     }
 
     //     return JSValue.jsUndefined();
@@ -1502,7 +1502,7 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn defaultErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
+    pub fn runErrorHandler(this: *VirtualMachine, result: JSValue, exception_list: ?*ExceptionList) void {
         if (result.isException(this.global.vm())) {
             var exception = @ptrCast(*Exception, result.asVoid());
 
@@ -1758,7 +1758,7 @@ pub const VirtualMachine = struct {
     }
 
     pub fn reportUncaughtExceptio(_: *JSGlobalObject, exception: *JSC.Exception) JSValue {
-        VirtualMachine.vm.defaultErrorHandler(exception.value(), null);
+        VirtualMachine.vm.runErrorHandler(exception.value(), null);
         return JSC.JSValue.jsUndefined();
     }
 

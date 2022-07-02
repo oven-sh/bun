@@ -1,3 +1,4 @@
+pub const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
 const Environment = @import("../env.zig");
@@ -511,15 +512,26 @@ pub fn NewApp(comptime ssl: bool) type {
         const ThisApp = @This();
 
         pub fn create(opts: us_socket_context_options_t) *ThisApp {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             return @ptrCast(*ThisApp, uws_create_app(ssl_flag, opts));
         }
         pub fn destroy(app: *ThisApp) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
+
             return uws_app_destroy(ssl_flag, @ptrCast(*uws_app_s, app));
         }
 
         fn RouteHandler(comptime UserDataType: type, comptime handler: fn (UserDataType, *Request, *Response) void) type {
             return struct {
                 pub fn handle(res: *uws_res, req: *Request, user_data: ?*anyopaque) callconv(.C) void {
+                    if (comptime is_bindgen) {
+                        unreachable;
+                    }
+
                     if (comptime UserDataType == void) {
                         return @call(
                             .{ .modifier = .always_inline },
@@ -547,6 +559,9 @@ pub fn NewApp(comptime ssl: bool) type {
 
         pub const ListenSocket = opaque {
             pub inline fn close(this: *ListenSocket) void {
+                if (comptime is_bindgen) {
+                    unreachable;
+                }
                 return us_listen_socket_close(ssl_flag, @ptrCast(*listen_socket_t, this));
             }
         };
@@ -558,6 +573,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_get(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn post(
@@ -567,6 +585,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_post(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn options(
@@ -576,6 +597,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_options(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn delete(
@@ -585,6 +609,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_delete(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn patch(
@@ -594,6 +621,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_patch(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn put(
@@ -603,6 +633,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_put(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn head(
@@ -612,6 +645,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_head(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn connect(
@@ -621,6 +657,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_connect(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn trace(
@@ -630,6 +669,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_trace(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn any(
@@ -639,9 +681,15 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserDataType,
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             uws_app_any(ssl_flag, @ptrCast(*uws_app_t, app), pattern, RouteHandler(UserDataType, handler).handle, user_data);
         }
         pub fn run(app: *ThisApp) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             return uws_app_run(ssl_flag, @ptrCast(*uws_app_t, app));
         }
         pub fn listen(
@@ -651,6 +699,9 @@ pub fn NewApp(comptime ssl: bool) type {
             user_data: UserData,
             comptime handler: fn (UserData, ?*ListenSocket, uws_app_listen_config_t) void,
         ) void {
+            if (comptime is_bindgen) {
+                unreachable;
+            }
             const Wrapper = struct {
                 pub fn handle(socket: ?*listen_socket_t, conf: uws_app_listen_config_t, data: ?*anyopaque) callconv(.C) void {
                     if (comptime UserData == void) {

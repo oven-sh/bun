@@ -145,40 +145,6 @@ const ReadableEvent ReadableEvent__Resume = 6;
 const ReadableEvent ReadableEvent__Open = 7;
 const ReadableEvent ReadableEventUser = 254;
 
-typedef struct {
-    uint32_t highwater_mark;
-    Encoding encoding;
-    int32_t start;
-    int32_t end;
-    bool readable;
-    bool aborted;
-    bool did_read;
-    bool ended;
-    uint8_t flowing;
-    bool emit_close;
-    bool emit_end;
-} Bun__Readable;
-
-typedef struct {
-    uint32_t highwater_mark;
-    Encoding encoding;
-    uint32_t start;
-    bool destroyed;
-    bool ended;
-    bool corked;
-    bool finished;
-    bool emit_close;
-} Bun__Writable;
-
-typedef struct {
-    char* ptr;
-    uint32_t offset;
-    uint32_t len;
-    uint32_t byte_len;
-    uint8_t cell_type;
-    uint64_t _value;
-} Bun__ArrayBuffer;
-
 #ifndef STRING_POINTER
 #define STRING_POINTER
 typedef struct StringPointer {
@@ -192,7 +158,20 @@ typedef void WebSocketHTTPSClient;
 typedef void WebSocketClient;
 typedef void WebSocketClientTLS;
 
+#ifndef __cplusplus
+typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
+#endif
+
 #ifdef __cplusplus
+
+typedef struct {
+    char* ptr;
+    uint32_t offset;
+    uint32_t len;
+    uint32_t byte_len;
+    uint8_t cell_type;
+    uint64_t _value;
+} Bun__ArrayBuffer;
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 

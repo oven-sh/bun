@@ -222,7 +222,8 @@ declare module "bun" {
    *
    * Concatenate the chunks into a single {@link ArrayBuffer}.
    *
-   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
+   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
+   * chunks of different types, consider {@link readableStreamToBlob}
    *
    * @param stream The stream to consume.
    * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.

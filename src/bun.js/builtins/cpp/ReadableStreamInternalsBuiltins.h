@@ -183,10 +183,10 @@ extern const char* const s_readableStreamInternalsOnCloseDirectStreamCode;
 extern const int s_readableStreamInternalsOnCloseDirectStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsOnCloseDirectStreamCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamInternalsOnCloseDirectStreamCodeConstructorKind;
-extern const char* const s_readableStreamInternalsOnDrainDirectStreamCode;
-extern const int s_readableStreamInternalsOnDrainDirectStreamCodeLength;
-extern const JSC::ConstructAbility s_readableStreamInternalsOnDrainDirectStreamCodeConstructAbility;
-extern const JSC::ConstructorKind s_readableStreamInternalsOnDrainDirectStreamCodeConstructorKind;
+extern const char* const s_readableStreamInternalsOnFlushDirectStreamCode;
+extern const int s_readableStreamInternalsOnFlushDirectStreamCodeLength;
+extern const JSC::ConstructAbility s_readableStreamInternalsOnFlushDirectStreamCodeConstructAbility;
+extern const JSC::ConstructorKind s_readableStreamInternalsOnFlushDirectStreamCodeConstructorKind;
 extern const char* const s_readableStreamInternalsCreateTextStreamCode;
 extern const int s_readableStreamInternalsCreateTextStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInternalsCreateTextStreamCodeConstructAbility;
@@ -335,7 +335,7 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArray
     macro(noopDoneFunction, readableStreamInternalsNoopDoneFunction, 0) \
     macro(onReadableStreamDirectControllerClosed, readableStreamInternalsOnReadableStreamDirectControllerClosed, 1) \
     macro(onCloseDirectStream, readableStreamInternalsOnCloseDirectStream, 1) \
-    macro(onDrainDirectStream, readableStreamInternalsOnDrainDirectStream, 0) \
+    macro(onFlushDirectStream, readableStreamInternalsOnFlushDirectStream, 0) \
     macro(createTextStream, readableStreamInternalsCreateTextStream, 1) \
     macro(initializeTextStream, readableStreamInternalsInitializeTextStream, 2) \
     macro(initializeArrayStream, readableStreamInternalsInitializeArrayStream, 2) \
@@ -399,7 +399,7 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArray
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_NOOPDONEFUNCTION 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONREADABLESTREAMDIRECTCONTROLLERCLOSED 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONCLOSEDIRECTSTREAM 1
-#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONDRAINDIRECTSTREAM 1
+#define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_ONFLUSHDIRECTSTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_CREATETEXTSTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_INITIALIZETEXTSTREAM 1
 #define WEBCORE_BUILTIN_READABLESTREAMINTERNALS_INITIALIZEARRAYSTREAM 1
@@ -464,7 +464,7 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArray
     macro(readableStreamInternalsNoopDoneFunctionCode, noopDoneFunction, ASCIILiteral(), s_readableStreamInternalsNoopDoneFunctionCodeLength) \
     macro(readableStreamInternalsOnReadableStreamDirectControllerClosedCode, onReadableStreamDirectControllerClosed, ASCIILiteral(), s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeLength) \
     macro(readableStreamInternalsOnCloseDirectStreamCode, onCloseDirectStream, ASCIILiteral(), s_readableStreamInternalsOnCloseDirectStreamCodeLength) \
-    macro(readableStreamInternalsOnDrainDirectStreamCode, onDrainDirectStream, ASCIILiteral(), s_readableStreamInternalsOnDrainDirectStreamCodeLength) \
+    macro(readableStreamInternalsOnFlushDirectStreamCode, onFlushDirectStream, ASCIILiteral(), s_readableStreamInternalsOnFlushDirectStreamCodeLength) \
     macro(readableStreamInternalsCreateTextStreamCode, createTextStream, ASCIILiteral(), s_readableStreamInternalsCreateTextStreamCodeLength) \
     macro(readableStreamInternalsInitializeTextStreamCode, initializeTextStream, ASCIILiteral(), s_readableStreamInternalsInitializeTextStreamCodeLength) \
     macro(readableStreamInternalsInitializeArrayStreamCode, initializeArrayStream, ASCIILiteral(), s_readableStreamInternalsInitializeArrayStreamCodeLength) \
@@ -512,7 +512,7 @@ extern const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArray
     macro(lazyLoadStream) \
     macro(noopDoneFunction) \
     macro(onCloseDirectStream) \
-    macro(onDrainDirectStream) \
+    macro(onFlushDirectStream) \
     macro(onPullDirectStream) \
     macro(onReadableStreamDirectControllerClosed) \
     macro(pipeToClosingMustBePropagatedBackward) \

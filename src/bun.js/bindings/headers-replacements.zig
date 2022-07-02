@@ -1,4 +1,3 @@
-// GENERATED FILE - do not modify!
 const bindings = @import("../../jsc.zig");
 pub const struct_JSC__CallFrame = bindings.CallFrame;
 pub const struct_JSC__StringPrototype = bindings.StringPrototype;

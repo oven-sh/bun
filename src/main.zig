@@ -15,6 +15,7 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
+pub const JSC = @import("javascript_core");
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const panicky = @import("panic_handler.zig");

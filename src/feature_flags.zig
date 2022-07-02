@@ -89,8 +89,10 @@ pub const use_libgit2 = true;
 
 pub const atomic_file_watcher = env.isLinux;
 
-pub const node_streams = env.isDebug or env.isTest;
+pub const node_streams = false;
 pub const simd = true;
 
 // This change didn't seem to make a meaningful difference in microbenchmarks
 pub const latin1_is_now_ascii = false;
+
+pub const http_buffer_pooling = false;

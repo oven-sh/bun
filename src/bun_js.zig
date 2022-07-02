@@ -116,7 +116,7 @@ pub const Run = struct {
         var promise = this.vm.loadEntryPoint(this.entry_path) catch return;
 
         if (promise.status(this.vm.global.vm()) == .Rejected) {
-            this.vm.defaultErrorHandler(promise.result(this.vm.global.vm()), null);
+            this.vm.runErrorHandler(promise.result(this.vm.global.vm()), null);
             Global.exit(1);
         }
 

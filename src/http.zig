@@ -1271,7 +1271,7 @@ pub const RequestContext = struct {
                 defer exception_list.deinit();
 
                 if (!js_value.isUndefinedOrNull()) {
-                    javascript_vm.?.defaultErrorHandler(
+                    javascript_vm.?.runErrorHandler(
                         js_value,
                         &exception_list,
                     );
@@ -1319,7 +1319,7 @@ pub const RequestContext = struct {
                 var did_log_messages = false;
                 if (!js_value.isUndefinedOrNull()) {
                     var start_count = this.log.msgs.items.len;
-                    javascript_vm.?.defaultErrorHandler(
+                    javascript_vm.?.runErrorHandler(
                         js_value,
                         &exception_list,
                     );

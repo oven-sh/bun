@@ -692,7 +692,7 @@ pub const TestScope = struct {
         const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), this.callback, null, 0, null);
 
         if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
-            vm.defaultErrorHandler(initial_value, null);
+            vm.runErrorHandler(initial_value, null);
             return .{ .fail = this.counter.actual };
         }
 
@@ -709,7 +709,7 @@ pub const TestScope = struct {
             vm.waitForPromise(this.promise.?);
             switch (this.promise.?.status(vm.global.vm())) {
                 .Rejected => {
-                    vm.defaultErrorHandler(this.promise.?.result(vm.global.vm()), null);
+                    vm.runErrorHandler(this.promise.?.result(vm.global.vm()), null);
                     return .{ .fail = this.counter.actual };
                 },
                 else => {
@@ -964,7 +964,7 @@ pub const DescribeScope = struct {
 
             if (!beforeEach.isEmpty()) {
                 Jest.runner.?.reportFailure(test_id, source.path.text, tests[i].label, 0, this);
-                ctx.bunVM().defaultErrorHandler(beforeEach, null);
+                ctx.bunVM().runErrorHandler(beforeEach, null);
                 i += 1;
                 continue;
             }
@@ -986,7 +986,7 @@ pub const DescribeScope = struct {
 
         const afterAll = this.execCallback(ctx, .afterAll);
         if (!afterAll.isEmpty()) {
-            ctx.bunVM().defaultErrorHandler(afterAll, null);
+            ctx.bunVM().runErrorHandler(afterAll, null);
         }
 
         this.tests.deinit(allocator);

@@ -2852,7 +2852,7 @@ pub const EnvironmentVariables = struct {
 };
 
 export fn Bun__reportError(_: *JSGlobalObject, err: JSC.JSValue) void {
-    JSC.VirtualMachine.vm.defaultErrorHandler(err, null);
+    JSC.VirtualMachine.vm.runErrorHandler(err, null);
 }
 
 comptime {

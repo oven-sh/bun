@@ -2246,6 +2246,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+        JSC.markBinding();
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis.ref(),
             this.asObjectRef(),

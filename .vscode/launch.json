@@ -4,269 +4,37 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "HTTP bench",
-      "program": "${workspaceFolder}/misctools/http_bench",
-      "args": ["https://twitter.com", "--count=100"],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "fetch debug",
-      "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://example.com", "--verbose"],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "fetch debug #2",
-      "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://twitter.com", "--verbose"],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "fetch debug #13w",
-      "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["http://127.0.0.1:8080/next.json", "--quiet", "--verbose"],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "fetch debug #12w",
-      "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://registry.npmjs.org/next", "--quiet", "--verbose"],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "hop",
-      "program": "hop",
-      "args": ["swc-linux-arm64-musl-12.0.3.tgz"],
-      "cwd": "/Users/jarred/Downloads/hop-test",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "hop extract",
-      "program": "hop",
-      "args": ["swc-linux-arm64-musl-12.0.3.hop"],
-      "cwd": "/Users/jarred/Downloads/hop-test",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "fetch debug #2",
-      "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["https://registry.npmjs.org/react", "--verbose"],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "fetch debug #3",
-      "program": "${workspaceFolder}/misctools/fetch",
-      "args": ["http://example.com/", "--verbose"],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun create debug",
+      "name": "bun test",
       "program": "bun-debug",
-      "args": ["create", "next", "foo", "--open", "--force"],
-      "cwd": "/tmp",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun dev debug",
-      "program": "bun-debug",
-      "args": ["dev"],
-      "cwd": "/tmp/foo",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run debug",
-      "program": "bun-debug",
-      "args": ["run", "/tmp/bar.js"],
-      // "args": ["--version"],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun a debug",
-      "program": "bun-debug",
-      "args": ["create", "https://github.com/ahfarmer/calculator", "--force"],
-      "cwd": "/tmp/",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun routes",
-      "program": "bun-debug",
-      "args": [],
-      "cwd": "${workspaceFolder}/test/apps/routing",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Eval Error",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
-      "args": [
-        "error.js",
-        "--resolve=dev",
-        "--outdir=outcss"
-        // "--origin=https://localhost:9000/"
-      ],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": ".bun",
-      "program": "bun-debug",
-      "args": [
-        "./examples/hello-next/node_modules.server.bun"
-        // "--origin=https://localhost:9000/"
-      ],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Discord",
-      "program": "bun-debug",
-      "args": [
-        "discord"
-        // "--origin=https://localhost:9000/"
-      ],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Eval",
-      "program": "${workspaceFolder}/build/debug/macos-x86_64/spjs",
-      "args": [
-        "./src/index.tsx"
-        // "--origin=https://localhost:9000/"
-      ],
-      "cwd": "${workspaceFolder}/examples/css-stress-test",
-      "console": "internalConsole"
-    },
-
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Dev Launch",
-      "program": "bun-debug",
-      "args": [
-        "./simple.css",
-        "--resolve=dev",
-        "--outdir=outcss",
-        "--origin=https://localhost:9000/"
-      ],
-      "cwd": "${workspaceFolder}/src/test/fixtures",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Linux Launch",
-      "program": "${workspaceFolder}/packages/debug-bun-cli-linux-x64/bin/bun-debug",
-      "args": ["--origin=http://jarred-desktop.local:3000/"],
-      "cwd": "${workspaceFolder}/examples/hello-next",
-      "console": "internalConsole"
-    },
-
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Release Serve",
-      "program": "${workspaceFolder}/build/macos-x86_64/bun",
-      // "args": ["--serve", "--origin=http://localhost:3000"],
-      "args": ["dev", "--origin=http://localhost:3000"],
-      "cwd": "${workspaceFolder}/examples/hello-next",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Demo Serve",
-      "program": "bun-debug",
-      // "args": ["--serve", "--origin=http://localhost:3000"],
-      "args": ["dev", "--origin=http://localhost:3000"],
-      "cwd": "/tmp/next-app",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Demo ",
-      "program": "bun-debug",
-      // "args": ["--serve", "--origin=http://localhost:3000"],
-      "args": ["/Users/jarred/Desktop/text-encoder-hello.js"],
-      "cwd": "${workspaceFolder}",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "wiptest",
-      "program": "bun-debug",
-      "args": ["wiptest", "transpiler"],
+      "args": ["wiptest", "jsc"],
       "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "debug test",
+      "name": "bun test (all)",
       "program": "bun-debug",
-      "args": ["build", "/tmp/foo.ts"],
-      "cwd": "/tmp",
+      "args": ["wiptest"],
+      "cwd": "${workspaceFolder}/test",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Dazzle serve",
+      "name": "bun run current file",
       "program": "bun-debug",
-      "args": ["dev"],
-      "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Dazzle bun",
-      "program": "bun-debug",
-      "args": ["bun"],
-      "cwd": "/Users/jarred/Build/lattice/apps/dazzle",
+      "args": ["${file}"],
+      "cwd": "${file}/../../",
+      "env": {
+        "FORCE_COLOR": "1"
+      },
       "console": "internalConsole"
     },
     {
@@ -274,49 +42,20 @@
       "request": "launch",
       "name": "bun run",
       "program": "bun-debug",
-      "args": ["cat.js", "./node_modules/@babel/standalone/babel.js"],
-      "cwd": "/Users/jarred/Build/foobar",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun run callback bench",
-      "program": "bun-debug",
-      "args": ["/Users/jarred/Code/bun/bench/snippets/callbacks-overhead.mjs"],
-      "cwd": "/Users/jarred/Build/foobar",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test",
-      "program": "bun-debug",
-      "args": ["wiptest"],
-      "cwd": "${workspaceFolder}",
+      "args": ["check.tsx", "-c"],
+      "cwd": "${env:HOME}/Build/react-ssr",
       "env": {
         "FORCE_COLOR": "1"
       },
       "console": "internalConsole"
     },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun test current",
-      "program": "bun-debug",
-      "args": ["wiptest", "websocket"],
-      "cwd": "${workspaceFolder}/test",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole"
-    },
+
     {
       "type": "lldb",
       "request": "launch",
       "name": "bun http example",
       "program": "bun-debug",
-      "args": ["run", "examples/bun/http.ts"],
+      "args": ["run", "examples/http.ts"],
       "cwd": "${workspaceFolder}",
       "env": {
         "FORCE_COLOR": "1"
@@ -347,471 +86,24 @@
       },
       "console": "internalConsole"
     },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun tes2t",
-      "program": "bun-debug",
-      "args": ["/Users/jarred/Code/bun-invite/server.ts"],
-      "cwd": "/Users/jarred/Code/bun-invite",
-      "env": {
-        "FORCE_COLOR": "1"
-      },
-      "console": "internalConsole"
-    },
 
     {
       "type": "lldb",
       "request": "launch",
-      "name": "unicode check",
-      "args": ["--disable-hmr"],
-      "program": "bun-debug",
-      "cwd": "/Users/jarred/Build/app994",
-      "console": "internalConsole"
-    },
-
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Demo .bun",
-      "program": "bun-debug",
-      "args": ["bun", "--use=bun-framework-next"],
-      "cwd": "${workspaceFolder}/examples/hello-next",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "PNPM .bun",
-      "program": "bun-debug",
-      "args": ["bun", "./pages/index.js"],
-      "cwd": "/Users/jarred/Build/pnpm-bun/packages/app",
-      "console": "internalConsole"
-    },
-
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "PNPM serve",
-      "program": "bun-debug",
-      "args": [],
-      "cwd": "/Users/jarred/Build/pnpm-bun/packages/app",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Mixed case resolve",
-      "program": "bun-debug",
-      "args": [
-        "build",
-        "./index.js",
-        "--origin=http://localhost:9000/",
-        // "--use=./bun-framework-next",
-        "--platform=browser"
-      ],
-      "cwd": "${workspaceFolder}/examples/lotta-modules/",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Build .bun lotta-modules",
-      "program": "bun-debug",
-      "args": ["bun", "./index.js", "--platform=browser"],
-      "cwd": "${workspaceFolder}/examples/lotta-modules/",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Dev CRA",
-      "program": "bun-debug",
-      "args": ["dev", "--platform=browser"],
-      "cwd": "${workspaceFolder}/examples/hello-create-react-app/",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Fragment",
-      "program": "bun-debug",
-      "args": [],
-      "cwd": "${workspaceFolder}/src/test/fixtures",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Context bun Bug",
-      "program": "bun-debug",
-      "args": ["bun", "./code.js"],
-      "cwd": "/Users/jarred/Build/context/www",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Context bun",
-      "program": "bun-debug",
-      "args": ["bun", "--use=next"],
-      "cwd": "/Users/jarred/Build/context/www",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun-hello",
-      "program": "bun-debug",
-      "args": [],
-      "cwd": "${workspaceFolder}/packages/bun-hello",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Integration Test Dev",
-      "program": "bun-debug",
-      "args": [],
-      "cwd": "${workspaceFolder}/test/snippets",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "bun.sh dev",
-      "program": "bun-debug",
-      "args": ["dev"],
-      "cwd": "${workspaceFolder}/../bun.sh",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Instal 1l",
-      "program": "bun-debug",
-      "args": ["install", "-g", "which"],
-      "cwd": "/tmp/new-app",
-      "env": {},
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Instal 32",
-      "program": "bun-debug",
-      "args": ["install"],
-      "cwd": "/tmp/foo",
-      "env": {},
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Install",
-      "program": "bun-debug",
-      "args": ["install", "--backend=clonefile", "--force"],
-      "cwd": "/Users/jarred/Build/octokit-test",
-      "env": {},
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Install #2",
-      "program": "bun-debug",
-      "args": ["add", "typescript"],
-      "cwd": "/tmp/wow-such-npm",
-      "env": {},
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Add",
-      "program": "bun-debug",
-      "args": ["add", "react"],
-      "cwd": "/tmp/wow-such-npm",
-      "env": {},
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Remove",
-      "program": "bun-debug",
-      "args": ["remove", "foo"],
-      "cwd": "/Users/jarred/Build/athena.yarn",
-      "env": {},
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Print Lockfile",
-      "program": "bun-debug",
-      "args": ["./bun.lockb"],
-      "cwd": "/tmp/wow-such-npm",
-      "env": {
-        "BUN_CONFIG_SKIP_SAVE_LOCKFILE": "1"
-      },
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Integration Test Dev (no hmr)",
-      "program": "bun-debug",
-      "args": ["--disable-hmr"],
-      "cwd": "${workspaceFolder}/test/snippets",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Fixtures Dev",
-      "program": "a",
-      "args": ["dev"],
-      "cwd": "${workspaceFolder}/src/test/fixtures",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-
-      "request": "launch",
-      "name": "Context Dev",
-      "program": "bun-debug",
-      "args": [],
-      "cwd": "/Users/jarred/Build/context/www",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Context Rel",
-      "program": "${workspaceFolder}/build/macos-x86_64/bun",
-      "args": [],
-      "cwd": "/Users/jarred/Build/context/www",
-      "console": "internalConsole"
-    },
-
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Debug Dev",
-      "program": "bun-debug",
-      "args": ["dev"],
-      "cwd": "${workspaceFolder}/examples/hello-next",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Type-only import",
-      "program": "bun-debug",
-      "args": [
-        "bun",
-        "./src/test/fixtures/type-only-import.ts",
-        "--external=react"
-      ],
+      "name": "HTTP bench",
+      "program": "${workspaceFolder}/misctools/http_bench",
+      "args": ["https://twitter.com", "--count=100"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     },
     {
       "type": "lldb",
       "request": "launch",
-      "name": "Dev lotta-modules",
-      "program": "bun-debug",
-      "args": ["dev", "./index.js", "--platform=browser"],
-      "cwd": "${workspaceFolder}/examples/lotta-modules/",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Demo Build .bun",
-      "program": "bun-debug",
-      "args": [
-        "bun",
-        // "./index.js",
-        "--origin=http://localhost:9000/",
-        "--use=./bun-framework-next",
-        "--platform=browser"
-      ],
-      "cwd": "${workspaceFolder}/examples/hello-next/",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "PNPM Resolve symlink",
-      "program": "bun-debug",
-      "args": ["--resolve=dev", "test-pnpm.js", "--platform=browser"],
-      "cwd": "${workspaceFolder}/examples/css-stress-test",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Demo Print .bun",
-      "program": "bun-debug",
-      "args": ["./node_modules.bun"],
-      "cwd": "${workspaceFolder}/examples/simple-react",
-      "console": "internalConsole"
-    },
-
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "DAev Launch",
-      "program": "${workspaceFolder}/build/macos-x86_64/bun",
-      "args": ["./simple.jsx", "--resolve=disable"],
-      "cwd": "${workspaceFolder}/src/test/fixtures",
-      "console": "internalConsole"
-    },
-
-    // {
-    //   "type": "lldb",
-    //   "request": "launch",
-    //   "name": "Dev Launch (other)",
-    //   "program": "bun-debug",
-    //   "args": ["./simple.jsx", "--resolve=disable"],
-    //   "cwd": "${workspaceFolder}/src/test/fixtures",
-    //   "console": "internalConsole"
-    // },
-    // {
-    //   "type": "lldb",
-    //   "request": "launch",
-    //   "name": "Dev Launch",
-    //   "program": "bun-debug",
-    //   "preLaunchTask": "build",
-    //   "args": [
-    //     "--resolve=disable",
-    //     "--cwd",
-    //     "/Users/jarredsumner/Code/bun/src/test/fixtures",
-    //     "escape-chars.js"
-    //   ],
-    //   "cwd": "${workspaceFolder}",
-    //   "console": "internalConsole"
-    // }
-    // {
-    //   "type": "lldb",
-    //   "request": "launch",
-    //   "name": "Dev Launch",
-    //   "program": "bun-debug",
-    //   "preLaunchTask": "build",
-    //   "args": [
-    //     "--resolve=dev",
-    //     "--cwd",
-    //     "/Users/jarredsumner/Builds/esbuild/bench/three/src/",
-    //     "./entry.js",
-    //     "-o",
-    //     "out"
-    //   ],
-    //   "cwd": "/Users/jarredsumner/Builds/esbuild/bench/three/src",
-    //   "console": "internalConsole"
-    // }
-    // {
-    //   "type": "lldb",
-    //   "request": "launch",
-    //   "name": "Dev Launch",
-    //   "program": "bun-debug",
-    //   "preLaunchTask": "build",
-    //   "args": [
-    //     "--resolve=dev",
-    //     "--cwd",
-    //     "/Users/jarredsumner/Builds/esbuild/bench/three/src/",
-    //     "./entry.js",
-    //     "-o",
-    //     "out"
-    //   ],
-    //   "cwd": "${workspaceFolder}",
-    //   "console": "internalConsole"
-    // }
-    // {
-    //   "type": "lldb",
-    //   "request": "launch",
-    //   "name": "Dev Launch",
-    //   "program": "bun-debug",
-    //   // "preLaunchTask": "build",
-    //   "args": [
-    //     "--resolve=dev",
-    //     "--cwd",
-    //     "./src/api/demo",
-    //     "pages/index.jsx",
-    //     "-o",
-    //     "out",
-    //     "--origin=https://hello.com/",
-    //     "--serve"
-    //   ],
-    //   "cwd": "${workspaceFolder}",
-    //   "console": "internalConsole"
-    // }
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Rome",
-      // "program": "bun-debug",
-      "program": "${workspaceFolder}/build/macos-x86_64/bun",
-      // "preLaunchTask": "build",
-      "args": [
-        "--resolve=dev",
-        // "--resolve=lazy",
-        "--cwd",
-        "${workspaceFolder}/bench/rome/src",
-        "entry",
-        "--platform=node",
-        // "@romejs/js-analysis/evaluators/modules/ImportCall.ts",
-        "--outdir=${workspaceFolder}/bench/rome/src/out",
-        // "@romejs/cli-diagnostics/banners/success.json",
-        "--origin=https://hello.com/"
-      ],
-      "cwd": "${workspaceFolder}/bench/rome/src",
-      "console": "internalConsole"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Rome Dev",
-      // "program": "bun-debug",
-      "program": "bun-debug",
-      // "preLaunchTask": "build",
-      "args": [
-        "--resolve=dev",
-        // "--resolve=lazy",
-        "--cwd",
-        "${workspaceFolder}/bench/rome/src",
-        "entry",
-        "--platform=node",
-        // "@romejs/js-analysis/evaluators/modules/ImportCall.ts",
-        "--outdir=${workspaceFolder}/bench/rome/src/out",
-        // "@romejs/cli-diagnostics/banners/success.json",
-        "--origin=https://hello.com/"
-      ],
-      "cwd": "${workspaceFolder}/bench/rome/src",
+      "name": "fetch debug",
+      "program": "${workspaceFolder}/misctools/fetch",
+      "args": ["https://example.com", "--verbose"],
+      "cwd": "${workspaceFolder}",
       "console": "internalConsole"
     }
-    // {
-    //   "type": "lldb",
-    //   "request": "launch",
-    //   "name": "Dev Launch",
-    //   "program": "${workspaceFolder}/build/bin/debug/bun",
-    //   "preLaunchTask": "build",
-    //   "args": [
-    //     "--resolve=dev",
-    //     "--cwd",
-    //     "/",
-    //     "/Users/jarredsumner/Code/bun/src/test/fixtures/img-bug.js",
-    //     "-o",
-    //     "out"
-    //   ],
-    //   "cwd": "${workspaceFolder}",
-    //   "console": "internalConsole",
-    //   "presentation": {
-    //     "hidden": false,
-    //     "group": "",
-    //     "order": 1
-    //   }
-    // }
   ]
 }

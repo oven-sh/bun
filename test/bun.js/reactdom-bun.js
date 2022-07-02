@@ -34,7 +34,7 @@ function t(a, b) {
   return !0;
 }
 function ba(a) {
-  a.drain();
+  a.flush(false);
 }
 var ca = new TextEncoder();
 function u(a) {

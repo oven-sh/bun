@@ -2155,7 +2155,7 @@ pub fn JSError(
 
     if (comptime std.meta.fields(@TypeOf(args)).len == 0) {
         var zig_str = JSC.ZigString.init(fmt);
-        if (comptime !strings.isAllASCII(fmt)) {
+        if (comptime !strings.isAllASCIISimple(fmt)) {
             zig_str.markUTF16();
         }
 
@@ -2167,7 +2167,6 @@ pub fn JSError(
         var buf = std.fmt.allocPrint(allocator, fmt, args) catch unreachable;
         var zig_str = JSC.ZigString.init(buf);
         zig_str.detectEncoding();
-        zig_str.mark();
         // it alwayas clones
         exception.* = zig_str.toErrorInstance(ctx).asObjectRef();
         allocator.free(buf);

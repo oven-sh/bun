@@ -95,4 +95,4 @@ pub const simd = true;
 // This change didn't seem to make a meaningful difference in microbenchmarks
 pub const latin1_is_now_ascii = false;
 
-pub const http_buffer_pooling = false;
+pub const http_buffer_pooling = true;

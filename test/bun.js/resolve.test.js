@@ -71,6 +71,42 @@ it("Bun.resolveSync", () => {
   );
 });
 
+it("self-referencing imports works", async () => {
+  await writePackageJSONExportsFixture();
+
+  const baz = await import.meta.resolve("package-json-exports/baz");
+  const namespace = await import.meta.resolve(
+    "package-json-exports/references-baz"
+  );
+  Loader.registry.delete(baz);
+  Loader.registry.delete(namespace);
+  var a = await import(baz);
+  var b = await import(namespace);
+  expect(a.bar).toBe(1);
+  expect(b.bar).toBe(1);
+
+  Loader.registry.delete(baz);
+  Loader.registry.delete(namespace);
+  var a = await import("package-json-exports/baz");
+  var b = await import("package-json-exports/references-baz");
+  expect(a.bar).toBe(1);
+  expect(b.bar).toBe(1);
+
+  Loader.registry.delete(baz);
+  Loader.registry.delete(namespace);
+  var a = import.meta.require("package-json-exports/baz");
+  var b = import.meta.require("package-json-exports/references-baz");
+  expect(a.bar).toBe(1);
+  expect(b.bar).toBe(1);
+
+  Loader.registry.delete(baz);
+  Loader.registry.delete(namespace);
+  var a = import.meta.require(baz);
+  var b = import.meta.require(namespace);
+  expect(a.bar).toBe(1);
+  expect(b.bar).toBe(1);
+});
+
 function writePackageJSONExportsFixture() {
   try {
     mkdirSync(
@@ -85,12 +121,20 @@ function writePackageJSONExportsFixture() {
     "export const bar = 1;"
   );
   writeFileSync(
+    join(
+      import.meta.dir,
+      "./node_modules/package-json-exports/foo/references-baz.js"
+    ),
+    "export {bar} from 'package-json-exports/baz';"
+  );
+  writeFileSync(
     join(import.meta.dir, "./node_modules/package-json-exports/package.json"),
     JSON.stringify(
       {
         name: "package-json-exports",
         exports: {
           "./baz": "./foo/bar.js",
+          "./references-baz": "./foo/references-baz.js",
         },
       },
       null,

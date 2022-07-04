@@ -1633,6 +1633,10 @@ pub const JSGlobalObject = extern struct {
 
     pub fn bunVM(this: *JSGlobalObject) *JSC.VirtualMachine {
         if (comptime bun.Environment.allow_assert) {
+            // if this fails
+            // you most likely need to run
+            //   make clean-jsc-bindings
+            //   make jsc-bindings-mac -j10
             std.debug.assert(this.bunVM_() == @ptrCast(*anyopaque, JSC.VirtualMachine.vm));
         }
         return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));

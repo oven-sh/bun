@@ -212,6 +212,8 @@ Server-side render React:
 // react-ssr.tsx
 import { renderToReadableStream } from "react-dom/server";
 
+const dt = new Intl.DateTimeFormat();
+
 export default {
   port: 3000,
   async fetch(request: Request) {
@@ -223,7 +225,7 @@ export default {
           </head>
           <body>
             <h1>Hello from React!</h1>
-            <p>The date is {new Intl.DateTimeFormat().format(new Date())}</p>
+            <p>The date is {dt.format(new Date())}</p>
           </body>
         </html>
       )
@@ -504,13 +506,16 @@ bun.js == bun’s JavaScriptCore integration that executes JavaScript. Similar t
 
 ### Limitations & intended usage
 
-bun's bundler & transpiler are great for building websites &amp; webapps, but note that bun doesn't have a minifier or support tree-shaking yet. For production, you probably still want to use a tool like esbuild to do that.
+Today, bun is mostly focused on bun.js: the JavaScript runtime.
 
-Today, bun is mostly focused on compatibility with existing frameworks & tooling.
+While you could use bun's bundler & transpiler separately to build for browsers or node, bun doesn't have a minifier or support tree-shaking yet. For production browser builds, you probably should use a tool like esbuild or swc.
 
-Ideally, most projects can use bun with their existing tooling while making few changes to their codebase. For frontend work, that means using bun in development, and continuing to use Webpack, esbuild, or another bundler in production. Using two bundlers might sound strange at first, but after all the production-only AST transforms, minification, and special development/production-only imported files...it’s not far from the status quo.
+Longer-term, bun intends to replace Node.js, Webpack, Babel, yarn, and PostCSS (in production).
 
-Longer-term, bun intends to replace Node.js, Webpack, Babel, and PostCSS (in production).
+### Upcoming breaking changes
+
+- Bun's CLI flags will change to better support bun as a JavaScript runtime. They were chosen when bun was just a frontend development tool.
+- Bun's bundling format will change to accomdate production browser bundles and on-demand production bundling
 
 ## Configuration
 

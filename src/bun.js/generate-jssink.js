@@ -136,12 +136,7 @@ function header() {
 
 
                 void* wrapped() const { return m_sinkPtr; }    
-                void detach() {
-                    m_sinkPtr = nullptr;
-                    m_onPull.clear();
-                    m_onClose.clear();
-                    m_weakReadableStream.clear();
-                }
+                void detach();
 
                 void start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSFunction *onPull, JSC::JSFunction *onClose);
                 DECLARE_VISIT_CHILDREN;
@@ -597,6 +592,25 @@ JSObject* JS${controllerName}::createPrototype(VM& vm, JSDOMGlobalObject& global
     return ${controllerPrototypeName}::create(vm, &globalObject, ${controllerPrototypeName}::createStructure(vm, &globalObject, globalObject.objectPrototype()));
 }
 
+void JS${controllerName}::detach() {
+    m_sinkPtr = nullptr;
+    m_onPull.clear();
+
+    auto readableStream = m_weakReadableStream.get();
+    auto onClose = m_onClose.get();
+    m_onClose.clear();
+
+    if (readableStream && onClose) {
+        JSC::JSGlobalObject *globalObject = this->globalObject();
+        auto callData = JSC::getCallData(onClose);
+        JSC::MarkedArgumentBuffer arguments;
+        arguments.append(readableStream);
+        arguments.append(jsUndefined());
+        JSC::call(globalObject, onClose, callData, JSC::jsUndefined(), arguments);
+    }
+    
+    m_weakReadableStream.clear();
+}
 `;
 
     templ += `
@@ -871,7 +885,9 @@ extern "C" void ${name}__onClose(JSC__JSValue controllerValue, JSC__JSValue reas
 
     auto callData = JSC::getCallData(function);
     JSC::MarkedArgumentBuffer arguments;
-    arguments.append(controller);
+    auto readableStream = controller->m_weakReadableStream.get();
+    arguments.append(readableStream ? readableStream : JSC::jsUndefined());
+
     arguments.append(JSC::JSValue::decode(reason));
     JSC::call(globalObject, function, callData, JSC::jsUndefined(), arguments);
 }

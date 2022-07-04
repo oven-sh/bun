@@ -1110,7 +1110,6 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             var this = @ptrCast(*ThisSink, @alignCast(std.meta.alignment(ThisSink), ptr));
 
             this.sink.finalize();
-            this.detach();
         }
 
         pub fn detach(this: *ThisSink) void {

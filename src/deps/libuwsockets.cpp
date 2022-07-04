@@ -1,6 +1,3 @@
-
-#include <mimalloc-new-delete.h>
-
 #include "_libusockets.h"
 
 #include <uws/src/App.h>

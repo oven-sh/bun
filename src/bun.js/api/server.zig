@@ -567,6 +567,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             _: *JSC.JSGlobalObject,
             arguments: []const JSC.JSValue,
         ) void {
+            ctx.pending_promises_for_abort -|= 1;
             if (ctx.aborted) {
                 ctx.finalizeForAbort();
                 return;
@@ -608,6 +609,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             _: *JSC.JSGlobalObject,
             arguments: []const JSC.JSValue,
         ) void {
+            ctx.pending_promises_for_abort -|= 1;
+
             if (ctx.aborted) {
                 ctx.finalizeForAbort();
                 return;
@@ -1234,7 +1237,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 }
 
                                 stream.value.ensureStillAlive();
-                                stream.value.unprotect();
+
                                 var response_stream = this.allocator.create(ResponseStream.JSSink) catch unreachable;
                                 response_stream.* = ResponseStream.JSSink{
                                     .sink = .{
@@ -1262,6 +1265,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                         @ptrCast(**anyopaque, &signal.ptr),
                                     },
                                 );
+
                                 assignment_result.ensureStillAlive();
                                 // assert that it was updated
                                 std.debug.assert(!signal.isDead());
@@ -1280,6 +1284,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     response_stream.detach();
                                     this.sink = null;
                                     response_stream.sink.destroy();
+                                    stream.value.unprotect();
                                     return this.handleReject(assignment_result);
                                 }
 
@@ -1303,6 +1308,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     }
 
                                     this.finalize();
+                                    stream.value.unprotect();
 
                                     return;
                                 }
@@ -1325,6 +1331,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                                     wrapper.detach();
                                                     req.sink = null;
                                                     wrapper.sink.destroy();
+                                                }
+
+                                                if (req.response_ptr) |resp| {
+                                                    if (resp.body.value == .Locked) {
+                                                        resp.body.value.Locked.readable.?.done();
+                                                        resp.body.value = .{ .Used = {} };
+                                                    }
                                                 }
 
                                                 if (req.aborted) {
@@ -1357,6 +1370,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                                     wrapper.detach();
                                                     req.sink = null;
                                                     wrapper.sink.destroy();
+                                                }
+
+                                                if (req.response_ptr) |resp| {
+                                                    if (resp.body.value == .Locked) {
+                                                        resp.body.value.Locked.readable.?.done();
+                                                        resp.body.value = .{ .Used = {} };
+                                                    }
                                                 }
 
                                                 streamLog("onReject({s})", .{wrote_anything});
@@ -1397,7 +1417,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                             .Pending => {
                                                 // TODO: should this timeout?
                                                 this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);
-
+                                                this.response_ptr.?.body.value = .{
+                                                    .Locked = .{
+                                                        .readable = stream,
+                                                        .global = this.server.globalThis,
+                                                    },
+                                                };
                                                 assignment_result.then(
                                                     this.server.globalThis,
                                                     RequestContext,
@@ -1426,6 +1451,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     this.finalizeForAbort();
 
                                     response_stream.sink.finalize();
+                                    stream.value.unprotect();
                                     return;
                                 }
 
@@ -1440,6 +1466,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 this.resp.onAborted(*ResponseStream, ResponseStream.onAborted, &response_stream.sink);
                                 streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
                                 this.finalize();
+                                stream.value.unprotect();
                                 return;
                             },
                         }
@@ -2133,7 +2160,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             if (wait_for_promise) {
                 ctx.setAbortHandler();
-                request_value.protect();
+                ctx.pending_promises_for_abort += 1;
 
                 RequestContext.PromiseHandler.then(ctx, response_value, this.globalThis);
                 return;

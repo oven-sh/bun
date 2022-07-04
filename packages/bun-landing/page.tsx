@@ -402,7 +402,7 @@ curl https://bun.sh/install | bash
 
           <p>
             {" "}
-            Bun's HTTP server is built on the{" "}
+            Bun's HTTP server is built on web standards like
             <a
               className="Identifier"
               href="https://developer.mozilla.org/en-US/docs/Web/API/Request"
@@ -416,7 +416,6 @@ curl https://bun.sh/install | bash
             >
               Response
             </a>
-            web standards
           </p>
 
           <CodeBlock lang="js">{`

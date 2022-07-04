@@ -44,7 +44,6 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [Using bun with Create React App](#using-bun-with-create-react-app)
 - [Using bun with TypeScript](#using-bun-with-typescript)
   - [Transpiling TypeScript with Bun](#transpiling-typescript-with-bun)
-- [Using Tailwind with bun](#using-tailwind-with-bun)
 - [Not implemented yet](#not-implemented-yet)
   - [Limitations & intended usage](#limitations--intended-usage)
 - [Benchmarks](#benchmarks)
@@ -457,18 +456,6 @@ TypeScript just works. There’s nothing to configure and nothing extra to insta
 
 bun also reads `tsconfig.json`, including `baseUrl` and `paths`.
 
-## Using Tailwind with bun
-
-[Tailwind](https://tailwindcss.com/) is a popular CSS utility framework. Currently, the easiest way to use Tailwind with bun is through Tailwind’s CLI. That means running both `bun` and `tailwind`, and importing the file `tailwind`’s CLI outputs.
-
-Tailwind’s docs talk more about [Tailwind’s CLI usage](https://tailwindcss.com/docs/installation#watching-for-changes), but the gist is you’ll want to run this:
-
-```bash
-npx tailwindcss -i ./src/tailwind.css -o ./dist/tailwind.css --watch
-```
-
-From there, make sure to import the `dist/tailwind.css` file (or what you chose as the output).
-
 ## Not implemented yet
 
 bun is a project with incredibly large scope, and it’s early days.
@@ -480,8 +467,8 @@ You can see [Bun's Roadmap](https://github.com/Jarred-Sumner/bun/issues/159), bu
 | Web Streams with Fetch API                                                            | Bun.js         |
 | Web Streams with HTMLRewriter                                                         | Bun.js         |
 | WebSocket Server                                                                      | Bun.js         |
-| [Hash components for Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)    | JSX Transpiler |
-| Source Maps                                                                           | JS Bundler     |
+| Package hoisting that matches npm behavior                                            | bun install    |
+| Source Maps (unbundled is supported)                                                  | JS Bundler     |
 | Source Maps                                                                           | CSS            |
 | JavaScript Minifier                                                                   | JS Transpiler  |
 | CSS Minifier                                                                          | CSS            |
@@ -493,6 +480,7 @@ You can see [Bun's Roadmap](https://github.com/Jarred-Sumner/bun/issues/159), bu
 | `@jsxPragma` comments                                                                 | JS Transpiler  |
 | Sharing `.bun` files                                                                  | bun            |
 | Dates & timestamps                                                                    | TOML parser    |
+| [Hash components for Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)    | JSX Transpiler |
 
 <small>
 JS Transpiler == JavaScript Transpiler
@@ -700,6 +688,9 @@ To support hot CSS reloading, bun inserts `@supports` annotations into CSS that 
 By default, bun’s runtime code automatically listens to `onimportcss` and will insert the `event.detail` into a `<link rel="stylesheet" href={${event.detail}}>` if there is no existing `link` tag with that stylesheet. That’s how bun’s equivalent of `style-loader` works.
 
 ### Frameworks
+
+> **Warning**
+> This will soon have breaking changes. It was designed when Bun was mostly a dev server and not a JavaScript runtime.
 
 Frameworks preconfigure bun to enable developers to use bun with their existing tooling.
 

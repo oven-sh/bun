@@ -7,9 +7,9 @@ const StringTypes = @import("./string_types.zig");
 
 pub const build_id = std.fmt.parseInt(u64, std.mem.trim(u8, @embedFile("../build-id"), "\n \r\t"), 10) catch unreachable;
 pub const package_json_version = if (Environment.isDebug)
-    std.fmt.comptimePrint("0.0.{d}_debug", .{build_id})
+    std.fmt.comptimePrint("0.1.{d}_debug", .{build_id})
 else
-    std.fmt.comptimePrint("0.0.{d}", .{build_id});
+    std.fmt.comptimePrint("0.1.{d}", .{build_id});
 pub const os_name = if (Environment.isWindows)
     "win32"
 else if (Environment.isMac)
@@ -35,8 +35,8 @@ pub inline fn getStartTime() i128 {
 
 pub const version: @import("./install/semver.zig").Version = .{
     .major = 0,
-    .minor = 0,
-    .patch = @truncate(u32, build_id),
+    .minor = 1,
+    .patch = build_id,
 };
 
 pub fn setThreadName(name: StringTypes.stringZ) void {

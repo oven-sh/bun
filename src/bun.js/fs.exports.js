@@ -119,6 +119,39 @@ function callbackify(fsFunction, args) {
   });
 }
 
+// note: this is not quite the same as how node does it
+// in some cases, node swaps around arguments or makes small tweaks to the return type
+// this is just better than nothing.
+function promisify(fsFunction) {
+  // TODO: remove variadic arguments
+  // we can use new Function() here instead
+  // based on fsFucntion.length
+  var obj = {
+    [fsFunction.name]: function (resolve, reject, args) {
+      var result;
+      try {
+        result = fsFunction.apply(fs, args);
+        args = undefined;
+      } catch (err) {
+        args = undefined;
+        reject(err);
+        return;
+      }
+
+      resolve(result);
+    },
+  };
+
+  var func = obj[fsFunction.name];
+
+  // TODO: consider @createPromiseCapabiilty intrinsic
+  return (...args) => {
+    return new Promise((resolve, reject) => {
+      func(resolve, reject, args);
+    });
+  };
+}
+
 export var accessSync = fs.accessSync.bind(fs);
 export var appendFileSync = fs.appendFileSync.bind(fs);
 export var closeSync = fs.closeSync.bind(fs);
@@ -156,6 +189,44 @@ export var lutimesSync = fs.lutimesSync.bind(fs);
 
 export var createReadStream = fs.createReadStream.bind(fs);
 export var createWriteStream = fs.createWriteStream.bind(fs);
+
+export var promises = {
+  access: promisify(fs.accessSync),
+  appendFile: promisify(fs.appendFileSync),
+  close: promisify(fs.closeSync),
+  copyFile: promisify(fs.copyFileSync),
+  exists: promisify(fs.existsSync),
+  chown: promisify(fs.chownSync),
+  chmod: promisify(fs.chmodSync),
+  fchmod: promisify(fs.fchmodSync),
+  fchown: promisify(fs.fchownSync),
+  fstat: promisify(fs.fstatSync),
+  fsync: promisify(fs.fsyncSync),
+  ftruncate: promisify(fs.ftruncateSync),
+  futimes: promisify(fs.futimesSync),
+  lchmod: promisify(fs.lchmodSync),
+  lchown: promisify(fs.lchownSync),
+  link: promisify(fs.linkSync),
+  lstat: promisify(fs.lstatSync),
+  mkdir: promisify(fs.mkdirSync),
+  mkdtemp: promisify(fs.mkdtempSync),
+  open: promisify(fs.openSync),
+  read: promisify(fs.readSync),
+  write: promisify(fs.writeSync),
+  readdir: promisify(fs.readdirSync),
+  writeFile: promisify(fs.writeFileSync),
+  readlink: promisify(fs.readlinkSync),
+  realpath: promisify(fs.realpathSync),
+  rename: promisify(fs.renameSync),
+  stat: promisify(fs.statSync),
+  symlink: promisify(fs.symlinkSync),
+  truncate: promisify(fs.truncateSync),
+  unlink: promisify(fs.unlinkSync),
+  utimes: promisify(fs.utimesSync),
+  lutimes: promisify(fs.lutimesSync),
+};
+
+promises.readFile = promises.readfile = promisify(fs.readFileSync);
 
 // lol
 realpath.native = realpath;
@@ -233,4 +304,5 @@ export default {
   createReadStream,
   createWriteStream,
   constants,
+  promises,
 };

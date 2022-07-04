@@ -89,16 +89,21 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 template<typename PromiseType, bool isInternal>
 static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), void (*ArgFn4)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
 {
-
+    gcProtect(promise);
+    auto globalThis = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), [ctx, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
+        globalObject->vm(), globalObject, 1, String(), [ctx, promise, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
             ArgFn3(ctx, globalObject, callFrame);
+            gcUnprotect(promise);
+
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
     JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
         globalObject->vm(), globalObject, 1, String(),
-        [ctx, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        [ctx, promise, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
             ArgFn4(ctx, globalObject, callFrame);
+            gcUnprotect(promise);
+
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
 

@@ -92,39 +92,3 @@ pub const Crypto = struct {
         return JSC.ZigString.init(str).toValueGC(ctx.ptr()).asObjectRef();
     }
 };
-
-pub const Performance = struct {
-    pub const Class = JSC.NewClass(
-        void,
-        .{
-            .name = "performance",
-            .read_only = true,
-        },
-        .{
-            .now = .{
-                .rfn = Performance.now,
-            },
-        },
-        .{},
-    );
-
-    pub fn now(
-        _: void,
-        ctx: JSC.C.JSContextRef,
-        _: JSC.C.JSObjectRef,
-        _: JSC.C.JSObjectRef,
-        _: []const JSC.C.JSValueRef,
-        _: JSC.C.ExceptionRef,
-    ) JSC.C.JSValueRef {
-        return JSC.C.JSValueMakeNumber(
-            ctx,
-            @floatCast(
-                f64,
-                @intToFloat(
-                    f128,
-                    JSC.VirtualMachine.vm.origin_timer.read(),
-                ) / std.time.ns_per_ms,
-            ),
-        );
-    }
-};

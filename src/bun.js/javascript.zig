@@ -103,7 +103,6 @@ pub const GlobalClasses = [_]type{
 
     Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
-    WebCore.Performance.Class,
 
     WebCore.Crypto.Class,
     WebCore.Crypto.Prototype,
@@ -188,7 +187,8 @@ pub const SavedSourceMap = struct {
     pub const Value = TaggedPointerUnion(.{ MappingList, SavedMappings });
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
 
-    map: HashTable,
+    /// This is a pointer to the map located on the VirtualMachine struct
+    map: *HashTable,
 
     pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
         try this.putMappings(source, chunk.buffer);
@@ -304,6 +304,13 @@ pub const VirtualMachine = struct {
     has_loaded_node_modules: bool = false,
     timer: Bun.Timer = Bun.Timer{},
     uws_event_loop: ?*uws.Loop = null,
+
+    /// Do not access this field directly
+    /// It exists in the VirtualMachine struct so that
+    /// we don't accidentally make a stack copy of it
+    /// only use it through
+    /// source_mappings
+    saved_source_map_table: SavedSourceMap.HashTable = undefined,
 
     arena: *Arena = undefined,
     has_loaded: bool = false,
@@ -512,13 +519,15 @@ pub const VirtualMachine = struct {
             .flush_list = std.ArrayList(string).init(allocator),
             .blobs = if (_args.serve orelse false) try Blob.Group.init(allocator) else null,
             .origin = bundler.options.origin,
-            .source_mappings = SavedSourceMap{ .map = SavedSourceMap.HashTable.init(allocator) },
+            .saved_source_map_table = SavedSourceMap.HashTable.init(allocator),
+            .source_mappings = undefined,
             .macros = MacroMap.init(allocator),
             .macro_entry_points = @TypeOf(VirtualMachine.vm.macro_entry_points).init(allocator),
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .ref_strings = JSC.RefString.Map.init(allocator),
             .file_blobs = JSC.WebCore.Blob.Store.Map.init(allocator),
         };
+        VirtualMachine.vm.source_mappings = .{ .map = &VirtualMachine.vm.saved_source_map_table };
         VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1065,18 +1074,18 @@ pub const VirtualMachine = struct {
                 jsc_vm.bundler.linker.import_counter = 0;
 
                 var printer = source_code_printer.?.*;
-                var written: usize = undefined;
+                defer source_code_printer.?.* = printer;
                 printer.ctx.reset();
-                {
-                    defer source_code_printer.?.* = printer;
-                    written = try jsc_vm.bundler.printWithSourceMap(
-                        parse_result,
-                        @TypeOf(&printer),
-                        &printer,
-                        .esm_ascii,
-                        SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
-                    );
-                }
+
+                var written: usize = 0;
+
+                written = try jsc_vm.bundler.printWithSourceMap(
+                    parse_result,
+                    @TypeOf(&printer),
+                    &printer,
+                    .esm_ascii,
+                    SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
+                );
 
                 if (written == 0) {
                     return error.PrintingErrorWriteFailed;
@@ -1088,10 +1097,11 @@ pub const VirtualMachine = struct {
 
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = ZigString.init(jsc_vm.allocator.dupe(u8, printer.ctx.written) catch unreachable),
+                    .source_code = ZigString.init(printer.ctx.writtenWithoutTrailingZero()),
                     .specifier = ZigString.init(specifier),
                     .source_url = ZigString.init(path.text),
-                    .hash = 0,
+                    // TODO: change hash to a bitfield
+                    .hash = 1,
                 };
             },
             // provideFetch() should be called
@@ -1261,7 +1271,8 @@ pub const VirtualMachine = struct {
         globalObject: *JSGlobalObject,
         microtask: *Microtask,
     ) void {
-        std.debug.assert(VirtualMachine.vm_loaded);
+        if (comptime Environment.allow_assert)
+            std.debug.assert(VirtualMachine.vm_loaded);
 
         var vm_ = globalObject.bunVM();
         if (vm_.global == globalObject) {

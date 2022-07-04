@@ -36,13 +36,23 @@ Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource)
 
     JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module;
 
+    // JSC owns the memory
+    if (resolvedSource.hash == 1) {
+        Ref<WTF::StringImpl> stringImpl_ = WTF::StringImpl::create(resolvedSource.source_code.ptr, resolvedSource.source_code.len);
+        return adoptRef(*new SourceProvider(
+            resolvedSource, WTFMove(stringImpl_),
+            JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
+            toStringNotConst(resolvedSource.source_url), TextPosition(),
+            sourceType));
+    }
+
     if (allocator) {
         Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::create(
             resolvedSource.source_code.ptr, resolvedSource.source_code.len,
             allocator,
             RefString__free);
         return adoptRef(*new SourceProvider(
-            resolvedSource, stringImpl_,
+            resolvedSource, WTFMove(stringImpl_),
             JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
             toStringNotConst(resolvedSource.source_url), TextPosition(),
             sourceType));
@@ -50,7 +60,7 @@ Ref<SourceProvider> SourceProvider::create(ResolvedSource resolvedSource)
         Ref<WTF::ExternalStringImpl> stringImpl_ = WTF::ExternalStringImpl::createStatic(
             resolvedSource.source_code.ptr, resolvedSource.source_code.len);
         return adoptRef(*new SourceProvider(
-            resolvedSource, stringImpl_,
+            resolvedSource, WTFMove(stringImpl_),
             JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(toString(resolvedSource.source_url))),
             toStringNotConst(resolvedSource.source_url), TextPosition(),
             sourceType));

@@ -4,9 +4,18 @@
   --orange: #f89b4b;
   --orange-light: #d4d3d2;
 
-  --monospace-font: "Fira Code", "Hack", "Source Code Pro", monospace;
+  --monospace-font: "Fira Code", "Hack", "Source Code Pro", "SF Mono",
+    "Inconsolata", monospace;
 
   --dark-border: rgba(200, 200, 25, 0.2);
+  --max-width: 1152px;
+
+  --system-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+
+  --horizontal-padding: 3rem;
+  --vertical-padding: 4rem;
+  --line-height: 1.4;
 }
 * {
   box-sizing: border-box;
@@ -16,7 +25,7 @@ body,
 :root {
   margin: 0 auto;
   padding: 0;
-  font-family: Helvetica, Arial, sans-serif;
+  font-family: var(--system-font);
 }
 
 body {
@@ -53,20 +62,24 @@ main {
   width: auto;
 
   margin: 0 auto;
-  max-width: 1152px;
+  max-width: var(--max-width);
   display: grid;
   grid-template-columns: auto auto;
 }
 
-#cards-wrap {
+main,
+header,
+#explain-section {
+  margin: 0 auto;
+  max-width: var(--max-width);
+  padding: 0 var(--horizontal-padding);
 }
+
 #cards-wrap,
 #usecases,
 main,
 header {
-  padding: 4rem 3rem;
-  margin: 0 auto;
-  max-width: 1152px;
+  padding: var(--vertical-padding) var(--horizontal-padding);
 }
 
 #pitch-content {
@@ -117,7 +130,7 @@ header {
   display: grid;
   grid-template-columns: auto max-content min-content;
   background-color: var(--black);
-  padding: 1rem 3rem;
+  padding: 1.5rem 3rem;
   align-items: center;
   color: white;
 }
@@ -135,7 +148,7 @@ header {
   font-weight: 500;
 }
 
-#install {
+.InstallBox {
   margin-top: 2rem;
   background: #15140e;
   padding: 24px 24px;
@@ -494,4 +507,208 @@ header {
 
 #cards {
   display: grid;
+}
+
+#explain-section {
+}
+#explain ul {
+  font-size: 1.2rem;
+}
+
+#explain li {
+  margin-bottom: 1rem;
+  line-height: var(--line-height);
+}
+
+.Tag {
+  --background: rgba(31, 31, 132, 0.15);
+  background-color: var(--background);
+  border-radius: 8px;
+  padding: 3px 8px;
+  color: white;
+  text-decoration: none !important;
+  display: inline-block;
+  font-family: var(--monospace-font) !important;
+}
+
+.Tag:visited {
+  color: white;
+}
+
+.mono {
+  font-family: var(--monospace-font);
+}
+
+.Tag--Command {
+  --background: #111;
+  font-weight: medium;
+  color: rgb(163, 255, 133);
+}
+
+.Tag--Command:before {
+  content: "❯";
+  color: rgba(255, 255, 255, 0.35);
+  margin-top: auto;
+  margin-bottom: auto;
+  margin-right: 1ch;
+  margin-left: 0.5ch;
+  display: inline-block;
+  transform: translateY(-1px);
+}
+
+.Tag--WebAPI {
+  --background: #29b6f6;
+  color: white;
+  box-shadow: inset -1px -1px 3px rgb(231, 187, 73);
+}
+
+.Tag--NodeJS {
+  --background: rgb(130, 172, 108);
+}
+
+.Tag--TypeScript {
+  --background: rgb(69, 119, 192);
+}
+
+.Tag--React {
+  color: rgb(130, 216, 247);
+  --background: #333;
+}
+
+.Tag--React:before {
+  color: rgba(130, 216, 247, 0.5);
+  content: "<";
+}
+
+.Tag--React:after {
+  color: rgba(130, 216, 247, 0.5);
+  content: ">";
+}
+
+.Tag--Bun {
+  --background: #ff17ff;
+}
+
+ul,
+li {
+}
+
+.mono {
+  font-family: var(--monospace-font);
+  border-radius: 6px;
+  color: rgb(0, 103, 19);
+}
+
+@media (min-width: 931px) {
+  .InstallBox--mobile {
+    display: none;
+  }
+}
+
+@media (max-width: 930px) {
+  header {
+    padding: 24px 16px;
+  }
+  .InstallBox--desktop {
+    display: none;
+  }
+
+  #logo {
+    max-width: 48px;
+  }
+
+  :root {
+    --max-width: 100%;
+    --horizontal-padding: 16px;
+    --vertical-padding: 2rem;
+    --line-height: 1.6;
+  }
+
+  main {
+    grid-template-columns: auto;
+    grid-template-rows: auto auto auto;
+  }
+
+  #explain li {
+    line-height: var(--line-height);
+    margin-bottom: 1.5rem;
+  }
+
+  ul {
+    padding: 0;
+    list-style: none;
+  }
+
+  .Tabs {
+    margin-left: 0;
+  }
+
+  .Graphs,
+  .BarGraph,
+  .BarGraphList {
+    max-width: calc(100vw - (var(--horizontal-padding) * 2));
+  }
+
+  .BarGraph {
+    padding: 24px 0;
+  }
+
+  #pitch-content {
+    max-width: auto;
+  }
+
+  #pitch main {
+    gap: 1rem;
+  }
+
+  #install {
+    margin-top: 0;
+  }
+
+  .tagline {
+    font-size: 32pt;
+  }
+
+  #logo-text,
+  #HeaderInstallButton {
+    display: none;
+  }
+}
+
+.InstallBox--mobile {
+  padding: calc(var(--vertical-padding) * 1.5) var(--horizontal-padding);
+  margin: calc(-1 * var(--vertical-padding))
+    calc(-1 * var(--horizontal-padding));
+  box-sizing: content-box;
+  border-radius: 0;
+  max-width: calc(100vw - (var(--horizontal-padding) * 2));
+}
+
+@media (max-width: 599px) {
+  #code-box-copy {
+    display: none;
+  }
+
+  #code-box {
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 360px) {
+  .tagline {
+    font-size: 22pt;
+  }
+}
+
+#explain p {
+  line-height: var(--line-height);
+  font-size: 1.2rem;
+}
+
+#explain p a {
+  text-decoration: underline;
+}
+
+.Zig {
+  transform: translateY(15%);
 }

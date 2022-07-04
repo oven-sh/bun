@@ -30,17 +30,17 @@
     <div id="pitch">
       <main>
         <div id="pitch-content">
-          <h1 class="tagline">Build &amp; Run JavaScript 100x faster</h1>
+          <h1 class="tagline">Bun is a fast all-in-one JavaScript runtime</h1>
           <p class="subtitle">
             Bundle, transpile, install and run JavaScript & TypeScript projects
             &mdash; all in Bun. Bun is a new JavaScript runtime with a native
-            bundler, transpiler, and npm client built-in.
+            bundler, transpiler, task runner and npm client built-in.
           </p>
 
           <div id="install">
             <div id="install-label">
               <div class="unselectable" id="install-label-heading">
-                Install Bun CLI
+                Install Bun CLI v0.1.0 (beta)
               </div>
               <div class="unselectable" id="install-label-subtitle">
                 macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux
@@ -61,9 +61,9 @@
         </div>
         <div class="Graphs">
           <div class="Tabs">
-            <div class="Tab Tab--active">bun.js</div>
-            <div class="Tab">bun run</div>
-            <div class="Tab">bun install</div>
+            <div class="Tab Tab--active">Bun.serve</div>
+            <div class="Tab">bun:sqlite</div>
+            <div class="Tab">bun:ffi</div>
           </div>
           <div class="ActiveTab">
             <div class="BarGraph BarGraph--horizontal BarGraph--dark">
@@ -139,7 +139,7 @@
           </div>
         </div>
 
-        <div id="frameworks">
+        <!-- <div id="frameworks">
           <div class="FrameworksGroup">
             <div class="DemphasizedLabel">Supported frameworks</div>
             <div class="FrameworksList">
@@ -169,145 +169,12 @@
               </a>
             </div>
           </div>
-        </div>
+        </div> -->
       </main>
     </div>
     <section id="explain-section">
       <div id="explain">
         <h1>Getting started</h1>
-
-        <p>A simple HTTP</p>
-      </div>
-    </section>
-
-    <section id="usecases-section">
-      <div id="usecases">
-        <a href="/" id="logo-link">
-          <img src="/public/logo@2x.png" alt="Bun" id="logo" />
-          <img src="/public/Bun@2x.png" alt="Bun" id="logo-text" />
-        </a>
-
-        <h1>Usecases</h1>
-        <div class="UsecaseGroup">
-          <div class="UsecaseGroupTitle">bun run</div>
-          <div className="UseCase"></div>
-        </div>
-
-        <div class="UsecaseGroup">
-          <div class="UsecaseGroupTitle">bun.js</div>
-        </div>
-
-        <div class="UsecaseGroup">
-          <div class="UsecaseGroupTitle">bun dev</div>
-        </div>
-
-        <div class="UsecaseGroup">
-          <div class="UsecaseGroupTitle">bun install</div>
-        </div>
-
-        <div class="UsecaseGroup">
-          <div class="UsecaseGroupTitle">bun build</div>
-        </div>
-      </div>
-    </section>
-    <section id="cards-wrap">
-      <div id="cards">
-        <div class="Card">
-          <div class="Badge CardBadge">Bun.Transpiler</div>
-          <div class="CardHeader"></div>
-          <div class="CardContent">
-            <div class="BarGraph BarGraph--vertical BarGraph--light">
-              <div class="BarGraph-heading">
-                Transpiling JSX via JavaScript API (MB/s)
-              </div>
-              <div class="BarGraph-subheading">This runs</div>
-
-              <div style="--count: 4" class="BarGraphList">
-                <div
-                  class="BarGraphItem BarGraphItem--bun"
-                  style="--amount: 41829"
-                >
-                  <div
-                    style="--amount: 41829"
-                    title="41829 requests per second"
-                    class="BarGraphBar"
-                  >
-                    <div style="--amount: 41829" class="BarGraphBar-label">
-                      41,829
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  style="--amount: 2584"
-                  class="BarGraphItem BarGraphItem--esbuild"
-                >
-                  <div
-                    title="1,843 requests per second"
-                    style="--amount: 2584"
-                    class="BarGraphBar"
-                  >
-                    <div style="--amount: 2584" class="BarGraphBar-label">
-                      2,584
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  class="BarGraphItem BarGraphItem--swc"
-                  style="--amount: 365"
-                >
-                  <div
-                    style="--amount: 365"
-                    title="365 requests per second"
-                    class="BarGraphBar"
-                  >
-                    <div style="--amount: 365" class="BarGraphBar-label">
-                      365
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  class="BarGraphItem BarGraphItem--babel"
-                  style="--amount: 365"
-                >
-                  <div
-                    style="--amount: 365"
-                    title="365 requests per second"
-                    class="BarGraphBar"
-                  >
-                    <div style="--amount: 365" class="BarGraphBar-label">
-                      365
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div style="--count: 4" class="BarGraphKey">
-                <div class="BarGraphKeyItem">
-                  <div class="BarGraphKeyItem-label">bun.js</div>
-                  <div class="BarGraphKeyItem-value">v0.0.78</div>
-                </div>
-
-                <div class="BarGraphKeyItem">
-                  <div class="BarGraphKeyItem-label">babel</div>
-                  <div class="BarGraphKeyItem-value">v17.7.1</div>
-                </div>
-
-                <div class="BarGraphKeyItem">
-                  <div class="BarGraphKeyItem-label">swc</div>
-                  <div class="BarGraphKeyItem-value">v1.20.5</div>
-                </div>
-
-                <div class="BarGraphKeyItem">
-                  <div class="BarGraphKeyItem-label">esbuild</div>
-                  <div class="BarGraphKeyItem-value">v1.20.5</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </section>
   </body>

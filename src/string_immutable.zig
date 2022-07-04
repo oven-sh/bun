@@ -2624,19 +2624,24 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
             const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
                 @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\r'))) |
                 @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\n')));
-            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-            const first = @ctz(AsciiVectorInt, bitmask);
-            if (first < ascii_vector_size) {
+
+            if (@reduce(.Max, cmp) > 0) {
+                const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+                const first = @ctz(AsciiVectorInt, bitmask);
+
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len) + offset;
             }
 
             remaining = remaining[ascii_vector_size..];
         }
+
+        assert(remaining.len < ascii_vector_size);
     }
 
-    for (remaining) |char, i| {
+    for (remaining) |*char_| {
+        const char = char_.*;
         if (char > 127 or char < 0x20 or char == '\n' or char == '\r') {
-            return @truncate(u32, i + (slice.len - remaining.len)) + offset;
+            return @truncate(u32, (@ptrToInt(char_) - @ptrToInt(slice.ptr))) + offset;
         }
     }
 
@@ -2658,19 +2663,22 @@ pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
             const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
                 @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '\\'))) |
                 @bitCast(AsciiVectorU1, vec == @splat(ascii_vector_size, @as(u8, '"')));
-            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-            const first = @ctz(AsciiVectorInt, bitmask);
-            if (first < ascii_vector_size) {
-                return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
+
+            if (@reduce(.Max, cmp) > 0) {
+                const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+                const first = @ctz(AsciiVectorInt, bitmask);
+
+                return @as(u32, first) + @truncate(u32, @ptrToInt(remaining.ptr) - @ptrToInt(slice.ptr));
             }
 
             remaining = remaining[ascii_vector_size..];
         }
     }
 
-    for (remaining) |char, i| {
+    for (remaining) |*char_| {
+        const char = char_.*;
         if (char > 127 or char < 0x20 or char == '\\' or char == '"') {
-            return @truncate(u32, i + (slice.len - remaining.len));
+            return @truncate(u32, @ptrToInt(char_) - @ptrToInt(slice.ptr));
         }
     }
 
@@ -2762,10 +2770,10 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
     if (comptime Environment.isAarch64 or Environment.isX64) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp = vec != @splat(ascii_vector_size, char);
-            const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
-            const first = @ctz(AsciiVectorInt, bitmask);
-            if (first < ascii_vector_size) {
+            const cmp = @splat(ascii_vector_size, char) != vec;
+            if (@reduce(.Min, @bitCast(AsciiVectorU1, cmp)) > 0) {
+                const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
+                const first = @ctz(AsciiVectorInt, bitmask);
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
             }
 
@@ -2773,11 +2781,10 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
         }
     }
 
-    while (remaining.len > 0) {
-        if (remaining[0] != char) {
-            return @truncate(u32, (slice.len - remaining.len));
+    for (remaining) |*current| {
+        if (current.* != char) {
+            return @truncate(u32, @ptrToInt(current) - @ptrToInt(slice.ptr));
         }
-        remaining = remaining[1..];
     }
 
     return null;

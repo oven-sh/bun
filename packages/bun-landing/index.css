@@ -712,3 +712,21 @@ li {
 .Zig {
   transform: translateY(15%);
 }
+
+.CodeBlock .shiki {
+  padding: 1rem;
+  border-radius: 8px;
+  font-family: var(--monospace-font);
+  font-size: 1rem;
+}
+
+.Identifier {
+  font-family: var(--monospace-font);
+  font-size: 1rem;
+  color: #50fa7b !important;
+  background-color: #282a36;
+  padding: 0.25rem;
+  border-radius: 8px;
+  text-decoration: none !important;
+  margin-right: 0.2rem;
+}

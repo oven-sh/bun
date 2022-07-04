@@ -1,3 +1,18 @@
+import * as shiki from "shiki";
+
+globalThis._highlighter ||= await shiki.getHighlighter({
+  theme: "dracula",
+});
+
+const highlighter = globalThis._highlighter as shiki.Highlighter;
+
+const CodeBlock = ({ children, lang = "js" }) => {
+  const html = highlighter.codeToHtml(children.trim(), { lang });
+  return (
+    <div className="CodeBlock" dangerouslySetInnerHTML={{ __html: html }} />
+  );
+};
+
 const Command = ({ children, href, Tag = href ? "a" : "span" }) => (
   <Tag target="_blank" href={href} className="Tag Tag--Command">
     {children}
@@ -371,7 +386,71 @@ export default () => (
             </li>
           </ul>
 
-          <h1>How it works</h1>
+          <h1>Getting started</h1>
+
+          <p>
+            To install bun, run this{" "}
+            <a target="_blank" href="https://bun.sh/install">
+              install script
+            </a>{" "}
+            in your terminal. It downloads Bun from GitHub.
+          </p>
+
+          <CodeBlock lang="shell">{`
+curl https://bun.sh/install | bash
+          `}</CodeBlock>
+
+          <p>
+            {" "}
+            Bun's HTTP server is built on the{" "}
+            <a
+              className="Identifier"
+              href="https://developer.mozilla.org/en-US/docs/Web/API/Request"
+            >
+              Request
+            </a>
+            and{" "}
+            <a
+              className="Identifier"
+              href="https://developer.mozilla.org/en-US/docs/Web/API/Response"
+            >
+              Response
+            </a>
+            web standards
+          </p>
+
+          <CodeBlock lang="js">{`
+// http.js
+export default {
+  port: 3000,
+  fetch(request) {
+    return new Response("Welcome to Bun!");
+  },
+};
+          `}</CodeBlock>
+
+          <p>Run it with bun:</p>
+
+          <CodeBlock lang="shell">{`bun run http.js`}</CodeBlock>
+
+          <p>
+            Then open{" "}
+            <a target="_blank" href="http://localhost:3000">
+              http://localhost:3000
+            </a>{" "}
+            in your browser
+            <br />
+            <br />
+            See{" "}
+            <a href="https://github.com/Jarred-Sumner/bun/tree/main/examples">
+              more examples
+            </a>{" "}
+            and check out <a href="/docs">the docs</a>. If you have any
+            questions or want help, join{" "}
+            <a href="https://bun.sh/discord">Bun's Discord</a>
+          </p>
+
+          <h1>How does Bun work?</h1>
 
           <p>
             Bun.js uses the{" "}

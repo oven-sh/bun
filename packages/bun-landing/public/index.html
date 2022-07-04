@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="/index.css" />
+    <script type="module" src="/index.js"></script>
+  </head>
+
+  <body>
+    <div id="header-wrap">
+      <header>
+        <a href="/" id="logo-link">
+          <img src="/public/logo@2x.png" alt="Bun" id="logo" />
+          <img src="/public/Bun@2x.png" alt="Bun" id="logo-text" />
+        </a>
+
+        <nav class="Navigation">
+          <li>
+            <a class="NavText" href="/docs">Docs</a>
+          </li>
+          <li>
+            <a class="NavText" href="/discord">Discord</a>
+          </li>
+          <li>
+            <a class="NavText" href="/github">GitHub</a>
+          </li>
+        </nav>
+        <div id="HeaderInstallButton">Install</div>
+      </header>
+    </div>
+    <div id="pitch">
+      <main>
+        <div id="pitch-content">
+          <h1 class="tagline">Bun is a fast all-in-one JavaScript runtime</h1>
+          <p class="subtitle">
+            Bundle, transpile, install and run JavaScript & TypeScript projects
+            &mdash; all in Bun. Bun is a new JavaScript runtime with a native
+            bundler, transpiler, task runner and npm client built-in.
+          </p>
+
+          <div id="install">
+            <div id="install-label">
+              <div class="unselectable" id="install-label-heading">
+                Install Bun CLI v0.1.0 (beta)
+              </div>
+              <div class="unselectable" id="install-label-subtitle">
+                macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux
+              </div>
+            </div>
+            <div id="code-box">
+              <div id="curl">curl https://bun.sh/install | bash</div>
+              <div class="unselectable" id="code-box-copy">copy</div>
+            </div>
+            <a
+              class="unselectable"
+              id="view-source-link"
+              target="_blank"
+              href="https://bun.sh/install"
+              >Show script source</a
+            >
+          </div>
+        </div>
+        <div class="Graphs">
+          <div class="Tabs">
+            <div class="Tab Tab--active">Bun.serve</div>
+            <div class="Tab">bun:sqlite</div>
+            <div class="Tab">bun:ffi</div>
+          </div>
+          <div class="ActiveTab">
+            <div class="BarGraph BarGraph--horizontal BarGraph--dark">
+              <div class="BarGraph-heading">HTTP requests per second</div>
+              <div class="BarGraph-subheading">
+                Serving a 47 KB file * Bigger is better
+              </div>
+
+              <div style="--count: 3" class="BarGraphList">
+                <div
+                  class="BarGraphItem BarGraphItem--bun"
+                  style="--amount: 41829"
+                >
+                  <div
+                    style="--amount: 41829"
+                    title="41829 requests per second"
+                    class="BarGraphBar"
+                  >
+                    <div style="--amount: 41829" class="BarGraphBar-label">
+                      41,829
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  style="--amount: 2584"
+                  class="BarGraphItem BarGraphItem--node"
+                >
+                  <div
+                    title="1,843 requests per second"
+                    style="--amount: 2584"
+                    class="BarGraphBar"
+                  >
+                    <div style="--amount: 2584" class="BarGraphBar-label">
+                      2,584
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  class="BarGraphItem BarGraphItem--deno"
+                  style="--amount: 365"
+                >
+                  <div
+                    style="--amount: 365"
+                    title="365 requests per second"
+                    class="BarGraphBar"
+                  >
+                    <div style="--amount: 365" class="BarGraphBar-label">
+                      365
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="--count: 3" class="BarGraphKey">
+                <div class="BarGraphKeyItem">
+                  <div class="BarGraphKeyItem-label">bun.js</div>
+                  <div class="BarGraphKeyItem-value">v0.0.78</div>
+                </div>
+
+                <div class="BarGraphKeyItem">
+                  <div class="BarGraphKeyItem-label">node.js</div>
+                  <div class="BarGraphKeyItem-value">v17.7.1</div>
+                </div>
+
+                <div class="BarGraphKeyItem">
+                  <div class="BarGraphKeyItem-label">deno</div>
+                  <div class="BarGraphKeyItem-value">v1.20.5</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- <div id="frameworks">
+          <div class="FrameworksGroup">
+            <div class="DemphasizedLabel">Supported frameworks</div>
+            <div class="FrameworksList">
+              <a
+                referrerpolicy="no-referrer"
+                class="Framework"
+                href="https://nextjs.org"
+                target="_blank"
+                ><img
+                  src="/public/next.svg"
+                  height="40"
+                  alt="Next.js"
+                  decoding="async"
+              /></a>
+              <a
+                class="Framework"
+                referrerpolicy="no-referrer"
+                href="https://remix.run"
+                target="_blank"
+              >
+                <img
+                  src="/public/remix.svg"
+                  alt="Remix"
+                  height="26"
+                  decoding="async"
+                />
+              </a>
+            </div>
+          </div>
+        </div> -->
+      </main>
+    </div>
+    <section id="explain-section">
+      <div id="explain">
+        <h1>Getting started</h1>
+      </div>
+    </section>
+  </body>
+</html>

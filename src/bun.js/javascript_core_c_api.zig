@@ -102,15 +102,31 @@ pub extern fn JSValueToNumber(ctx: JSContextRef, value: JSValueRef, exception: E
 pub extern fn JSValueToStringCopy(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSStringRef;
 pub extern fn JSValueToObject(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSObjectRef;
 
+const log_protection = @import("../global.zig").Environment.allow_assert;
+pub inline fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void {
+    const Wrapped = struct {
+        pub extern fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void;
+    };
+    if (comptime log_protection) {
+        const Output = @import("../global.zig").Output;
+        Output.debug("[unprotect] {d}\n", .{@ptrToInt(value)});
+    }
+    // wrapper exists to make it easier to set a breakpoint
+    Wrapped.JSValueUnprotect(ctx, value);
+}
+
 pub inline fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void {
     const Wrapped = struct {
         pub extern fn JSValueProtect(ctx: JSContextRef, value: JSValueRef) void;
     };
+    if (comptime log_protection) {
+        const Output = @import("../global.zig").Output;
+        Output.debug("[protect] {d}\n", .{@ptrToInt(value)});
+    }
     // wrapper exists to make it easier to set a breakpoint
     Wrapped.JSValueProtect(ctx, value);
 }
 
-pub extern fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void;
 pub const JSPropertyAttributes = enum(c_uint) {
     kJSPropertyAttributeNone = 0,
     kJSPropertyAttributeReadOnly = 2,

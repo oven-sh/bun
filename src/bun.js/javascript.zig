@@ -258,12 +258,17 @@ pub export fn Bun__drainMicrotasks() void {
     JSC.VirtualMachine.vm.eventLoop().tick();
 }
 
+export fn Bun__readOriginTimer(vm: *JSC.VirtualMachine) u64 {
+    return vm.origin_timer.read();
+}
+
 comptime {
     if (!JSC.is_bindgen) {
         _ = Bun__getDefaultGlobal;
         _ = Bun__getVM;
         _ = Bun__drainMicrotasks;
         _ = Bun__queueMicrotask;
+        _ = Bun__readOriginTimer;
     }
 }
 

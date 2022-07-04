@@ -645,7 +645,11 @@ pub const LineOffsetTable = struct {
             }
 
             if (c > 0x7F and columns_for_non_ascii.items.len == 0) {
-
+                std.debug.assert(@ptrToInt(
+                    remaining.ptr,
+                ) > @ptrToInt(
+                    contents.ptr,
+                ));
                 // we have a non-ASCII character, so we need to keep track of the
                 // mapping from byte offsets to UTF-16 code unit counts
                 columns_for_non_ascii.appendAssumeCapacity(column);

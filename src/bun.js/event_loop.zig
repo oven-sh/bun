@@ -422,7 +422,13 @@ pub const EventLoop = struct {
             if (this.tickWithCount() == 0) break;
         }
 
-        this.global.vm().releaseWeakRefs();
+        // This is JSC's event loop
+        // We don't actually use this.
+        // However, there are three uses of it in JavaScriptCore outside our control:
+        // 1. FinalizationRegistry callbacks
+        // 2. WebAssembly.instantiate
+        // 3. WebAssembly.instantiateStreaming
+        this.global.vm().doWork();
 
         if (!ctx.disable_run_us_loop and ctx.us_loop_reference_count > 0 and !ctx.is_us_loop_entered) {
             ctx.is_us_loop_entered = true;

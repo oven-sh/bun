@@ -2617,7 +2617,7 @@ void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
 
 void JSC__VM__doWork(JSC__VM* vm)
 {
-    vm->deferredWorkTimer->runRunLoop();
+    vm->deferredWorkTimer->doWork(*vm);
 }
 
 void JSC__VM__deinit(JSC__VM* arg1, JSC__JSGlobalObject* globalObject) {}

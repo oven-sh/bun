@@ -1487,6 +1487,29 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
     return flattenArrayOfBuffersIntoArrayBuffer(globalObject, arrayValue);
 }
 
+extern "C" uint64_t Bun__readOriginTimer(void*);
+
+JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
+
+JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
+    // nanoseconds to seconds
+    uint64_t time = Bun__readOriginTimer(global->bunVM());
+    double result = time / 1000000000.0;
+    return JSValue::encode(jsNumber(time));
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
+
+JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
+    // nanoseconds to seconds
+    uint64_t time = Bun__readOriginTimer(global->bunVM());
+    return JSValue::encode(jsNumber(time));
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArraysFromIterator);
 
 JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArraysFromIterator, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -1663,16 +1686,23 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(prototype);
         });
 
-    m_JSHTTPResponseControllerPrototype.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::HTTPResponseSink);
-            init.set(prototype);
+    m_JSHTTPResponseController.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+            auto* structure = createJSSinkControllerStructure(init.vm, init.owner, WebCore::SinkID::HTTPResponseSink);
+            init.set(structure);
         });
 
     m_JSHTTPSResponseControllerPrototype.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::HTTPSResponseSink);
             init.set(prototype);
+        });
+
+    m_performanceObject.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            JSC::JSObject* object = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 1);
+            object->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "now"_s), 1, functionPerformanceNow, NoIntrinsic, 0);
+            init.set(object);
         });
 
     m_processEnvObject.initLater(
@@ -1878,6 +1908,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
         JSC::PropertyAttribute::CustomAccessor | 0);
 
+    putDirect(vm, JSC::Identifier::fromString(vm, "performance"_s), this->performanceObject(),
+        0);
+
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"_s), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | 0);
 
@@ -2036,6 +2069,12 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         {
+            JSC::Identifier identifier = JSC::Identifier::fromString(vm, "nanoseconds"_s);
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionBunNanoseconds, NoIntrinsic,
+                JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
+        }
+
+        {
 
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, pathToFileURLString);
             object->putDirectNativeFunction(vm, this, identifier, 1, functionPathToFileURL, NoIntrinsic,
@@ -2135,6 +2174,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_requireMap.visit(visitor);
     thisObject->m_processEnvObject.visit(visitor);
     thisObject->m_processObject.visit(visitor);
+    thisObject->m_performanceObject.visit(visitor);
 
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
     visitor.append(thisObject->m_readableStreamToText);

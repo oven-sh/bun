@@ -922,3 +922,7 @@ li {
   margin-bottom: 2rem;
   color: #333;
 }
+
+img {
+  object-fit: contain;
+}

@@ -1,6 +1,8 @@
 import { readFileSync } from "fs";
 import * as shiki from "shiki";
 
+const DOCS = "https://github.com/Jarred-Sumner/bun#Reference";
+
 // because we don't want to wait for it to reload everytime this page reloads
 globalThis._highlighter ||= await shiki.getHighlighter({
   theme: "dracula",
@@ -211,15 +213,6 @@ export default ({ inlineCSS }) => (
     <head>
       <meta charSet="UTF-8" />
 
-      {inlineCSS ? (
-        <style
-          dangerouslySetInnerHTML={{
-            __html: readFileSync(import.meta.dir + "/index.css", "utf8"),
-          }}
-        ></style>
-      ) : (
-        <link rel="stylesheet" href="/index.css" />
-      )}
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <meta
         property="og:title"
@@ -232,6 +225,16 @@ export default ({ inlineCSS }) => (
         a native bundler, transpiler, task runner and npm client built-in.`}
       />
       <title>Bun is a fast all-in-one JavaScript runtime</title>
+
+      {inlineCSS ? (
+        <style
+          dangerouslySetInnerHTML={{
+            __html: readFileSync(import.meta.dir + "/index.css", "utf8"),
+          }}
+        ></style>
+      ) : (
+        <link rel="stylesheet" href="/index.css" />
+      )}
     </head>
 
     <body>
@@ -249,7 +252,7 @@ export default ({ inlineCSS }) => (
 
           <nav className="Navigation">
             <li>
-              <a className="NavText" href="https://bun.sh/docs">
+              <a className="NavText" href={DOCS}>
                 Docs
               </a>
             </li>
@@ -646,8 +649,8 @@ export default {
             <a href="https://github.com/Jarred-Sumner/bun/tree/main/examples">
               more examples
             </a>{" "}
-            and check out <a href="/docs">the docs</a>. If you have any
-            questions or want help, join{" "}
+            and check out <a href={DOCS}>the docs</a>. If you have any questions
+            or want help, join{" "}
             <a href="https://bun.sh/discord">Bun's Discord</a>
           </p>
 

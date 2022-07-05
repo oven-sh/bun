@@ -1,3 +1,4 @@
+import { readFileSync } from "fs";
 import * as shiki from "shiki";
 
 // because we don't want to wait for it to reload everytime this page reloads
@@ -205,22 +206,45 @@ const Group = ({ children, ...props }) => (
   </div>
 );
 
-export default () => (
+export default ({ inlineCSS }) => (
   <html>
     <head>
       <meta charSet="UTF-8" />
 
-      <link rel="stylesheet" href="/index.css" />
-      <script type="module" src="/index.js"></script>
+      {inlineCSS ? (
+        <style
+          dangerouslySetInnerHTML={{
+            __html: readFileSync(import.meta.dir + "/index.css", "utf8"),
+          }}
+        ></style>
+      ) : (
+        <link rel="stylesheet" href="/index.css" />
+      )}
       <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <meta
+        property="og:title"
+        content="Bun is a fast all-in-one JavaScript runtime"
+      />
+      <meta
+        property="og:description"
+        content={`Bundle, transpile, install and run JavaScript & TypeScript
+        projects – all in Bun. Bun is a new JavaScript runtime with
+        a native bundler, transpiler, task runner and npm client built-in.`}
+      />
+      <title>Bun is a fast all-in-one JavaScript runtime</title>
     </head>
 
     <body>
       <div id="header-wrap">
         <header>
           <a href="/" id="logo-link">
-            <img src="/logo@2x.png" alt="Bun" id="logo" />
-            <img src="/Bun@2x.png" alt="Bun" id="logo-text" />
+            <img height="61px" src={`/logo@2x.png`} alt="Bun" id="logo" />
+            <img
+              height="31.65px"
+              src={`/Bun@2x.png`}
+              alt="Bun"
+              id="logo-text"
+            />
           </a>
 
           <nav className="Navigation">
@@ -322,11 +346,9 @@ export default () => (
               </div>
 
               <div className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark">
-                <div className="BarGraph-heading">
-                  Average queries per second{" "}
-                </div>
+                <div className="BarGraph-heading">Load a huge table</div>
                 <div className="BarGraph-subheading">
-                  SELECT * from "Orders" (Northwind Traders)
+                  Average queries per second
                 </div>
 
                 <div style={{ "--count": 3 }} className="BarGraphList">
@@ -376,10 +398,8 @@ export default () => (
               </div>
 
               <div className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark">
-                <div className="BarGraph-heading">Operations per second</div>
-                <div className="BarGraph-subheading">
-                  Call add(1,2,3) from JavaScript
-                </div>
+                <div className="BarGraph-heading">How fast can it get?</div>
+                <div className="BarGraph-subheading">Operations per second</div>
 
                 <div style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
@@ -439,7 +459,7 @@ export default () => (
             from scratch to focus on three main things:
           </p>
           <ul>
-            <li>Extremely lightweight (it has the edge in mind).</li>
+            <li>Start fast (it has the edge in mind).</li>
             <li>
               New levels of performance (extending JavaScriptCore, the engine).
             </li>
@@ -452,11 +472,11 @@ export default () => (
             Bun is designed as a drop-in replacement for your current JavaScript
             &amp; TypeScript apps or scripts — on your local computer, server or
             on the edge. Bun natively implements hundreds of Node.js and Web
-            APIs, including 90% of Node-API functions (native modules), fs,
-            path, Buffer and more. The goal of Bun is to run most of the worlds
-            JavaScript outside of browsers, bringing performance and complexity
-            enhancements to your future infrastructure, as well as developer
-            productivity through better, simpler tooling.
+            APIs, including ~90% of{" "}
+            <a href="https://nodejs.org/api/n-api.html" target="_blank">
+              Node-API
+            </a>{" "}
+            functions (native modules), fs, path, Buffer and more.
           </p>
           <p>
             The goal of Bun is to run most of the worlds JavaScript outside of
@@ -516,14 +536,14 @@ export default () => (
               <NodeJS href="https://github.com/Jarred-Sumner/bun/issues/158">
                 Node-API
               </NodeJS>{" "}
-              bun.js implements most of Node.js'{" "}
+              bun.js implements most of
               <a
                 href="https://nodejs.org/api/n-api.html#node-api"
                 target="_blank"
               >
-                native addons API
+                Node-API (N-API)
               </a>
-              , Node-API (NAPI). Many Node.js native modules just work.
+              . Many Node.js native modules just work.
             </li>
             <li>
               <Bun>bun:ffi</Bun> call native code from JavaScript with bun's

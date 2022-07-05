@@ -645,7 +645,7 @@ li {
   }
 
   #logo {
-    max-width: 48px;
+    width: 48px;
   }
 
   :root {
@@ -921,4 +921,8 @@ li {
   margin-top: 4rem;
   margin-bottom: 2rem;
   color: #333;
+}
+
+img {
+  object-fit: contain;
 }

@@ -645,7 +645,7 @@ li {
   }
 
   #logo {
-    max-width: 48px;
+    width: 48px;
   }
 
   :root {

@@ -6,7 +6,9 @@ import liveReload from "bun-livereload";
 import { join } from "path";
 
 const { default: Page } = await import("./page.tsx");
-const build = await new Response(await renderToReadableStream(<Page />)).text();
+const build = await new Response(
+  await renderToReadableStream(<Page inlineCSS />)
+).text();
 
 await Bun.write(import.meta.dir + "/public/index.html", build);
 await Bun.write(

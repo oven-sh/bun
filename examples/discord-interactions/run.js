@@ -14,8 +14,9 @@ const client = new BunSlashCreator({
 client.on('error', console.error);
 
 client.withServer(new BunServer());
-client.registerCommandsIn(path.join(__dirname, 'commands')).syncCommands();
+await client.registerCommandsIn(path.join(__dirname, 'commands'));
 
+client.syncCommands();
 await client.server.listen(1337);
 
 // client.server.stop(); // stop server

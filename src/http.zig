@@ -1881,9 +1881,9 @@ pub const RequestContext = struct {
                 var reloader = Api.Reloader.disable;
                 if (ctx.bundler.options.hot_module_reloading) {
                     reloader = Api.Reloader.live;
-                    if (ctx.bundler.options.jsx.supports_fast_refresh) {
-                        reloader = Api.Reloader.fast_refresh;
-                    }
+                    // if (ctx.bundler.options.jsx.supports_fast_refresh) {
+                    //     reloader = Api.Reloader.fast_refresh;
+                    // }
                 }
 
                 const welcome_message = Api.WebsocketMessageWelcome{

@@ -9,11 +9,16 @@ const headers = {
   },
 };
 
+const App = () => (
+  <html>
+    <body>
+      <h1>Hello World</h1>
+    </body>
+  </html>
+);
+
 export default {
   async fetch(req) {
-    return new Response(
-      await renderToReadableStream(<div>Hello World</div>),
-      headers
-    );
+    return new Response(await renderToReadableStream(<App />), headers);
   },
 };

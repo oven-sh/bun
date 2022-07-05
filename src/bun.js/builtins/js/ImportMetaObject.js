@@ -66,14 +66,20 @@ function require(name) {
 
 function loadModule(meta, resolvedSpecifier) {
   "use strict";
-  var Loader = globalThis.Loader;
 
   var queue = @createFIFO();
   var key = resolvedSpecifier;
-  var registry = Loader.registry;
   while (key) {
-    @fulfillModuleSync(key);
-    var entry = registry.@get(key);
+    // we need to explicitly check because state could be @ModuleFetch
+    // it will throw this error if we do not:
+    //    @throwTypeError("Requested module is already fetched.");
+    var entry = Loader.registry.@get(key);
+
+    if (!entry || entry.state <= @ModuleFetch) {
+      @fulfillModuleSync(key);
+      entry = Loader.registry.@get(key);
+    }
+
 
     // entry.fetch is a Promise<SourceCode>
     // SourceCode is not a string, it's a JSC::SourceCode object
@@ -147,9 +153,10 @@ function loadModule(meta, resolvedSpecifier) {
 
     entry.dependencies = dependencies;
     key = queue.shift();
-    while (key && (registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {
+    while (key && (Loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {
       key = queue.shift();
     }
+
   }
 
   var linkAndEvaluateResult = Loader.linkAndEvaluateModule(

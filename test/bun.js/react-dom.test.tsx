@@ -11,6 +11,7 @@ import { describe, expect, it } from "bun:test";
 import { renderToReadableStream as renderToReadableStreamBrowser } from "react-dom/server.browser";
 import { gc } from "./gc";
 import { renderToReadableStream as renderToReadableStreamBun } from "./reactdom-bun";
+import React from "react";
 
 Object.defineProperty(renderToReadableStreamBrowser, "name", {
   value: "server.browser",
@@ -87,6 +88,17 @@ const fixtures = [
     </>,
   ],
 ];
+
+describe("React", () => {
+  it("React.createContext works", () => {
+    expect(typeof React.createContext).toBe("function");
+    const pleaseDontThrow = React.createContext({ foo: true });
+    expect(pleaseDontThrow.$$typeof.description).toBe("react.context");
+
+    const pleaseDontThrow2 = React.default.createContext({ foo: true });
+    expect(pleaseDontThrow2.$$typeof.description).toBe("react.context");
+  });
+});
 
 describe("ReactDOM", () => {
   for (let renderToReadableStream of [

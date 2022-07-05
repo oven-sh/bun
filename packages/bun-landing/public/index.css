@@ -302,7 +302,6 @@ header {
   align-items: center;
   width: min-content;
   white-space: nowrap;
-  gap: 2rem;
 }
 
 .Tab {
@@ -312,6 +311,7 @@ header {
   padding-bottom: 8px;
   border-bottom: 1px solid #ccc;
   cursor: pointer;
+  padding: 16px 16px;
 }
 
 .Tab[data-tab="react"]:hover,
@@ -321,6 +321,7 @@ header {
 .Tab[data-tab="ffi"]:hover,
 .Graphs--active-ffi .Tab[data-tab="ffi"] {
   border-bottom-color: aquamarine;
+  background-color: rgba(130, 216, 247, 0.1);
   border-right-color: aquamarine;
   border-left-color: aquamarine;
 }
@@ -630,6 +631,11 @@ li {
   }
 }
 
+#explain {
+  max-width: 650px;
+  margin: 0 auto;
+}
+
 @media (max-width: 930px) {
   header {
     padding: 24px 16px;
@@ -871,4 +877,48 @@ li {
   .Tabs {
     border-top: 1px solid rgba(200, 200, 200, 0.1);
   }
+}
+
+#explain p > code {
+  white-space: pre;
+  padding: 1px 2px;
+}
+
+.Group {
+  display: block;
+}
+
+.Tag--Command {
+  display: block;
+  width: fit-content;
+  margin-bottom: 0.5rem;
+  padding: 8px 12px;
+}
+
+.Label-replace {
+  font-weight: 500;
+}
+
+.Label-text {
+  margin-top: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+#batteries {
+  padding-left: 0;
+}
+
+.Group {
+  margin-bottom: 2rem;
+}
+
+.Group strong {
+  display: block;
+}
+
+.Built {
+  text-align: center;
+  margin-top: 4rem;
+  margin-bottom: 2rem;
+  color: #333;
 }

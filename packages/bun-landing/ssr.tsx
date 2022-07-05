@@ -10,6 +10,10 @@ async function fetch(req: Request) {
     return new Response("", { status: 404 });
   }
 
+  if (req.url.endsWith(".css")) {
+    return new Response(file(join(import.meta.dir + "/", "index.css")));
+  }
+
   if (!req.url.includes(".")) {
     const { default: Page } = await import("./page.tsx");
     return new Response(await renderToReadableStream(<Page />), {

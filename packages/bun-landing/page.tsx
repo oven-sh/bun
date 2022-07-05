@@ -48,6 +48,18 @@ const Bun = ({ children, href, Tag = href ? "a" : "span" }) => (
 
 const fmt = new Intl.NumberFormat();
 
+const Label = ({ children, replace }) => {
+  if (replace) {
+    return (
+      <div className="Label">
+        <div className="Label-replace">{replace}</div>
+        <div className="Label-text">{children}</div>
+      </div>
+    );
+  }
+  return <div className="Label">{children}</div>;
+};
+
 const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
   <div
     className={`BarGraphItem BarGraphItem--${type}`}
@@ -187,9 +199,17 @@ const InstallBox = ({ desktop = false }) => (
   </div>
 );
 
+const Group = ({ children, ...props }) => (
+  <div {...props} className="Group">
+    {children}
+  </div>
+);
+
 export default () => (
   <html>
     <head>
+      <meta charSet="UTF-8" />
+
       <link rel="stylesheet" href="/index.css" />
       <script type="module" src="/index.js"></script>
       <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -239,6 +259,7 @@ export default () => (
 
             <InstallBox desktop />
           </div>
+
           <div className="Graphs Graphs--active-react">
             <div className="Tabs">
               <div data-tab="react" className="Tab">
@@ -412,42 +433,39 @@ export default () => (
       </div>
       <section id="explain-section">
         <div id="explain">
-          <h1>🐚 All the tools</h1>
+          <h1>Tell me more about Bun</h1>
+          <p>
+            Bun is a modern JavaScript runtime like Node or Deno. It was built
+            from scratch to focus on three main things:
+          </p>
           <ul>
-            <li title="npm takes 160ms to run a script that does nothing">
-              <Command>bun run</Command> start &nbsp;
-              <code className="mono">package.json "scripts"</code>{" "}
-              <PerformanceClaim href="https://twitter.com/jarredsumner/status/1454218996983623685">
-                30x faster than <code className="mono">npm run</code>
-              </PerformanceClaim>
-            </li>
-
-            <li title="JavaScript package managers are not using the fastest system calls">
-              <Command>bun install</Command> installs npm packages 2x - 100x
-              faster than npm, yarn or pnpm
+            <li>Extremely lightweight (it has the edge in mind).</li>
+            <li>
+              New levels of performance (extending JavaScriptCore, the engine).
             </li>
             <li>
-              <Command>bun dev</Command> bun's frontend dev server{" "}
-              <PerformanceClaim href="https://twitter.com/jarredsumner/status/1434396683861782530">
-                boots 30x faster than Create React App
-              </PerformanceClaim>
-            </li>
-
-            <li>
-              <Command>bun bun</Command> bundle node_modules into a single file
-            </li>
-
-            <li>
-              <Command>bun wiptest</Command>{" "}
-              <PerformanceClaim href="https://twitter.com/jarredsumner/status/1542824445810642946">
-                you've never seen a JavaScript test runner this fast
-              </PerformanceClaim>{" "}
-              (or incomplete)
+              Being a great and complete tool (bundler, transpiler, package
+              manager).
             </li>
           </ul>
-
-          <h1>🔋 Batteries included</h1>
-          <ul>
+          <p>
+            Bun is designed as a drop-in replacement for your current JavaScript
+            &amp; TypeScript apps or scripts — on your local computer, server or
+            on the edge. Bun natively implements hundreds of Node.js and Web
+            APIs, including 90% of Node-API functions (native modules), fs,
+            path, Buffer and more. The goal of Bun is to run most of the worlds
+            JavaScript outside of browsers, bringing performance and complexity
+            enhancements to your future infrastructure, as well as developer
+            productivity through better, simpler tooling.
+          </p>
+          <p>
+            The goal of Bun is to run most of the worlds JavaScript outside of
+            browsers, bringing performance and complexity enhancements to your
+            future infrastructure, as well as developer productivity through
+            better, simpler tooling.
+          </p>
+          <h1>Batteries included</h1>
+          <ul id="batteries">
             <li>
               Web APIs like{" "}
               <WebAPI href="https://developer.mozilla.org/en-US/docs/Web/API/fetch">
@@ -469,36 +487,43 @@ export default () => (
               and CommonJS are supported, but Bun internally uses ESM.
             </li>
             <li>
-              <React>JSX</React> <TypeScript>TypeScript</TypeScript> in bun.js,
-              every file is transpiled. TypeScript &amp; JSX just work.
+              In bun.js, every file is transpiled.{" "}
+              <TypeScript>TypeScript</TypeScript> &amp; <React>JSX</React> just
+              work.
             </li>
             <li>
-              <TypeScript>tsconfig.json</TypeScript> bun supports{" "}
-              <code className="">"paths"</code>, <code>"jsxImportSource"</code>
-              and more from tsconfig.json
+              bun supports <code className="">"paths"</code>,{" "}
+              <code>"jsxImportSource"</code>
+              and more from <TypeScript>tsconfig.json</TypeScript> files
             </li>
             <li>
               <Bun>Bun.Transpiler</Bun> bun's JSX &amp; TypeScript transpiler is
               available as an API in Bun.js
             </li>
             <li>
-              <Bun>Bun.write</Bun> use the fastest system calls available to
-              write, copy, pipe, send and clone files.
+              use the fastest system calls available with <Bun>Bun.write</Bun>{" "}
+              to write, copy, pipe, send and clone files.
             </li>
             <li>
-              <Bun>.env</Bun> bun.js automatically loads environment variables
-              from .env files. No more{" "}
+              bun.js automatically loads environment variables from{" "}
+              <Bun>.env</Bun> files. No more{" "}
               <code class="mono">require("dotenv").load()</code>
             </li>
             <li>
-              <Bun>bun:sqlite</Bun> fast SQLite3 client built-in
+              bun ships with a fast SQLite3 client builtin <Bun>bun:sqlite</Bun>
             </li>
             <li>
               <NodeJS href="https://github.com/Jarred-Sumner/bun/issues/158">
                 Node-API
               </NodeJS>{" "}
-              bun.js implements most of Node-API (NAPI). Many Node.js native
-              modules just work.
+              bun.js implements most of Node.js'{" "}
+              <a
+                href="https://nodejs.org/api/n-api.html#node-api"
+                target="_blank"
+              >
+                native addons API
+              </a>
+              , Node-API (NAPI). Many Node.js native modules just work.
             </li>
             <li>
               <Bun>bun:ffi</Bun> call native code from JavaScript with bun's
@@ -511,71 +536,7 @@ export default () => (
             </li>
           </ul>
 
-          <h1>Getting started</h1>
-
-          <p>
-            To install bun, run this{" "}
-            <a target="_blank" href="https://bun.sh/install">
-              install script
-            </a>{" "}
-            in your terminal. It downloads Bun from GitHub.
-          </p>
-
-          <CodeBlock lang="shell">{`
-curl https://bun.sh/install | bash
-          `}</CodeBlock>
-
-          <p>
-            {" "}
-            Bun's HTTP server is built on web standards like{" "}
-            <a
-              className="Identifier"
-              href="https://developer.mozilla.org/en-US/docs/Web/API/Request"
-            >
-              Request
-            </a>{" "}
-            and{" "}
-            <a
-              className="Identifier"
-              href="https://developer.mozilla.org/en-US/docs/Web/API/Response"
-            >
-              Response
-            </a>
-          </p>
-
-          <CodeBlock lang="js">{`
-// http.js
-export default {
-  port: 3000,
-  fetch(request) {
-    return new Response("Welcome to Bun!");
-  },
-};
-          `}</CodeBlock>
-
-          <p>Run it with bun:</p>
-
-          <CodeBlock lang="shell">{`bun run http.js`}</CodeBlock>
-
-          <p>
-            Then open{" "}
-            <a target="_blank" href="http://localhost:3000">
-              http://localhost:3000
-            </a>{" "}
-            in your browser
-            <br />
-            <br />
-            See{" "}
-            <a href="https://github.com/Jarred-Sumner/bun/tree/main/examples">
-              more examples
-            </a>{" "}
-            and check out <a href="/docs">the docs</a>. If you have any
-            questions or want help, join{" "}
-            <a href="https://bun.sh/discord">Bun's Discord</a>
-          </p>
-
           <h1>How does Bun work?</h1>
-
           <p>
             Bun.js uses the{" "}
             <a href="https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore">
@@ -600,7 +561,6 @@ export default {
             transpiler, npm client, bundler, SQLite client, HTTP client,
             WebSocket client and more.
           </p>
-
           <h1>Why is Bun fast?</h1>
           <p>
             An enourmous amount of time spent profiling, benchmarking and
@@ -615,12 +575,117 @@ export default {
               Sponsor the Zig Software Foundation
             </a>
           </p>
+          <h1>Getting started</h1>
+          <p>
+            To install bun, run this{" "}
+            <a target="_blank" href="https://bun.sh/install">
+              install script
+            </a>{" "}
+            in your terminal. It downloads Bun from GitHub.
+          </p>
+          <CodeBlock lang="shell">{`
+curl https://bun.sh/install | bash
+          `}</CodeBlock>
+          <p>
+            {" "}
+            Bun's HTTP server is built on web standards like{" "}
+            <a
+              className="Identifier"
+              href="https://developer.mozilla.org/en-US/docs/Web/API/Request"
+            >
+              Request
+            </a>{" "}
+            and{" "}
+            <a
+              className="Identifier"
+              href="https://developer.mozilla.org/en-US/docs/Web/API/Response"
+            >
+              Response
+            </a>
+          </p>
+          <CodeBlock lang="js">{`
+// http.js
+export default {
+  port: 3000,
+  fetch(request) {
+    return new Response("Welcome to Bun!");
+  },
+};
+          `}</CodeBlock>
+          <p>Run it with bun:</p>
+          <CodeBlock lang="shell">{`bun run http.js`}</CodeBlock>
+          <p>
+            Then open{" "}
+            <a target="_blank" href="http://localhost:3000">
+              http://localhost:3000
+            </a>{" "}
+            in your browser
+            <br />
+            <br />
+            See{" "}
+            <a href="https://github.com/Jarred-Sumner/bun/tree/main/examples">
+              more examples
+            </a>{" "}
+            and check out <a href="/docs">the docs</a>. If you have any
+            questions or want help, join{" "}
+            <a href="https://bun.sh/discord">Bun's Discord</a>
+          </p>
+
+          <h1>Bun CLI</h1>
+          <Group title="npm takes 160ms to run a script that does nothing">
+            <Command>bun run</Command>
+            <p>
+              The same command for running JavaScript &amp; TypeScript files
+              with bun's JavaScript runtime also runs package.json{" "}
+              <code className="mono">"scripts"</code>.
+            </p>
+            <strong>
+              Replace <code className="mono">npm run</code> with{" "}
+              <code className="mono">bun run</code> and save 160ms on every run.
+            </strong>
+            <br />
+            <div>
+              bun runs package.json scripts{" "}
+              <PerformanceClaim href="https://twitter.com/jarredsumner/status/1454218996983623685">
+                30x faster than <code className="mono">npm run</code>
+              </PerformanceClaim>
+            </div>{" "}
+          </Group>
+
+          <Group title="JavaScript package managers are not using the fastest system calls">
+            <Command>bun install</Command>
+            <p>
+              bun install is an npm-compatible package manager. You probably
+              will be surprised by how much faster copying files can get.
+            </p>
+            <strong>
+              Replace <code className="mono">yarn</code> with{" "}
+              <code className="mono">bun install</code> and get 20x faster
+              package installs.
+            </strong>
+            <br />
+            <div>
+              bun install uses the fastest system calls available to copy files.
+            </div>
+          </Group>
+          <Group>
+            <Command>bun wiptest</Command>
+            <p>
+              A Jest-like test runner for JavaScript &amp; TypeScript projects
+              builtin to bun
+            </p>
+            <Label>
+              <PerformanceClaim href="https://twitter.com/jarredsumner/status/1542824445810642946">
+                You've never seen a JavaScript test runner this fast
+              </PerformanceClaim>{" "}
+              (or incomplete)
+            </Label>
+          </Group>
 
           <h1>What is the license?</h1>
           <p>
             MIT License, excluding dependencies which have various licenses.
           </p>
-
           <h1>How do I see the source code?</h1>
           <p>
             Bun is on <a href="https://github.com/Jarred-Sumner/bun">GitHub</a>
@@ -646,6 +711,7 @@ document.querySelector("#code-box-copy").addEventListener("click", async e => {
       `,
         }}
       />
+      <div className="Built">Built with Bun {process.version}</div>
     </body>
   </html>
 );

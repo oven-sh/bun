@@ -1,4 +1,4 @@
-const { SlashCommand, CommandOptionType } = require('slash-create');
+import { SlashCommand, CommandOptionType } from 'slash-create';
 
 export default class HelloCommand extends SlashCommand {
   constructor(creator) {

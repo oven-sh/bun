@@ -1,5 +1,6 @@
 import * as shiki from "shiki";
 
+// because we don't want to wait for it to reload everytime this page reloads
 globalThis._highlighter ||= await shiki.getHighlighter({
   theme: "dracula",
 });
@@ -45,7 +46,43 @@ const Bun = ({ children, href, Tag = href ? "a" : "span" }) => (
   </Tag>
 );
 
-const Zig = ({}) => (
+const fmt = new Intl.NumberFormat();
+
+const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
+  <div
+    className={`BarGraphItem BarGraphItem--${type}`}
+    style={{ "--amount": amount, "--max": max }}
+  >
+    <div
+      style={{ "--amount": amount, "--max": max }}
+      title={`${amount} ${label}`}
+      className="BarGraphBar"
+    >
+      <div
+        style={{ "--amount": amount, "--max": max }}
+        className="BarGraphBar-label"
+      >
+        {fmt.format(amount)}
+      </div>
+    </div>
+  </div>
+);
+
+const BarGraphLabel = ({ name, version, source }) => (
+  <a href={source} target="_blank" className="BarGraphKeyItem">
+    <div className="BarGraphKeyItem-label">{name}</div>
+    <div className="BarGraphKeyItem-value">{version}</div>
+    <div className="BarGraphKeyItem-viewSource">View source</div>
+  </a>
+);
+
+const PerformanceClaim = ({ href, children }) => (
+  <a href={href} target="_blank" className="PerformanceClaim">
+    {children}
+  </a>
+);
+
+const Zig = () => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
     height="1.2rem"
@@ -162,8 +199,8 @@ export default () => (
       <div id="header-wrap">
         <header>
           <a href="/" id="logo-link">
-            <img src="/public/logo@2x.png" alt="Bun" id="logo" />
-            <img src="/public/Bun@2x.png" alt="Bun" id="logo-text" />
+            <img src="/logo@2x.png" alt="Bun" id="logo" />
+            <img src="/Bun@2x.png" alt="Bun" id="logo-text" />
           </a>
 
           <nav className="Navigation">
@@ -183,7 +220,6 @@ export default () => (
               </a>
             </li>
           </nav>
-          <div id="HeaderInstallButton">Install</div>
         </header>
       </div>
       <div id="pitch">
@@ -200,90 +236,170 @@ export default () => (
 
             <InstallBox desktop />
           </div>
-          <div className="Graphs">
+          <div className="Graphs Graphs--active-react">
             <div className="Tabs">
-              <div className="Tab Tab--active">Bun.serve</div>
-              <div className="Tab">bun:sqlite</div>
-              <div className="Tab">bun:ffi</div>
+              <div data-tab="react" className="Tab">
+                Bun.serve
+              </div>
+              <div data-tab="sqlite" className="Tab">
+                bun:sqlite
+              </div>
+              <div data-tab="ffi" className="Tab">
+                bun:ffi
+              </div>
             </div>
-            <div className="ActiveTab">
-              <div className="BarGraph BarGraph--horizontal BarGraph--dark">
-                <div className="BarGraph-heading">HTTP requests per second</div>
-                <div className="BarGraph-subheading">
-                  Serving a 47 KB file * Bigger is better
+            <div id="active-tab" className="ActiveTab">
+              <div className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark">
+                <div className="BarGraph-heading">
+                  Server-side rendering React
+                </div>
+                <div title="oha -z 5s" className="BarGraph-subheading">
+                  HTTP requests per second (Linux AMD64)
                 </div>
 
                 <div style={{ "--count": 3 }} className="BarGraphList">
-                  <div
-                    className="BarGraphItem BarGraphItem--bun"
-                    style={{ "--amount": 41829 }}
-                  >
-                    <div
-                      style={{ "--amount": 41829 }}
-                      title="41829 requests per second"
-                      className="BarGraphBar"
-                    >
-                      <div
-                        style={{ "--amount": 41829 }}
-                        className="BarGraphBar-label"
-                      >
-                        41,829
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    style={{ "--amount": 2584 }}
-                    className="BarGraphItem BarGraphItem--node"
-                  >
-                    <div
-                      title="1,843 requests per second"
-                      style={{ "--amount": 2584 }}
-                      className="BarGraphBar"
-                    >
-                      <div
-                        style={{ "--amount": 2584 }}
-                        className="BarGraphBar-label"
-                      >
-                        2,584
-                      </div>
-                    </div>
-                  </div>
-
-                  <div
-                    className="BarGraphItem BarGraphItem--deno"
-                    style={{ "--amount": 365 }}
-                  >
-                    <div
-                      style={{ "--amount": 365 }}
-                      title="365 requests per second"
-                      className="BarGraphBar"
-                    >
-                      <div
-                        style={{ "--amount": 365 }}
-                        className="BarGraphBar-label"
-                      >
-                        365
-                      </div>
-                    </div>
-                  </div>
+                  <BarGraphItem
+                    type="bun"
+                    amount={48936}
+                    label="requests per second"
+                    max={Math.max(48936, 16288, 12289) * 1.25}
+                  />
+                  <BarGraphItem
+                    type="node"
+                    amount={16288}
+                    label="requests per second"
+                    max={Math.max(48936, 16288, 12289) * 1.25}
+                  />
+                  <BarGraphItem
+                    type="deno"
+                    amount={12289}
+                    label="requests per second"
+                    max={Math.max(48936, 16288, 12289) * 1.25}
+                  />
                 </div>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
-                  <div className="BarGraphKeyItem">
-                    <div className="BarGraphKeyItem-label">bun.js</div>
-                    <div className="BarGraphKeyItem-value">v0.0.78</div>
-                  </div>
+                  <BarGraphLabel
+                    name="bun"
+                    version="v0.1.0"
+                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.jsx"
+                  />
+                  <BarGraphLabel
+                    name="node"
+                    version="v18.1.0"
+                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.deno.jsx"
+                  />
+                  <BarGraphLabel
+                    name="deno"
+                    version="v1.23.2"
+                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.node.jsx"
+                  />
+                </div>
+              </div>
 
-                  <div className="BarGraphKeyItem">
-                    <div className="BarGraphKeyItem-label">node.js</div>
-                    <div className="BarGraphKeyItem-value">v17.7.1</div>
-                  </div>
+              <div className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark">
+                <div className="BarGraph-heading">
+                  Average queries per second{" "}
+                </div>
+                <div className="BarGraph-subheading">
+                  SELECT * from "Orders" (Northwind Traders)
+                </div>
 
-                  <div className="BarGraphKeyItem">
-                    <div className="BarGraphKeyItem-label">deno</div>
-                    <div className="BarGraphKeyItem-value">v1.20.5</div>
-                  </div>
+                <div style={{ "--count": 3 }} className="BarGraphList">
+                  <BarGraphItem
+                    type="bun"
+                    amount={(1000 / 16.6).toFixed(2)}
+                    label="queries per second"
+                    max={Math.ceil(
+                      Math.max(1000 / 16.6, 1000 / 42.96, 1000 / 104.69) * 1.25
+                    )}
+                  />
+                  <BarGraphItem
+                    type="better-sqlite3"
+                    amount={(1000 / 42.96).toFixed(2)}
+                    label="queries per second"
+                    max={Math.ceil(
+                      Math.max(1000 / 16.6, 1000 / 42.96, 1000 / 104.69) * 1.25
+                    )}
+                  />
+                  <BarGraphItem
+                    type="deno"
+                    amount={(1000 / 104.69).toFixed(2)}
+                    label="queries per second"
+                    max={Math.ceil(
+                      Math.max(1000 / 16.6, 1000 / 42.96, 1000 / 104.69) * 1.25
+                    )}
+                  />
+                </div>
+
+                <div style={{ "--count": 3 }} className="BarGraphKey">
+                  <BarGraphLabel
+                    name="bun:sqlite"
+                    version="v0.1.0"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.js"
+                  />
+                  <BarGraphLabel
+                    name="better-sqlite3"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.node.mjs"
+                    version="node v18.2.0"
+                  />
+                  <BarGraphLabel
+                    name="deno (x/sqlite)"
+                    version="v1.23.2"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.deno.js"
+                  />
+                </div>
+              </div>
+
+              <div className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark">
+                <div className="BarGraph-heading">Operations per second</div>
+                <div className="BarGraph-subheading">
+                  Call add(1,2,3) from JavaScript
+                </div>
+
+                <div style={{ "--count": 3 }} className="BarGraphList">
+                  <BarGraphItem
+                    type="bun"
+                    amount={(115473441).toFixed(2)}
+                    label="operations per second"
+                    max={Math.ceil(
+                      Math.max(115473441, 43478261, 2891761) * 1.25
+                    )}
+                  />
+                  <BarGraphItem
+                    type="Node-API"
+                    amount={(43478261).toFixed(2)}
+                    label="operations per second"
+                    max={Math.ceil(
+                      Math.max(115473441, 43478261, 2891761) * 1.25
+                    )}
+                  />
+                  <BarGraphItem
+                    type="deno"
+                    amount={(2891761).toFixed(2)}
+                    label="oeprations per iteration"
+                    max={Math.ceil(
+                      Math.max(115473441, 43478261, 2891761) * 1.25
+                    )}
+                  />
+                </div>
+
+                <div style={{ "--count": 3 }} className="BarGraphKey">
+                  <BarGraphLabel
+                    name="bun:ffi"
+                    version="v0.1.0"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.js"
+                  />
+                  <BarGraphLabel
+                    name="node (napi)"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.node.mjs"
+                    version="node v18.2.0"
+                  />
+                  <BarGraphLabel
+                    name="deno (ffi)"
+                    version="v1.23.2"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.deno.js"
+                  />
                 </div>
               </div>
             </div>
@@ -297,27 +413,33 @@ export default () => (
           <ul>
             <li title="npm takes 160ms to run a script that does nothing">
               <Command>bun run</Command> start &nbsp;
-              <code className="mono">package.json "scripts"</code> 30x faster
-              than <code className="mono">npm run</code>
+              <code className="mono">package.json "scripts"</code>{" "}
+              <PerformanceClaim href="https://twitter.com/jarredsumner/status/1454218996983623685">
+                30x faster than <code className="mono">npm run</code>
+              </PerformanceClaim>
             </li>
 
             <li title="JavaScript package managers are not using the fastest system calls">
-              <Command>bun install</Command> installs npm packages up to 100x
-              faster than npm, yarn or pnpm (when disk cached)
+              <Command>bun install</Command> installs npm packages 2x - 100x
+              faster than npm, yarn or pnpm
             </li>
             <li>
-              <Command>bun dev</Command> bun's frontend dev server starts in
-              about 15ms
+              <Command>bun dev</Command> bun's frontend dev server{" "}
+              <PerformanceClaim href="https://twitter.com/jarredsumner/status/1434396683861782530">
+                boots 30x faster than Create React App
+              </PerformanceClaim>
             </li>
 
             <li>
               <Command>bun bun</Command> bundle node_modules into a single file
-              (~1 million LOC/s input)
             </li>
 
             <li>
-              <Command>bun wiptest</Command> you've never seen a JavaScript test
-              runner this fast (or incomplete)
+              <Command>bun wiptest</Command>{" "}
+              <PerformanceClaim href="https://twitter.com/jarredsumner/status/1542824445810642946">
+                you've never seen a JavaScript test runner this fast
+              </PerformanceClaim>{" "}
+              (or incomplete)
             </li>
           </ul>
 
@@ -402,13 +524,13 @@ curl https://bun.sh/install | bash
 
           <p>
             {" "}
-            Bun's HTTP server is built on web standards like
+            Bun's HTTP server is built on web standards like{" "}
             <a
               className="Identifier"
               href="https://developer.mozilla.org/en-US/docs/Web/API/Request"
             >
               Request
-            </a>
+            </a>{" "}
             and{" "}
             <a
               className="Identifier"
@@ -506,6 +628,16 @@ export default {
       <section id="explain-section">
         <div id="explain"></div>
       </section>
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `
+[...document.querySelectorAll(".Tab")].map(el => el.addEventListener("click", function(e) {
+  var tab = e.srcElement.getAttribute("data-tab");
+  document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
+}));
+      `,
+        }}
+      />
     </body>
   </html>
 );

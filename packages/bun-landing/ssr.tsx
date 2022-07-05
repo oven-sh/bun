@@ -1,7 +1,6 @@
-import React from "react";
 import { file, serve } from "bun";
-
-import { renderToReadableStream } from "./react-dom-server.bun.production.min";
+import "shiki";
+import { renderToReadableStream } from "../../test/bun.js/reactdom-bun";
 
 import liveReload from "bun-livereload";
 import { join } from "path";
@@ -12,7 +11,7 @@ async function fetch(req: Request) {
   }
 
   if (!req.url.includes(".")) {
-    const { default: Page } = await import("./page.jsx");
+    const { default: Page } = await import("./page.tsx");
     return new Response(await renderToReadableStream(<Page />), {
       headers: {
         "Content-Type": "text/html",
@@ -20,9 +19,12 @@ async function fetch(req: Request) {
     });
   }
 
-  return new Response(file(join(import.meta.dir, new URL(req.url).pathname)));
+  return new Response(
+    file(join(import.meta.dir, "./public/", new URL(req.url).pathname))
+  );
 }
 
 serve({
   fetch: liveReload(fetch),
+  port: 8080,
 });

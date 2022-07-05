@@ -367,48 +367,14 @@ pub const GenerateHeader = struct {
 
 pub var has_loaded = false;
 pub var disabled = false;
-pub fn enqueue(comptime name: EventName) void {
-    if (disabled) return;
-
-    if (!has_loaded) {
-        if (!start()) return;
-    }
-
-    var items = [_]Event{Event.init(name)};
-    _ = event_queue.write(&items) catch false;
-    Futex.wake(&counter, 1);
-}
+pub fn enqueue(comptime _: EventName) void {}
 
 pub var thread: std.Thread = undefined;
 var counter: std.atomic.Atomic(u32) = undefined;
 
-fn start() bool {
-    @setCold(true);
+fn start() bool {}
 
-    has_loaded = true;
-    counter = std.atomic.Atomic(u32).init(0);
-
-    event_queue = EventQueue.init(std.heap.c_allocator);
-    spawn() catch |err| {
-        if (comptime Environment.isDebug) {
-            Output.prettyErrorln("[Analytics] error spawning thread {s}", .{@errorName(err)});
-            Output.flush();
-        }
-
-        disabled = true;
-        return false;
-    };
-    return true;
-}
-
-fn spawn() !void {
-    @setCold(true);
-    has_loaded = true;
-    thread = std.Thread.spawn(.{}, readloop, .{}) catch {
-        disabled = true;
-        return;
-    };
-}
+fn spawn() !void {}
 
 const headers_buf: string = "Content-Type binary/peechy";
 const header_entry = Headers.Kv{

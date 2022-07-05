@@ -274,7 +274,7 @@ bun.js has fast paths for common use cases that make Web APIs live up to the per
 
 `Bun.file(path)` returns a [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) that represents a lazily-loaded file.
 
-When you pass two file blobs to `Bun.write`, Bun automatically uses a faster system call:
+When you pass a file blob to `Bun.write`, Bun automatically uses a faster system call:
 
 ```js
 const blob = Bun.file("input.txt");
@@ -464,9 +464,9 @@ You can see [Bun's Roadmap](https://github.com/Jarred-Sumner/bun/issues/159), bu
 
 | Feature                                                                               | In             |
 | ------------------------------------------------------------------------------------- | -------------- |
-| Web Streams with Fetch API                                                            | Bun.js         |
-| Web Streams with HTMLRewriter                                                         | Bun.js         |
-| WebSocket Server                                                                      | Bun.js         |
+| Web Streams with Fetch API                                                            | bun.js         |
+| Web Streams with HTMLRewriter                                                         | bun.js         |
+| WebSocket Server                                                                      | bun.js         |
 | Package hoisting that matches npm behavior                                            | bun install    |
 | Source Maps (unbundled is supported)                                                  | JS Bundler     |
 | Source Maps                                                                           | CSS            |
@@ -2615,7 +2615,7 @@ Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_progr
 
 64-bit processors support up to [52 bits of addressible space](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors).
 
-[JavaScript numbers](https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64) support 63 bits of usable space, so that leaves us with about 11 bits of extra space.
+[JavaScript numbers](https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64) support 53 bits of usable space, so that leaves us with about 11 bits of extra space.
 
 Why not `BigInt`?
 

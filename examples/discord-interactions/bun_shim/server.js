@@ -10,13 +10,13 @@ export default class BunServer extends Server {
     super({ alreadyListening: true });
   }
 
+  createEndpoint(path, handler) {
+    this.#handler = handler;
+  }
+
   stop() {
     if (this.#server) this.#server.close();
     else throw new Error('BunServer not started');
-  }
-
-  createEndpoint(path, handler) {
-    this.#handler = handler;
   }
 
   listen(port) {

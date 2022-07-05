@@ -13,7 +13,7 @@
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
 
-#define ZIG_REPR_TYPE uint64_t
+#define ZIG_REPR_TYPE int64_t
 
 
 // /* 7.18.1.1  Exact-width integer types */

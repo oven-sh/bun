@@ -989,7 +989,7 @@ pub const FFI = struct {
                 \\
                 \\
                 \\/* ---- Your Wrapper Function ---- */
-                \\void* JSFunctionCall(void* globalObject, void* callFrame) {
+                \\ZIG_REPR_TYPE JSFunctionCall(void* globalObject, void* callFrame) {
                 \\
             );
 
@@ -1085,9 +1085,9 @@ pub const FFI = struct {
             try writer.writeAll("return ");
 
             if (!(this.return_type == .void)) {
-                try writer.print("{}.asPtr", .{this.return_type.toJS("return_value")});
+                try writer.print("{}.asZigRepr", .{this.return_type.toJS("return_value")});
             } else {
-                try writer.writeAll("ValueUndefined.asPtr");
+                try writer.writeAll("ValueUndefined.asZigRepr");
             }
 
             try writer.writeAll(";\n}\n\n");

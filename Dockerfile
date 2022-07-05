@@ -286,8 +286,7 @@ COPY Makefile ${BUN_DIR}/Makefile
 WORKDIR $BUN_DIR
 
 RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
-    sqlite jsc-bindings-headers \
-    api \
+    sqlite api \
     analytics \
     bun_error \
     fallback_decoder && rm -rf $HOME/.cache zig-cache && \

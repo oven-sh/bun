@@ -2,16 +2,6 @@
 var { readFileSync, writeFileSync } = require("fs");
 var { join } = require("path");
 
-if (!("replaceAll" in String.prototype)) {
-  String.prototype.replaceAll = function (search, replacement) {
-    var target = this;
-    return target.replace(
-      new RegExp(search.replace(/\*/gm, "\\*"), "g"),
-      replacement
-    );
-  };
-}
-
 const destination = join(__dirname, "../src/bun.js/bindings/headers.zig");
 const replacements = join(
   __dirname,

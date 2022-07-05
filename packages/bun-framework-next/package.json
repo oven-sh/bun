@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "12.1.3",
+  "version": "12.1.5",
   "main": "empty.js",
   "module": "empty.js",
   "description": "bun compatibility layer for Next.js v12.x.x",

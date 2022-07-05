@@ -23,9 +23,9 @@ import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
 import * as React from "react";
 import * as ReactIs from "react-is";
-import { packageVersion } from "macro:./packageVersion.ts";
+import packageJson from "next/package.json";
 
-const nextVersion = packageVersion("next");
+const nextVersion = packageJson.version;
 
 var HtmlContext;
 // HtmlContext is in different places depending on the next version

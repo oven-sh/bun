@@ -396,7 +396,7 @@ pub const Arguments = struct {
         if (args.option("--port")) |port_str| {
             opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
         }
-        opts.serve = cmd == .DevCommand or (FeatureFlags.dev_only and cmd == .AutoCommand);
+        opts.serve = cmd == .DevCommand;
         opts.main_fields = args.options("--main-fields");
         opts.generate_node_module_bundle = cmd == .BunCommand;
         opts.inject = args.options("--inject");
@@ -841,7 +841,7 @@ pub const Command = struct {
         const skipped = args_iter.skip();
 
         if (!skipped) {
-            return .AutoCommand;
+            return .HelpCommand;
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
@@ -1229,11 +1229,7 @@ pub const Command = struct {
                     Global.exit(1);
                 }
 
-                if (FeatureFlags.dev_only) {
-                    try DevCommand.exec(ctx);
-                } else {
-                    try BuildCommand.exec(ctx);
-                }
+                try HelpCommand.exec(allocator);
             },
             else => unreachable,
         }

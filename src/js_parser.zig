@@ -2655,7 +2655,7 @@ pub const Parser = struct {
                             // We do not mark this as .require becuase we are already wrapping it manually.
                             // unless it's bun and you're not bundling
                             const use_automatic_identifier = (p.options.can_import_from_bundle or p.options.enable_bundling or !p.options.features.allow_runtime);
-                            const import_record_kind = if (use_automatic_identifier or !p.options.features.dynamic_require) ImportKind.internal else ImportKind.require;
+                            const import_record_kind = if (use_automatic_identifier) ImportKind.internal else ImportKind.require;
                             const import_record_id = p.addImportRecord(import_record_kind, loc, p.options.jsx.import_source);
 
                             const dot_call_target = brk: {

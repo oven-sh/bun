@@ -15,6 +15,13 @@ export var __merge = BUN_RUNTIME.__merge;
 export var $$bun_runtime_json_parse = JSON.parse;
 export var __internalIsCommonJSNamespace =
   BUN_RUNTIME.__internalIsCommonJSNamespace;
-globalThis.require ||= BUN_RUNTIME.__require;
+
+globalThis.require ||= function (moduleId) {
+  if (typeof moduleId === "string") {
+    return import.meta.require(moduleId);
+  }
+
+  return BUN_RUNTIME.__require(moduleId);
+};
 globalThis.__internalIsCommonJSNamespace ||=
   BUN_RUNTIME.__internalIsCommonJSNamespace;

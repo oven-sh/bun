@@ -96,19 +96,25 @@ const char* const s_importMetaObjectRequireCode =
 
 const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_importMetaObjectLoadModuleCodeLength = 2750;
+const int s_importMetaObjectLoadModuleCodeLength = 2818;
 static const JSC::Intrinsic s_importMetaObjectLoadModuleCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectLoadModuleCode =
     "(function (meta, resolvedSpecifier) {\n" \
     "  \"use strict\";\n" \
-    "  var Loader = globalThis.Loader;\n" \
     "\n" \
     "  var queue = @createFIFO();\n" \
     "  var key = resolvedSpecifier;\n" \
-    "  var registry = Loader.registry;\n" \
     "  while (key) {\n" \
-    "    @fulfillModuleSync(key);\n" \
-    "    var entry = registry.@get(key);\n" \
+    "    //\n" \
+    "    //\n" \
+    "    //\n" \
+    "    var entry = Loader.registry.@get(key);\n" \
+    "\n" \
+    "    if (!entry || entry.state <= @ModuleFetch) {\n" \
+    "      @fulfillModuleSync(key);\n" \
+    "      entry = Loader.registry.@get(key);\n" \
+    "    }\n" \
+    "\n" \
     "\n" \
     "    //\n" \
     "    //\n" \
@@ -182,9 +188,10 @@ const char* const s_importMetaObjectLoadModuleCode =
     "\n" \
     "    entry.dependencies = dependencies;\n" \
     "    key = queue.shift();\n" \
-    "    while (key && (registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {\n" \
+    "    while (key && (Loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {\n" \
     "      key = queue.shift();\n" \
     "    }\n" \
+    "\n" \
     "  }\n" \
     "\n" \
     "  var linkAndEvaluateResult = Loader.linkAndEvaluateModule(\n" \

@@ -949,7 +949,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 
 const JSC::ConstructAbility s_readableStreamInternalsReadDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_readableStreamInternalsReadDirectStreamCodeLength = 1496;
+const int s_readableStreamInternalsReadDirectStreamCodeLength = 1534;
 static const JSC::Intrinsic s_readableStreamInternalsReadDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadDirectStreamCode =
     "(function (stream, sink, underlyingSource) {\n" \
@@ -958,21 +958,18 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "  @putByIdDirectPrivate(stream, \"underlyingSource\", @undefined);\n" \
     "  @putByIdDirectPrivate(stream, \"start\", @undefined);\n" \
     "\n" \
-    "  var {cancel, pull} = underlyingSource;\n" \
-    "  underlyingSource = @undefined;\n" \
-    "\n" \
     "\n" \
     "  var capturedStream = stream;\n" \
     "  var reader;\n" \
     "\n" \
     "  function close(stream, reason) {\n" \
-    "    if (reason && cancel) {\n" \
+    "    if (reason && underlyingSource?.cancel) {\n" \
     "      try {\n" \
-    "        cancel(reason);\n" \
+    "        underlyingSource.cancel(reason);\n" \
     "      } catch (e) {\n" \
     "      }\n" \
     "\n" \
-    "      cancel = @undefined;\n" \
+    "      underlyingSource = @undefined;\n" \
     "    }\n" \
     "\n" \
     "    if (stream) {\n" \
@@ -992,12 +989,12 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "\n" \
     "\n" \
     "\n" \
-    "  if (!pull) {\n" \
+    "  if (!underlyingSource.pull) {\n" \
     "    close();\n" \
     "    return;\n" \
     "  }\n" \
     "\n" \
-    "  if (!@isCallable(pull)) {\n" \
+    "  if (!@isCallable(underlyingSource.pull)) {\n" \
     "    close();\n" \
     "    @throwTypeError(\"pull is not a function\");\n" \
     "    return;\n" \
@@ -1012,10 +1009,10 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "    });\n" \
     "  }\n" \
     "\n" \
-    "  @startDirectStream.@call(sink, stream, pull, close);\n" \
+    "  @startDirectStream.@call(sink, stream, underlyingSource.pull, close);\n" \
     "  @putByIdDirectPrivate(stream, \"reader\", {});\n" \
     "\n" \
-    "  var maybePromise = pull(sink);\n" \
+    "  var maybePromise = underlyingSource.pull(sink);\n" \
     "  sink = @undefined;\n" \
     "  if (maybePromise && @isPromise(maybePromise)) {\n" \
     "    return maybePromise.@then(() => {});\n" \

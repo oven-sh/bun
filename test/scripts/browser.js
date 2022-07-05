@@ -9,6 +9,7 @@ const serverURL = process.env.TEST_SERVER_URL || "http://localhost:8080";
 const USE_EXISTING_PROCESS = process.env.USE_EXISTING_PROCESS || false;
 const DISABLE_HMR = !!process.env.DISABLE_HMR;
 const bunFlags = [
+  "dev",
   `--origin=${serverURL}`,
   DISABLE_HMR && "--disable-hmr",
 ].filter(Boolean);

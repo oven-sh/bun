@@ -205,17 +205,20 @@ export default () => (
 
           <nav className="Navigation">
             <li>
-              <a className="NavText" href="/docs">
+              <a className="NavText" href="https://bun.sh/docs">
                 Docs
               </a>
             </li>
             <li>
-              <a className="NavText" href="/discord">
+              <a className="NavText" href="https://bun.sh/discord">
                 Discord
               </a>
             </li>
             <li>
-              <a className="NavText" href="/github">
+              <a
+                className="NavText"
+                href="https://github.com/Jarred-Sumner/bun"
+              >
                 GitHub
               </a>
             </li>
@@ -388,17 +391,17 @@ export default () => (
                   <BarGraphLabel
                     name="bun:ffi"
                     version="v0.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.js"
+                    source="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.bun.js"
                   />
                   <BarGraphLabel
                     name="node (napi)"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.node.mjs"
+                    source="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.napi.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (ffi)"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.deno.js"
+                    source="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.deno.js"
                   />
                 </div>
               </div>
@@ -635,6 +638,11 @@ export default {
   var tab = e.srcElement.getAttribute("data-tab");
   document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
 }));
+
+document.querySelector("#code-box-copy").addEventListener("click", async e => {
+  var el = document.querySelector("#code-box");
+  await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
+});
       `,
         }}
       />

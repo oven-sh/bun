@@ -19,11 +19,12 @@ export default class BunServer extends Server {
     else throw new Error('BunServer not started');
   }
 
-  listen(port) {
+  listen(port, options = {}) {
     const getHandler = () => this.#handler;
 
     this.#server = Bun.serve({
       port,
+      ...options,
 
       async fetch(req) {
         const handler = getHandler();

@@ -5,7 +5,10 @@ var { join } = require("path");
 if (!("replaceAll" in String.prototype)) {
   String.prototype.replaceAll = function (search, replacement) {
     var target = this;
-    return target.replace(new RegExp(search, "g"), replacement);
+    return target.replace(
+      new RegExp(search.replace(/\*/gm, "\\*"), "g"),
+      replacement
+    );
   };
 }
 

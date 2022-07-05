@@ -117,7 +117,7 @@ if test $(basename $SHELL) == "fish"; then
     IS_BUN_AUTO_UPDATE="true" SHELL="fish" $exe completions >/dev/null 2>&1
     if test -f $HOME/.config/fish/config.fish; then
         echo -e "\n# bun\nset -Ux BUN_INSTALL \"$bun_install\"" >>"$HOME/.config/fish/config.fish"
-        echo -e "set -px --path PATH \"$bin_dir\"\n" >>"$HOME/.config/fish/config.fish"
+        echo -e "fish_add_path \"$bin_dir\"\n" >>"$HOME/.config/fish/config.fish"
         echo ""
         echo -e "$Dim Added \"$bin_dir\" to \$PATH in \"\~/.config/fish/config.fish\"$Color_Off"
         echo ""
@@ -131,7 +131,7 @@ if test $(basename $SHELL) == "fish"; then
         echo "Manually add the directory to your \$HOME/.config/fish/config.fish (or similar)"
         echo ""
         echo -e "  $BWhite set -Ux BUN_INSTALL \"$bun_install\"$Color_Off"
-        echo -e "  $BWhite set -px --path PATH \"$bin_dir\"$Color_Off"
+        echo -e "  $BWhite fish_add_path \"$bin_dir\"$Color_Off"
         echo ""
     fi
 elif

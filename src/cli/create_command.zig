@@ -2111,15 +2111,12 @@ pub const CreateListExamplesCommand = struct {
 
         env_loader.loadProcess();
 
-        const time = std.time.nanoTimestamp();
         var progress = std.Progress{};
         var node = progress.start("Fetching manifest", 0);
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
         progress.refresh();
 
         const examples = try Example.fetchAllLocalAndRemote(ctx, node, &env_loader, filesystem);
-        Output.printStartEnd(time, std.time.nanoTimestamp());
-        Output.prettyln(" <d>Fetched manifest<r>", .{});
         Output.prettyln("Welcome to bun! Create a new project by pasting any of the following:\n\n", .{});
         Output.flush();
 

@@ -285,7 +285,7 @@ COPY Makefile ${BUN_DIR}/Makefile
 
 WORKDIR $BUN_DIR
 
-RUN cd $BUN_DIR &&  rm -rf $HOME/.cache zig-cache && make \
+RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make \
     sqlite api \
     analytics \
     bun_error \

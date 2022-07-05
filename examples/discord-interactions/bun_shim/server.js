@@ -41,7 +41,7 @@ export default class BunServer extends Server {
               body: reqBody,
               response: null,
               headers: reqHeaders,
-            }, async response => {
+            }, response => {
               let body = response.body;
               const headers = new Headers();
 

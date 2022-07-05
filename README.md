@@ -367,6 +367,8 @@ cd my-interactions-bot
 
 If you don't have a Discord bot/application yet, you can create one [here (https://discord.com/developers/applications/me)](https://discord.com/developers/applications/me).
 
+Invite bot to your server by visiting `https://discord.com/api/oauth2/authorize?client_id=<your_application_id>&scope=bot%20applications.commands`
+
 Afterwards you will need to get your bot's token, public key, and application id from application page and put them into `.env.example` file
 
 Then you can run the http server that will handle your interactions:

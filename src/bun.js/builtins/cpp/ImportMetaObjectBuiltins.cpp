@@ -96,7 +96,7 @@ const char* const s_importMetaObjectRequireCode =
 
 const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind = JSC::ConstructorKind::None;
-const int s_importMetaObjectLoadModuleCodeLength = 2818;
+const int s_importMetaObjectLoadModuleCodeLength = 2834;
 static const JSC::Intrinsic s_importMetaObjectLoadModuleCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectLoadModuleCode =
     "(function (meta, resolvedSpecifier) {\n" \
@@ -110,7 +110,7 @@ const char* const s_importMetaObjectLoadModuleCode =
     "    //\n" \
     "    var entry = Loader.registry.@get(key);\n" \
     "\n" \
-    "    if (!entry || entry.state <= @ModuleFetch) {\n" \
+    "    if (!entry || !entry.state || entry.state <= @ModuleFetch) {\n" \
     "      @fulfillModuleSync(key);\n" \
     "      entry = Loader.registry.@get(key);\n" \
     "    }\n" \

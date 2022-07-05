@@ -1074,18 +1074,18 @@ pub const VirtualMachine = struct {
                 jsc_vm.bundler.linker.import_counter = 0;
 
                 var printer = source_code_printer.?.*;
-                defer source_code_printer.?.* = printer;
                 printer.ctx.reset();
 
-                var written: usize = 0;
-
-                written = try jsc_vm.bundler.printWithSourceMap(
-                    parse_result,
-                    @TypeOf(&printer),
-                    &printer,
-                    .esm_ascii,
-                    SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
-                );
+                const written = brk: {
+                    defer source_code_printer.?.* = printer;
+                    break :brk try jsc_vm.bundler.printWithSourceMap(
+                        parse_result,
+                        @TypeOf(&printer),
+                        &printer,
+                        .esm_ascii,
+                        SavedSourceMap.SourceMapHandler.init(&jsc_vm.source_mappings),
+                    );
+                };
 
                 if (written == 0) {
                     return error.PrintingErrorWriteFailed;
@@ -1097,11 +1097,14 @@ pub const VirtualMachine = struct {
 
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = ZigString.init(printer.ctx.writtenWithoutTrailingZero()),
+                    .source_code = ZigString.init(try default_allocator.dupe(u8, printer.ctx.getWritten())),
                     .specifier = ZigString.init(specifier),
                     .source_url = ZigString.init(path.text),
-                    // TODO: change hash to a bitfield
-                    .hash = 1,
+                    // // TODO: change hash to a bitfield
+                    // .hash = 1,
+
+                    // having JSC own the memory causes crashes
+                    .hash = 0,
                 };
             },
             // provideFetch() should be called

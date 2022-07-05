@@ -75,7 +75,7 @@ function loadModule(meta, resolvedSpecifier) {
     //    @throwTypeError("Requested module is already fetched.");
     var entry = Loader.registry.@get(key);
 
-    if (!entry || entry.state <= @ModuleFetch) {
+    if (!entry || !entry.state || entry.state <= @ModuleFetch) {
       @fulfillModuleSync(key);
       entry = Loader.registry.@get(key);
     }

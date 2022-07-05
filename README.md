@@ -39,6 +39,8 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [Fast paths for Web APIs](#fast-paths-for-web-apis)
 - [Using bun as a package manager](#using-bun-as-a-package-manager)
 - [Using bun as a task runner](#using-bun-as-a-task-runner)
+- [Creating a Discord bot with Bun](#creating-a-discord-bot-with-bun)
+  - [Application Commands](#application-commands)
 - [Using bun with Next.js](#using-bun-with-nextjs)
 - [Using bun with single page apps](#using-bun-with-single-page-apps)
   - [Using bun with Create React App](#using-bun-with-create-react-app)
@@ -349,6 +351,34 @@ Assuming a package.json with a `"clean"` command in `"scripts"`:
   }
 }
 ```
+
+## Creating a Discord bot with Bun
+
+### Application Commands
+
+> Application commands are native ways to interact with apps in the Discord client. There are 3 types of commands accessible in different interfaces: the chat input, a message's context menu (top-right menu or right-clicking in a message), and a user's context menu (right-clicking on a user).
+
+To get started you can use interactions template:
+
+```bash
+bun create discord-interactions my-interactions-bot
+cd my-interactions-bot
+```
+
+If you don't have a Discord bot/application yet, you can create one [here (https://discord.com/developers/applications/me)](https://discord.com/developers/applications/me).
+
+Afterwards you will need to get your bot's token, public key, and application id from application page and put them into `.env.example` file
+
+Then you can run the http server that will handle your interactions:
+
+```bash
+bun install
+mv .env.example .env
+
+bun run.js # listening on port 1337
+```
+
+Discord does not accept insecure http server, so you will need provide SSL certificate or put interactions server behind a secure reverse proxy. For development you can use ngrok/cloudflare tunnel to expose local port as secure URL.
 
 ## Using bun with Next.js
 

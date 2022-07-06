@@ -185,7 +185,7 @@ bun.js prefers Web API compatibility instead of designing new APIs when possible
 - `.env` files automatically load into `process.env` and `Bun.env`
 - top level await
 
-The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/bun.js/bindings/webcore/JSFetchHeaders.cpp#L1).
+The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/HEAD/src/bun.js/bindings/webcore/JSFetchHeaders.cpp).
 
 `cat` clone that runs [2x faster than GNU cat](https://twitter.com/jarredsumner/status/1511707890708586496) for large files on Linux
 

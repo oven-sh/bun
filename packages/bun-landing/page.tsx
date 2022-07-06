@@ -293,23 +293,23 @@ export default ({ inlineCSS }) => (
           <div className="Graphs Graphs--active-react">
             <ul className="Tabs" role="tablist">
               <li className="Tab">
-                <button data-tab="react" aria-controls="react-tab-content" className="TabButton" role="tab" aria-selected tabIndex={0}>
+                <button data-tab="react" id="tab-react" aria-controls="react-tab-content" className="TabButton" role="tab" aria-selected tabIndex={0}>
                   Bun.serve
                 </button>
               </li>
               <li className="Tab">
-                <button data-tab="sqlite" aria-controls="sqlite-tab-content" className="TabButton" role="tab" tabIndex={-1}>
+                <button data-tab="sqlite" id="tab-sqlite" aria-controls="sqlite-tab-content" className="TabButton" role="tab" tabIndex={-1}>
                   bun:sqlite
                 </button>
               </li>
               <li className="Tab">
-                <button data-tab="ffi" aria-controls="ffi-tab-content" className="TabButton" role="tab" tabIndex={-1}>
+                <button data-tab="ffi" id="tab-ffi" aria-controls="ffi-tab-content" className="TabButton" role="tab" tabIndex={-1}>
                   bun:ffi
                 </button>
               </li>
             </ul>
             <div id="active-tab" className="ActiveTab">
-              <div id="react-tab-content" className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark">
+              <div role="tabpanel" tabIndex={0} id="react-tab-content" aria-labelledby="tab-react" className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark">
                 <h2 className="BarGraph-heading">
                   Server-side rendering React
                 </h2>
@@ -357,7 +357,7 @@ export default ({ inlineCSS }) => (
                 </div>
               </div>
 
-              <div id="sqlite-tab-content" className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark">
+              <div role="tabpanel" tabIndex={-1} id="sqlite-tab-content" aria-labelledby="tab-sqlite" className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark">
                 <h2 className="BarGraph-heading">Load a huge table</h2>
                 <p className="BarGraph-subheading">
                   Average queries per second
@@ -409,7 +409,7 @@ export default ({ inlineCSS }) => (
                 </div>
               </div>
 
-              <div id="ffi-tab-content" className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark">
+              <div role="tabpanel" tabIndex={-1} id="ffi-tab-content" aria-labelledby="tab-ffi" className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark">
                 <h2 className="BarGraph-heading">How fast can it get?</h2>
                 <p className="BarGraph-subheading">Operations per second</p>
 
@@ -731,32 +731,48 @@ export default {
       <script
         dangerouslySetInnerHTML={{
           __html: `
-[...document.querySelectorAll(".TabButton")].map(el => el.addEventListener("click", function(e) {
-  var tab = e.srcElement.getAttribute("data-tab");
-  [...document.querySelectorAll(".TabButton")].map(el => {
-    var active = el.getAttribute("data-tab") === tab;
-    el.setAttribute("tabindex", active ? 0 : -1);
-    el.setAttribute("aria-selected", active);
+[...document.querySelectorAll(".TabButton")].map(el => {
+  el.addEventListener("click", function(e) {
+    var tab = e.srcElement.getAttribute("data-tab");
+    [...document.querySelectorAll(".TabButton")].map(el => {
+      var active = el.getAttribute("data-tab") === tab;
+      el.setAttribute("tabindex", active ? 0 : -1);
+      el.setAttribute("aria-selected", active);
+    });
+    [...document.querySelectorAll(".BarGraph")].map(el => {
+      var active = el.id === tab + "-tab-content";
+      el.setAttribute("tabindex", active ? 0 : -1);
+    });
+    document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
   });
-  document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
-}));
 
-document.body.addEventListener("keydown", e => {
-  var tabs = [...document.querySelectorAll(".TabButton")];
-  var activeTabEl = document.querySelector(".TabButton[aria-selected='true']");
-  var activeTabIndex = tabs.indexOf(activeTabEl);
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-    e.preventDefault();
-    activeTabIndex = (activeTabIndex + 1) % tabs.length;
-    tabs[activeTabIndex].click();
-    tabs[activeTabIndex].focus();
-  }
-  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-    e.preventDefault();
-    activeTabIndex = (activeTabIndex + tabs.length - 1) % tabs.length;
-    tabs[activeTabIndex].click();
-    tabs[activeTabIndex].focus();
-  }
+  el.addEventListener("keydown", e => {
+    var tabs = [...document.querySelectorAll(".TabButton")];
+    var activeTabEl = document.querySelector(".TabButton[aria-selected='true']");
+    var activeTabIndex = tabs.indexOf(activeTabEl);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeTabIndex = (activeTabIndex + 1) % tabs.length;
+      tabs[activeTabIndex].click();
+      tabs[activeTabIndex].focus();
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeTabIndex = (activeTabIndex + tabs.length - 1) % tabs.length;
+      tabs[activeTabIndex].click();
+      tabs[activeTabIndex].focus();
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      tabs[0].click();
+      tabs[0].focus();    
+    }
+    if (e.key === 'End') {
+      e.preventDefault();
+      tabs[tabs.length - 1].click();
+      tabs[tabs.length - 1].focus();    
+    }
+  });
 });
 
 document.querySelector("#code-box-copy").addEventListener("click", async e => {

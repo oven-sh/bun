@@ -9,7 +9,7 @@ bun is a new:
 - JavaScript/TypeScript/JSX transpiler
 - JavaScript & CSS bundler
 - Task runner for package.json scripts
-- npm-compatible package manager
+- Npm-compatible package manager
 
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
 
@@ -3193,7 +3193,7 @@ You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expe
 
 #### Build bun (macOS)
 
-If you’re building on an Apple Silicon device, you’ll need to do is ensure you have set an environment variable `CODESIGN_IDENTITY`. You can find the correct value by visiting `Keychain Access` and looking under your `login` profile for `Certificates`. The name would usually look like `Apple Development: user@example.com (WDYABC123)`
+If you’re building on an Apple Silicon device, what you’ll need to do is ensure you have set an environment variable `CODESIGN_IDENTITY`. You can find the correct value by visiting `Keychain Access` and looking under your `login` profile for `Certificates`. The name would usually look like `Apple Development: user@example.com (WDYABC123)`
 
 If you’re not familiar with the process, there’s a guide [here](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode)
 
@@ -3207,7 +3207,7 @@ make vendor jsc identifier-cache dev
 
 #### Verify it worked (macOS)
 
-First ensure the node dependencies are installed
+First ensure the node dependencies are installed.
 
 ```bash
 cd test/snippets

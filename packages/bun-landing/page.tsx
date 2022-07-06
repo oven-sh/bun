@@ -322,19 +322,19 @@ export default ({ inlineCSS }) => (
                     type="bun"
                     amount={48936}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 12289) * 1.25}
+                    max={Math.max(48936, 16288, 15786) * 1.25}
                   />
                   <BarGraphItem
                     type="node"
                     amount={16288}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 12289) * 1.25}
+                    max={Math.max(48936, 16288, 15786) * 1.25}
                   />
                   <BarGraphItem
                     type="deno"
-                    amount={12289}
+                    amount={15786}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 12289) * 1.25}
+                    max={Math.max(48936, 16288, 15786) * 1.25}
                   />
                 </ul>
 

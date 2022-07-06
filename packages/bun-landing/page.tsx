@@ -333,17 +333,17 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun"
                     version="v0.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.jsx"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/react-hello-world.jsx"
                   />
                   <BarGraphLabel
                     name="node"
                     version="v18.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.deno.jsx"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/react-hello-world.node.jsx"
                   />
                   <BarGraphLabel
                     name="deno"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.node.jsx"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/react-hello-world.deno.jsx"
                   />
                 </div>
               </div>
@@ -714,10 +714,6 @@ export default {
             Bun is on <a href="https://github.com/Jarred-Sumner/bun">GitHub</a>
           </p>
         </div>
-      </section>
-
-      <section id="explain-section">
-        <div id="explain"></div>
       </section>
       <script
         dangerouslySetInnerHTML={{

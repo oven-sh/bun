@@ -3,13 +3,13 @@
   <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
 </p>
 
-bun is a new:
+<h3 align="center">bun is a new:</h3>
 
-- JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more builtin. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
-- JavaScript/TypeScript/JSX transpiler
-- JavaScript & CSS bundler
-- Task runner for package.json scripts
-- npm-compatible package manager
+- 🚀 JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more builtin. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
+- ✨JavaScript/TypeScript/JSX transpiler
+- 📦 JavaScript & CSS bundler
+- 💨 Task runner for package.json scripts
+- 😃 npm-compatible package manager
 
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
 

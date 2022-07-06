@@ -338,12 +338,12 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="node"
                     version="v18.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.deno.jsx"
+                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.node.jsx"
                   />
                   <BarGraphLabel
                     name="deno"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.node.jsx"
+                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.deno.jsx"
                   />
                 </div>
               </div>
@@ -389,7 +389,7 @@ export default ({ inlineCSS }) => (
                   />
                   <BarGraphLabel
                     name="better-sqlite3"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.node.mjs"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.better-sqlite3.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel

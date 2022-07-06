@@ -13,6 +13,7 @@ const App = () => (
 const headers = {
   headers: {
     "Content-Type": "text/html",
+    "Cache-Control": "no-transform" // disables response body auto compression, see https://deno.land/manual/runtime/http_server_apis#automatic-body-compression
   },
 };
 

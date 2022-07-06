@@ -18,6 +18,7 @@ http
         // If something errored before we started streaming, we set the error code appropriately.
         res.statusCode = didError ? 500 : 200;
         res.setHeader("Content-type", "text/html");
+        res.setHeader("Cache-Control", "no-transform"); // set to match the Deno benchmark, which requires this for an apples to apples comparison
         stream.pipe(res);
       },
       onShellError(error) {

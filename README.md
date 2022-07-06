@@ -1,4 +1,7 @@
 # bun
+<p align="center">
+  <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
+</p>
 
 bun is a new:
 

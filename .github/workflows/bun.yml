@@ -9,12 +9,14 @@ on:
       - "LICENSE"
       - ".vscode"
       - ".devcontainer"
+      - "packages/bun-landing/**"
   pull_request:
     branches: [main]
     paths-ignore:
       - "examples/**"
       - "bench/**"
       - README.*
+      - "packages/bun-landing/**"
 
 env:
   REGISTRY: ghcr.io

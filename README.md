@@ -65,6 +65,11 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [bun not running on an M1 (or Apple Silicon)](#bun-not-running-on-an-m1-or-apple-silicon)
   - [error: Unexpected](#error-unexpected)
   - [bun install is stuck](#bun-install-is-stuck)
+  - [Unzip is required](#unzip-is-required)
+    - [Debian / Ubuntu / Mint](#debian--ubuntu--mint)
+    - [RedHat / CentOS / Fedora](#redhat--centos--fedora)
+    - [Arch / Manjaro](#arch--manjaro)
+    - [OpenSUSE](#opensuse)
 - [Reference](#reference)
   - [`bun install`](#bun-install)
     - [Configuring bun install with `bunfig.toml`](#configuring-bun-install-with-bunfigtoml)
@@ -902,6 +907,29 @@ To fix this issue:
 1. Remove any scripts that call `ulimit -n` and restart your shell.
 2. Try again, and if the error still occurs, try setting `ulimit -n` to an absurdly high number, such as `ulimit -n 2147483646`
 3. Try again, and if that still doesn’t fix it, open an issue
+
+### Unzip is required
+Unzip is required to install bun on Linux. You can use one of the following commands to install `unzip`:
+
+#### Debian / Ubuntu / Mint
+```sh
+sudo apt install unzip
+```
+
+#### RedHat / CentOS / Fedora
+```sh
+sudo dnf install unzip
+```
+
+#### Arch / Manjaro
+```sh
+sudo pacman -S unzip
+```
+
+#### OpenSUSE
+```sh
+sudo zypper install unzip
+```
 
 ### bun install is stuck
 

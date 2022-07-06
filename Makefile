@@ -9,24 +9,22 @@ ifeq ($(ARCH_NAME_RAW),aarch64)
 ARCH_NAME_RAW = arm64
 endif
 
-MIN_MACOS_VERSION = 10.14
-
-
 MARCH_NATIVE = -mtune=native
 
 ARCH_NAME :=
 DOCKER_BUILDARCH =
 ifeq ($(ARCH_NAME_RAW),arm64)
-   ARCH_NAME = aarch64
-   DOCKER_BUILDARCH = arm64
-   BREW_PREFIX_PATH = /opt/homebrew
-   MIN_MACOS_VERSION = 11.0
-   MARCH_NATIVE = -mtune=native
+	ARCH_NAME = aarch64
+	DOCKER_BUILDARCH = arm64
+	BREW_PREFIX_PATH = /opt/homebrew
+	MIN_MACOS_VERSION ?= 11.0
+	MARCH_NATIVE = -mtune=native
 else
-   ARCH_NAME = x64
-   DOCKER_BUILDARCH = amd64
-   BREW_PREFIX_PATH = /usr/local
-   MARCH_NATIVE = -march=native -mtune=native
+	ARCH_NAME = x64
+	DOCKER_BUILDARCH = amd64
+	BREW_PREFIX_PATH = /usr/local
+	MIN_MACOS_VERSION ?= 10.14
+	MARCH_NATIVE = -march=native -mtune=native
 endif
 
 AR=

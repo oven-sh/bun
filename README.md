@@ -145,7 +145,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
     - [Troubleshooting (macOS)](#troubleshooting-macos)
 - [vscode-zig](#vscode-zig)
 
-## Using bun.js - a new JavaScript runtime environment
+## Using bun.js - a new JavaScript runtime environment[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bun.js focuses on performance, developer experience and compatibility with the JavaScript ecosystem.
 
@@ -244,7 +244,7 @@ There are some more examples in the [examples](./examples) folder.
 
 PRs adding more examples are very welcome!
 
-### Types for bun.js (editor autocomplete)
+### Types for bun.js (editor autocomplete)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 The best docs right now are the TypeScript types in the [`bun-types`](types/bun/bun.d.ts) npm package. A docs site is coming soon.
 
@@ -273,7 +273,7 @@ bun add bun-types
 
 You can also [view the types here](./types/bun/bun.d.ts).
 
-### Fast paths for Web APIs
+### Fast paths for Web APIs[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bun.js has fast paths for common use cases that make Web APIs live up to the performance demands of servers and CLIs.
 
@@ -295,7 +295,7 @@ On Linux, this uses the [`copy_file_range`](https://man7.org/linux/man-pages/man
 await Bun.write("index.html", await fetch("https://example.com"));
 ```
 
-## Using bun as a package manager
+## Using bun as a package manager[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 On Linux, `bun install` tends to install packages 20x - 100x faster than `npm install`. On macOS, it’s more like 4x - 80x.
 
@@ -330,7 +330,7 @@ sudo apt install --install-recommends linux-generic-hwe-20.04
 
 </details>
 
-## Using bun as a task runner
+## Using bun as a task runner[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for bun.
 
@@ -355,9 +355,9 @@ Assuming a package.json with a `"clean"` command in `"scripts"`:
 }
 ```
 
-## Creating a Discord bot with Bun
+## Creating a Discord bot with Bun[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
-### Application Commands
+### Application Commands[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 > Application commands are native ways to interact with apps in the Discord client. There are 3 types of commands accessible in different interfaces: the chat input, a message's context menu (top-right menu or right-clicking in a message), and a user's context menu (right-clicking on a user).
 
@@ -385,7 +385,7 @@ bun run.js # listening on port 1337
 
 Discord does not accept insecure http server, so you will need provide SSL certificate or put interactions server behind a secure reverse proxy. For development you can use ngrok/cloudflare tunnel to expose local port as secure URL.
 
-## Using bun with Next.js
+## Using bun with Next.js[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 To create a new Next.js app with bun:
 
@@ -420,7 +420,7 @@ When using Next.js, bun automatically reads configuration from `.env.local`, `.e
 
 Currently, any time you import new dependencies from `node_modules`, you will need to re-run `bun bun --use next`. This will eventually be automatic.
 
-## Using bun with single page apps
+## Using bun with single page apps[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 In your project folder root (where `package.json` is):
 
@@ -444,7 +444,7 @@ Here are examples of routing from `public/` and how they’re matched:
 
 If `public/index.html` exists, it becomes the default page instead of a 404 page, unless that pathname has a file extension.
 
-### Using bun with Create React App
+### Using bun with Create React App[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 To create new a React app:
 
@@ -483,15 +483,15 @@ You can override the public directory by passing `--public-dir="path-to-folder"`
 
 If no directory is specified and `./public/` doesn’t exist, bun will try `./static/`. If `./static/` does not exist, but won’t serve from a public directory. If you pass `--public-dir=./` bun will serve from the current directory, but it will check the current directory last instead of first.
 
-## Using bun with TypeScript
+## Using bun with TypeScript[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
-#### Transpiling TypeScript with Bun
+#### Transpiling TypeScript with Bun[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 TypeScript just works. There’s nothing to configure and nothing extra to install. If you import a `.ts` or `.tsx` file, bun will transpile it into JavaScript. bun also transpiles `node_modules` containing `.ts` or `.tsx` files. This is powered by bun’s TypeScript transpiler, so it’s fast.
 
 bun also reads `tsconfig.json`, including `baseUrl` and `paths`.
 
-## Not implemented yet
+## Not implemented yet[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bun is a project with incredibly large scope, and it’s early days.
 
@@ -527,7 +527,7 @@ Package manager == `bun install`
 bun.js == bun’s JavaScriptCore integration that executes JavaScript. Similar to how Node.js & Deno embed V8.
 </small>
 
-### Limitations & intended usage
+### Limitations & intended usage[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Today, bun is mostly focused on bun.js: the JavaScript runtime.
 
@@ -535,14 +535,14 @@ While you could use bun's bundler & transpiler separately to build for browsers 
 
 Longer-term, bun intends to replace Node.js, Webpack, Babel, yarn, and PostCSS (in production).
 
-### Upcoming breaking changes
+### Upcoming breaking changes[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 - Bun's CLI flags will change to better support bun as a JavaScript runtime. They were chosen when bun was just a frontend development tool.
 - Bun's bundling format will change to accomdate production browser bundles and on-demand production bundling
 
-## Configuration
+## Configuration[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
-### bunfig.toml
+### bunfig.toml[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bunfig.toml is bun's configuration file.
 
@@ -613,7 +613,7 @@ editor = "code"
 
 TODO: list each property name
 
-### Loaders
+### Loaders[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 A loader determines how to map imports &amp; file extensions to transforms and output.
 
@@ -644,7 +644,7 @@ bun --loader=.js:js
 
 This will disable JSX transforms for `.js` files.
 
-### CSS in JS
+### CSS in JS[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 When importing CSS in JavaScript-like loaders, CSS is treated special.
 
@@ -654,7 +654,7 @@ By default, bun will transform a statement like this:
 import "../styles/global.css";
 ```
 
-##### When `platform` is `browser`
+##### When `platform` is `browser`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 ```js
 globalThis.document?.dispatchEvent(
@@ -666,7 +666,7 @@ globalThis.document?.dispatchEvent(
 
 An event handler for turning that into a `<link>` is automatically registered when HMR is enabled. That event handler can be turned off either in a framework’s `package.json` or by setting `globalThis["Bun_disableCSSImports"] = true;` in client-side code. Additionally, you can get a list of every .css file imported this way via `globalThis["__BUN"].allImportedStyles`.
 
-##### When `platform` is `bun`
+##### When `platform` is `bun`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 ```js
 //@import url("http://localhost:3000/styles/globals.css");
@@ -693,7 +693,7 @@ addEventListener("fetch", async (event: FetchEvent) => {
 
 This is useful for preventing flash of unstyled content.
 
-### CSS Loader
+### CSS Loader[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bun bundles `.css` files imported via `@import` into a single file. It doesn’t autoprefix or minify CSS today. Multiple `.css` files imported in one JavaScript file will _not_ be bundled into one file. You’ll have to import those from a `.css` file.
 
@@ -716,13 +716,13 @@ Becomes:
 /* ...contents of yo.css */
 ```
 
-### CSS runtime
+### CSS runtime[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 To support hot CSS reloading, bun inserts `@supports` annotations into CSS that tag which files a stylesheet is composed of. Browsers ignore this, so it doesn’t impact styles.
 
 By default, bun’s runtime code automatically listens to `onimportcss` and will insert the `event.detail` into a `<link rel="stylesheet" href={${event.detail}}>` if there is no existing `link` tag with that stylesheet. That’s how bun’s equivalent of `style-loader` works.
 
-### Frameworks
+### Frameworks[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 > **Warning**
 > This will soon have breaking changes. It was designed when Bun was mostly a dev server and not a JavaScript runtime.
@@ -875,9 +875,9 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 
 If you’re interested in adding a framework integration, please reach out. There’s a lot here and it’s not entirely documented yet.
 
-## Troubleshooting
+## Troubleshooting[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
-### bun not running on an M1 (or Apple Silicon)
+### bun not running on an M1 (or Apple Silicon)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 If you see a message like this
 
@@ -887,7 +887,7 @@ It most likely means you’re running bun’s x64 version on Apple Silicon. This
 
 The fix is to ensure you installed a version of bun built for Apple Silicon.
 
-### error: Unexpected
+### error: Unexpected[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 If you see an error like this:
 
@@ -903,19 +903,19 @@ To fix this issue:
 2. Try again, and if the error still occurs, try setting `ulimit -n` to an absurdly high number, such as `ulimit -n 2147483646`
 3. Try again, and if that still doesn’t fix it, open an issue
 
-### bun install is stuck
+### bun install is stuck[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Please run `bun install --verbose 2> logs.txt` and send them to me in bun's discord. If you're on Linux, it would also be helpful if you run `sudo perf trace bun install --silent` and attach the logs.
 
-## Reference
+## Reference[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
-### `bun install`
+### `bun install`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bun install is a fast package manager & npm client.
 
 bun install can be configured via `bunfig.toml`, environment variables, and CLI flags.
 
-#### Configuring bun install with `bunfig.toml`
+#### Configuring bun install with `bunfig.toml`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `bunfig.toml` is searched for in the following paths on `bun install`, `bun remove`, and `bun add`:
 
@@ -1054,7 +1054,7 @@ export interface Lockfile {
 }
 ```
 
-#### Configuring with environment variables
+#### Configuring with environment variables[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Environment variables have higher priority than `bunfig.toml`.
 
@@ -1079,35 +1079,35 @@ When a `bun.lockb` doesn’t exist or `package.json` has changed dependencies, t
 
 When a `bun.lockb` exists and `package.json` hasn’t changed, bun downloads missing dependencies lazily. If the package with a matching `name` & `version` already exists in the expected location within `node_modules`, bun won’t attempt to download the tarball.
 
-#### Platform-specific dependencies?
+#### Platform-specific dependencies?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won’t change between platforms/architectures even if the packages ultimately installed do change.
 
-#### Peer dependencies?
+#### Peer dependencies?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Peer dependencies are handled similarly to yarn. `bun install` does not automatically install peer dependencies and will try to choose an existing dependency.
 
-#### Lockfile
+#### Lockfile[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `bun.lockb` is bun’s binary lockfile format.
 
-#### Why is it binary?
+#### Why is it binary?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 In a word: Performance. bun’s lockfile saves & loads incredibly quickly, and saves a lot more data than what is typically inside lockfiles.
 
-#### How do I inspect it?
+#### How do I inspect it?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 For now, the easiest thing is to run `bun install -y`. That prints a Yarn v1-style yarn.lock file.
 
-#### What does the lockfile store?
+#### What does the lockfile store?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Packages, metadata for those packages, the hoisted install order, dependencies for each package, what packages those dependencies resolved to, an integrity hash (if available), what each package was resolved to and which version (or equivalent)
 
-#### Why is it fast?
+#### Why is it fast?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 It uses linear arrays for all data. [Packages](https://github.com/Jarred-Sumner/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
 
-#### Cache
+#### Cache[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 To delete the cache:
 
@@ -1115,14 +1115,14 @@ To delete the cache:
 rm -rf ~/.bun/install/cache
 ```
 
-#### npm registry metadata
+#### npm registry metadata[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
 You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages
 
 bun’s usage of `Cache-Control` ignores `Age`. This improves performance, but means bun may be about 5 minutes out of date to receive the the latest package version metadata from npm.
 
-### `bun run`
+### `bun run`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `bun run` is a fast `package.json` scripts runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for bun.
 
@@ -1202,13 +1202,13 @@ bun run relay-compiler --schema foo.graphql
 
 `bun run` supports lifecycle hooks like `post${task}` and `pre{task}`. If they exist, they will run matching the behavior of npm clients. If the `pre${task}` fails, the next task will not be run. There is currently no flag to skip these lifecycle tasks if they exist, if you want that file an issue.
 
-### `bun create`
+### `bun create`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `bun create` is a fast way to create a new project from a template.
 
 At the time of writing, `bun create react app` runs ~11x faster on my local computer than `yarn create react-app app`. `bun create` currently does no caching (though your npm client does)
 
-#### Usage
+#### Usage[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Create a new Next.js project:
 
@@ -1246,7 +1246,7 @@ bun create github.com/github-user/repo-name destination
 
 Note: you don’t need `bun create` to use bun. You don’t need any configuration at all. This command exists to make it a little easier.
 
-#### Local templates
+#### Local templates[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 If you have your own boilerplate you prefer using, copy it into `$HOME/.bun-create/my-boilerplate-name`.
 
@@ -1279,7 +1279,7 @@ bun create
 
 Warning: unlike with remote templates, **bun will delete the entire destination folder if it already exists.**
 
-#### Flags
+#### Flags[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 | Flag         | Description                            |
 | ------------ | -------------------------------------- |
@@ -1298,13 +1298,13 @@ Warning: unlike with remote templates, **bun will delete the entire destination 
 
 By default, `bun create` will cancel if there are existing files it would overwrite and its a remote template. You can pass `--force` to disable this behavior.
 
-#### Publishing a new template
+#### Publishing a new template[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Clone this repository and a new folder in `examples/` with your new template. The `package.json` must have a `name` that starts with `@bun-examples/`. Do not worry about publishing it, that will happen automaticallly after the PR is merged.
 
 Make sure to include a `.gitignore` that includes `node_modules` so that `node_modules` aren’t checked in to git when people download the template.
 
-#### Testing your new template
+#### Testing your new template[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 To test your new template, add it as a local template or pass the absolute path.
 
@@ -1314,7 +1314,7 @@ bun create /path/to/my/new/template destination-dir
 
 Warning: **This will always delete everything in destination-dir**.
 
-#### Config
+#### Config[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 The `bun-create` section of `package.json` is automatically removed from the `package.json` on disk. This lets you add create-only steps without waiting for an extra package to install.
 
@@ -1353,7 +1353,7 @@ By default, all commands run inside the environment exposed by the auto-detected
 
 Any command that starts with `"bun "` will be run without npm, relying on the first `bun` binary in `$PATH`.
 
-#### How `bun create` works
+#### How `bun create` works[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 When you run `bun create ${template} ${destination}`, here’s what happens:
 
@@ -1396,16 +1396,16 @@ ELSE IF local template
 
 `misctools/publish-examples.js` publishes all examples to npm.
 
-### `bun bun`
+### `bun bun`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Run `bun bun ./path-to.js` to generate a `node_modules.bun` file containing all imported dependencies (recursively).
 
-#### Why bundle?
+#### Why bundle?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 - For browsers, loading entire apps without bundling dependencies is typically slow. With a fast bundler & transpiler, the bottleneck eventually becomes the web browser’s ability to run many network requests concurrently. There are many workarounds for this. `<link rel="modulepreload">`, HTTP/3, etc but none are more effective than bundling. If you have reproducible evidence to the contrary, feel free to submit an issue. It would be better if bundling wasn’t necessary.
 - On the server, bundling reduces the number of filesystem lookups to load JavaScript. While filesystem lookups are faster than HTTP requests, there’s still overhead.
 
-#### What is `.bun`?
+#### What is `.bun`?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Note: [This format may change soon](https://github.com/Jarred-Sumner/bun/issues/121)
 
@@ -1430,7 +1430,7 @@ All in one file.
 
 It’s a little like a build cache, but designed for reuse across builds.
 
-#### Position-independent code
+#### Position-independent code[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 From a design perspective, the most important part of the `.bun` format is how code is organized. Each module is exported by a hash like this:
 
@@ -1446,7 +1446,7 @@ This makes bundled modules [position-independent](https://en.wikipedia.org/wiki/
 
 To see the schema inside, have a look at [`JavascriptBundleContainer`](./src/api/schema.d.ts#:~:text=export%20interface-,JavascriptBundleContainer,-%7B). You can find JavaScript bindings to read the metadata in [src/api/schema.js](./src/api/schema.js). This is not really an API yet. It’s missing the part where it gets the binary data from the bottom of the file. Someday, I want this to be usable by other tools too.
 
-#### Where is the code?
+#### Where is the code?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `.bun` files are marked as executable.
 
@@ -1468,7 +1468,7 @@ To deploy to production with bun, you’ll want to get the code from the `.bun` 
 
 Note that `.bun` is a binary file format, so just opening it in VSCode or vim might render strangely.
 
-#### Advanced
+#### Advanced[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 By default, `bun bun` only bundles external dependencies that are `import`ed or `require`d in either app code or another external dependency. An "external depenendency" is defined as, "A JavaScript-like file that has `/node_modules/` in the resolved file path and a corresponding `package.json`".
 
@@ -1485,7 +1485,7 @@ To force bun to bundle packages which are not located in a `node_modules` folder
 
 Bundled dependencies are not eligible for Hot Module Reloading. The code is served to browsers & bun.js verbatim. But, in the future, it may be sectioned off into only parts of the bundle being used. That’s possible in the current version of the `.bun` file (so long as you know which files are necessary), but it’s not implemented yet. Longer-term, it will include all `import` and `export` of each module inside.
 
-#### What is the module ID hash?
+#### What is the module ID hash?[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 The `$eb6819b` hash used here:
 
@@ -1501,7 +1501,7 @@ Is generated like this:
 
 The implementation details of this module ID hash will vary between versions of bun. The important part is the metadata contains the module IDs, the package paths, and the package hashes so it shouldn’t really matter in practice if other tooling wants to make use of any of this.
 
-### `bun upgrade`
+### `bun upgrade`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 To upgrade bun, run `bun upgrade`.
 
@@ -1523,13 +1523,13 @@ bun is distributed as a single binary file, so you can also do this manually:
 - Unzip the folder
 - Move the `bun` binary to `~/.bun/bin` (or anywhere)
 
-### `bun completions`
+### `bun completions`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 This command installs completions for `zsh` and/or `fish`. It’s run automatically on every `bun upgrade` and on install. It reads from `$SHELL` to determine which shell to install for. It tries several common shell completion directories for your shell and OS.
 
 If you want to copy the completions manually, run `bun completions > path-to-file`. If you know the completions directory to install them to, run `bun completions /path/to/directory`.
 
-## `Bun.serve` - fast HTTP server
+## `Bun.serve` - fast HTTP server[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 For a hello world HTTP server that writes "bun!", `Bun.serve` serves about 2.5x more requests per second than node.js on Linux:
 
@@ -1566,7 +1566,7 @@ require("http")
 
 </details>
 
-#### Usage
+#### Usage[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Two ways to start an HTTP server with bun.js:
 
@@ -1597,7 +1597,7 @@ Bun.serve({
 });
 ```
 
-#### Error handling
+#### Error handling[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 For error handling, you get an `error` function.
 
@@ -1636,7 +1636,7 @@ server.stop();
 
 The interface for `Bun.serve` is based on what [Cloudflare Workers](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/#module-workers-in-the-dashboard) does.
 
-## `Bun.write` – optimizing I/O
+## `Bun.write` – optimizing I/O[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `Bun.write` lets you write, copy or pipe files automatically using the fastest system calls compatible with the input and platform.
 
@@ -1686,7 +1686,7 @@ await Bun.write(Bun.file("index.html"), await fetch("http://example.com"));
 await Bun.write("output.txt", Bun.file("input.txt"));
 ```
 
-## bun:sqlite (SQLite3 module)
+## bun:sqlite (SQLite3 module)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `bun:sqlite` is a high-performance builtin [SQLite3](https://www.sqlite.org/) module for bun.js.
 
@@ -1742,7 +1742,7 @@ db.query("SELECT * FROM foo WHERE greeting = $greeting").get({
 // ]
 ```
 
-### bun:sqlite Benchmark
+### bun:sqlite Benchmark[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Database: [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/master/Northwind_large.sqlite.zip).
 
@@ -1778,7 +1778,7 @@ In screenshot form (which has a different sorting order)
 
 <img width="738" alt="image" src="https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png">
 
-### Getting started with bun:sqlite
+### Getting started with bun:sqlite[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bun:sqlite's API is loosely based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3), though the implementation is different.
 
@@ -1787,7 +1787,7 @@ bun:sqlite has two classes:
 - `class Database`
 - `class Statement`
 
-#### `Database`
+#### `Database`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Calling `new Database(filename)` opens or creates the SQLite database.
 
@@ -1879,7 +1879,7 @@ db.close();
 
 Note: `close()` is called automatically when the database is garbage collected. It is safe to call multiple times, but has no effect after the first.
 
-#### Database.prototype.query
+#### Database.prototype.query[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `query(sql)` creates a `Statement` for the given SQL and caches it, but does not execute it.
 
@@ -1921,7 +1921,7 @@ stmt.get("Welcome to bun!");
 stmt.run("Welcome to bun!");
 ```
 
-#### Database.prototype.prepare
+#### Database.prototype.prepare[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `prepare(sql)` creates a `Statement` for the given SQL, but does not execute it.
 
@@ -1945,7 +1945,7 @@ stmt.all("baz");
 
 Internally, this calls [`sqlite3_prepare_v3`](https://www.sqlite.org/c3ref/prepare.html).
 
-#### Database.prototype.exec & Database.prototype.run
+#### Database.prototype.exec & Database.prototype.run[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `exec` is for one-off executing a query which does not need to return anything.
 `run` is an alias.
@@ -1991,7 +1991,7 @@ For queries which aren't intended to be run multiple times, it should be faster 
 
 Internally, this function calls [`sqlite3_prepare`](https://www.sqlite.org/c3ref/prepare.html), [`sqlite3_step`](https://www.sqlite.org/c3ref/step.html), and [`sqlite3_finalize`](https://www.sqlite.org/c3ref/finalize.html).
 
-#### Database.prototype.transaction
+#### Database.prototype.transaction[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Creates a function that always runs inside a transaction. When the function is invoked, it will begin a new transaction. When the function returns, the transaction will be committed. If an exception is thrown, the transaction will be rolled back (and the exception will propagate as usual).
 
@@ -2060,7 +2060,7 @@ Any arguments passed to the transaction function will be forwarded to the wrappe
 
 bun:sqlite's transaction implementation is based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3/blob/master/docs/api.md#transactionfunction---function) (along with this section of the docs), so thanks to Joshua Wise and better-sqlite3 constributors.
 
-#### Database.prototype.serialize
+#### Database.prototype.serialize[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 SQLite has a builtin way to [serialize](https://www.sqlite.org/c3ref/serialize.html) and [deserialize](https://www.sqlite.org/c3ref/deserialize.html) databases to and from memory.
 
@@ -2091,7 +2091,7 @@ db2.query("SELECT * FROM foo").all();
 
 Internally, it calls [`sqlite3_serialize`](https://www.sqlite.org/c3ref/serialize.html).
 
-#### Database.prototype.loadExtension
+#### Database.prototype.loadExtension[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `bun:sqlite` supports [SQLite extensions](https://www.sqlite.org/loadext.html).
 
@@ -2126,7 +2126,7 @@ To install sqlite with homebrew:
 brew install sqlite
 ```
 
-#### Statement
+#### Statement[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `Statement` is a prepared statement. Use it to run queries that get results.
 
@@ -2167,7 +2167,7 @@ statement.get();
 statement.run();
 ```
 
-#### Statement.all
+#### Statement.all[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Calling `all()` on a `Statement` instance runs the query and returns the rows as an array of objects.
 
@@ -2200,7 +2200,7 @@ statement.all(2);
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and repeatedly calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it returns `SQLITE_DONE`.
 
-#### Statement.values
+#### Statement.values[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Calling `values()` on a `Statement` instance runs the query and returns the rows as an array of arrays.
 
@@ -2243,7 +2243,7 @@ statement.values({ $count: 2 });
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and repeatedly calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) until it returns `SQLITE_DONE`.
 
-#### Statement.get
+#### Statement.get[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Calling `get()` on a `Statement` instance runs the query and returns the first result as an object.
 
@@ -2280,7 +2280,7 @@ statement.get({ $count: 2 });
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you only want the first row.
 
-#### Statement.run
+#### Statement.run[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Calling `run()` on a `Statement` instance runs the query and returns nothing.
 
@@ -2311,7 +2311,7 @@ statement.run();
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you don't care about the results.
 
-#### Statement.finalize
+#### Statement.finalize[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 This method finalizes the statement, freeing any resources associated with it.
 
@@ -2344,7 +2344,7 @@ statement.finalize();
 statement.run();
 ```
 
-#### Statement.toString()
+#### Statement.toString()[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Calling `toString()` on a `Statement` instance prints the expanded SQL query. This is useful for debugging.
 
@@ -2378,7 +2378,7 @@ console.log(statement.toString());
 
 Internally, this calls [`sqlite3_expanded_sql`](https://www.sqlite.org/capi3ref.html#sqlite3_expanded_sql).
 
-#### Datatypes
+#### Datatypes[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 | JavaScript type | SQLite type            |
 | --------------- | ---------------------- |
@@ -2390,7 +2390,7 @@ Internally, this calls [`sqlite3_expanded_sql`](https://www.sqlite.org/capi3ref.
 | `bigint`        | `INTEGER`              |
 | `null`          | `NULL`                 |
 
-### `bun:ffi` (Foreign Functions Interface)
+### `bun:ffi` (Foreign Functions Interface)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `bun:ffi` lets you efficiently call native libraries from JavaScript. It works with languages that support the C ABI (Zig, Rust, C/C++, C#, Nim, Kotlin, etc).
 
@@ -2425,7 +2425,7 @@ const {
 console.log(`SQLite 3 version: ${sqlite3_libversion()}`);
 ```
 
-#### Low-overhead FFI
+#### Low-overhead FFI[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 3ns to go from JavaScript <> native code with `bun:ffi` (on my machine, an M1X)
 
@@ -2446,7 +2446,7 @@ To compile C, Bun embeds [TinyCC](https://github.com/TinyCC/tinycc) a small and 
 
 </details>
 
-#### Usage
+#### Usage[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 With Zig:
 
@@ -2496,7 +2496,7 @@ To compile:
 rustc --crate-type cdylib add.rs
 ```
 
-#### Supported FFI types (`FFIType`)
+#### Supported FFI types (`FFIType`)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 | `FFIType` | C Type     | Aliases                     |
 | --------- | ---------- | --------------------------- |
@@ -2515,7 +2515,7 @@ rustc --crate-type cdylib add.rs
 | bool      | `bool`     |                             |
 | char      | `char`     |                             |
 
-#### Strings (`CString`)
+#### Strings (`CString`)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 JavaScript strings and C-like strings are different, and that complicates using strings with native libraries.
 
@@ -2579,11 +2579,11 @@ my_library_free(myString.ptr);
 console.log(myString);
 ```
 
-##### Returning a string
+##### Returning a string[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 When used in `returns`, `FFIType.cstring` coerces the pointer to a JavaScript `string`. When used in `args`, `cstring` is identical to `ptr`.
 
-#### Function pointers (`CFunction`)
+#### Function pointers (`CFunction`)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 To call a function pointer from JavaScript, use `CFunction`
 
@@ -2640,7 +2640,7 @@ const [major, minor, patch] = [
 ];
 ```
 
-#### Pointers
+#### Pointers[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_programming)>) as a `number` in JavaScript.
 
@@ -2692,7 +2692,7 @@ If an API expects a pointer sized to something other than `char` or `u8`, make s
 
 A `u64*` is not exactly the same as `[8]u8*` due to alignment
 
-##### Passing a pointer
+##### Passing a pointer[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Where FFI functions expect a pointer, pass a TypedArray of equivalent size
 
@@ -2762,7 +2762,7 @@ const out = encode_png(
 
 </details>
 
-##### Reading pointers
+##### Reading pointers[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 ```ts
 const out = encode_png(
@@ -2781,14 +2781,14 @@ var png = new Uint8Array(toArrayBuffer(out));
 await Bun.write("out.png", png);
 ```
 
-##### Not implemented yet
+##### Not implemented yet[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `bun:ffi` has a few more things planned but not implemented yet:
 
 - callback functions
 - async functions
 
-### Node-API (napi)
+### Node-API (napi)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Bun.js implements 90% of the APIs available in [Node-API](https://nodejs.org/api/n-api.html) (napi).
 
@@ -2825,7 +2825,7 @@ import.meta.require("./my-node-module.node");
 
 Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore builtin function](https://github.com/Jarred-Sumner/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/bun.js/bindings/builtins/js/JSZigGlobalObject.js#L26).
 
-### `Bun.Transpiler`
+### `Bun.Transpiler`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 `Bun.Transpiler` lets you use Bun's transpiler from JavaScript (available in Bun.js)
 
@@ -2905,7 +2905,7 @@ type Import = {
 const transpiler = new Bun.Transpiler({ loader: "jsx" });
 ````
 
-#### `Bun.Transpiler.transformSync`
+#### `Bun.Transpiler.transformSync`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 This lets you transpile JavaScript, TypeScript, TSX, and JSX using Bun's transpiler. It does not resolve modules.
 
@@ -2935,7 +2935,7 @@ export default jsx(
 
 If a macro is used, it will be run in the same thread as the transpiler, but in a separate event loop from the rest of your application. Currently, globals between macros and regular code are shared, which means it is possible (but not recommended) to share state between macros and regular code. Attempting to use AST nodes outside of a macro is undefined behavior.
 
-#### `Bun.Transpiler.transform`
+#### `Bun.Transpiler.transform`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 This lets you transpile JavaScript, TypeScript, TSX, and JSX using Bun's transpiler. It does not resolve modules.
 
@@ -2973,7 +2973,7 @@ You can also pass a `Loader` as a string
 await transpiler.transform("<div>hi!</div>", "tsx");
 ```
 
-#### `Bun.Transpiler.scan`
+#### `Bun.Transpiler.scan`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 This is a fast way to get a list of imports & exports used in a JavaScript/jsx or TypeScript/tsx file.
 
@@ -3014,7 +3014,7 @@ export const loader = () => import('./loader');
 
 ```
 
-#### `Bun.Transpiler.scanImports`
+#### `Bun.Transpiler.scanImports`[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 This is a fast path for getting a list of imports used in a JavaScript/jsx or TypeScript/tsx file. It skips the visiting pass, which means it is faster but less accurate. You probably won't notice a difference between `Bun.Transpiler.scan` and `Bun.Transpiler.scanImports` often. You might notice it for very large files (megabytes).
 
@@ -3049,18 +3049,18 @@ export const loader = () => import('./loader');
 ]
 ```
 
-## Environment variables
+## Environment variables[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 - `GOMAXPROCS`: For `bun bun`, this sets the maximum number of threads to use. If you’re experiencing an issue with `bun bun`, try setting `GOMAXPROCS=1` to force bun to run single-threaded
 - `DISABLE_BUN_ANALYTICS=1` this disables bun’s analytics. bun records bundle timings (so we can answer with data, "is bun getting faster?") and feature usage (e.g. "are people actually using macros?"). The request body size is about 60 bytes, so it’s not a lot of data
 - `TMPDIR`: Before `bun bun` completes, it stores the new `.bun` in `$TMPDIR`. If unset, `TMPDIR` defaults to the platform-specific temporary directory (on Linux, `/tmp` and on macOS `/private/tmp`)
 
-## Credits
+## Credits[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 - While written in Zig instead of Go, bun’s JS transpiler, CSS lexer, and node module resolver source code is based off of @evanw’s esbuild project. @evanw did a fantastic job with esbuild.
 - The idea for the name "bun" came from [@kipply](https://github.com/kipply)
 
-## License
+## License[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 bun itself is MIT-licensed.
 
@@ -3116,11 +3116,11 @@ For compatibiltiy reasons, these NPM packages are embedded into bun’s binary a
 - [`util`](https://npmjs.com/package/util) (MIT license)
 - [`vm-browserify`](https://npmjs.com/package/vm-browserify) (MIT license)
 
-## Developing bun
+## Developing bun[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Estimated: 30-90 minutes :(
 
-### VSCode Dev Container (Linux)
+### VSCode Dev Container (Linux)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 The VSCode Dev Container in this repository is the easiest way to get started. It comes with Zig, JavaScriptCore, Zig Language Server, vscode-zig, and more pre-installed on an instance of Ubuntu.
 
@@ -3163,7 +3163,7 @@ bun-debug
 
 It is very similar to my own development environment.
 
-### MacOS
+### MacOS[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Install LLVM 13 and homebrew dependencies:
 
@@ -3191,7 +3191,7 @@ On fish that looks like `fish_add_path (brew --prefix llvm@13)/bin`
 
 You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expected is the HEAD in [Jarred-Sumner/zig](https://github.com/Jarred-Sumner/zig).
 
-#### Build bun (macOS)
+#### Build bun (macOS)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 If you’re building on an Apple Silicon device, you’ll need to do is ensure you have set an environment variable `CODESIGN_IDENTITY`. You can find the correct value by visiting `Keychain Access` and looking under your `login` profile for `Certificates`. The name would usually look like `Apple Development: user@example.com (WDYABC123)`
 
@@ -3205,7 +3205,7 @@ git submodule update --init --recursive --progress --depth=1
 make vendor jsc identifier-cache dev
 ```
 
-#### Verify it worked (macOS)
+#### Verify it worked (macOS)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 First ensure the node dependencies are installed
 
@@ -3222,7 +3222,7 @@ cd ../../
 make test-dev-all
 ```
 
-#### Troubleshooting (macOS)
+#### Troubleshooting (macOS)[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 If you see an error when compiling `libarchive`, run this:
 
@@ -3232,7 +3232,7 @@ brew install pkg-config
 
 If you see an error about missing files on `zig build obj`, make sure you built the headers
 
-## vscode-zig
+## vscode-zig[⬆](#table-of-contents)<!-- Link generated with jump2header -->
 
 Note: this is automatically installed on the devcontainer
 

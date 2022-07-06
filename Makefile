@@ -65,7 +65,7 @@ CC = $(shell which clang-13 || which clang)
 CXX = $(shell which clang++-13 || which clang++)
 
 ifeq ($(OS_NAME),darwin)
-LLVM_PREFIX = $(shell brew --prefix llvm)
+LLVM_PREFIX ?= $(shell brew --prefix llvm)
 LDFLAGS += " -L$(LLVM_PREFIX)/lib"
 CPPFLAGS += " -I$(LLVM_PREFIX)/include"
 CC = $(LLVM_PREFIX)/bin/clang

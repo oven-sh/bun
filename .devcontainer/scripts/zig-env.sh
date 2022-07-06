@@ -4,4 +4,4 @@ curl -L https://github.com/Jarred-Sumner/vscode-zig/releases/download/fork-v1/zi
 git clone https://github.com/zigtools/zls /home/ubuntu/zls
 cd /home/ubuntu/zls
 git submodule update --init --recursive --progress --depth=1
-zig build -Drelease-fast
+/build/zig-latest/zig build -Drelease-fast

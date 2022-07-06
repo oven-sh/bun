@@ -47,6 +47,7 @@ RUN apt-get update && \
     cargo \
     unzip \
     tar \
+    xz-utils \
     golang-go ninja-build pkg-config automake autoconf libtool curl && \
     update-alternatives --install /usr/bin/cc cc /usr/bin/clang-13 90 && \
     update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-13 90 && \
@@ -93,6 +94,15 @@ RUN cd $GITHUB_WORKSPACE && \
     curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/mar4/zig-linux-$BUILDARCH.zip && \
     unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
+
+RUN cd $GITHUB_WORKSPACE && \
+    zig_tarball_url=$(curl -sS https://ziglang.org/download/ | grep -o -E 'https://ziglang\.org/builds/zig-linux-x86_64-[^>]+') && \
+    zig_master_version=$(echo "$zig_tarball_url" | grep -o -E '[0-9.]+-dev\.[0-9]+\+[0-9a-f]+') && \
+    echo zig_master_verion=$zig_master_version && \
+    curl -o zig-linux-$BUILDARCH.tar.xz -L https://ziglang.org/builds/zig-linux-x86_64-$zig_master_version.tar.xz && \
+    tar -xJf zig-linux-$BUILDARCH.tar.xz && \
+    mv zig-linux-x86_64-$zig_master_version zig-latest && \
+    rm zig-linux-$BUILDARCH.tar.xz;
 
 RUN cd $GITHUB_WORKSPACE && \
     curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/Jarred-Sumner/WebKit/releases/download/jul4/bun-webkit-linux-$BUILDARCH.tar.gz && \

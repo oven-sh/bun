@@ -706,7 +706,7 @@ jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
-devcontainer: clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev runtime_js_dev
+devcontainer: clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev runtime_js_dev libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 

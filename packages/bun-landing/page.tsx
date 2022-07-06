@@ -586,7 +586,7 @@ export default ({ inlineCSS }) => (
           </p>
           <h1>Why is Bun fast?</h1>
           <p>
-            An enourmous amount of time spent profiling, benchmarking and
+            An enormous amount of time spent profiling, benchmarking and
             optimizing things. The answer is different for every part of Bun,
             but one general theme:{" "}
             <a href="https://ziglang.org/">

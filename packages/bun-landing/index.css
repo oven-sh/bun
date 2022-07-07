@@ -96,7 +96,8 @@ header {
 .subtitle {
   font-size: 1.2rem;
 }
-nav {
+
+.Navigation ul {
   white-space: nowrap;
   display: flex;
   gap: 2rem;

@@ -558,7 +558,7 @@ Longer-term, bun intends to replace Node.js, Webpack, Babel, yarn, and PostCSS (
 ### Upcoming breaking changes
 
 - Bun's CLI flags will change to better support bun as a JavaScript runtime. They were chosen when bun was just a frontend development tool.
-- Bun's bundling format will change to accomdate production browser bundles and on-demand production bundling
+- Bun's bundling format will change to accommdoate production browser bundles and on-demand production bundling
 
 ## Configuration
 
@@ -1490,7 +1490,7 @@ Note that `.bun` is a binary file format, so just opening it in VSCode or vim mi
 
 #### Advanced
 
-By default, `bun bun` only bundles external dependencies that are `import`ed or `require`d in either app code or another external dependency. An "external depenendency" is defined as, "A JavaScript-like file that has `/node_modules/` in the resolved file path and a corresponding `package.json`".
+By default, `bun bun` only bundles external dependencies that are `import`ed or `require`d in either app code or another external dependency. An "external dependency" is defined as, "A JavaScript-like file that has `/node_modules/` in the resolved file path and a corresponding `package.json`".
 
 To force bun to bundle packages which are not located in a `node_modules` folder (i.e. the final, resolved path following all symlinks), add a `bun` section to the root project’s `package.json` with `alwaysBundle` set to an array of package names to always bundle. Here’s an example:
 
@@ -2125,7 +2125,7 @@ var db = new Database();
 db.loadExtension("myext");
 ```
 
-If you're on macOS, you will need to first use a custom SQLite install (you can install with homebrew). By default, bun uses Apple's propietary build of SQLite because it benchmarks about 50% faster. However, they disabled extension support, so you will need to have a custom build of SQLite to use extensions on macOS.
+If you're on macOS, you will need to first use a custom SQLite install (you can install with homebrew). By default, bun uses Apple's proprietary build of SQLite because it benchmarks about 50% faster. However, they disabled extension support, so you will need to have a custom build of SQLite to use extensions on macOS.
 
 ```ts
 import { Database } from "bun:sqlite";

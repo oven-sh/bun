@@ -224,6 +224,11 @@ export default ({ inlineCSS }) => (
         projects – all in Bun. Bun is a new JavaScript runtime with
         a native bundler, transpiler, task runner and npm client built-in.`}
       />
+      <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"></link>
+      <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"></link>
+      <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"></link>
+      <link rel="manifest" href="/site.webmanifest"></link>
+
       <title>Bun is a fast all-in-one JavaScript runtime</title>
 
       {inlineCSS ? (

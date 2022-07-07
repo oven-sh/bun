@@ -63,6 +63,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [CSS runtime](#css-runtime)
   - [Frameworks](#frameworks)
 - [Troubleshooting](#troubleshooting)
+  - [Illegal Instruction (Core Dumped)](#illegal-instruction-core-dumped)
   - [bun not running on an M1 (or Apple Silicon)](#bun-not-running-on-an-m1-or-apple-silicon)
   - [error: Unexpected](#error-unexpected)
   - [bun install is stuck](#bun-install-is-stuck)
@@ -896,7 +897,24 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 If you’re interested in adding a framework integration, please reach out. There’s a lot here and it’s not entirely documented yet.
 
 ## Troubleshooting
-
+### Illegal Instruction (Core Dumped)
+If you get this error while bun is initializing, You probably need to wrap the bun executable with intel-sde
+  1. Install intel-sde
+    - Arch Linux: `yay -S intel-sde`
+    - Other Distros:
+```
+# wget https://downloadmirror.intel.com/732268/sde-external-9.7.0-2022-05-09-lin.tar.xz -O /tmp/intel-sde.tar.xz
+# cd /tmp
+# tar -xf intel-sde.tar.xz
+# cd sde-external*
+# mkdir /usr/local/bin -p
+# cp sde64 /usr/local/bin/sde
+```
+  2. Add alias to bashrc
+```
+$ echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
+```
+You can replace `.bashrc` with `.zshrc` if you use zsh instead of bash
 ### bun not running on an M1 (or Apple Silicon)
 
 If you see a message like this

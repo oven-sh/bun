@@ -914,6 +914,8 @@ If you get this error while bun is initializing, You probably need to wrap the b
 # cd sde-external*
 # mkdir /usr/local/bin -p
 # cp sde64 /usr/local/bin/sde
+# cp -r intel64 /usr/local/bin/
+# cp -r misc /usr/local/bin/
 ```
   2. Add alias to bashrc
 ```

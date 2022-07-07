@@ -1,4 +1,7 @@
 # bun
+<p align="center">
+  <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
+</p>
 
 bun is a new:
 
@@ -35,7 +38,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 - [Install](#install)
 - [Using bun.js - a new JavaScript runtime environment](#using-bunjs---a-new-javascript-runtime-environment)
-  - [Types for bun.js (editor autocomplete)](#types-for-bunjs--editor-autocomplete)
+  - [Types for bun.js (editor autocomplete)](#types-for-bunjs-editor-autocomplete)
   - [Fast paths for Web APIs](#fast-paths-for-web-apis)
 - [Using bun as a package manager](#using-bun-as-a-package-manager)
 - [Using bun as a task runner](#using-bun-as-a-task-runner)
@@ -46,9 +49,10 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [Using bun with Create React App](#using-bun-with-create-react-app)
 - [Using bun with TypeScript](#using-bun-with-typescript)
   - [Transpiling TypeScript with Bun](#transpiling-typescript-with-bun)
+  - [Adding Type Definitions](#adding-type-definitions)
 - [Not implemented yet](#not-implemented-yet)
   - [Limitations & intended usage](#limitations--intended-usage)
-- [Benchmarks](#benchmarks)
+  - [Upcoming breaking changes](#upcoming-breaking-changes)
 - [Configuration](#configuration)
   - [bunfig.toml](#bunfigtoml)
   - [Loaders](#loaders)
@@ -112,7 +116,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
     - [Statement.get](#statementget)
     - [Statement.run](#statementrun)
     - [Statement.finalize](#statementfinalize)
-    - [Statement.toString()](#statementtostring-)
+    - [Statement.toString()](#statementtostring)
   - [Datatypes](#datatypes)
 - [`bun:ffi` (Foreign Functions Interface)](#bunffi-foreign-functions-interface)
   - [Low-overhead FFI](#low-overhead-ffi)
@@ -125,7 +129,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
     - [Passing a pointer](#passing-a-pointer)
     - [Reading pointers](#reading-pointers)
     - [Not implemented yet](#not-implemented-yet-1)
-- [Node-API (napi)](#node-api--napi)
+- [Node-API (napi)](#node-api-napi)
 - [`Bun.Transpiler`](#buntranspiler)
   - [`Bun.Transpiler.transformSync`](#buntranspilertransformsync)
   - [`Bun.Transpiler.transform`](#buntranspilertransform)
@@ -185,7 +189,7 @@ bun.js prefers Web API compatibility instead of designing new APIs when possible
 - `.env` files automatically load into `process.env` and `Bun.env`
 - top level await
 
-The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/e0011fd6baf2fe2b12d1b2a909981da1a183cdad/src/bun.js/bindings/webcore/JSFetchHeaders.cpp#L1).
+The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/HEAD/src/bun.js/bindings/webcore/JSFetchHeaders.cpp).
 
 `cat` clone that runs [2x faster than GNU cat](https://twitter.com/jarredsumner/status/1511707890708586496) for large files on Linux
 
@@ -482,11 +486,29 @@ If no directory is specified and `./public/` doesn’t exist, bun will try `./st
 
 ## Using bun with TypeScript
 
-#### Transpiling TypeScript with Bun
+### Transpiling TypeScript with Bun
 
 TypeScript just works. There’s nothing to configure and nothing extra to install. If you import a `.ts` or `.tsx` file, bun will transpile it into JavaScript. bun also transpiles `node_modules` containing `.ts` or `.tsx` files. This is powered by bun’s TypeScript transpiler, so it’s fast.
 
 bun also reads `tsconfig.json`, including `baseUrl` and `paths`.
+
+### Adding Type Definitions
+
+To get TypeScript working with the global API, add `bun-types` to your project:
+
+```sh
+bun add -d bun-types
+```
+
+And to the `types` field in your `tsconfig.json`:
+
+```json
+{
+  "compilerOptions": {
+    "types": ["bun-types"]
+  }
+}
+```
 
 ## Not implemented yet
 
@@ -1745,7 +1767,7 @@ Database: [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob
 
 This benchmark can be run from [./bench/sqlite](./bench/sqlite).
 
-Here are results from an M1X on macOS 12.3.1.
+Here are results from an M1 Pro (64GB) on macOS 12.3.1.
 
 **SELECT \* FROM "Order"**
 
@@ -2424,7 +2446,7 @@ console.log(`SQLite 3 version: ${sqlite3_libversion()}`);
 
 #### Low-overhead FFI
 
-3ns to go from JavaScript <> native code with `bun:ffi` (on my machine, an M1X)
+3ns to go from JavaScript <> native code with `bun:ffi` (on my machine, an M1 Pro with 64GB of RAM)
 
 - 5x faster than napi (Node v17.7.1)
 - 100x faster than Deno v1.21.1

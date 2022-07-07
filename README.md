@@ -2668,7 +2668,7 @@ Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_progr
 
 <summary>How does a 64 bit pointer fit in a JavaScript number?</summary>
 
-64-bit processors support up to [52 bits of addressible space](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors).
+64-bit processors support up to [52 bits of addressable space](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors).
 
 [JavaScript numbers](https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64) support 53 bits of usable space, so that leaves us with about 11 bits of extra space.
 

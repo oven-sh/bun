@@ -454,7 +454,7 @@ To create new a React app:
 ```bash
 bun create react ./app
 cd app
-bun
+bun dev # start dev server
 ```
 
 To use an existing React app:
@@ -467,7 +467,7 @@ npm install -D react-refresh
 bun bun ./src/index.js # jsx, tsx, ts also work. can be multiple files
 
 # Start the dev server
-bun
+bun dev
 ```
 
 From there, bun relies on the filesystem for mapping dev server paths to source files. All URL paths are relative to the project root (where `package.json` is located).

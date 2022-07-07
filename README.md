@@ -1767,7 +1767,7 @@ Database: [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob
 
 This benchmark can be run from [./bench/sqlite](./bench/sqlite).
 
-Here are results from an M1X on macOS 12.3.1.
+Here are results from an M1 Pro (64GB) on macOS 12.3.1.
 
 **SELECT \* FROM "Order"**
 
@@ -2446,7 +2446,7 @@ console.log(`SQLite 3 version: ${sqlite3_libversion()}`);
 
 #### Low-overhead FFI
 
-3ns to go from JavaScript <> native code with `bun:ffi` (on my machine, an M1X)
+3ns to go from JavaScript <> native code with `bun:ffi` (on my machine, an M1 Pro with 64GB of RAM)
 
 - 5x faster than napi (Node v17.7.1)
 - 100x faster than Deno v1.21.1

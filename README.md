@@ -5,7 +5,7 @@
 
 bun is a new:
 
-- JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more builtin. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
+- JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more Web APIs built-in. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
 - JavaScript/TypeScript/JSX transpiler
 - JavaScript & CSS bundler
 - Task runner for package.json scripts
@@ -178,7 +178,7 @@ export default {
 
 bun.js prefers Web API compatibility instead of designing new APIs when possible. bun.js also implements some Node.js APIs.
 
-- TypeScript & JSX support is builtin, powered by Bun's JavaScript transpiler
+- TypeScript & JSX support are inbuilt, powered by Bun's JavaScript transpiler
 - ESM & CommonJS modules are supported (internally, bun.js uses ESM)
 - Many npm packages "just work" with bun.js (when they use few/no node APIs)
 - tsconfig.json `"paths"` is natively supported, along with `"exports"` in package.json
@@ -189,7 +189,7 @@ bun.js prefers Web API compatibility instead of designing new APIs when possible
 - `.env` files automatically load into `process.env` and `Bun.env`
 - top level await
 
-The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/HEAD/src/bun.js/bindings/webcore/JSFetchHeaders.cpp).
+The runtime uses [JavaScriptCore](https://developer.apple.com/documentation/javascriptcore), the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/HEAD/src/bun.js/bindings/webcore/JSFetchHeaders.cpp).
 
 `cat` clone that runs [2x faster than GNU cat](https://twitter.com/jarredsumner/status/1511707890708586496) for large files on Linux
 

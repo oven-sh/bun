@@ -2078,7 +2078,7 @@ insertMany.exclusive(cats); // uses "BEGIN EXCLUSIVE"
 
 Any arguments passed to the transaction function will be forwarded to the wrapped function, and any values returned from the wrapped function will be returned from the transaction function. The wrapped function will also have access to the same this binding as the transaction function.
 
-bun:sqlite's transaction implementation is based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3/blob/master/docs/api.md#transactionfunction---function) (along with this section of the docs), so thanks to Joshua Wise and better-sqlite3 constributors.
+bun:sqlite's transaction implementation is based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3/blob/master/docs/api.md#transactionfunction---function) (along with this section of the docs), so thanks to Joshua Wise and better-sqlite3 contributors.
 
 #### Database.prototype.serialize
 

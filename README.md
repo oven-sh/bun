@@ -247,7 +247,7 @@ PRs adding more examples are very welcome!
 
 ### Types for bun.js (editor autocomplete)
 
-The best docs right now are the TypeScript types in the [`bun-types`](types/bun/bun.d.ts) npm package. A docs site is coming soon.
+The best docs are the TypeScript types in the [`bun-types`](types/bun/bun.d.ts) npm package. A docs site is coming soon.
 
 To get autocomplete for bun.js types in your editor,
 
@@ -1195,7 +1195,7 @@ react-scripts eject
 
 If something is unexpected there, you can run `bun run env` to get a list of environment variables.
 
-The default shell it uses is `bash`, but if that’s not found, it tries `sh` and if still not found, it tries `zsh`. This is not configurable right now, but if you care file an issue.
+The default shell it uses is `bash`, but if that’s not found, it tries `sh` and if still not found, it tries `zsh`. This is not configurable, but if you care file an issue.
 
 `bun run` automatically adds any parent `node_modules/.bin` to `$PATH` and if no scripts match, it will load that binary instead. That means you can run executables from packages too.
 

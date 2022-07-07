@@ -824,10 +824,8 @@ pub export fn napi_get_dataview_info(env: napi_env, dataview: napi_value, bytele
     byte_offset.* = array_buffer.offset;
     return .ok;
 }
-pub export fn napi_get_version(_: napi_env, result: [*]u32) napi_status {
-    result[0] = bun.Global.version.major;
-    result[1] = bun.Global.version.minor;
-    result[2] = bun.Global.version.patch;
+pub export fn napi_get_version(_: napi_env, result: *u32) napi_status {
+    result.* = NAPI_VERSION;
     return .ok;
 }
 pub export fn napi_create_promise(env: napi_env, deferred: *napi_deferred, promise: *napi_value) napi_status {

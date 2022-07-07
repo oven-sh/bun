@@ -3112,7 +3112,7 @@ bun also statically links these libraries:
 - `libicu` 66.1, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is MIT licensed
 
-For compatibiltiy reasons, these NPM packages are embedded into bun’s binary and injected if imported.
+For compatibility reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 
 - [`assert`](https://npmjs.com/package/assert) (MIT license)
 - [`browserify-zlib`](https://npmjs.com/package/browserify-zlib) (MIT license)

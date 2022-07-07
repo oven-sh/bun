@@ -184,12 +184,13 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
 
             // We signaled to spawn a new thread
             if (can_wake and sync.spawned < self.max_threads) {
-                const spawn_config = std.Thread.SpawnConfig{};
-                if (Environment.isMac) {
+                const spawn_config = if (Environment.isMac)
                     // stack size must be a multiple of page_size
                     // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-                    spawn_config.stack_size = ((self.stack_size + (std.mem.page_size / 2)) / std.mem.page_size) * std.mem.page_size;
-                }
+                    std.Thread.SpawnConfig{ .stack_size = ((std.Thread.SpawnConfig{}).stack_size + (std.mem.page_size / 2) / std.mem.page_size) * std.mem.page_size }
+                else
+                    std.Thread.SpawnConfig{};
+
                 const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
                 // if (self.name.len > 0) thread.setName(self.name) catch {};
                 return thread.detach();

@@ -185,7 +185,7 @@ const NetworkTask = struct {
         PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
     }
 
-    const default_headers_buf: string = "Acceptapplication/vnd.npm.install-v1+json";
+    const default_headers_buf: string = "Acceptapplication/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
     pub fn forManifest(
         this: *NetworkTask,
         name: string,

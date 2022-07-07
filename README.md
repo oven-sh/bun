@@ -2125,7 +2125,7 @@ var db = new Database();
 db.loadExtension("myext");
 ```
 
-If you're on macOS, you will need to first use a custom SQLite install (you can install with homebrew). By default, bun uses Apple's propietary build of SQLite because it benchmarks about 50% faster. However, they disabled extension support, so you will need to have a custom build of SQLite to use extensions on macOS.
+If you're on macOS, you will need to first use a custom SQLite install (you can install with homebrew). By default, bun uses Apple's proprietary build of SQLite because it benchmarks about 50% faster. However, they disabled extension support, so you will need to have a custom build of SQLite to use extensions on macOS.
 
 ```ts
 import { Database } from "bun:sqlite";

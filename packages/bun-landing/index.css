@@ -299,36 +299,26 @@ header {
   align-items: center;
   width: min-content;
   white-space: nowrap;
-  list-style-type: none;
   padding: 0;
 }
 
 .Tab {
   width: min-content;
+  border: none;
+  background-color: transparent;
   font-family: var(--monospace-font);
   text-align: center;
-  padding-bottom: 8px;
   border-bottom: 1px solid #ccc;
   cursor: pointer;
-  padding: 0;
-}
-
-.TabButton {
-  background: transparent;
-  border: none;
-  padding: 16px 16px;
+  padding: 16px;
   color: inherit;
   font-size: inherit;
-  font-family: inherit;
-  cursor: inherit;
 }
 
-.TabButton[data-tab="react"]:hover,
-.Graphs--active-react .TabButton[data-tab="react"],
-.TabButton[data-tab="sqlite"]:hover,
-.Graphs--active-sqlite .TabButton[data-tab="sqlite"],
-.TabButton[data-tab="ffi"]:hover,
-.Graphs--active-ffi .TabButton[data-tab="ffi"] {
+.Tab:hover,
+.Graphs--active-react .Tab[data-tab="react"],
+.Graphs--active-sqlite .Tab[data-tab="sqlite"],
+.Graphs--active-ffi .Tab[data-tab="ffi"] {
   border-bottom-color: aquamarine;
   background-color: rgba(130, 216, 247, 0.1);
   border-right-color: aquamarine;
@@ -565,14 +555,10 @@ header {
   background-color: var(--background);
   border-radius: 8px;
   padding: 3px 8px;
-  color: white;
+  color: black;
   text-decoration: none !important;
   display: inline-block;
   font-family: var(--monospace-font) !important;
-}
-
-.Tag:visited {
-  color: white;
 }
 
 .mono {
@@ -598,7 +584,6 @@ header {
 
 .Tag--WebAPI {
   --background: #29b6f6;
-  color: white;
   box-shadow: inset -1px -1px 3px rgb(231, 187, 73);
 }
 
@@ -608,6 +593,7 @@ header {
 
 .Tag--TypeScript {
   --background: rgb(69, 119, 192);
+  color: white;
 }
 
 .Tag--React {
@@ -831,9 +817,6 @@ li {
     gap: 2rem;
   }
 
-  .Tabs {
-  }
-
   .tagline,
   .subtitle,
   .BarGraph-heading,
@@ -872,11 +855,6 @@ li {
   .Tab {
     width: 100%;
     border-bottom-color: #333;
-  }
-
-  .TabButton {
-    padding-top: 16px;
-    padding-bottom: 16px;    
   }
 
   #pitch-content {

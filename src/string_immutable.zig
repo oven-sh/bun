@@ -482,7 +482,7 @@ pub fn eqlAnyComptime(self: string, comptime list: []const string) bool {
     return false;
 }
 
-/// Count the occurences of a character in an ASCII byte array
+/// Count the occurrences of a character in an ASCII byte array
 /// uses SIMD
 pub fn countChar(self: string, char: u8) usize {
     var total: usize = 0;

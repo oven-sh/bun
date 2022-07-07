@@ -185,7 +185,13 @@ const NetworkTask = struct {
         PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
     }
 
-    const default_headers_buf: string = "Acceptapplication/vnd.npm.install-v1+json";
+    // We must use a less restrictive Acccept header value
+    // https://github.com/Jarred-Sumner/bun/issues/341
+    // https://www.jfrog.com/jira/browse/RTFACT-18398
+    const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+
+    const default_headers_buf: string = "Accept" ++ accept_header_value;
+
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
@@ -218,7 +224,7 @@ const NetworkTask = struct {
         }
 
         if (header_builder.header_count > 0) {
-            header_builder.count("Accept", "application/vnd.npm.install-v1+json");
+            header_builder.count("Accept", accept_header_value);
             if (last_modified.len > 0 and etag.len > 0) {
                 header_builder.content.count(last_modified);
             }
@@ -236,7 +242,7 @@ const NetworkTask = struct {
                 header_builder.append("If-Modified-Since", last_modified);
             }
 
-            header_builder.append("Accept", "application/vnd.npm.install-v1+json");
+            header_builder.append("Accept", accept_header_value);
 
             if (last_modified.len > 0 and etag.len > 0) {
                 last_modified = header_builder.content.append(last_modified);
@@ -1094,7 +1100,7 @@ const PackageInstall = struct {
                     return result;
                 } else |err| {
                     switch (err) {
-                        error.NotSameFilesystem, error.NotSupported => {
+                        error.NotSameFileSystem, error.NotSupported => {
                             supported_method = .copyfile;
                         },
                         error.FileNotFound => return Result{

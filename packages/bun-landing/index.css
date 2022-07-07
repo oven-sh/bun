@@ -17,9 +17,11 @@
   --vertical-padding: 4rem;
   --line-height: 1.4;
 }
+
 * {
   box-sizing: border-box;
 }
+
 head,
 body,
 :root {
@@ -37,14 +39,17 @@ a {
   text-decoration: none;
   transition: transform 0.1s linear;
 }
+
 a:visited {
   color: inherit;
 }
+
 a:hover {
   text-decoration: underline;
   transform: scale(1.06, 1.06);
   transform-origin: middle center;
 }
+
 #header-wrap,
 #pitch {
   background-color: var(--black);
@@ -58,6 +63,7 @@ a:hover {
   gap: 24px;
   align-items: center;
 }
+
 main {
   width: auto;
 
@@ -141,6 +147,7 @@ header {
   cursor: pointer;
   transform: scale(1.06);
 }
+
 #HeaderInstallButton {
   transition: transform 0.1s linear;
   background: #00a6e1;
@@ -259,10 +266,8 @@ header {
 
 .InstallBox-copy {
   height: 100%;
-
   display: flex;
   align-items: center;
-
   color: var(--orange-light);
   transition: transform 0.05s linear;
   transition-property: color, transform;
@@ -336,6 +341,7 @@ header {
   list-style-type: none;
   padding: 0;
 }
+
 .BarGraph,
 .ActiveTab,
 .Graphs {
@@ -381,10 +387,8 @@ header {
 
 .BarGraphBar {
   margin: 0 auto;
-
   width: var(--primary);
   height: var(--opposite);
-
   background-color: rgb(93, 89, 134);
   position: relative;
   height: calc(200px * var(--level));
@@ -404,9 +408,6 @@ header {
   border-right-color: transparent;
 }
 
-.BarGraph--horizontal .BarGraphBar {
-}
-
 .BarGraph--vertical .BarGraphBar {
   max-width: 90%;
 }
@@ -417,8 +418,9 @@ header {
   font-family: var(--monospace-font);
   width: 100%;
   text-align: center;
-
   position: relative;
+  display: flex;
+  justify-content: center;
 }
 
 .CardContent {
@@ -457,10 +459,8 @@ header {
 .BarGraph--vertical .BarGraphBar {
   height: var(--primary);
   width: var(--opposite);
-
   transform: scaleX(var(--level));
   transform-origin: bottom left;
-
   max-height: 40px;
   margin-top: 1rem;
   margin-bottom: 1rem;
@@ -532,8 +532,6 @@ header {
   display: grid;
 }
 
-#explain-section {
-}
 #explain ul {
   font-size: 1.2rem;
 }
@@ -606,10 +604,6 @@ header {
 
 .Tag--Bun {
   --background: #ff17ff;
-}
-
-ul,
-li {
 }
 
 .mono {

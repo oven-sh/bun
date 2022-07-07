@@ -154,25 +154,22 @@ header {
   background: #15140e;
   padding: 24px 24px;
   border-radius: 24px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  -moz-user-select: none;
 }
 
-#install-label-heading {
+.InstallBox-label-heading {
   font-size: 1.4rem;
   margin-bottom: 1rem;
   font-weight: 500;
   font-weight: 500;
 }
 
-#install-label-subtitle {
+.InstallBox-label-subtitle {
   font-size: 0.9rem;
   color: var(--orange-light);
-}
-
-.unselectable {
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-user-drag: none;
-  -moz-user-select: none;
 }
 
 #usecases-section {
@@ -218,7 +215,7 @@ header {
   padding: 0;
 }
 
-#code-box {
+.InstallBox-code-box {
   background-color: rgb(37, 36, 32);
   padding: 4px 16px;
   position: relative;
@@ -235,21 +232,7 @@ header {
   font-family: var(--monospace-font);
 }
 
-#curl:hover {
-  cursor: text;
-  pointer-events: auto;
-}
-
-#curl::before {
-  display: block;
-  content: "$" / "";
-  color: var(--orange);
-  pointer-events: none;
-  width: 1ch;
-  height: 1ch;
-}
-
-#curl {
+.InstallBox-curl {
   user-select: all;
   -webkit-user-select: text;
   pointer-events: auto;
@@ -260,11 +243,20 @@ header {
   gap: 2ch;
 }
 
-#view-source-link {
+.InstallBox-curl::before {
+  display: block;
+  content: "$" / "";
+  color: var(--orange);
+  pointer-events: none;
+  width: 1ch;
+  height: 1ch;
+}
+
+.InstallBox-view-source-link {
   color: var(--orange-light);
 }
 
-#code-box-copy {
+.InstallBox-copy {
   height: 100%;
 
   display: flex;
@@ -281,12 +273,12 @@ header {
   font-family: inherit;
 }
 
-#code-box-copy:hover {
+.InstallBox-copy:hover {
   color: var(--blue);
   transform: scale(1.06);
 }
 
-#code-box-copy:active {
+.InstallBox-copy:active {
   transform: scale(1.12);
 }
 
@@ -692,7 +684,7 @@ li {
     gap: 1rem;
   }
 
-  #install {
+  .InstallBox {
     margin-top: 0;
   }
 
@@ -711,11 +703,11 @@ li {
 }
 
 @media (max-width: 599px) {
-  #code-box-copy {
+  .InstallBox-copy {
     display: none;
   }
 
-  #code-box {
+  .InstallBox-code-box {
     font-size: 0.8rem;
   }
 }
@@ -792,7 +784,7 @@ li {
 }
 
 @media (max-width: 929px) {
-  #code-box {
+  .InstallBox-code-box {
     width: fit-content;
   }
 

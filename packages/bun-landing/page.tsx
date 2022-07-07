@@ -177,25 +177,23 @@ const InstallBox = ({ desktop = false }) => (
     className={
       "InstallBox " + (desktop ? "InstallBox--desktop" : "InstallBox--mobile")
     }
-    id="install"
   >
-    <div id="install-label">
-      <div className="unselectable" id="install-label-heading">
+    <div className="InstallBox-label">
+      <div className="InstallBox-label-heading">
         Install Bun CLI v0.1.0 (beta)
       </div>
-      <div className="unselectable" id="install-label-subtitle">
+      <div className="InstallBox-label-subtitle">
         macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux
       </div>
     </div>
-    <div id="code-box">
-      <div id="curl">curl https://bun.sh/install | bash</div>
-      <button className="unselectable" id="code-box-copy" aria-label="Copy installation script">
+    <div className="InstallBox-code-box">
+      <div className="InstallBox-curl">curl https://bun.sh/install | bash</div>
+      <button className="InstallBox-copy" aria-label="Copy installation script">
         copy
       </button>
     </div>
     <a
-      className="unselectable"
-      id="view-source-link"
+      className="InstallBox-view-source-link"
       target="_blank"
       href="https://bun.sh/install"
     >
@@ -793,10 +791,11 @@ export default {
   });
 });
 
-document.querySelector("#code-box-copy").addEventListener("click", async e => {
-  var el = document.querySelector("#code-box");
-  await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
-});
+for (const el of document.querySelectorAll(".InstallBox-copy")) {
+  el.addEventListener("click", async e => {
+    await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
+  });
+}
       `,
         }}
       />

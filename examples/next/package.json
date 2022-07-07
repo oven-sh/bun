@@ -9,7 +9,8 @@
     "react-is": "^17.0.2"
   },
   "devDependencies": {
-    "@types/react": "latest",
+    "@types/node": "^18.0.3",
+    "@types/react": "^18.0.15",
     "bun-framework-next": "^12",
     "typescript": "latest"
   },
@@ -17,5 +18,8 @@
     "postinstall": [
       "bun bun --use next"
     ]
+  },
+  "scripts": {
+    "start": "npx next"
   }
 }

@@ -548,7 +548,7 @@ export default ({ inlineCSS }) => (
               <NodeJS href="https://github.com/Jarred-Sumner/bun/issues/158">
                 Node-API
               </NodeJS>{" "}
-              bun.js implements most of{' '}
+              bun.js implements most of{" "}
               <a
                 href="https://nodejs.org/api/n-api.html#node-api"
                 target="_blank"

@@ -60,7 +60,7 @@ pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
                         \\  1. Open Windows Update
                         \\  2. Download any updates to Windows Subsystem for Linux
                         \\
-                        \\If you're having trouble, 
+                        \\If you're still having trouble, ask for help in bun's discord https://bun.sh/discord
                         \\
                     , .{});
                     break :log;

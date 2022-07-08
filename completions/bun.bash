@@ -1,24 +1,5 @@
 #/usr/bin/env bash
 
-declare -A GLOBAL_OPTIONS;
-declare -A PACKAGE_OPTIONS;
-
-
-SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help";
-
-GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
-GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
-
-
-PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional";
-PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d";
-
-PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="";
-PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="";
-
-PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --no-save --dry-run --lockfile --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
-PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
-
 
 file_arguments() {
 
@@ -83,6 +64,25 @@ read_scripts_in_package_json() {
 
 _bun_completions() {
 
+    declare -A GLOBAL_OPTIONS;
+    declare -A PACKAGE_OPTIONS;
+
+
+    SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help";
+
+    GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
+    GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
+
+
+    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional";
+    PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d";
+
+    PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="";
+    PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="";
+
+    PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --no-save --dry-run --lockfile --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
+    PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
+
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
     local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
 
@@ -131,11 +131,9 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
             return 0;;
         run)
-
             COMPREPLY=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ));
             read_scripts_in_package_json;
             return 0;;
-
         *)
             long_short_completion \
                 "${cur_word}" \

@@ -9,24 +9,22 @@ ifeq ($(ARCH_NAME_RAW),aarch64)
 ARCH_NAME_RAW = arm64
 endif
 
-MIN_MACOS_VERSION = 10.14
-
-
 MARCH_NATIVE = -mtune=native
 
 ARCH_NAME :=
 DOCKER_BUILDARCH =
 ifeq ($(ARCH_NAME_RAW),arm64)
-   ARCH_NAME = aarch64
-   DOCKER_BUILDARCH = arm64
-   BREW_PREFIX_PATH = /opt/homebrew
-   MIN_MACOS_VERSION = 11.0
-   MARCH_NATIVE = -mtune=native
+	ARCH_NAME = aarch64
+	DOCKER_BUILDARCH = arm64
+	BREW_PREFIX_PATH = /opt/homebrew
+	MIN_MACOS_VERSION ?= 11.0
+	MARCH_NATIVE = -mtune=native
 else
-   ARCH_NAME = x64
-   DOCKER_BUILDARCH = amd64
-   BREW_PREFIX_PATH = /usr/local
-   MARCH_NATIVE = -march=native -mtune=native
+	ARCH_NAME = x64
+	DOCKER_BUILDARCH = amd64
+	BREW_PREFIX_PATH = /usr/local
+	MIN_MACOS_VERSION ?= 10.14
+	MARCH_NATIVE = -march=native -mtune=native
 endif
 
 AR=
@@ -65,7 +63,7 @@ CC = $(shell which clang-13 || which clang)
 CXX = $(shell which clang++-13 || which clang++)
 
 ifeq ($(OS_NAME),darwin)
-LLVM_PREFIX = $(shell brew --prefix llvm)
+LLVM_PREFIX ?= $(shell brew --prefix llvm)
 LDFLAGS += " -L$(LLVM_PREFIX)/lib"
 CPPFLAGS += " -I$(LLVM_PREFIX)/include"
 CC = $(LLVM_PREFIX)/bin/clang
@@ -708,7 +706,7 @@ jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
-devcontainer: clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev runtime_js_dev
+devcontainer: clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev runtime_js_dev libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 

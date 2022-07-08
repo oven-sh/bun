@@ -64,14 +64,15 @@ const Label = ({ children, replace }) => {
 };
 
 const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
-  <div
+  <li
     className={`BarGraphItem BarGraphItem--${type}`}
     style={{ "--amount": amount, "--max": max }}
   >
+    <div className="visually-hidden">{`${type}: ${fmt.format(amount)} ${label}`}</div>
     <div
       style={{ "--amount": amount, "--max": max }}
-      title={`${amount} ${label}`}
       className="BarGraphBar"
+      aria-hidden
     >
       <div
         style={{ "--amount": amount, "--max": max }}
@@ -80,11 +81,11 @@ const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
         {fmt.format(amount)}
       </div>
     </div>
-  </div>
+  </li>
 );
 
 const BarGraphLabel = ({ name, version, source }) => (
-  <a href={source} target="_blank" className="BarGraphKeyItem">
+  <a href={source} target="_blank" className="BarGraphKeyItem" aria-label={`${name} benchmark source`}>
     <div className="BarGraphKeyItem-label">{name}</div>
     <div className="BarGraphKeyItem-value">{version}</div>
     <div className="BarGraphKeyItem-viewSource">View source</div>
@@ -104,6 +105,7 @@ const Zig = () => (
     className="Zig"
     viewBox="0 0 400 140"
   >
+    <title>Zig</title>
     <g fill="#F7A41D">
       <g>
         <polygon points="46,22 28,44 19,30" />
@@ -187,9 +189,9 @@ const InstallBox = ({ desktop = false }) => (
     </div>
     <div id="code-box">
       <div id="curl">curl https://bun.sh/install | bash</div>
-      <div className="unselectable" id="code-box-copy">
+      <button className="unselectable" id="code-box-copy" aria-label="Copy installation script">
         copy
-      </div>
+      </button>
     </div>
     <a
       className="unselectable"
@@ -240,11 +242,12 @@ export default ({ inlineCSS }) => (
     <body>
       <div id="header-wrap">
         <header>
-          <a href="/" id="logo-link">
-            <img height="61px" src={`/logo@2x.png`} alt="Bun" id="logo" />
+          <a href="/" id="logo-link" aria-label="home">
+            <img height="61px" src="/logo.png" srcSet="/logo.png 1x, /logo@2x.png 2x" alt="Bun logo" id="logo" />
             <img
               height="31.65px"
-              src={`/Bun@2x.png`}
+              src="/Bun.png"
+              srcSet="/Bun.png 1x, /Bun@2x.png 2x"
               alt="Bun"
               id="logo-text"
             />
@@ -288,46 +291,52 @@ export default ({ inlineCSS }) => (
           </div>
 
           <div className="Graphs Graphs--active-react">
-            <div className="Tabs">
-              <div data-tab="react" className="Tab">
-                Bun.serve
-              </div>
-              <div data-tab="sqlite" className="Tab">
-                bun:sqlite
-              </div>
-              <div data-tab="ffi" className="Tab">
-                bun:ffi
-              </div>
-            </div>
+            <ul className="Tabs" role="tablist">
+              <li className="Tab">
+                <button data-tab="react" id="tab-react" aria-controls="react-tab-content" className="TabButton" role="tab" aria-selected tabIndex={0}>
+                  Bun.serve
+                </button>
+              </li>
+              <li className="Tab">
+                <button data-tab="sqlite" id="tab-sqlite" aria-controls="sqlite-tab-content" className="TabButton" role="tab" tabIndex={-1}>
+                  bun:sqlite
+                </button>
+              </li>
+              <li className="Tab">
+                <button data-tab="ffi" id="tab-ffi" aria-controls="ffi-tab-content" className="TabButton" role="tab" tabIndex={-1}>
+                  bun:ffi
+                </button>
+              </li>
+            </ul>
             <div id="active-tab" className="ActiveTab">
-              <div className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark">
-                <div className="BarGraph-heading">
+              <div role="tabpanel" tabIndex={0} id="react-tab-content" aria-labelledby="tab-react" className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark">
+                <h2 className="BarGraph-heading">
                   Server-side rendering React
-                </div>
-                <div title="oha -z 5s" className="BarGraph-subheading">
+                </h2>
+                <p className="BarGraph-subheading">
                   HTTP requests per second (Linux AMD64)
-                </div>
+                </p>
 
-                <div style={{ "--count": 3 }} className="BarGraphList">
+                <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
                     amount={48936}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 12289) * 1.25}
+                    max={Math.max(48936, 16288, 15786) * 1.25}
                   />
                   <BarGraphItem
                     type="node"
                     amount={16288}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 12289) * 1.25}
+                    max={Math.max(48936, 16288, 15786) * 1.25}
                   />
                   <BarGraphItem
                     type="deno"
-                    amount={12289}
+                    amount={15786}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 12289) * 1.25}
+                    max={Math.max(48936, 16288, 15786) * 1.25}
                   />
-                </div>
+                </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
@@ -338,23 +347,23 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="node"
                     version="v18.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.deno.jsx"
+                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.node.jsx"
                   />
                   <BarGraphLabel
                     name="deno"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.node.jsx"
+                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.deno.jsx"
                   />
                 </div>
               </div>
 
-              <div className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark">
-                <div className="BarGraph-heading">Load a huge table</div>
-                <div className="BarGraph-subheading">
+              <div role="tabpanel" tabIndex={-1} id="sqlite-tab-content" aria-labelledby="tab-sqlite" className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark">
+                <h2 className="BarGraph-heading">Load a huge table</h2>
+                <p className="BarGraph-subheading">
                   Average queries per second
-                </div>
+                </p>
 
-                <div style={{ "--count": 3 }} className="BarGraphList">
+                <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
                     amount={(1000 / 16.6).toFixed(2)}
@@ -379,7 +388,7 @@ export default ({ inlineCSS }) => (
                       Math.max(1000 / 16.6, 1000 / 42.96, 1000 / 104.69) * 1.25
                     )}
                   />
-                </div>
+                </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
@@ -389,7 +398,7 @@ export default ({ inlineCSS }) => (
                   />
                   <BarGraphLabel
                     name="better-sqlite3"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.node.mjs"
+                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.better-sqlite3.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
@@ -400,11 +409,11 @@ export default ({ inlineCSS }) => (
                 </div>
               </div>
 
-              <div className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark">
-                <div className="BarGraph-heading">How fast can it get?</div>
-                <div className="BarGraph-subheading">Operations per second</div>
+              <div role="tabpanel" tabIndex={-1} id="ffi-tab-content" aria-labelledby="tab-ffi" className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark">
+                <h2 className="BarGraph-heading">How fast can it get?</h2>
+                <p className="BarGraph-subheading">Operations per second</p>
 
-                <div style={{ "--count": 3 }} className="BarGraphList">
+                <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
                     amount={(115473441).toFixed(2)}
@@ -424,12 +433,12 @@ export default ({ inlineCSS }) => (
                   <BarGraphItem
                     type="deno"
                     amount={(2891761).toFixed(2)}
-                    label="oeprations per iteration"
+                    label="operations per iteration"
                     max={Math.ceil(
                       Math.max(115473441, 43478261, 2891761) * 1.25
                     )}
                   />
-                </div>
+                </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
@@ -456,7 +465,7 @@ export default ({ inlineCSS }) => (
       </div>
       <section id="explain-section">
         <div id="explain">
-          <h1>Tell me more about Bun</h1>
+          <h2>Tell me more about Bun</h2>
           <p>
             Bun is a modern JavaScript runtime like Node or Deno. It was built
             from scratch to focus on three main things:
@@ -487,7 +496,7 @@ export default ({ inlineCSS }) => (
             future infrastructure, as well as developer productivity through
             better, simpler tooling.
           </p>
-          <h1>Batteries included</h1>
+          <h2>Batteries included</h2>
           <ul id="batteries">
             <li>
               Web APIs like{" "}
@@ -539,7 +548,7 @@ export default ({ inlineCSS }) => (
               <NodeJS href="https://github.com/Jarred-Sumner/bun/issues/158">
                 Node-API
               </NodeJS>{" "}
-              bun.js implements most of{' '}
+              bun.js implements most of{" "}
               <a
                 href="https://nodejs.org/api/n-api.html#node-api"
                 target="_blank"
@@ -559,7 +568,7 @@ export default ({ inlineCSS }) => (
             </li>
           </ul>
 
-          <h1>How does Bun work?</h1>
+          <h2>How does Bun work?</h2>
           <p>
             Bun.js uses the{" "}
             <a href="https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore">
@@ -584,9 +593,9 @@ export default ({ inlineCSS }) => (
             transpiler, npm client, bundler, SQLite client, HTTP client,
             WebSocket client and more.
           </p>
-          <h1>Why is Bun fast?</h1>
+          <h2>Why is Bun fast?</h2>
           <p>
-            An enourmous amount of time spent profiling, benchmarking and
+            An enormous amount of time spent profiling, benchmarking and
             optimizing things. The answer is different for every part of Bun,
             but one general theme:{" "}
             <a href="https://ziglang.org/">
@@ -598,7 +607,7 @@ export default ({ inlineCSS }) => (
               Sponsor the Zig Software Foundation
             </a>
           </p>
-          <h1>Getting started</h1>
+          <h2>Getting started</h2>
           <p>
             To install bun, run this{" "}
             <a target="_blank" href="https://bun.sh/install">
@@ -654,8 +663,8 @@ export default {
             <a href="https://bun.sh/discord">Bun's Discord</a>
           </p>
 
-          <h1>Bun CLI</h1>
-          <Group title="npm takes 160ms to run a script that does nothing">
+          <h2>Bun CLI</h2>
+          <Group>
             <Command>bun run</Command>
             <p>
               The same command for running JavaScript &amp; TypeScript files
@@ -675,7 +684,7 @@ export default {
             </div>{" "}
           </Group>
 
-          <Group title="JavaScript package managers are not using the fastest system calls">
+          <Group>
             <Command>bun install</Command>
             <p>
               bun install is an npm-compatible package manager. You probably
@@ -705,11 +714,11 @@ export default {
             </Label>
           </Group>
 
-          <h1>What is the license?</h1>
+          <h2>What is the license?</h2>
           <p>
             MIT License, excluding dependencies which have various licenses.
           </p>
-          <h1>How do I see the source code?</h1>
+          <h2>How do I see the source code?</h2>
           <p>
             Bun is on <a href="https://github.com/Jarred-Sumner/bun">GitHub</a>
           </p>
@@ -722,10 +731,49 @@ export default {
       <script
         dangerouslySetInnerHTML={{
           __html: `
-[...document.querySelectorAll(".Tab")].map(el => el.addEventListener("click", function(e) {
-  var tab = e.srcElement.getAttribute("data-tab");
-  document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
-}));
+[...document.querySelectorAll(".TabButton")].map(el => {
+  el.addEventListener("click", function(e) {
+    var tab = e.srcElement.getAttribute("data-tab");
+    [...document.querySelectorAll(".TabButton")].map(el => {
+      var active = el.getAttribute("data-tab") === tab;
+      el.setAttribute("tabindex", active ? 0 : -1);
+      el.setAttribute("aria-selected", active);
+    });
+    [...document.querySelectorAll(".BarGraph")].map(el => {
+      var active = el.id === tab + "-tab-content";
+      el.setAttribute("tabindex", active ? 0 : -1);
+    });
+    document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
+  });
+
+  el.addEventListener("keydown", e => {
+    var tabs = [...document.querySelectorAll(".TabButton")];
+    var activeTabEl = document.querySelector(".TabButton[aria-selected='true']");
+    var activeTabIndex = tabs.indexOf(activeTabEl);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeTabIndex = (activeTabIndex + 1) % tabs.length;
+      tabs[activeTabIndex].click();
+      tabs[activeTabIndex].focus();
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeTabIndex = (activeTabIndex + tabs.length - 1) % tabs.length;
+      tabs[activeTabIndex].click();
+      tabs[activeTabIndex].focus();
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      tabs[0].click();
+      tabs[0].focus();    
+    }
+    if (e.key === 'End') {
+      e.preventDefault();
+      tabs[tabs.length - 1].click();
+      tabs[tabs.length - 1].focus();    
+    }
+  });
+});
 
 document.querySelector("#code-box-copy").addEventListener("click", async e => {
   var el = document.querySelector("#code-box");

@@ -325,9 +325,24 @@ pub const TSConfigJSON = struct {
             return &([_]string{});
         }
         const parts_count = std.mem.count(u8, text, ".");
+
+        if (parts_count == 0) {
+            if (!js_lexer.isIdentifier(text)) {
+                const warn = source.rangeOfString(loc);
+                log.addRangeWarningFmt(source, warn, allocator, "Invalid JSX member expression: \"{s}\"", .{text}) catch {};
+                return &([_]string{});
+            }
+
+            var members = allocator.alloc(string, 1) catch unreachable;
+
+            members[0] = text;
+            return members;
+        }
+
         const parts = allocator.alloc(string, parts_count) catch unreachable;
         var iter = std.mem.tokenize(u8, text, ".");
         var i: usize = 0;
+
         while (iter.next()) |part| {
             if (!js_lexer.isIdentifier(part)) {
                 const warn = source.rangeOfString(loc);

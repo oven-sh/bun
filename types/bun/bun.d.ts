@@ -322,7 +322,7 @@ declare module "bun" {
 
   interface Sink<T> {
     write(chunk: string | ArrayBufferView | ArrayBuffer): number;
-    drain(): Promise<number> | number;
+    flush(): Promise<number> | number;
     end(): T;
   }
 
@@ -339,7 +339,7 @@ declare module "bun" {
     } = {}): void;
 
     write(chunk: string | ArrayBufferView | ArrayBuffer): number;
-    drain(): number;
+    flush(): number;
     end(): ArrayBuffer;
   }
 

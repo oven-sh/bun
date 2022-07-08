@@ -2,10 +2,12 @@
 // https://github.com/kprotty/zap/blob/blog/src/thread_pool.zig
 
 const std = @import("std");
+const bun = @import("./global.zig");
 const ThreadPool = @This();
 const Futex = @import("./futex.zig");
 const AsyncIO = @import("io");
 
+const Environment = bun.Environment;
 const assert = std.debug.assert;
 const Atomic = std.atomic.Atomic;
 pub const OnSpawnCallback = fn (ctx: ?*anyopaque) ?*anyopaque;
@@ -182,11 +184,13 @@ noinline fn notifySlow(self: *ThreadPool, is_waking: bool) void {
 
             // We signaled to spawn a new thread
             if (can_wake and sync.spawned < self.max_threads) {
-                const spawn_config = std.Thread.SpawnConfig{
+                const spawn_config = if (Environment.isMac)
                     // stack size must be a multiple of page_size
                     // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-                    .stack_size = ((self.stack_size + (std.mem.page_size / 2)) / std.mem.page_size) * std.mem.page_size,
-                };
+                    std.Thread.SpawnConfig{ .stack_size = ((std.Thread.SpawnConfig{}).stack_size + (std.mem.page_size / 2) / std.mem.page_size) * std.mem.page_size }
+                else
+                    std.Thread.SpawnConfig{};
+
                 const thread = std.Thread.spawn(spawn_config, Thread.run, .{self}) catch return self.unregister(null);
                 // if (self.name.len > 0) thread.setName(self.name) catch {};
                 return thread.detach();

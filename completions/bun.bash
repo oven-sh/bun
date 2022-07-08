@@ -2,19 +2,15 @@
 
 
 file_arguments() {
-
     local cur_word="${1}";
     local extension="${2}";
-
     [[ -z "${cur_word}" ]] && {
         COMPREPLY=( $(compgen -G "*.${extension}" -- "${cur_word}") );
     }
-
     COMPREPLY=( $(compgen -fG "${cur_word}*.${extension}" -- "${cur_word}") );
 }
 
 long_short_completion() {
-
     local cur_word="${1}";
     local wordlist="${2}";
     local short_options="${3}"
@@ -23,7 +19,6 @@ long_short_completion() {
         COMPREPLY=( $(compgen -W "${wordlist}" -- "${cur_word}"));
         return;
     }
-
     [[ "${cur_word}" =~ ^-[A-Za_z]+ ]] && {
         COMPREPLY=( $(compgen -W "${short_options}" -- "${cur_word}"));
         return;
@@ -31,7 +26,6 @@ long_short_completion() {
 }
 
 read_scripts_in_package_json() {
-
     local package_json;
     local line=0;
     local working_dir="${PWD}";
@@ -41,9 +35,8 @@ read_scripts_in_package_json() {
     done
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<${working_dir}/package.json);
-
+    
     [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
-
         local package_json_compreply;
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
@@ -63,20 +56,16 @@ read_scripts_in_package_json() {
 }
 
 _bun_completions() {
-
     declare -A GLOBAL_OPTIONS;
     declare -A PACKAGE_OPTIONS;
-
 
     SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
-
-
+    
     PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional";
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d";
-
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="";
 
@@ -92,16 +81,13 @@ _bun_completions() {
         --bunfile)        file_arguments "${cur_word}" "bun"        && return;;
         --server-bunfile) file_arguments "${cur_word}" "server.bun" && return;;
         --backend)
-
             case "${COMP_WORDS[1]}" in
                 a|add|remove|rm|install|i)
                     COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir" -- "${cur_word}") );
                     ;;
                 *) : ;;
             esac
-
             return ;;
-
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
@@ -149,11 +135,8 @@ _bun_completions() {
                 "${cur_word}" \
                 "${GLOBAL_OPTIONS[*]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
-
             read_scripts_in_package_json;
-
             local regexp_subcommand="^[dbcriauh]";
-
             [[ "${prev}" =~ ${regexp_subcommand} ]] && {
                 COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
             }

@@ -104,8 +104,10 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "browser node" -- "${cur_word}") );
             return 0;;
         -l|--loader)
-            [[ "${cur_word:$(( ${#cur_word} - 1 )):1}" == ":" ]] && {
-                COMPREPLY=( $(compgen -W "jsx js json tsx ts css" -- "${cur_word}") );
+            [[ "${cur_word}" =~ (:) ]] && {
+                local cut_colon_forward="${cur_word%%:*}"
+                COMPREPLY=( $(compgen -W "${cut_colon_forward}:jsx ${cut_colon_forward}:js ${cut_colon_forward}:json ${cut_colon_forward}:tsx ${cut_colon_forward}:ts \
+ ${cut_colon_forward}:css" -- "${cut_colon_forward}:${cur_word##*:}") );
             }
             return 0;;
     esac
@@ -131,7 +133,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
             return 0;;
         run)
-            COMPREPLY=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ));
+            COMPREPLY=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
             read_scripts_in_package_json;
             return 0;;
         *)

@@ -1,13 +1,13 @@
 # React with Bun runtime
 
-This is a React project boostrapped with bun.
+This is a React project bootstrapped with [bun](https://bun.sh/).
 
 ## Getting Started
 
 ### Cloning the repo
 
 ```sh
-bun create react ./app
+bun create react ./react-bun-app
 ```
 
 ### Development

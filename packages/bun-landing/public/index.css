@@ -458,7 +458,7 @@ header {
 .BarGraphItem--bun .BarGraphBar {
   background-color: rgb(249, 241, 225);
   box-shadow: inset 1px 1px 3px rgb(204, 198, 187);
-  background-image: url("/logo.png");
+  background-image: url("/logo.svg");
   background-repeat: no-repeat;
   background-size: 56px 48.8px;
   background-position: 6px 20%;

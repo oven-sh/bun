@@ -29,7 +29,7 @@ endif
 
 AR=
 
-BUN_OR_NODE = $(shell which bun || which node)
+BUN_SHELL= $(shell which bun)
 
 CXX_VERSION=c++2a
 TRIPLET = $(OS_NAME)-$(ARCH_NAME)
@@ -721,7 +721,7 @@ jsc-bindings-headers:
 	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES_DEBUG) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)  -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
 	/tmp/build-jsc-headers
 	$(ZIG) translate-c src/bun.js/bindings/headers.h > src/bun.js/bindings/headers.zig
-	$(BUN_OR_NODE) misctools/headers-cleaner.js
+	$(BUN_SHELL) misctools/headers-cleaner.js
 	$(ZIG) fmt src/bun.js/bindings/headers.zig
 
 

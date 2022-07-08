@@ -25,7 +25,7 @@ declare module "bun:jsc" {
   };
   export function getRandomSeed(): number;
   export function setRandomSeed(value: number): void;
-  export function isRope(input: string): bool;
+  export function isRope(input: string): boolean;
   export function callerSourceOrigin(): string;
   export function noFTL(func: Function): Function;
   export function noOSRExitFuzzing(func: Function): Function;

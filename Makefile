@@ -425,6 +425,8 @@ vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder b
 prepare-types:
 	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) types/bun/bundle.ts packages/bun-types
 	echo "Generated types for $(PACKAGE_JSON_VERSION) in packages/bun-types"
+	cp packages/bun-types/types.d.ts /tmp/bun-types.d.ts
+	cd /tmp && tsc /tmp/bun-types.d.ts
 
 release-types:
 	cd packages/bun-types && npm publish

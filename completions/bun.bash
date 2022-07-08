@@ -92,7 +92,7 @@ _bun_completions() {
         --bunfile)        file_arguments "${cur_word}" "bun"        && return 0;;
         --server-bunfile) file_arguments "${cur_word}" "server.bun" && return 0;;
         --backend)
-            COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir" -- "${cur_file}") );
+            COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir" -- "${cur_word}") );
             return 0;;
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));

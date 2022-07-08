@@ -206,6 +206,9 @@ interface Headers {
   get(name: string): string | null;
   has(name: string): boolean;
   set(name: string, value: string): void;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
   forEach(
     callbackfn: (value: string, key: string, parent: Headers) => void,
     thisArg?: any
@@ -249,6 +252,11 @@ declare class Blob implements BlobInterface {
    * Read the data from the blob as a string. It will be decoded from UTF-8.
    */
   text(): Promise<string>;
+
+  /**
+   * Read the data from the blob as a ReadableStream.
+   */
+  stream(): ReadableStream<number[]>;
 
   /**
    * Read the data from the blob as an ArrayBuffer.

@@ -17,9 +17,11 @@
   --vertical-padding: 4rem;
   --line-height: 1.4;
 }
+
 * {
   box-sizing: border-box;
 }
+
 head,
 body,
 :root {
@@ -37,14 +39,17 @@ a {
   text-decoration: none;
   transition: transform 0.1s linear;
 }
+
 a:visited {
   color: inherit;
 }
+
 a:hover {
   text-decoration: underline;
   transform: scale(1.06, 1.06);
   transform-origin: middle center;
 }
+
 #header-wrap,
 #pitch {
   background-color: var(--black);
@@ -58,6 +63,7 @@ a:hover {
   gap: 24px;
   align-items: center;
 }
+
 main {
   width: auto;
 
@@ -65,6 +71,7 @@ main {
   max-width: var(--max-width);
   display: grid;
   grid-template-columns: auto auto;
+  overflow-y: hidden;
 }
 
 main,
@@ -95,6 +102,7 @@ header {
 .subtitle {
   font-size: 1.2rem;
 }
+
 nav {
   white-space: nowrap;
   display: flex;
@@ -139,6 +147,7 @@ header {
   cursor: pointer;
   transform: scale(1.06);
 }
+
 #HeaderInstallButton {
   transition: transform 0.1s linear;
   background: #00a6e1;
@@ -226,15 +235,12 @@ header {
   align-items: center;
   border: 1px solid var(--orange);
   margin-top: 1rem;
-  display: grid;
+  display: flex;
+  justify-content: space-between;
   align-content: center;
   white-space: nowrap;
   margin-bottom: 1rem;
-}
-
-#code-box {
   font-family: var(--monospace-font);
-  position: relative;
 }
 
 #curl:hover {
@@ -244,7 +250,7 @@ header {
 
 #curl::before {
   display: block;
-  content: "$";
+  content: "$" / "";
   color: var(--orange);
   pointer-events: none;
   width: 1ch;
@@ -267,21 +273,18 @@ header {
 }
 
 #code-box-copy {
-  position: absolute;
-  right: 16px;
-  top: 0;
-  bottom: 0;
   height: 100%;
-
   display: flex;
   align-items: center;
-  z-index: 5;
-
   color: var(--orange-light);
   transition: transform 0.05s linear;
   transition-property: color, transform;
   transform-origin: center center;
   cursor: pointer;
+  background: transparent;
+  border: none;
+  font-size: inherit;
+  font-family: inherit;
 }
 
 #code-box-copy:hover {
@@ -302,6 +305,8 @@ header {
   align-items: center;
   width: min-content;
   white-space: nowrap;
+  list-style-type: none;
+  padding: 0;
 }
 
 .Tab {
@@ -311,15 +316,25 @@ header {
   padding-bottom: 8px;
   border-bottom: 1px solid #ccc;
   cursor: pointer;
-  padding: 16px 16px;
+  padding: 0;
 }
 
-.Tab[data-tab="react"]:hover,
-.Graphs--active-react .Tab[data-tab="react"],
-.Tab[data-tab="sqlite"]:hover,
-.Graphs--active-sqlite .Tab[data-tab="sqlite"],
-.Tab[data-tab="ffi"]:hover,
-.Graphs--active-ffi .Tab[data-tab="ffi"] {
+.TabButton {
+  background: transparent;
+  border: none;
+  padding: 16px 16px;
+  color: inherit;
+  font-size: inherit;
+  font-family: inherit;
+  cursor: inherit;
+}
+
+.TabButton[data-tab="react"]:hover,
+.Graphs--active-react .TabButton[data-tab="react"],
+.TabButton[data-tab="sqlite"]:hover,
+.Graphs--active-sqlite .TabButton[data-tab="sqlite"],
+.TabButton[data-tab="ffi"]:hover,
+.Graphs--active-ffi .TabButton[data-tab="ffi"] {
   border-bottom-color: aquamarine;
   background-color: rgba(130, 216, 247, 0.1);
   border-right-color: aquamarine;
@@ -335,12 +350,16 @@ header {
 .BarGraph-heading {
   font-weight: 500;
   font-size: 1.5rem;
+  margin: 0;
 }
 
 .BarGraphList {
   flex: 1;
   position: relative;
+  list-style-type: none;
+  padding: 0;
 }
+
 .BarGraph,
 .ActiveTab,
 .Graphs {
@@ -350,6 +369,7 @@ header {
 .BarGraph-subheading {
   font-size: 0.9rem;
   color: rgb(135, 134, 134);
+  margin: 0;
 }
 
 .BarGraphList {
@@ -385,28 +405,25 @@ header {
 
 .BarGraphBar {
   margin: 0 auto;
-
   width: var(--primary);
   height: var(--opposite);
-
   background-color: rgb(93, 89, 134);
-  transform-origin: bottom center;
-  transform: scaleY(var(--level));
   position: relative;
+  height: calc(200px * var(--level));
 }
 
 .BarGraphItem {
   border-right: 1px dashed var(--dark-border);
   border-top: 1px dashed var(--dark-border);
   border-bottom: 1px dashed var(--dark-border);
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 .BarGraphItem--deno {
   border-right-color: transparent;
-}
-
-.BarGraph--horizontal .BarGraphBar {
-  min-height: 200px;
 }
 
 .BarGraph--vertical .BarGraphBar {
@@ -419,8 +436,9 @@ header {
   font-family: var(--monospace-font);
   width: 100%;
   text-align: center;
-
   position: relative;
+  display: flex;
+  justify-content: center;
 }
 
 .CardContent {
@@ -434,8 +452,7 @@ header {
 }
 
 .BarGraph--horizontal .BarGraphBar-label {
-  transform: scaleY(var(--inverse));
-  top: calc(-20px * var(--inverse));
+  top: -22px;
 }
 
 .BarGraphItem--bun .BarGraphBar {
@@ -460,10 +477,8 @@ header {
 .BarGraph--vertical .BarGraphBar {
   height: var(--primary);
   width: var(--opposite);
-
   transform: scaleX(var(--level));
   transform-origin: bottom left;
-
   max-height: 40px;
   margin-top: 1rem;
   margin-bottom: 1rem;
@@ -484,13 +499,13 @@ header {
 }
 
 .BarGraphKeyItem-value {
-  color: #666;
+  color: #7a7a7a;
   margin-top: 0.5rem;
 }
 
 .BarGraphKeyItem-viewSource {
   margin-top: 0.5rem;
-  color: #666;
+  color: #7a7a7a;
   text-transform: lowercase;
   font-weight: thin;
   font-size: 0.8rem;
@@ -520,7 +535,7 @@ header {
 }
 
 .DemphasizedLabel {
-  color: #666;
+  color: #7a7a7a;
   font-weight: 300;
 }
 
@@ -535,8 +550,6 @@ header {
   display: grid;
 }
 
-#explain-section {
-}
 #explain ul {
   font-size: 1.2rem;
 }
@@ -572,7 +585,7 @@ header {
 }
 
 .Tag--Command:before {
-  content: "❯";
+  content: "❯" / "";
   color: rgba(255, 255, 255, 0.35);
   margin-top: auto;
   margin-bottom: auto;
@@ -603,20 +616,16 @@ header {
 
 .Tag--React:before {
   color: rgba(130, 216, 247, 0.5);
-  content: "<";
+  content: "<" / "";
 }
 
 .Tag--React:after {
   color: rgba(130, 216, 247, 0.5);
-  content: ">";
+  content: ">" / "";
 }
 
 .Tag--Bun {
   --background: #ff17ff;
-}
-
-ul,
-li {
 }
 
 .mono {
@@ -817,9 +826,6 @@ li {
     gap: 2rem;
   }
 
-  .Tabs {
-  }
-
   .tagline,
   .subtitle,
   .BarGraph-heading,
@@ -852,16 +858,17 @@ li {
     margin: 0;
     gap: 0rem;
     width: 100%;
+    border-top: 1px solid rgba(200, 200, 200, 0.1);
   }
 
   .Tab {
     width: 100%;
-    padding-top: 16px;
-    padding-bottom: 16px;
+    border-bottom-color: #333;
   }
 
-  .Tab {
-    border-bottom-color: #333;
+  .TabButton {
+    padding-top: 16px;
+    padding-bottom: 16px;
   }
 
   #pitch-content {
@@ -872,10 +879,6 @@ li {
   .Graphs--active-sqlite .Tab[data-tab="sqlite"],
   .Graphs--active-ffi .Tab[data-tab="ffi"] {
     background-color: rgba(100, 100, 100, 0.1);
-  }
-
-  .Tabs {
-    border-top: 1px solid rgba(200, 200, 200, 0.1);
   }
 }
 
@@ -925,4 +928,14 @@ li {
 
 img {
   object-fit: contain;
+}
+
+.visually-hidden {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
 }

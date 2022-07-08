@@ -224,6 +224,16 @@ export default ({ inlineCSS }) => (
         projects – all in Bun. Bun is a new JavaScript runtime with
         a native bundler, transpiler, task runner and npm client built-in.`}
       />
+      <meta
+        name="description"
+        content={`Bundle, transpile, install and run JavaScript & TypeScript
+        projects – all in Bun. Bun is a new JavaScript runtime with
+        a native bundler, transpiler, task runner and npm client built-in.`}
+      />
+      <meta name="theme-color" content="#fbf0df" />
+      <link rel="manifest" href="manifest.json" />
+      <link rel="icon" type="image/png" sizes="32x32" href="/logo-square@32px.png" />
+      <link rel="icon" type="image/png" sizes="16x16" href="/logo-square@16px.png" />
       <title>Bun is a fast all-in-one JavaScript runtime</title>
 
       {inlineCSS ? (
@@ -241,7 +251,7 @@ export default ({ inlineCSS }) => (
       <div id="header-wrap">
         <header>
           <a href="/" id="logo-link" aria-label="home">
-            <img height="61px" src="/logo.png" srcSet="/logo.png 1x, /logo@2x.png 2x" alt="Bun logo" id="logo" />
+            <img height="61px" src="/logo.svg" alt="Bun logo" id="logo" />
             <img
               height="31.65px"
               src="/Bun.png"

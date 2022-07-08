@@ -2210,7 +2210,7 @@ const GitHandler = struct {
             const git_commands = .{
                 &[_]string{ std.mem.span(git), "init", "--quiet" },
                 &[_]string{ std.mem.span(git), "add", destination, "--ignore-errors" },
-                &[_]string{ std.mem.span(git), "commit", "-am", "\"Initial commit (via bun create)\"", "--quiet" },
+                &[_]string{ std.mem.span(git), "commit", "-am", "Initial commit (via bun create)", "--quiet" },
             };
 
             if (comptime verbose) {

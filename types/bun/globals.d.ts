@@ -108,6 +108,12 @@ interface ImportMeta {
   resolve(moduleId: string, parent: string): Promise<string>;
 }
 
+/** @deprecated Please use `import.meta.path` instead. */
+declare var __filename: string;
+
+/** @deprecated Please use `import.meta.dir` instead. */
+declare var __dirname: string;
+
 interface EncodeIntoResult {
   /**
    * The read Unicode code units of input.

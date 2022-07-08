@@ -112,19 +112,19 @@ _bun_completions() {
 
     case "${COMP_WORDS[1]}" in
         help|--help|-h|-v|--version) return -1;;
-        add)
+        add|a)
             long_short_completion \
                 "${cur_word}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}"
             return 0;;
-        remove|install)
+        remove|rm|i|install)
             long_short_completion \
                 "${cur_word}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
             return 0;;
-        create)
+        create|c)
             COMPREPLY=( $(compgen -W "--force --no-install --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );
             return 0;;
         upgrade)

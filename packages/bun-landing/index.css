@@ -604,6 +604,7 @@ header {
 
 .Tag--Bun {
   --background: #ff17ff;
+  color: white;
 }
 
 .mono {

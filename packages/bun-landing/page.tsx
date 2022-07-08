@@ -232,6 +232,7 @@ export default ({ inlineCSS }) => (
       />
       <meta name="theme-color" content="#fbf0df" />
       <link rel="manifest" href="manifest.json" />
+      <link rel="icon" type="image/png" sizes="256x256" href="/logo-square.png" />
       <link rel="icon" type="image/png" sizes="32x32" href="/logo-square@32px.png" />
       <link rel="icon" type="image/png" sizes="16x16" href="/logo-square@16px.png" />
       <title>Bun is a fast all-in-one JavaScript runtime</title>

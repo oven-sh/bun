@@ -21,12 +21,12 @@ long_short_completion() {
 
     [[ -z "${cur_word}" || "${cur_word}" =~ ^- ]] && {
         COMPREPLY=( $(compgen -W "${wordlist}" -- "${cur_word}"));
-        return 0;
+        return;
     }
 
     [[ "${cur_word}" =~ ^-[A-Za_z]+ ]] && {
         COMPREPLY=( $(compgen -W "${short_options}" -- "${cur_word}"));
-        return 0;
+        return;
     }
 }
 
@@ -87,55 +87,63 @@ _bun_completions() {
     local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
 
     case "${prev}" in
-        help|--help|-h|-v|--version) return -1;;
-        -c|--config)      file_arguments "${cur_word}" "toml"       && return 0;;
-        --bunfile)        file_arguments "${cur_word}" "bun"        && return 0;;
-        --server-bunfile) file_arguments "${cur_word}" "server.bun" && return 0;;
+        help|--help|-h|-v|--version) return;;
+        -c|--config)      file_arguments "${cur_word}" "toml"       && return;;
+        --bunfile)        file_arguments "${cur_word}" "bun"        && return;;
+        --server-bunfile) file_arguments "${cur_word}" "server.bun" && return;;
         --backend)
-            COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir" -- "${cur_word}") );
-            return 0;;
+
+            case "${COMP_WORDS[1]}" in
+                a|add|remove|rm|install|i)
+                    COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir" -- "${cur_word}") );
+                    ;;
+                *) : ;;
+            esac
+
+            return ;;
+
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
-            return 0;;
+            return;;
         --jsx-runtime)
             COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
-            return 0;;
+            return;;
         --platform)
             COMPREPLY=( $(compgen -W "browser node" -- "${cur_word}") );
-            return 0;;
+            return;;
         -l|--loader)
             [[ "${cur_word}" =~ (:) ]] && {
                 local cut_colon_forward="${cur_word%%:*}"
                 COMPREPLY=( $(compgen -W "${cut_colon_forward}:jsx ${cut_colon_forward}:js ${cut_colon_forward}:json ${cut_colon_forward}:tsx ${cut_colon_forward}:ts \
  ${cut_colon_forward}:css" -- "${cut_colon_forward}:${cur_word##*:}") );
             }
-            return 0;;
+            return;;
     esac
 
     case "${COMP_WORDS[1]}" in
-        help|--help|-h|-v|--version) return -1;;
+        help|--help|-h|-v|--version) return;;
         add|a)
             long_short_completion \
                 "${cur_word}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}"
-            return 0;;
+            return;;
         remove|rm|i|install)
             long_short_completion \
                 "${cur_word}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
-            return 0;;
+            return;;
         create|c)
             COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );
-            return 0;;
+            return;;
         upgrade)
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
-            return 0;;
+            return;;
         run)
             COMPREPLY=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
             read_scripts_in_package_json;
-            return 0;;
+            return;;
         *)
             long_short_completion \
                 "${cur_word}" \
@@ -153,7 +161,7 @@ _bun_completions() {
                 declare -A comp_reply_associative="( $(echo ${COMPREPLY[@]} | sed 's/[^ ]*/[&]=&/g') )";
                 [[ -z "${comp_reply_associative[${prev}]}" ]] && unset COMPREPLY;
             }
-            return 0;;
+            return;;
     esac
 
 }

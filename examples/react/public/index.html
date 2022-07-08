@@ -14,7 +14,12 @@
       manifest.json provides metadata used when your web app is installed on a
       user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
     -->
-    <link rel="manifest" href="/manifest.json" />
+    <!-- <link rel="manifest" href="/manifest.json" /> -->
+     <!-- 
+      Comment out manifest since 'bun dev' could not load manifest correctly and  causing following errors:
+      1. GET http://localhost:3000/manifest.json 404 (Not Found)
+      2. Manifest: Line: 1, column: 1, Syntax error.
+    -->
     <!--
       Notice the use of %PUBLIC_URL% in the tags above.
       It will be replaced with the URL of the `public` folder during the build.

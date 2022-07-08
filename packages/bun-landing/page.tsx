@@ -539,7 +539,7 @@ export default ({ inlineCSS }) => (
             <li>
               bun.js automatically loads environment variables from{" "}
               <Bun>.env</Bun> files. No more{" "}
-              <code class="mono">require("dotenv").load()</code>
+              <code class="mono">require("dotenv").config()</code>
             </li>
             <li>
               bun ships with a fast SQLite3 client builtin <Bun>bun:sqlite</Bun>

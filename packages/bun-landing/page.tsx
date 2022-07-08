@@ -610,7 +610,7 @@ export default ({ inlineCSS }) => (
             but one general theme:{" "}
             <a href="https://ziglang.org/">
               <Zig></Zig>
-            </a>{" "}
+            </a>
             's low-level control over memory and lack of hidden control flow
             makes it much simpler to write fast software.{" "}
             <a href="https://github.com/sponsors/ziglang">

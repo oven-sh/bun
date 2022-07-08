@@ -12,4 +12,4 @@ bun create discord-interactions interactions-bot
 
 ### Development
 
-To run this locally, rename `.env.example` to `.env` and fill in the variables, then you can run `bun run.js` to start a local dev environment and use something like ngrok/cloudflare to tunnel it to a URL.
+To run this locally, rename `.env.example` to `.env` and fill in the variables, then run `bun run.js` to start a local dev environment and use something similar to [ngrok](https://ngrok.com/) or [cloudflare](https://www.cloudflare.com/) to tunnel it to a URL.

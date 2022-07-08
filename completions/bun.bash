@@ -125,7 +125,7 @@ _bun_completions() {
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
             return 0;;
         create|c)
-            COMPREPLY=( $(compgen -W "--force --no-install --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );
             return 0;;
         upgrade)
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );

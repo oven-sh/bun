@@ -519,7 +519,7 @@ And to the `types` field in your `tsconfig.json`:
 
 ## Not implemented yet
 
-bun is a project with an incredibly large scope and still in it's early days.
+bun is a project with an incredibly large scope and still in its early days.
 
 You can see [Bun's Roadmap](https://github.com/Jarred-Sumner/bun/issues/159), but here are some additional things that are planned:
 

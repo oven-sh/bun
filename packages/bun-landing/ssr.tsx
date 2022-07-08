@@ -6,7 +6,7 @@ import liveReload from "bun-livereload";
 import { join } from "path";
 
 async function fetch(req: Request) {
-  if (req.url.endsWith("favicon.ico")) {
+  if (req.url.endsWith("favicon.ico") || req.url.endsWith("robots.txt")) {
     return new Response("", { status: 404 });
   }
 

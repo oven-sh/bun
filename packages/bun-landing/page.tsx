@@ -180,7 +180,7 @@ const InstallBox = ({ desktop = false }) => (
   >
     <div className="InstallBox-label">
       <div className="InstallBox-label-heading">
-        Install Bun CLI v0.1.0 (beta)
+        Install Bun CLI v0.1.2 (beta)
       </div>
       <div className="InstallBox-label-subtitle">
         macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux

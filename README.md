@@ -63,9 +63,15 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [CSS runtime](#css-runtime)
   - [Frameworks](#frameworks)
 - [Troubleshooting](#troubleshooting)
+  - [Illegal Instruction (Core Dumped)](#illegal-instruction-core-dumped)
   - [bun not running on an M1 (or Apple Silicon)](#bun-not-running-on-an-m1-or-apple-silicon)
   - [error: Unexpected](#error-unexpected)
   - [bun install is stuck](#bun-install-is-stuck)
+  - [Unzip is required](#unzip-is-required)
+    - [Debian / Ubuntu / Mint](#debian--ubuntu--mint)
+    - [RedHat / CentOS / Fedora](#redhat--centos--fedora)
+    - [Arch / Manjaro](#arch--manjaro)
+    - [OpenSUSE](#opensuse)
 - [Reference](#reference)
   - [`bun install`](#bun-install)
     - [Configuring bun install with `bunfig.toml`](#configuring-bun-install-with-bunfigtoml)
@@ -317,7 +323,7 @@ bun add preact
 
 <details> <summary><strong>For Linux users</strong>: <code>bun install</code> needs Linux Kernel 5.6 or higher to work well</summary>
 
-The minimum Linux Kernel version is 5.1. If you're on Linux kernel 5.1 - 5.5, `bun install` should still work, but HTTP requests will be slow due to lack of support for io_uring's `connect()` operation.
+The minimum Linux Kernel version is 5.1. If you're on Linux kernel 5.1 - 5.5, `bun install` should still work, but HTTP requests will be slow due to a lack of support for io_uring's `connect()` operation.
 
 If you're using Ubuntu 20.04, here's how to install a [newer kernel](https://wiki.ubuntu.com/Kernel/LTSEnablementStack):
 
@@ -362,7 +368,7 @@ Assuming a package.json with a `"clean"` command in `"scripts"`:
 
 > Application commands are native ways to interact with apps in the Discord client. There are 3 types of commands accessible in different interfaces: the chat input, a message's context menu (top-right menu or right-clicking in a message), and a user's context menu (right-clicking on a user).
 
-To get started you can use interactions template:
+To get started you can use the interactions template:
 
 ```bash
 bun create discord-interactions my-interactions-bot
@@ -373,7 +379,7 @@ If you don't have a Discord bot/application yet, you can create one [here (https
 
 Invite bot to your server by visiting `https://discord.com/api/oauth2/authorize?client_id=<your_application_id>&scope=bot%20applications.commands`
 
-Afterwards you will need to get your bot's token, public key, and application id from application page and put them into `.env.example` file
+Afterwards you will need to get your bot's token, public key, and application id from the application page and put them into `.env.example` file
 
 Then you can run the http server that will handle your interactions:
 
@@ -384,7 +390,7 @@ mv .env.example .env
 bun run.js # listening on port 1337
 ```
 
-Discord does not accept insecure http server, so you will need provide SSL certificate or put interactions server behind a secure reverse proxy. For development you can use ngrok/cloudflare tunnel to expose local port as secure URL.
+Discord does not accept an insecure HTTP server, so you will need to provide an SSL certificate or put the interactions server behind a secure reverse proxy. For development you can use ngrok/cloudflare tunnel to expose local ports as secure URL.
 
 ## Using bun with Next.js
 
@@ -422,7 +428,7 @@ When using Next.js, bun automatically reads configuration from `.env.local`, `.e
 
 Currently, any time you import new dependencies from `node_modules`, you will need to re-run `bun bun --use next`. This will eventually be automatic.
 
-## Using bun with single page apps
+## Using bun with single-page apps
 
 In your project folder root (where `package.json` is):
 
@@ -453,7 +459,7 @@ To create new a React app:
 ```bash
 bun create react ./app
 cd app
-bun
+bun dev # start dev server
 ```
 
 To use an existing React app:
@@ -466,7 +472,7 @@ npm install -D react-refresh
 bun bun ./src/index.js # jsx, tsx, ts also work. can be multiple files
 
 # Start the dev server
-bun
+bun dev
 ```
 
 From there, bun relies on the filesystem for mapping dev server paths to source files. All URL paths are relative to the project root (where `package.json` is located).
@@ -479,7 +485,7 @@ Here are examples of routing source code file paths:
 | /src/index.tsx             | src/index.tsx               |
 | /pages/index.js            | pages/index.js              |
 
-You do not need to include file extensions in `import` paths. CommonJS-style import paths without the file extension works.
+You do not need to include file extensions in `import` paths. CommonJS-style import paths without the file extension work.
 
 You can override the public directory by passing `--public-dir="path-to-folder"`.
 
@@ -513,7 +519,7 @@ And to the `types` field in your `tsconfig.json`:
 
 ## Not implemented yet
 
-bun is a project with incredibly large scope, and it’s early days.
+bun is a project with an incredibly large scope and still in it's early days.
 
 You can see [Bun's Roadmap](https://github.com/Jarred-Sumner/bun/issues/159), but here are some additional things that are planned:
 
@@ -558,7 +564,8 @@ Longer-term, bun intends to replace Node.js, Webpack, Babel, yarn, and PostCSS (
 ### Upcoming breaking changes
 
 - Bun's CLI flags will change to better support bun as a JavaScript runtime. They were chosen when bun was just a frontend development tool.
-- Bun's bundling format will change to accommdoate production browser bundles and on-demand production bundling
+
+- Bun's bundling format will change to accommodate production browser bundles and on-demand production bundling
 
 ## Configuration
 
@@ -896,7 +903,24 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 If you’re interested in adding a framework integration, please reach out. There’s a lot here and it’s not entirely documented yet.
 
 ## Troubleshooting
-
+### Illegal Instruction (Core Dumped)
+If you get this error while bun is initializing, You probably need to wrap the bun executable with intel-sde
+  1. Install intel-sde
+    - Arch Linux: `yay -S intel-sde`
+    - Other Distros:
+```
+# wget https://downloadmirror.intel.com/732268/sde-external-9.7.0-2022-05-09-lin.tar.xz -O /tmp/intel-sde.tar.xz
+# cd /tmp
+# tar -xf intel-sde.tar.xz
+# cd sde-external*
+# mkdir /usr/local/bin -p
+# cp sde64 /usr/local/bin/sde
+```
+  2. Add alias to bashrc
+```
+$ echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
+```
+You can replace `.bashrc` with `.zshrc` if you use zsh instead of bash
 ### bun not running on an M1 (or Apple Silicon)
 
 If you see a message like this
@@ -922,6 +946,29 @@ To fix this issue:
 1. Remove any scripts that call `ulimit -n` and restart your shell.
 2. Try again, and if the error still occurs, try setting `ulimit -n` to an absurdly high number, such as `ulimit -n 2147483646`
 3. Try again, and if that still doesn’t fix it, open an issue
+
+### Unzip is required
+Unzip is required to install bun on Linux. You can use one of the following commands to install `unzip`:
+
+#### Debian / Ubuntu / Mint
+```sh
+sudo apt install unzip
+```
+
+#### RedHat / CentOS / Fedora
+```sh
+sudo dnf install unzip
+```
+
+#### Arch / Manjaro
+```sh
+sudo pacman -S unzip
+```
+
+#### OpenSUSE
+```sh
+sudo zypper install unzip
+```
 
 ### bun install is stuck
 
@@ -1076,7 +1123,7 @@ export interface Lockfile {
 
 #### Configuring with environment variables
 
-Environment variables have higher priority than `bunfig.toml`.
+Environment variables have a higher priority than `bunfig.toml`.
 
 | Name                             | Description                                                   |
 | -------------------------------- | ------------------------------------------------------------- |
@@ -1091,7 +1138,7 @@ Environment variables have higher priority than `bunfig.toml`.
 
 bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
 
-bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk.
+bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce the chances of errors from long file paths but unfortunately complicates figuring out where a package was installed on disk.
 
 When the `node_modules` folder exists, before installing, bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether or not it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
 
@@ -1140,11 +1187,11 @@ rm -rf ~/.bun/install/cache
 bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
 You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages
 
-bun’s usage of `Cache-Control` ignores `Age`. This improves performance, but means bun may be about 5 minutes out of date to receive the the latest package version metadata from npm.
+bun’s usage of `Cache-Control` ignores `Age`. This improves performance but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
 
 ### `bun run`
 
-`bun run` is a fast `package.json` scripts runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for bun.
+`bun run` is a fast `package.json` script runner. Instead of waiting 170ms for your npm client to start every time, you wait 6ms for bun.
 
 By default, `bun run` prints the script that will be invoked:
 
@@ -1320,7 +1367,7 @@ By default, `bun create` will cancel if there are existing files it would overwr
 
 #### Publishing a new template
 
-Clone this repository and a new folder in `examples/` with your new template. The `package.json` must have a `name` that starts with `@bun-examples/`. Do not worry about publishing it, that will happen automaticallly after the PR is merged.
+Clone this repository and a new folder in `examples/` with your new template. The `package.json` must have a `name` that starts with `@bun-examples/`. Do not worry about publishing it, that will happen automatically after the PR is merged.
 
 Make sure to include a `.gitignore` that includes `node_modules` so that `node_modules` aren’t checked in to git when people download the template.
 
@@ -1444,11 +1491,11 @@ Here are some of the questions `.bun` files answer:
 - how big is each imported dependency?
 - what is the hash of the bundle’s contents? (for etags)
 - what is the name & version of every npm package exported in this bundle?
-- what modules from which packages are used in this project? ("project" defined as all the entry points used to generate the .bun)
+- what modules from which packages are used in this project? ("project" is defined as all the entry points used to generate the .bun)
 
 All in one file.
 
-It’s a little like a build cache, but designed for reuse across builds.
+It’s a little like a build cache but designed for reuse across builds.
 
 #### Position-independent code
 
@@ -1515,7 +1562,7 @@ export var $eb6819b = $$m({
 
 Is generated like this:
 
-1. Murmur3 32 bit hash of `package.name@package.version`. This is the hash uniquely identifying the npm package.
+1. Murmur3 32-bit hash of `package.name@package.version`. This is the hash uniquely identifying the npm package.
 2. Wyhash 64 of the `package.hash` + `package_path`. `package_path` means "relative to the root of the npm package, where is the module imported?". For example, if you imported `react/jsx-dev-runtime.js`, the `package_path` is `jsx-dev-runtime.js`. `react-dom/cjs/react-dom.development.js` would be `cjs/react-dom.development.js`
 3. Truncate the hash generated above to a `u32`
 
@@ -1592,7 +1639,7 @@ Two ways to start an HTTP server with bun.js:
 
 1. `export default` an object with a `fetch` function
 
-If the file used to start bun has a default export with a `fetch` function, it will start the http server.
+If the file used to start bun has a default export with a `fetch` function, it will start the HTTP server.
 
 ```ts
 // hi.js
@@ -1605,9 +1652,9 @@ export default {
 // bun ./hi.js
 ```
 
-`fetch` receives a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) object and must return either a [`Response` ](https://developer.mozilla.org/en-US/docs/Web/API/Response) or a [`Promise<Response>`](https://developer.mozilla.org/en-US/docs/Web/API/Response). In a future version, it might have an additional arguments for things like cookies.
+`fetch` receives a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) object and must return either a [`Response` ](https://developer.mozilla.org/en-US/docs/Web/API/Response) or a [`Promise<Response>`](https://developer.mozilla.org/en-US/docs/Web/API/Response). In a future version, it might have additional arguments for things like cookies.
 
-2. `Bun.serve` starts the http server explicitly
+2. `Bun.serve` starts the HTTP server explicitly
 
 ```ts
 Bun.serve({
@@ -1897,7 +1944,7 @@ var db = new Database();
 db.close();
 ```
 
-Note: `close()` is called automatically when the database is garbage collected. It is safe to call multiple times, but has no effect after the first.
+Note: `close()` is called automatically when the database is garbage collected. It is safe to call multiple times but has no effect after the first.
 
 #### Database.prototype.query
 
@@ -2076,9 +2123,9 @@ insertMany.immediate(cats); // uses "BEGIN IMMEDIATE"
 insertMany.exclusive(cats); // uses "BEGIN EXCLUSIVE"
 ```
 
-Any arguments passed to the transaction function will be forwarded to the wrapped function, and any values returned from the wrapped function will be returned from the transaction function. The wrapped function will also have access to the same this binding as the transaction function.
+Any arguments passed to the transaction function will be forwarded to the wrapped function, and any values returned from the wrapped function will be returned from the transaction function. The wrapped function will also have access to the same binding as the transaction function.
 
-bun:sqlite's transaction implementation is based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3/blob/master/docs/api.md#transactionfunction---function) (along with this section of the docs), so thanks to Joshua Wise and better-sqlite3 constributors.
+bun:sqlite's transaction implementation is based on [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3/blob/master/docs/api.md#transactionfunction---function) (along with this section of the docs), so thanks to Joshua Wise and better-sqlite3 contributors.
 
 #### Database.prototype.serialize
 
@@ -2668,7 +2715,7 @@ Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_progr
 
 <summary>How does a 64 bit pointer fit in a JavaScript number?</summary>
 
-64-bit processors support up to [52 bits of addressible space](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors).
+64-bit processors support up to [52 bits of addressable space](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors).
 
 [JavaScript numbers](https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64) support 53 bits of usable space, so that leaves us with about 11 bits of extra space.
 
@@ -2953,7 +3000,7 @@ export default jsx(
 );
 ```
 
-If a macro is used, it will be run in the same thread as the transpiler, but in a separate event loop from the rest of your application. Currently, globals between macros and regular code are shared, which means it is possible (but not recommended) to share state between macros and regular code. Attempting to use AST nodes outside of a macro is undefined behavior.
+If a macro is used, it will be run in the same thread as the transpiler, but in a separate event loop from the rest of your application. Currently, globals between macros and regular code are shared, which means it is possible (but not recommended) to share states between macros and regular code. Attempting to use AST nodes outside of a macro is undefined behavior.
 
 #### `Bun.Transpiler.transform`
 

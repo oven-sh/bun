@@ -193,6 +193,178 @@ declare module "bun" {
   }
 
   /**
+   * Concatenate an array of typed arrays into a single `ArrayBuffer`. This is a fast path.
+   *
+   * You can do this manually if you'd like, but this function will generally
+   * be a little faster.
+   *
+   * If you want a `Uint8Array` instead, consider `Buffer.concat`.
+   *
+   * @param buffers An array of typed arrays to concatenate.
+   * @returns An `ArrayBuffer` with the data from all the buffers.
+   *
+   * Here is similar code to do it manually, except about 30% slower:
+   * ```js
+   *   var chunks = [...];
+   *   var size = 0;
+   *   for (const chunk of chunks) {
+   *     size += chunk.byteLength;
+   *   }
+   *   var buffer = new ArrayBuffer(size);
+   *   var view = new Uint8Array(buffer);
+   *   var offset = 0;
+   *   for (const chunk of chunks) {
+   *     view.set(chunk, offset);
+   *     offset += chunk.byteLength;
+   *   }
+   *   return buffer;
+   * ```
+   *
+   * This function is faster because it uses uninitialized memory when copying. Since the entire
+   * length of the buffer is known, it is safe to use uninitialized memory.
+   */
+  export function concatArrayBuffers(
+    buffers: Array<ArrayBufferView | ArrayBufferLike>
+  ): ArrayBuffer;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single {@link ArrayBuffer}.
+   *
+   * Each chunk must be a TypedArray or an ArrayBuffer. If you need to support
+   * chunks of different types, consider {@link readableStreamToBlob}
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks or the concatenated chunks as an `ArrayBuffer`.
+   */
+  export function readableStreamToArrayBuffer(
+    stream: ReadableStream
+  ): Promise<ArrayBuffer> | ArrayBuffer;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single {@link Blob}.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks as a {@link Blob}.
+   */
+  export function readableStreamToBlob(stream: ReadableStream): Promise<Blob>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single string. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   */
+  export function readableStreamToText(stream: ReadableStream): Promise<string>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * Concatenate the chunks into a single string and parse as JSON. Chunks must be a TypedArray or an ArrayBuffer. If you need to support chunks of different types, consider {@link readableStreamToBlob}.
+   *
+   * @param stream The stream to consume.
+   * @returns A promise that resolves with the concatenated chunks as a {@link String}.
+   */
+  export function readableStreamToJSON(stream: ReadableStream): Promise<any>;
+
+  /**
+   * Consume all data from a {@link ReadableStream} until it closes or errors.
+   *
+   * @param stream The stream to consume
+   * @returns A promise that resolves with the chunks as an array
+   *
+   */
+  export function readableStreamToArray<T>(
+    stream: ReadableStream
+  ): Promise<T[]> | T[];
+
+  /**
+   * Escape the following characters in a string:
+   *
+   * - `"` becomes `"&quot;"`
+   * - `&` becomes `"&amp;"`
+   * - `'` becomes `"&#x27;"`
+   * - `<` becomes `"&lt;"`
+   * - `>` becomes `"&gt;"`
+   *
+   * This function is optimized for large input. On an M1X, it processes 480 MB/s -
+   * 20 GB/s, depending on how much data is being escaped and whether there is non-ascii
+   * text.
+   *
+   * Non-string types will be converted to a string before escaping.
+   */
+  export function escapeHTML(input: string | object | number | boolean): string;
+
+  /**
+   * Convert a filesystem path to a file:// URL.
+   *
+   * @param path The path to convert.
+   * @returns A {@link URL} with the file:// scheme.
+   *
+   * @example
+   * ```js
+   * const url = Bun.pathToFileURL("/foo/bar.txt");
+   * console.log(url.href); // "file:///foo/bar.txt"
+   *```
+   *
+   * Internally, this function uses WebKit's URL API to
+   * convert the path to a file:// URL.
+   */
+  export function pathToFileURL(path: string): URL;
+
+  /**
+   * Convert a {@link URL} to a filesystem path.
+   * @param url The URL to convert.
+   * @returns A filesystem path.
+   * @throws If the URL is not a URL.
+   * @example
+   * ```js
+   * const path = Bun.fileURLToPath(new URL("file:///foo/bar.txt"));
+   * console.log(path); // "/foo/bar.txt"
+   * ```
+   */
+  export function fileURLToPath(url: URL): string;
+
+  /**
+   * Fast incremental writer that becomes an `ArrayBuffer` on end().
+   */
+  export class ArrayBufferSink {
+    constructor();
+
+    start(options?: {
+      asUint8Array?: boolean;
+      /**
+       * Preallocate an internal buffer of this size
+       * This can significantly improve performance when the chunk size is small
+       */
+      highWaterMark?: number;
+      /**
+       * On {@link ArrayBufferSink.flush}, return the written data as a `Uint8Array`.
+       * Writes will restart from the beginning of the buffer.
+       */
+      stream?: boolean;
+    }): void;
+
+    write(chunk: string | ArrayBufferView | ArrayBuffer): number;
+    /**
+     * Flush the internal buffer
+     *
+     * If {@link ArrayBufferSink.start} was passed a `stream` option, this will return a `ArrayBuffer`
+     * If {@link ArrayBufferSink.start} was passed a `stream` option and `asUint8Array`, this will return a `Uint8Array`
+     * Otherwise, this will return the number of bytes written since the last flush
+     *
+     * This API might change later to separate Uint8ArraySink and ArrayBufferSink
+     */
+    flush(): number | Uint8Array | ArrayBuffer;
+    end(): ArrayBuffer | Uint8Array;
+  }
+
+  /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
    *
    * This Blob is lazy. That means it won't do any work until you read from it.
@@ -366,6 +538,16 @@ declare module "bun" {
      *    ```
      */
     macros?: MacroMap;
+
+    autoImportJSX?: boolean;
+    allowBunRuntime?: boolean;
+    exports?: {
+      eliminate?: string[];
+      replace?: Record<string, string>;
+    };
+    treeShaking?: boolean;
+    trimUnusedImports?: boolean;
+    jsxOptimizationInline?: boolean;
   }
 
   /**
@@ -843,9 +1025,9 @@ declare module "bun" {
    * This uses a high-resolution monotonic system timer.
    *
    * After 14 weeks of consecutive uptime, this function
-   * returns a `bigint` to prevent overflow
+   * wraps
    */
-  export function nanoseconds(): number | bigint;
+  export function nanoseconds(): number;
 
   /**
    * Generate a heap snapshot for seeing where the heap is being used
@@ -1059,6 +1241,7 @@ interface BufferEncodingOption {
 }
 
 declare var Bun: typeof import("bun");
+
 
 // ./ffi.d.ts
 
@@ -1826,6 +2009,7 @@ declare module "bun:ffi" {
   export const suffix: string;
 }
 
+
 // ./sqlite.d.ts
 
 /**
@@ -1858,7 +2042,7 @@ declare module "bun:sqlite" {
     /**
      * Open or create a SQLite3 database
      *
-     * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` for an in-memory database.
+     * @param filename The filename of the database to open. Pass an empty string (`""` or undefined) or `":memory:"` for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
      *
      * @example
@@ -1890,7 +2074,7 @@ declare module "bun:sqlite" {
      * ```
      */
     constructor(
-      filename: string,
+      filename?: string,
       options?:
         | number
         | {
@@ -1997,14 +2181,14 @@ declare module "bun:sqlite" {
      */
     run<ParamsType = SQLQueryBindings>(
       sqlQuery: string,
-      ...bindings: ParamsType
+      ...bindings: ParamsType[]
     ): void;
     /** 
         This is an alias of {@link Database.prototype.run}
      */
     exec<ParamsType = SQLQueryBindings>(
       sqlQuery: string,
-      ...bindings: ParamsType
+      ...bindings: ParamsType[]
     ): void;
 
     /**
@@ -2186,8 +2370,6 @@ declare module "bun:sqlite" {
       exclusive: (...args: any) => void;
     };
   }
-
-  export { default as Database };
 
   /**
    * A prepared statement.
@@ -2574,7 +2756,10 @@ declare module "bun:sqlite" {
     | boolean
     | null
     | Record<string, string | bigint | TypedArray | number | boolean | null>;
+
+  export default Database;
 }
+
 
 // ./fs.d.ts
 
@@ -6177,6 +6362,7 @@ declare module "node:fs" {
   export = fs;
 }
 
+
 // ./html-rewriter.d.ts
 
 declare namespace HTMLRewriterTypes {
@@ -6292,6 +6478,7 @@ declare class HTMLRewriter {
    */
   transform(input: Response): Response;
 }
+
 
 // ./globals.d.ts
 
@@ -6747,8 +6934,13 @@ type ReferrerPolicy =
   | "unsafe-url";
 type RequestInfo = Request | string;
 
-type BodyInit = XMLHttpRequestBodyInit;
+type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
 type XMLHttpRequestBodyInit = Blob | BufferSource | string;
+type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
+type ReadableStreamDefaultReadResult<T> =
+  | ReadableStreamDefaultReadValueResult<T>
+  | ReadableStreamDefaultReadDoneResult;
+type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
 
 interface RequestInit {
   /**
@@ -7721,6 +7913,305 @@ declare var Loader: {
   resolveSync: (specifier: string, from: string) => string;
 };
 
+/** This Streams API interface represents a readable stream of byte data. The Fetch API offers a concrete instance of a ReadableStream through the body property of a Response object. */
+interface ReadableStream<R = any> {
+  readonly locked: boolean;
+  cancel(reason?: any): Promise<void>;
+  getReader(): ReadableStreamDefaultReader<R>;
+  pipeThrough<T>(
+    transform: ReadableWritablePair<T, R>,
+    options?: StreamPipeOptions
+  ): ReadableStream<T>;
+  pipeTo(
+    destination: WritableStream<R>,
+    options?: StreamPipeOptions
+  ): Promise<void>;
+  tee(): [ReadableStream<R>, ReadableStream<R>];
+  forEach(
+    callbackfn: (value: any, key: number, parent: ReadableStream<R>) => void,
+    thisArg?: any
+  ): void;
+}
+
+declare var ReadableStream: {
+  prototype: ReadableStream;
+  new <R = any>(
+    underlyingSource?: DirectUnderlyingSource<R> | UnderlyingSource<R>,
+    strategy?: QueuingStrategy<R>
+  ): ReadableStream<R>;
+};
+
+interface QueuingStrategy<T = any> {
+  highWaterMark?: number;
+  size?: QueuingStrategySize<T>;
+}
+
+interface QueuingStrategyInit {
+  /**
+   * Creates a new ByteLengthQueuingStrategy with the provided high water mark.
+   *
+   * Note that the provided high water mark will not be validated ahead of time. Instead, if it is negative, NaN, or not a number, the resulting ByteLengthQueuingStrategy will cause the corresponding stream constructor to throw.
+   */
+  highWaterMark: number;
+}
+
+/** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
+interface ByteLengthQueuingStrategy extends QueuingStrategy<ArrayBufferView> {
+  readonly highWaterMark: number;
+  readonly size: QueuingStrategySize<ArrayBufferView>;
+}
+
+declare var ByteLengthQueuingStrategy: {
+  prototype: ByteLengthQueuingStrategy;
+  new (init: QueuingStrategyInit): ByteLengthQueuingStrategy;
+};
+
+interface ReadableStreamDefaultController<R = any> {
+  readonly desiredSize: number | null;
+  close(): void;
+  enqueue(chunk?: R): void;
+  error(e?: any): void;
+}
+
+interface ReadableStreamDirectController {
+  close(error?: Error): void;
+  write(data: ArrayBufferView | ArrayBuffer | string): number | Promise<number>;
+  end(): number | Promise<number>;
+  flush(): number | Promise<number>;
+  start(): void;
+}
+
+declare var ReadableStreamDefaultController: {
+  prototype: ReadableStreamDefaultController;
+  new (): ReadableStreamDefaultController;
+};
+
+interface ReadableStreamDefaultReader<R = any>
+  extends ReadableStreamGenericReader {
+  read(): Promise<ReadableStreamDefaultReadResult<R>>;
+  releaseLock(): void;
+}
+
+declare var ReadableStreamDefaultReader: {
+  prototype: ReadableStreamDefaultReader;
+  new <R = any>(stream: ReadableStream<R>): ReadableStreamDefaultReader<R>;
+};
+
+interface ReadableStreamGenericReader {
+  readonly closed: Promise<undefined>;
+  cancel(reason?: any): Promise<void>;
+}
+
+interface ReadableStreamDefaultReadDoneResult {
+  done: true;
+  value?: undefined;
+}
+
+interface ReadableStreamDefaultReadValueResult<T> {
+  done: false;
+  value: T;
+}
+
+interface ReadableWritablePair<R = any, W = any> {
+  readable: ReadableStream<R>;
+  /**
+   * Provides a convenient, chainable way of piping this readable stream through a transform stream (or any other { writable, readable } pair). It simply pipes the stream into the writable side of the supplied pair, and returns the readable side for further use.
+   *
+   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
+   */
+  writable: WritableStream<W>;
+}
+
+/** This Streams API interface provides a standard abstraction for writing streaming data to a destination, known as a sink. This object comes with built-in backpressure and queuing. */
+interface WritableStream<W = any> {
+  readonly locked: boolean;
+  abort(reason?: any): Promise<void>;
+  close(): Promise<void>;
+  getWriter(): WritableStreamDefaultWriter<W>;
+}
+
+declare var WritableStream: {
+  prototype: WritableStream;
+  new <W = any>(
+    underlyingSink?: UnderlyingSink<W>,
+    strategy?: QueuingStrategy<W>
+  ): WritableStream<W>;
+};
+
+/** This Streams API interface represents a controller allowing control of a WritableStream's state. When constructing a WritableStream, the underlying sink is given a corresponding WritableStreamDefaultController instance to manipulate. */
+interface WritableStreamDefaultController {
+  error(e?: any): void;
+}
+
+declare var WritableStreamDefaultController: {
+  prototype: WritableStreamDefaultController;
+  new (): WritableStreamDefaultController;
+};
+
+/** This Streams API interface is the object returned by WritableStream.getWriter() and once created locks the < writer to the WritableStream ensuring that no other streams can write to the underlying sink. */
+interface WritableStreamDefaultWriter<W = any> {
+  readonly closed: Promise<undefined>;
+  readonly desiredSize: number | null;
+  readonly ready: Promise<undefined>;
+  abort(reason?: any): Promise<void>;
+  close(): Promise<void>;
+  releaseLock(): void;
+  write(chunk?: W): Promise<void>;
+}
+
+declare var WritableStreamDefaultWriter: {
+  prototype: WritableStreamDefaultWriter;
+  new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
+};
+
+interface TransformerFlushCallback<O> {
+  (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
+}
+
+interface TransformerStartCallback<O> {
+  (controller: TransformStreamDefaultController<O>): any;
+}
+
+interface TransformerTransformCallback<I, O> {
+  (
+    chunk: I,
+    controller: TransformStreamDefaultController<O>
+  ): void | PromiseLike<void>;
+}
+
+interface UnderlyingSinkAbortCallback {
+  (reason?: any): void | PromiseLike<void>;
+}
+
+interface UnderlyingSinkCloseCallback {
+  (): void | PromiseLike<void>;
+}
+
+interface UnderlyingSinkStartCallback {
+  (controller: WritableStreamDefaultController): any;
+}
+
+interface UnderlyingSinkWriteCallback<W> {
+  (
+    chunk: W,
+    controller: WritableStreamDefaultController
+  ): void | PromiseLike<void>;
+}
+
+interface UnderlyingSourceCancelCallback {
+  (reason?: any): void | PromiseLike<void>;
+}
+
+interface UnderlyingSink<W = any> {
+  abort?: UnderlyingSinkAbortCallback;
+  close?: UnderlyingSinkCloseCallback;
+  start?: UnderlyingSinkStartCallback;
+  type?: undefined | "default" | "bytes";
+  write?: UnderlyingSinkWriteCallback<W>;
+}
+
+interface UnderlyingSource<R = any> {
+  cancel?: UnderlyingSourceCancelCallback;
+  pull?: UnderlyingSourcePullCallback<R>;
+  start?: UnderlyingSourceStartCallback<R>;
+  type?: undefined;
+}
+
+interface DirectUnderlyingSource<R = any> {
+  cancel?: UnderlyingSourceCancelCallback;
+  pull: (
+    controller: ReadableStreamDirectController
+  ) => void | PromiseLike<void>;
+  type: "direct";
+}
+
+interface UnderlyingSourcePullCallback<R> {
+  (controller: ReadableStreamController<R>): void | PromiseLike<void>;
+}
+
+interface UnderlyingSourceStartCallback<R> {
+  (controller: ReadableStreamController<R>): any;
+}
+
+interface GenericTransformStream {
+  readonly readable: ReadableStream;
+  readonly writable: WritableStream;
+}
+
+interface TransformStream<I = any, O = any> {
+  readonly readable: ReadableStream<O>;
+  readonly writable: WritableStream<I>;
+}
+
+declare var TransformStream: {
+  prototype: TransformStream;
+  new <I = any, O = any>(
+    transformer?: Transformer<I, O>,
+    writableStrategy?: QueuingStrategy<I>,
+    readableStrategy?: QueuingStrategy<O>
+  ): TransformStream<I, O>;
+};
+
+interface TransformStreamDefaultController<O = any> {
+  readonly desiredSize: number | null;
+  enqueue(chunk?: O): void;
+  error(reason?: any): void;
+  terminate(): void;
+}
+
+declare var TransformStreamDefaultController: {
+  prototype: TransformStreamDefaultController;
+  new (): TransformStreamDefaultController;
+};
+
+interface StreamPipeOptions {
+  preventAbort?: boolean;
+  preventCancel?: boolean;
+  /**
+   * Pipes this readable stream to a given writable stream destination. The way in which the piping process behaves under various error conditions can be customized with a number of passed options. It returns a promise that fulfills when the piping process completes successfully, or rejects if any errors were encountered.
+   *
+   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
+   *
+   * Errors and closures of the source and destination streams propagate as follows:
+   *
+   * An error in this source readable stream will abort destination, unless preventAbort is truthy. The returned promise will be rejected with the source's error, or with any error that occurs during aborting the destination.
+   *
+   * An error in destination will cancel this source readable stream, unless preventCancel is truthy. The returned promise will be rejected with the destination's error, or with any error that occurs during canceling the source.
+   *
+   * When this source readable stream closes, destination will be closed, unless preventClose is truthy. The returned promise will be fulfilled once this process completes, unless an error is encountered while closing the destination, in which case it will be rejected with that error.
+   *
+   * If destination starts out closed or closing, this source readable stream will be canceled, unless preventCancel is true. The returned promise will be rejected with an error indicating piping to a closed stream failed, or with any error that occurs during canceling the source.
+   *
+   * The signal option can be set to an AbortSignal to allow aborting an ongoing pipe operation via the corresponding AbortController. In this case, this source readable stream will be canceled, and destination aborted, unless the respective options preventCancel or preventAbort are set.
+   */
+  preventClose?: boolean;
+  signal?: AbortSignal;
+}
+
+/** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
+interface CountQueuingStrategy extends QueuingStrategy {
+  readonly highWaterMark: number;
+  readonly size: QueuingStrategySize;
+}
+
+declare var CountQueuingStrategy: {
+  prototype: CountQueuingStrategy;
+  new (init: QueuingStrategyInit): CountQueuingStrategy;
+};
+
+interface QueuingStrategySize<T = any> {
+  (chunk?: T): number;
+}
+
+interface Transformer<I = any, O = any> {
+  flush?: TransformerFlushCallback<O>;
+  readableType?: undefined;
+  start?: TransformerStartCallback<O>;
+  transform?: TransformerTransformCallback<I, O>;
+  writableType?: undefined;
+}
+
+
 // ./path.d.ts
 
 /**
@@ -7928,6 +8419,7 @@ declare module "node:path/win32" {
   export * from "path/win32";
 }
 
+
 // ./bun-test.d.ts
 
 /**
@@ -7950,7 +8442,7 @@ declare module "node:path/win32" {
  */
 
 declare module "bun:test" {
-  export function describe(label: string, body: () => {}): any;
+  export function describe(label: string, body: () => void): any;
   export function it(label: string, test: () => void | Promise<any>): any;
   export function test(label: string, test: () => void | Promise<any>): any;
 
@@ -7966,3 +8458,68 @@ declare module "test" {
   import BunTestModule = require("bun:test");
   export = BunTestModule;
 }
+
+
+// ./jsc.d.ts
+
+declare module "bun:jsc" {
+  export function describe(value: any): string;
+  export function describeArray(args: any[]): string;
+  export function gcAndSweep(): void;
+  export function fullGC(): void;
+  export function edenGC(): void;
+  export function heapSize(): number;
+  export function heapStats(): {
+    heapSize: number;
+    heapCapacity: number;
+    extraMemorySize: number;
+    objectCount: number;
+    protectedObjectCount: number;
+    globalObjectCount: number;
+    protectedGlobalObjectCount: number;
+    objectTypeCounts: Record<string, number>;
+    protectedObjectTypeCounts: Record<string, number>;
+  };
+  export function memoryUsage(): {
+    current: number;
+    peak: number;
+    currentCommit: number;
+    peakCommit: number;
+    pageFaults: number;
+  };
+  export function getRandomSeed(): number;
+  export function setRandomSeed(value: number): void;
+  export function isRope(input: string): boolean;
+  export function callerSourceOrigin(): string;
+  export function noFTL(func: Function): Function;
+  export function noOSRExitFuzzing(func: Function): Function;
+  export function optimizeNextInvocation(func: Function): Function;
+  export function numberOfDFGCompiles(func: Function): number;
+  export function releaseWeakRefs(): void;
+  export function totalCompileTime(func: Function): number;
+  export function reoptimizationRetryCount(func: Function): number;
+  export function drainMicrotasks(): void;
+
+  /**
+   * This returns objects which native code has explicitly protected from being
+   * garbage collected
+   *
+   * By calling this function you create another reference to the object, which
+   * will further prevent it from being garbage collected
+   *
+   * This function is mostly a debugging tool for bun itself.
+   *
+   * Warning: not all objects returned are supposed to be observable from JavaScript
+   */
+  export function getProtectedObjects(): any[];
+
+  /**
+   * Start a remote debugging socket server on the given port.
+   *
+   * This exposes JavaScriptCore's built-in debugging server.
+   *
+   * This is untested. May not be supported yet on macOS
+   */
+  export function startRemoteDebugger(host?: string, port?: number): void;
+}
+

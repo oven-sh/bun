@@ -256,7 +256,7 @@ declare class Blob implements BlobInterface {
   /**
    * Read the data from the blob as a ReadableStream.
    */
-  stream(): ReadableStream<number[]>;
+  stream(): ReadableStream<Uint8Array>;
 
   /**
    * Read the data from the blob as an ArrayBuffer.
@@ -669,7 +669,7 @@ declare class Request implements BlobInterface {
 }
 
 interface Crypto {
-  getRandomValues(array: TypedArray): void;
+  getRandomValues<T = TypedArray>(array: T): T;
   /**
    * Generate a cryptographically secure random UUID.
    *

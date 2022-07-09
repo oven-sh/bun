@@ -1,0 +1,26 @@
+{
+  "name": "@bun-examples/react-rescript",
+  "version": "0.0.1",
+  "dependencies": {
+    "@rescript/react": "^0.10.3",
+    "react": "^17.0.2",
+    "react-dom": "^17.0.2",
+    "web-vitals": "^1.0.1"
+  },
+  "scripts": {
+    "build": "rescript",
+    "clean": "rescript clean -with-deps",
+    "start": "rescript build -w"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "devDependencies": {
+    "react-refresh": "0.10.0",
+    "rescript": "^9.1.4",
+    "typescript": "latest"
+  }
+}

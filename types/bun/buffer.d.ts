@@ -142,7 +142,6 @@ declare module 'buffer' {
            * appropriate for `Buffer.from()` variants.
            *
            * `Buffer.from(array)` and `Buffer.from(string)` may also use the internal`Buffer` pool like `Buffer.allocUnsafe()` does.
-           * @since v5.10.0
            */
           from(arrayBuffer: WithImplicitCoercion<ArrayBuffer | SharedArrayBuffer>, byteOffset?: number, length?: number): Buffer;
           /**
@@ -181,7 +180,6 @@ declare module 'buffer' {
            * Buffer.isBuffer([]); // false
            * Buffer.isBuffer(new Uint8Array(1024)); // false
            * ```
-           * @since v0.1.101
            */
           isBuffer(obj: any): obj is Buffer;
           /**
@@ -203,7 +201,6 @@ declare module 'buffer' {
            * console.log(Buffer.isEncoding(''));
            * // Prints: false
            * ```
-           * @since v0.9.1
            * @param encoding A character encoding name to check.
            */
           isEncoding(encoding: string): encoding is BufferEncoding;
@@ -231,7 +228,6 @@ declare module 'buffer' {
            * `Buffer`/[`DataView`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView)/[`TypedArray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/-
            * Reference/Global_Objects/TypedArray)/[`ArrayBuffer`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer)/[`SharedArrayBuffer`](https://develop-
            * er.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer), the byte length as reported by `.byteLength`is returned.
-           * @since v0.1.90
            * @param string A value to calculate the length of.
            * @param [encoding='utf8'] If `string` is a string, this is its encoding.
            * @return The number of bytes contained within `string`.
@@ -271,7 +267,6 @@ declare module 'buffer' {
            * ```
            *
            * `Buffer.concat()` may also use the internal `Buffer` pool like `Buffer.allocUnsafe()` does.
-           * @since v0.7.11
            * @param list List of `Buffer` or {@link Uint8Array} instances to concatenate.
            * @param totalLength Total length of the `Buffer` instances in `list` when concatenated.
            */
@@ -290,7 +285,6 @@ declare module 'buffer' {
            * // Prints: [ <Buffer 30 31 32 33>, <Buffer 31 32 33 34> ]
            * // (This result is equal to: [buf2, buf1].)
            * ```
-           * @since v0.11.13
            * @return Either `-1`, `0`, or `1`, depending on the result of the comparison. See `compare` for details.
            */
           compare(buf1: Uint8Array, buf2: Uint8Array): -1 | 0 | 1;
@@ -336,7 +330,6 @@ declare module 'buffer' {
            * data that might not have been allocated for `Buffer`s.
            *
            * A `TypeError` will be thrown if `size` is not a number.
-           * @since v5.10.0
            * @param size The desired length of the new `Buffer`.
            * @param [fill=0] A value to pre-fill the new `Buffer` with.
            * @param [encoding='utf8'] If `fill` is a string, this is its encoding.
@@ -375,7 +368,6 @@ declare module 'buffer' {
            * than or equal to half `Buffer.poolSize`. The
            * difference is subtle but can be important when an application requires the
            * additional performance that `Buffer.allocUnsafe()` provides.
-           * @since v5.10.0
            * @param size The desired length of the new `Buffer`.
            */
           allocUnsafe(size: number): Buffer;
@@ -420,14 +412,12 @@ declare module 'buffer' {
            * ```
            *
            * A `TypeError` will be thrown if `size` is not a number.
-           * @since v5.12.0
            * @param size The desired length of the new `Buffer`.
            */
           allocUnsafeSlow(size: number): Buffer;
           /**
            * This is the size (in bytes) of pre-allocated internal `Buffer` instances used
            * for pooling. This value may be modified.
-           * @since v0.11.3
            */
           poolSize: number;
       }
@@ -454,7 +444,6 @@ declare module 'buffer' {
            * console.log(`${length} bytes: ${buffer.toString('utf8', 8, 10)}`);
            * // Prints: 2 bytes : ab
            * ```
-           * @since v0.1.90
            * @param string String to write to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write `string`.
            * @param [length=buf.length - offset] Maximum number of bytes to write (written bytes will not exceed `buf.length - offset`).
@@ -497,7 +486,6 @@ declare module 'buffer' {
            * console.log(buf2.toString(undefined, 0, 3));
            * // Prints: té
            * ```
-           * @since v0.1.90
            * @param [encoding='utf8'] The character encoding to use.
            * @param [start=0] The byte offset to start decoding at.
            * @param [end=buf.length] The byte offset to stop decoding at (not inclusive).
@@ -550,7 +538,6 @@ declare module 'buffer' {
            * console.log(buf1.equals(buf3));
            * // Prints: false
            * ```
-           * @since v0.11.13
            * @param otherBuffer A `Buffer` or {@link Uint8Array} with which to compare `buf`.
            */
           equals(otherBuffer: Uint8Array): boolean;
@@ -601,7 +588,6 @@ declare module 'buffer' {
            * ```
            *
            * `ERR_OUT_OF_RANGE` is thrown if `targetStart < 0`, `sourceStart < 0`,`targetEnd > target.byteLength`, or `sourceEnd > source.byteLength`.
-           * @since v0.11.13
            * @param target A `Buffer` or {@link Uint8Array} with which to compare `buf`.
            * @param [targetStart=0] The offset within `target` at which to begin comparison.
            * @param [targetEnd=target.length] The offset within `target` at which to end comparison (not inclusive).
@@ -655,7 +641,6 @@ declare module 'buffer' {
            * console.log(buf.toString());
            * // Prints: efghijghijklmnopqrstuvwxyz
            * ```
-           * @since v0.1.90
            * @param target A `Buffer` or {@link Uint8Array} to copy into.
            * @param [targetStart=0] The offset within `target` at which to begin writing.
            * @param [sourceStart=0] The offset within `buf` from which to begin copying.
@@ -691,7 +676,6 @@ declare module 'buffer' {
            * console.log(buf.toString());
            * // Also prints: cuffer (!)
            * ```
-           * @since v0.3.0
            * @deprecated Use `subarray` instead.
            * @param [start=0] Where the new `Buffer` will start.
            * @param [end=buf.length] Where the new `Buffer` will end (not inclusive).
@@ -752,7 +736,6 @@ declare module 'buffer' {
            * // Prints: uff
            * // (Equivalent to buf.subarray(1, 4).)
            * ```
-           * @since v3.0.0
            * @param [start=0] Where the new `Buffer` will start.
            * @param [end=buf.length] Where the new `Buffer` will end (not inclusive).
            */
@@ -772,7 +755,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 01 02 03 04 05 06 07 08>
            * ```
-           * @since v12.0.0, v10.20.0
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy: `0 <= offset <= buf.length - 8`.
            * @return `offset` plus the number of bytes written.
@@ -793,7 +775,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 08 07 06 05 04 03 02 01>
            * ```
-           * @since v12.0.0, v10.20.0
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy: `0 <= offset <= buf.length - 8`.
            * @return `offset` plus the number of bytes written.
@@ -814,7 +795,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer de ca fa fe ca ce fa de>
            * ```
-           * @since v12.0.0, v10.20.0
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy: `0 <= offset <= buf.length - 8`.
            * @return `offset` plus the number of bytes written.
@@ -822,7 +802,6 @@ declare module 'buffer' {
           writeBigUInt64BE(value: bigint, offset?: number): number;
           /**
            * @alias Buffer.writeBigUInt64BE
-           * @since v14.10.0, v12.19.0
            */
           writeBigUint64BE(value: bigint, offset?: number): number;
           /**
@@ -840,7 +819,6 @@ declare module 'buffer' {
            * ```
            *
            * This function is also available under the `writeBigUint64LE` alias.
-           * @since v12.0.0, v10.20.0
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy: `0 <= offset <= buf.length - 8`.
            * @return `offset` plus the number of bytes written.
@@ -848,7 +826,6 @@ declare module 'buffer' {
           writeBigUInt64LE(value: bigint, offset?: number): number;
           /**
            * @alias Buffer.writeBigUInt64LE
-           * @since v14.10.0, v12.19.0
            */
           writeBigUint64LE(value: bigint, offset?: number): number;
           /**
@@ -877,7 +854,6 @@ declare module 'buffer' {
           writeUIntLE(value: number, offset: number, byteLength: number): number;
           /**
            * @alias Buffer.writeUIntLE
-           * @since v14.9.0, v12.19.0
            */
           writeUintLE(value: number, offset: number, byteLength: number): number;
           /**
@@ -906,7 +882,6 @@ declare module 'buffer' {
           writeUIntBE(value: number, offset: number, byteLength: number): number;
           /**
            * @alias Buffer.writeUIntBE
-           * @since v14.9.0, v12.19.0
            */
           writeUintBE(value: number, offset: number, byteLength: number): number;
           /**
@@ -966,13 +941,11 @@ declare module 'buffer' {
            * console.log(buf.readBigUInt64BE(0));
            * // Prints: 4294967295n
            * ```
-           * @since v12.0.0, v10.20.0
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy: `0 <= offset <= buf.length - 8`.
            */
           readBigUInt64BE(offset?: number): bigint;
           /**
            * @alias Buffer.readBigUInt64BE
-           * @since v14.10.0, v12.19.0
            */
           readBigUint64BE(offset?: number): bigint;
           /**
@@ -988,13 +961,11 @@ declare module 'buffer' {
            * console.log(buf.readBigUInt64LE(0));
            * // Prints: 18446744069414584320n
            * ```
-           * @since v12.0.0, v10.20.0
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy: `0 <= offset <= buf.length - 8`.
            */
           readBigUInt64LE(offset?: number): bigint;
           /**
            * @alias Buffer.readBigUInt64LE
-           * @since v14.10.0, v12.19.0
            */
           readBigUint64LE(offset?: number): bigint;
           /**
@@ -1002,7 +973,6 @@ declare module 'buffer' {
            *
            * Integers read from a `Buffer` are interpreted as two's complement signed
            * values.
-           * @since v12.0.0, v10.20.0
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy: `0 <= offset <= buf.length - 8`.
            */
           readBigInt64BE(offset?: number): bigint;
@@ -1011,7 +981,6 @@ declare module 'buffer' {
            *
            * Integers read from a `Buffer` are interpreted as two's complement signed
            * values.
-           * @since v12.0.0, v10.20.0
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy: `0 <= offset <= buf.length - 8`.
            */
           readBigInt64LE(offset?: number): bigint;
@@ -1037,7 +1006,6 @@ declare module 'buffer' {
           readUIntLE(offset: number, byteLength: number): number;
           /**
            * @alias Buffer.readUIntLE
-           * @since v14.9.0, v12.19.0
            */
           readUintLE(offset: number, byteLength: number): number;
           /**
@@ -1064,7 +1032,6 @@ declare module 'buffer' {
           readUIntBE(offset: number, byteLength: number): number;
           /**
            * @alias Buffer.readUIntBE
-           * @since v14.9.0, v12.19.0
            */
           readUintBE(offset: number, byteLength: number): number;
           /**
@@ -1124,13 +1091,11 @@ declare module 'buffer' {
            * console.log(buf.readUInt8(2));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.5.0
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 1`.
            */
           readUInt8(offset?: number): number;
           /**
            * @alias Buffer.readUInt8
-           * @since v14.9.0, v12.19.0
            */
           readUint8(offset?: number): number;
           /**
@@ -1150,13 +1115,11 @@ declare module 'buffer' {
            * console.log(buf.readUInt16LE(2).toString(16));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.5.5
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 2`.
            */
           readUInt16LE(offset?: number): number;
           /**
            * @alias Buffer.readUInt16LE
-           * @since v14.9.0, v12.19.0
            */
           readUint16LE(offset?: number): number;
           /**
@@ -1174,13 +1137,11 @@ declare module 'buffer' {
            * console.log(buf.readUInt16BE(1).toString(16));
            * // Prints: 3456
            * ```
-           * @since v0.5.5
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 2`.
            */
           readUInt16BE(offset?: number): number;
           /**
            * @alias Buffer.readUInt16BE
-           * @since v14.9.0, v12.19.0
            */
           readUint16BE(offset?: number): number;
           /**
@@ -1198,13 +1159,11 @@ declare module 'buffer' {
            * console.log(buf.readUInt32LE(1).toString(16));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.5.5
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 4`.
            */
           readUInt32LE(offset?: number): number;
           /**
            * @alias Buffer.readUInt32LE
-           * @since v14.9.0, v12.19.0
            */
           readUint32LE(offset?: number): number;
           /**
@@ -1220,13 +1179,11 @@ declare module 'buffer' {
            * console.log(buf.readUInt32BE(0).toString(16));
            * // Prints: 12345678
            * ```
-           * @since v0.5.5
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 4`.
            */
           readUInt32BE(offset?: number): number;
           /**
            * @alias Buffer.readUInt32BE
-           * @since v14.9.0, v12.19.0
            */
           readUint32BE(offset?: number): number;
           /**
@@ -1246,7 +1203,6 @@ declare module 'buffer' {
            * console.log(buf.readInt8(2));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.5.0
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 1`.
            */
           readInt8(offset?: number): number;
@@ -1265,7 +1221,6 @@ declare module 'buffer' {
            * console.log(buf.readInt16LE(1));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.5.5
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 2`.
            */
           readInt16LE(offset?: number): number;
@@ -1282,7 +1237,6 @@ declare module 'buffer' {
            * console.log(buf.readInt16BE(0));
            * // Prints: 5
            * ```
-           * @since v0.5.5
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 2`.
            */
           readInt16BE(offset?: number): number;
@@ -1301,7 +1255,6 @@ declare module 'buffer' {
            * console.log(buf.readInt32LE(1));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.5.5
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 4`.
            */
           readInt32LE(offset?: number): number;
@@ -1318,7 +1271,6 @@ declare module 'buffer' {
            * console.log(buf.readInt32BE(0));
            * // Prints: 5
            * ```
-           * @since v0.5.5
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 4`.
            */
           readInt32BE(offset?: number): number;
@@ -1335,7 +1287,6 @@ declare module 'buffer' {
            * console.log(buf.readFloatLE(1));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.11.15
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 4`.
            */
           readFloatLE(offset?: number): number;
@@ -1350,7 +1301,6 @@ declare module 'buffer' {
            * console.log(buf.readFloatBE(0));
            * // Prints: 2.387939260590663e-38
            * ```
-           * @since v0.11.15
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 4`.
            */
           readFloatBE(offset?: number): number;
@@ -1367,7 +1317,6 @@ declare module 'buffer' {
            * console.log(buf.readDoubleLE(1));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.11.15
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 8`.
            */
           readDoubleLE(offset?: number): number;
@@ -1382,7 +1331,6 @@ declare module 'buffer' {
            * console.log(buf.readDoubleBE(0));
            * // Prints: 8.20788039913184e-304
            * ```
-           * @since v0.11.15
            * @param [offset=0] Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - 8`.
            */
           readDoubleBE(offset?: number): number;
@@ -1419,7 +1367,6 @@ declare module 'buffer' {
            * const buf = Buffer.from('This is little-endian UTF-16', 'utf16le');
            * buf.swap16(); // Convert to big-endian UTF-16 text.
            * ```
-           * @since v5.10.0
            * @return A reference to `buf`.
            */
           swap16(): Buffer;
@@ -1445,7 +1392,6 @@ declare module 'buffer' {
            * buf2.swap32();
            * // Throws ERR_INVALID_BUFFER_SIZE.
            * ```
-           * @since v5.10.0
            * @return A reference to `buf`.
            */
           swap32(): Buffer;
@@ -1471,7 +1417,6 @@ declare module 'buffer' {
            * buf2.swap64();
            * // Throws ERR_INVALID_BUFFER_SIZE.
            * ```
-           * @since v6.3.0
            * @return A reference to `buf`.
            */
           swap64(): Buffer;
@@ -1495,7 +1440,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 03 04 23 42>
            * ```
-           * @since v0.5.0
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 1`.
            * @return `offset` plus the number of bytes written.
@@ -1503,7 +1447,6 @@ declare module 'buffer' {
           writeUInt8(value: number, offset?: number): number;
           /**
            * @alias Buffer.writeUInt8
-           * @since v14.9.0, v12.19.0
            */
           writeUint8(value: number, offset?: number): number;
           /**
@@ -1523,7 +1466,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer ad de ef be>
            * ```
-           * @since v0.5.5
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 2`.
            * @return `offset` plus the number of bytes written.
@@ -1531,7 +1473,6 @@ declare module 'buffer' {
           writeUInt16LE(value: number, offset?: number): number;
           /**
            * @alias Buffer.writeUInt16LE
-           * @since v14.9.0, v12.19.0
            */
           writeUint16LE(value: number, offset?: number): number;
           /**
@@ -1551,7 +1492,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer de ad be ef>
            * ```
-           * @since v0.5.5
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 2`.
            * @return `offset` plus the number of bytes written.
@@ -1559,7 +1499,6 @@ declare module 'buffer' {
           writeUInt16BE(value: number, offset?: number): number;
           /**
            * @alias Buffer.writeUInt16BE
-           * @since v14.9.0, v12.19.0
            */
           writeUint16BE(value: number, offset?: number): number;
           /**
@@ -1578,7 +1517,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer ce fa ed fe>
            * ```
-           * @since v0.5.5
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 4`.
            * @return `offset` plus the number of bytes written.
@@ -1586,7 +1524,6 @@ declare module 'buffer' {
           writeUInt32LE(value: number, offset?: number): number;
           /**
            * @alias Buffer.writeUInt32LE
-           * @since v14.9.0, v12.19.0
            */
           writeUint32LE(value: number, offset?: number): number;
           /**
@@ -1605,7 +1542,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer fe ed fa ce>
            * ```
-           * @since v0.5.5
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 4`.
            * @return `offset` plus the number of bytes written.
@@ -1613,7 +1549,6 @@ declare module 'buffer' {
           writeUInt32BE(value: number, offset?: number): number;
           /**
            * @alias Buffer.writeUInt32BE
-           * @since v14.9.0, v12.19.0
            */
           writeUint32BE(value: number, offset?: number): number;
           /**
@@ -1634,7 +1569,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 02 fe>
            * ```
-           * @since v0.5.0
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 1`.
            * @return `offset` plus the number of bytes written.
@@ -1656,7 +1590,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 04 03>
            * ```
-           * @since v0.5.5
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 2`.
            * @return `offset` plus the number of bytes written.
@@ -1678,7 +1611,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 01 02>
            * ```
-           * @since v0.5.5
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 2`.
            * @return `offset` plus the number of bytes written.
@@ -1700,7 +1632,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 08 07 06 05>
            * ```
-           * @since v0.5.5
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 4`.
            * @return `offset` plus the number of bytes written.
@@ -1722,7 +1653,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 01 02 03 04>
            * ```
-           * @since v0.5.5
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 4`.
            * @return `offset` plus the number of bytes written.
@@ -1742,7 +1672,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer bb fe 4a 4f>
            * ```
-           * @since v0.11.15
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 4`.
            * @return `offset` plus the number of bytes written.
@@ -1762,7 +1691,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 4f 4a fe bb>
            * ```
-           * @since v0.11.15
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 4`.
            * @return `offset` plus the number of bytes written.
@@ -1782,7 +1710,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 77 be 9f 1a 2f dd 5e 40>
            * ```
-           * @since v0.11.15
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 8`.
            * @return `offset` plus the number of bytes written.
@@ -1802,7 +1729,6 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 40 5e dd 2f 1a 9f be 77>
            * ```
-           * @since v0.11.15
            * @param value Number to be written to `buf`.
            * @param [offset=0] Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - 8`.
            * @return `offset` plus the number of bytes written.
@@ -1854,7 +1780,6 @@ declare module 'buffer' {
            * console.log(buf.fill('zz', 'hex'));
            * // Throws an exception.
            * ```
-           * @since v0.5.0
            * @param value The value with which to fill `buf`.
            * @param [offset=0] Number of bytes to skip before starting to fill `buf`.
            * @param [end=buf.length] Where to stop filling `buf` (not inclusive).
@@ -1924,7 +1849,6 @@ declare module 'buffer' {
            *
            * If `value` is an empty string or empty `Buffer` and `byteOffset` is less
            * than `buf.length`, `byteOffset` will be returned. If `value` is empty and`byteOffset` is at least `buf.length`, `buf.length` will be returned.
-           * @since v1.5.0
            * @param value What to search for.
            * @param [byteOffset=0] Where to begin searching in `buf`. If negative, then offset is calculated from the end of `buf`.
            * @param [encoding='utf8'] If `value` is a string, this is the encoding used to determine the binary representation of the string that will be searched for in `buf`.
@@ -1992,7 +1916,6 @@ declare module 'buffer' {
            * ```
            *
            * If `value` is an empty string or empty `Buffer`, `byteOffset` will be returned.
-           * @since v6.0.0
            * @param value What to search for.
            * @param [byteOffset=buf.length - 1] Where to begin searching in `buf`. If negative, then offset is calculated from the end of `buf`.
            * @param [encoding='utf8'] If `value` is a string, this is the encoding used to determine the binary representation of the string that will be searched for in `buf`.
@@ -2021,7 +1944,6 @@ declare module 'buffer' {
            * //   [4, 101]
            * //   [5, 114]
            * ```
-           * @since v1.1.0
            */
           entries(): IterableIterator<[number, number]>;
           /**
@@ -2047,7 +1969,6 @@ declare module 'buffer' {
            * console.log(buf.includes('this', 4));
            * // Prints: false
            * ```
-           * @since v5.3.0
            * @param value What to search for.
            * @param [byteOffset=0] Where to begin searching in `buf`. If negative, then offset is calculated from the end of `buf`.
            * @param [encoding='utf8'] If `value` is a string, this is its encoding.
@@ -2073,7 +1994,6 @@ declare module 'buffer' {
            * //   4
            * //   5
            * ```
-           * @since v1.1.0
            */
           keys(): IterableIterator<number>;
           /**
@@ -2107,7 +2027,6 @@ declare module 'buffer' {
            * //   101
            * //   114
            * ```
-           * @since v1.1.0
            */
           values(): IterableIterator<number>;
       }

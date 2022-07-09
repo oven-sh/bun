@@ -2,9 +2,9 @@
 
 set -euo pipefail
 
-dir=$(mktemp -d --suffix=bun-install-test-1)
+DIR=$(mktemp -d -t bun-install-test-1)
 
-cd $dir
+cd "$DIR"
 ${NPM_CLIENT:-$(which bun)} add react react-dom @types/react @babel/parser esbuild
 
 echo "console.log(typeof require(\"react\").createElement);" >index.js
@@ -47,7 +47,7 @@ fi
 ${NPM_CLIENT:-$(which bun)} remove react-dom
 
 if [ -d "node_modules/react-dom" ]; then
-    echo "ERR: react-dom module still exists in $dir"
+    echo "ERR: react-dom module still exists in $DIR"
     exit 1
 fi
 
@@ -68,14 +68,14 @@ if echo "$yarn_dot_lock" | grep -q "@types/react"; then
 fi
 
 if echo "$yarn_dot_lock" | grep -q "@types/react"; then
-    echo "ERR: @types/react module still exists in $dir"
+    echo "ERR: @types/react module still exists in $DIR"
     exit 1
 fi
 
 ${NPM_CLIENT:-$(which bun)} remove react
 
 if [ -d "node_modules/react" ]; then
-    echo "ERR: react module still exists in $dir"
+    echo "ERR: react module still exists in $DIR"
     exit 1
 fi
 

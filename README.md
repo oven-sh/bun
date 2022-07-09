@@ -5,7 +5,7 @@
 
 bun is a new:
 
-- JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more builtin. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
+- JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more built-in. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
 - JavaScript/TypeScript/JSX transpiler
 - JavaScript & CSS bundler
 - Task runner for package.json scripts
@@ -454,7 +454,7 @@ If `public/index.html` exists, it becomes the default page instead of a 404 page
 
 ### Using bun with Create React App
 
-To create new a React app:
+To create a new React app:
 
 ```bash
 bun create react ./app
@@ -519,7 +519,7 @@ And to the `types` field in your `tsconfig.json`:
 
 ## Not implemented yet
 
-bun is a project with an incredibly large scope and still in its early days.
+bun is a project with an incredibly large scope and is still in its early days
 
 You can see [Bun's Roadmap](https://github.com/Jarred-Sumner/bun/issues/159), but here are some additional things that are planned:
 
@@ -914,6 +914,8 @@ If you get this error while bun is initializing, You probably need to wrap the b
 # cd sde-external*
 # mkdir /usr/local/bin -p
 # cp sde64 /usr/local/bin/sde
+# cp -r intel64 /usr/local/bin/
+# cp -r misc /usr/local/bin/
 ```
   2. Add alias to bashrc
 ```
@@ -1184,7 +1186,7 @@ rm -rf ~/.bun/install/cache
 #### npm registry metadata
 
 bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
-You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages
+You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages.
 
 bun’s usage of `Cache-Control` ignores `Age`. This improves performance but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
 
@@ -1362,7 +1364,7 @@ Warning: unlike with remote templates, **bun will delete the entire destination 
 | GITHUB_API_DOMAIN     | If you’re using a GitHub enterprise or a proxy, you can change what the endpoint requests to GitHub go |
 | GITHUB_API_TOKEN      | This lets `bun create` work with private repositories or if you get rate-limited                       |
 
-By default, `bun create` will cancel if there are existing files it would overwrite and its a remote template. You can pass `--force` to disable this behavior.
+By default, `bun create` will cancel if there are existing files it would overwrite and it's a remote template. You can pass `--force` to disable this behavior.
 
 #### Publishing a new template
 

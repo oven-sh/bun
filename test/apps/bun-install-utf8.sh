@@ -2,11 +2,11 @@
 
 set -euo pipefail
 
-killall -9 $(basename $BUN_BIN) || echo ""
+killall -9 "$(basename "$BUN_BIN")" || echo ""
 
-dir=$(mktemp -d --suffix=bun-ADD)
+DIR=$(mktemp -d -t bun-ADD)
 
-cd $dir
+cd "$DIR"
 
 # https://github.com/Jarred-Sumner/bun/issues/115
 echo '{ "author": "Arnaud Barré (https://github.com/ArnaudBarre)" }' >package.json

@@ -10,6 +10,7 @@ const Fetch = JSC.WebCore.Fetch;
 const WebCore = JSC.WebCore;
 const Bun = JSC.API.Bun;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
+const typeBaseName = @import("../meta.zig").typeBaseName;
 const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = @import("./api/transpiler.zig").TransformTask.AsyncTransformTask;
 const BunTimerTimeoutTask = Bun.Timer.Timeout.TimeoutTask;
@@ -335,7 +336,7 @@ pub const EventLoop = struct {
                     finished += 1;
                     vm_.active_tasks -|= 1;
                 },
-                @field(Task.Tag, @typeName(JSC.napi.napi_async_work)) => {
+                @field(Task.Tag, typeBaseName(@typeName(JSC.napi.napi_async_work))) => {
                     var transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
                     transform_task.*.runFromJS();
                     finished += 1;
@@ -361,13 +362,13 @@ pub const EventLoop = struct {
                     finished += 1;
                     vm_.active_tasks -|= 1;
                 },
-                @field(Task.Tag, @typeName(AnyTask)) => {
+                @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
                     var any: *AnyTask = task.get(AnyTask).?;
                     any.run();
                     finished += 1;
                     vm_.active_tasks -|= 1;
                 },
-                @field(Task.Tag, @typeName(CppTask)) => {
+                @field(Task.Tag, typeBaseName(@typeName(CppTask))) => {
                     var any: *CppTask = task.get(CppTask).?;
                     any.run(global);
                     finished += 1;

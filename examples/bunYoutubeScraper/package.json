@@ -1,0 +1,20 @@
+{
+  "name": "bunyoutubescraper",
+  "version": "1.0.0",
+  "description": "A simple Youtube Scraper made with pure Js and Bun.js",
+  "main": "bunYoutubeScraper.js",
+  "scripts": {
+    "start": "bun run bunYoutubeScraper.js"
+  },
+  "keywords": [
+    "bun",
+    "js",
+    "youtube",
+    "scraper",
+    "write",
+    "fetch",
+    "data"
+  ],
+  "author": "VitalSpace",
+  "license": "MIT"
+}

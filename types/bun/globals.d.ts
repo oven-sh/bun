@@ -669,7 +669,7 @@ declare class Request implements BlobInterface {
 }
 
 interface Crypto {
-  getRandomValues<T = TypedArray>(array: T): T;
+  getRandomValues<T extends TypedArray = TypedArray>(array: T): T;
   /**
    * Generate a cryptographically secure random UUID.
    *

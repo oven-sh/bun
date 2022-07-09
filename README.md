@@ -928,7 +928,7 @@ If you see a message like this
 
 > [1] 28447 killed bun create next ./test
 
-It most likely means you’re running bun’s x64 version on Apple Silicon. This happens if bun is running via Rosetta. Rosetta is unable to emulate AVX2 instructions, which bun indirectly uses.
+It most likely means you’re running bun’s x64 version on Apple Silicon. This happens if bun is running via Rosetta. Rosetta is unable to emulate AVX2 instructions, which bun depends on.
 
 The fix is to ensure you installed a version of bun built for Apple Silicon.
 

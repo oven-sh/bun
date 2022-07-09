@@ -1,10 +1,10 @@
 _bun() {
     zstyle ':completion:*:*:bun:*' group-name ''
     zstyle ':completion:*:*:bun-grouped:*' group-name ''
-    
+
     zstyle ':completion:*:*:bun::descriptions' format '%F{green}-- %d --%f'
     zstyle ':completion:*:*:bun-grouped:*' format '%F{green}-- %d --%f'
-    
+
     local program=bun
     typeset -A opt_args
     local curcontext="$curcontext" state line context
@@ -546,5 +546,4 @@ __bun_dynamic_comp() {
     return $comp
 }
 
-autoload -U compinit && compinit
 compdef _bun bun

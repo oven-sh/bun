@@ -528,7 +528,8 @@ declare module 'buffer' {
            * console.log(copy);
            * // Prints: <Buffer 01 02 03 04 05>
            * ```
-           * @since v0.9.2
+           *
+           * Note: as of Bun v0.1.2, this is not implemented yet.
            */
           toJSON(): {
               type: 'Buffer';
@@ -866,7 +867,8 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer ab 90 78 56 34 12>
            * ```
-           * @since v0.5.5
+           *
+           * Note: as of Bun v0.1.2, this is not implemented yet.
            * @param value Number to be written to `buf`.
            * @param offset Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - byteLength`.
            * @param byteLength Number of bytes to write. Must satisfy `0 < byteLength <= 6`.
@@ -894,7 +896,8 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 12 34 56 78 90 ab>
            * ```
-           * @since v0.5.5
+           *
+           * Note: as of Bun v0.1.2, this is not implemented yet.
            * @param value Number to be written to `buf`.
            * @param offset Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - byteLength`.
            * @param byteLength Number of bytes to write. Must satisfy `0 < byteLength <= 6`.
@@ -920,7 +923,8 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer ab 90 78 56 34 12>
            * ```
-           * @since v0.11.15
+           *
+           * Note: as of Bun v0.1.2, this is not implemented yet.
            * @param value Number to be written to `buf`.
            * @param offset Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - byteLength`.
            * @param byteLength Number of bytes to write. Must satisfy `0 < byteLength <= 6`.
@@ -941,7 +945,8 @@ declare module 'buffer' {
            * console.log(buf);
            * // Prints: <Buffer 12 34 56 78 90 ab>
            * ```
-           * @since v0.11.15
+           *
+           * Note: as of Bun v0.1.2, this is not implemented yet.
            * @param value Number to be written to `buf`.
            * @param offset Number of bytes to skip before starting to write. Must satisfy `0 <= offset <= buf.length - byteLength`.
            * @param byteLength Number of bytes to write. Must satisfy `0 < byteLength <= 6`.
@@ -1024,7 +1029,8 @@ declare module 'buffer' {
            * console.log(buf.readUIntLE(0, 6).toString(16));
            * // Prints: ab9078563412
            * ```
-           * @since v0.11.15
+           *
+           * Note: as of Bun v0.1.2, this is not implemented yet.
            * @param offset Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - byteLength`.
            * @param byteLength Number of bytes to read. Must satisfy `0 < byteLength <= 6`.
            */
@@ -1050,7 +1056,8 @@ declare module 'buffer' {
            * console.log(buf.readUIntBE(1, 6).toString(16));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.11.15
+           *
+           * Note: as of Bun v0.1.2, this is not implemented yet.
            * @param offset Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - byteLength`.
            * @param byteLength Number of bytes to read. Must satisfy `0 < byteLength <= 6`.
            */
@@ -1072,7 +1079,8 @@ declare module 'buffer' {
            * console.log(buf.readIntLE(0, 6).toString(16));
            * // Prints: -546f87a9cbee
            * ```
-           * @since v0.11.15
+           *
+           * Note: as of Bun v0.1.2, this is not implemented yet.
            * @param offset Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - byteLength`.
            * @param byteLength Number of bytes to read. Must satisfy `0 < byteLength <= 6`.
            */
@@ -1093,7 +1101,8 @@ declare module 'buffer' {
            * console.log(buf.readIntBE(1, 0).toString(16));
            * // Throws ERR_OUT_OF_RANGE.
            * ```
-           * @since v0.11.15
+           *
+           * Note: as of Bun v0.1.2, this is not implemented yet.
            * @param offset Number of bytes to skip before starting to read. Must satisfy `0 <= offset <= buf.length - byteLength`.
            * @param byteLength Number of bytes to read. Must satisfy `0 < byteLength <= 6`.
            */

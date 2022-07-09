@@ -10,7 +10,6 @@
  * forms, and are accessible using both CommonJS syntax and ES6 Modules (ESM).
  */
 declare module "fs" {
-  type Buffer = Uint8Array;
   import type { SystemError } from "bun";
 
   interface ObjectEncodingOptions {

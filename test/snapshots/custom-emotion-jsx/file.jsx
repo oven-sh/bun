@@ -1,16 +1,14 @@
 import {
 __require as require
 } from "http://localhost:8080/bun:wrap";
-import * as $72625799 from "http://localhost:8080/node_modules/@emotion/react/jsx-dev-runtime/dist/emotion-react-jsx-dev-runtime.browser.esm.js";
-var JSX = require($72625799);
+import * as $5bf278c5 from "http://localhost:8080/node_modules/@emotion/react/jsx-dev-runtime/dist/emotion-react-jsx-dev-runtime.browser.cjs.js";
+var JSX = require($5bf278c5);
 var jsx = require(JSX).jsxDEV;
-
-import * as $5b3cea55 from "http://localhost:8080/node_modules/react-dom/index.js";
-var ReactDOM = require($5b3cea55);
+import * as $d2dc5006 from "http://localhost:8080/node_modules/react-dom/index.js";
+var ReactDOM = require($d2dc5006);
 export const Foo = () => jsx("div", {
   css: { content: '"it worked!"' }
 }, undefined, false, undefined, this);
-
 export function test() {
   const element = document.createElement("div");
   element.id = "custom-emotion-jsx";

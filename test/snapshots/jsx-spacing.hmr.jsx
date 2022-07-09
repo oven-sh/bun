@@ -11,12 +11,12 @@ __require as require
 import {
 __FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
-import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-var JSX = require($2f488e5b);
+import * as $1407d117 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($1407d117);
 var jsx = require(JSX).jsxDEV;
-import * as $1f6f0e67 from "http://localhost:8080/node_modules/react-dom/server.browser.js";
-var ReactDOM = require($1f6f0e67);
-var hmr = new FastHMR(3614189736, "jsx-spacing.jsx", FastRefresh), exports = hmr.exports;
+import * as $72f3f54c from "http://localhost:8080/node_modules/react-dom/server.browser.js";
+var ReactDOM = require($72f3f54c);
+var hmr = new FastHMR(1284217403, "jsx-spacing.jsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   const ReturnDescriptionAsString = ({ description }) => description;
   function test() {

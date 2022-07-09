@@ -94,17 +94,21 @@ pub inline fn print() void {
     _ = backtrace_full(state, 2, full_callback, null, null);
 }
 
+fn setup_sigactions(act: ?*const os.Sigaction) !void {
+    try os.sigaction(os.SIG.ABRT, act, null);
+    try os.sigaction(os.SIG.BUS, act, null);
+    try os.sigaction(os.SIG.FPE, act, null);
+    try os.sigaction(os.SIG.ILL, act, null);
+    try os.sigaction(os.SIG.SEGV, act, null);
+    try os.sigaction(os.SIG.TRAP, act, null);
+}
+
 const builtin = @import("builtin");
 const ErrorCallback = fn (sig: i32, addr: usize) void;
 var on_error: ?ErrorCallback = null;
 noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
     // Prevent recursive calls
-    os.sigaction(os.SIG.ABRT, null, null);
-    os.sigaction(os.SIG.BUS, null, null);
-    os.sigaction(os.SIG.FPE, null, null);
-    os.sigaction(os.SIG.ILL, null, null);
-    os.sigaction(os.SIG.SEGV, null, null);
-    os.sigaction(os.SIG.TRAP, null, null);
+    setup_sigactions(null) catch unreachable;
 
     const addr = switch (comptime builtin.target.os.tag) {
         .linux => @ptrToInt(info.fields.sigfault.addr),
@@ -117,13 +121,8 @@ noinline fn sigaction_handler(sig: i32, info: *const std.os.siginfo_t, _: ?*cons
     if (on_error) |handle| handle(sig, addr);
 }
 
-pub fn reloadHandlers() void {
-    os.sigaction(os.SIG.ABRT, null, null);
-    os.sigaction(os.SIG.BUS, null, null);
-    os.sigaction(os.SIG.FPE, null, null);
-    os.sigaction(os.SIG.ILL, null, null);
-    os.sigaction(os.SIG.SEGV, null, null);
-    os.sigaction(os.SIG.TRAP, null, null);
+pub fn reloadHandlers() !void {
+    try setup_sigactions(null);
 
     var act = os.Sigaction{
         .handler = .{ .sigaction = sigaction_handler },
@@ -131,15 +130,10 @@ pub fn reloadHandlers() void {
         .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
     };
 
-    os.sigaction(os.SIG.ABRT, &act, null);
-    os.sigaction(os.SIG.BUS, &act, null);
-    os.sigaction(os.SIG.FPE, &act, null);
-    os.sigaction(os.SIG.ILL, &act, null);
-    os.sigaction(os.SIG.SEGV, &act, null);
-    os.sigaction(os.SIG.TRAP, &act, null);
+    try setup_sigactions(&act);
 }
 const os = std.os;
-pub fn start(ctx: ?*anyopaque, callback_: PrintCallback, onError: ErrorCallback) void {
+pub fn start(ctx: ?*anyopaque, callback_: PrintCallback, onError: ErrorCallback) !void {
     callback_ctx = ctx;
     callback = callback_;
     on_error = onError;
@@ -150,10 +144,5 @@ pub fn start(ctx: ?*anyopaque, callback_: PrintCallback, onError: ErrorCallback)
         .flags = (os.SA.SIGINFO | os.SA.RESTART | os.SA.RESETHAND),
     };
 
-    os.sigaction(os.SIG.ABRT, &act, null);
-    os.sigaction(os.SIG.BUS, &act, null);
-    os.sigaction(os.SIG.FPE, &act, null);
-    os.sigaction(os.SIG.ILL, &act, null);
-    os.sigaction(os.SIG.SEGV, &act, null);
-    os.sigaction(os.SIG.TRAP, &act, null);
+    try setup_sigactions(&act);
 }

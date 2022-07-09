@@ -1,4 +1,4 @@
-SHELL := /bin/bash # Use bash syntax to be consistent
+SHELL :=  $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)

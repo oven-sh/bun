@@ -4,8 +4,8 @@ import { join, resolve } from "path";
 
 // Combine all the .d.ts files into a single .d.ts file
 // so that your editor loads the types faster
-const BUN_VERSION = process.env.BUN_VERSION || process.version;
-const folder = resolve(process.argv.at(-1));
+const BUN_VERSION = (process.env.BUN_VERSION || process.version).replace(/^v/, '');
+const folder = resolve(process.argv.at(-1)!);
 if (folder.endsWith("bundle.ts")) {
   throw new Error("Pass a folder");
 }

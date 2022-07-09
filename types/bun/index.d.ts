@@ -5,6 +5,7 @@
 /// <reference no-default-lib="true" />
 /// <reference lib="esnext" />
 /// <reference path="./bun.d.ts" />
+/// <reference path="./buffer.d.ts" />
 /// <reference path="./sqlite.d.ts" />
 /// <reference path="./ffi.d.ts" />
 /// <reference path="./fs.d.ts" />

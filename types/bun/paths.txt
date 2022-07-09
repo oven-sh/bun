@@ -1,4 +1,5 @@
 ./bun.d.ts
+./buffer.d.ts
 ./ffi.d.ts
 ./sqlite.d.ts
 ./fs.d.ts

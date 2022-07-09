@@ -30,11 +30,11 @@ body:
   - type: textarea
     attributes:
       label: What is the expected behavior?
-      description: If possible please provide textual output instead of screenshots.
+      description: If possible, please provide textual output instead of screenshots.
   - type: textarea
     attributes:
       label: What do you see instead?
-      description: If possible please provide textual output instead of screenshots.
+      description: If possible, please provide textual output instead of screenshots.
     validations:
       required: true
   - type: textarea

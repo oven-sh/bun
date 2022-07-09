@@ -1614,10 +1614,10 @@ pub const ZigConsoleClient = struct {
                 },
                 .BigInt => {
                     var out_str = value.getZigString(this.globalThis).slice();
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{s}<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}n<r>", enable_ansi_colors), .{value.asNumber()});
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});
                 },
                 .Undefined => {
                     writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});

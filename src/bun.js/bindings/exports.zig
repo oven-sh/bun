@@ -29,6 +29,8 @@ const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const Backtrace = @import("../../deps/backtrace.zig");
 const JSPrinter = @import("../../js_printer.zig");
 const JSLexer = @import("../../js_lexer.zig");
+const typeBaseName = @import("../../meta.zig").typeBaseName;
+
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
     bytes: shim.Bytes,
@@ -40,7 +42,7 @@ pub const ZigGlobalObject = extern struct {
 
     pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque) *JSGlobalObject {
         var global = shim.cppFn("create", .{ class_ref, count, console });
-        Backtrace.reloadHandlers();
+        Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
 
@@ -194,7 +196,7 @@ pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
         success: bool,
-        pub const name = "Errorable" ++ @typeName(Type);
+        pub const name = "Errorable" ++ typeBaseName(@typeName(Type));
 
         pub const Result = extern union {
             value: Type,
@@ -1615,7 +1617,7 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}n<r>", enable_ansi_colors), .{value.asNumber()});
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});
                 },
                 .Undefined => {
                     writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});

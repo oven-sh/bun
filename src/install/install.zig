@@ -1151,8 +1151,8 @@ pub const CacheLevel = struct {
     use_last_modified: bool,
 };
 
-// We can't know all the package s we need until we've downloaded all the packages
-// The easy way wouild be:
+// We can't know all the packages we need until we've downloaded all the packages
+// The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependnecies for resolution
 // 2.
 pub const PackageManager = struct {

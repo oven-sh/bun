@@ -11,10 +11,12 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(2398506918, "caught-require.js", FastRefresh), exports = hmr.exports;
+var this_package_should_not_exist_f335_0 = (() => ({}));
+var this_package_should_not_exist_f335_1 = (() => ({}));
+var hmr = new FastHMR(2167781, "caught-require.js", FastRefresh), exports = hmr.exports;
 await (hmr._load = async function() {
   try {
-    require((() => { throw (new Error(`Cannot require module '"this-package-should-not-exist"'`)); } )());
+    require((() => { throw (new Error(`Cannot require module "this-package-should-not-exist"`)); } )());
   } catch (exception) {
   }
   try {
@@ -26,7 +28,7 @@ await (hmr._load = async function() {
   });
   async function test() {
     try {
-      require((() => { throw (new Error(`Cannot require module '"this-package-should-not-exist"'`)); } )());
+      require((() => { throw (new Error(`Cannot require module "this-package-should-not-exist"`)); } )());
     } catch (exception) {
     }
     try {

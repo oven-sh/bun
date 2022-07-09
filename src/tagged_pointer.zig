@@ -9,6 +9,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
+const typeBaseName = @import("./meta.zig").typeBaseName;
 
 const TagSize = u15;
 const AddressableSize = u49;
@@ -58,7 +59,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
             inline for (Types) |field, i| {
                 enumFields[i] = .{
-                    .name = @typeName(field),
+                    .name = comptime typeBaseName(@typeName(field)),
                     .value = 1024 - i,
                 };
             }
@@ -79,7 +80,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
             inline for (Fields) |field, i| {
                 enumFields[i] = .{
-                    .name = @typeName(field.default_value.?),
+                    .name = comptime typeBaseName(@typeName(field.default_value.?)),
                     .value = 1024 - i,
                 };
             }
@@ -102,8 +103,9 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         const This = @This();
         fn assert_type(comptime Type: type) void {
-            if (!comptime @hasField(Tag, @typeName(Type))) {
-                @compileError("TaggedPointerUnion does not have " ++ @typeName(Type) ++ ".");
+            var name = comptime typeBaseName(@typeName(Type));
+            if (!comptime @hasField(Tag, name)) {
+                @compileError("TaggedPointerUnion does not have " ++ name ++ ".");
             }
         }
         pub inline fn get(this: This, comptime Type: anytype) ?*Type {
@@ -124,7 +126,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn is(this: This, comptime Type: type) bool {
             comptime assert_type(Type);
-            return this.repr.data == comptime @enumToInt(@field(Tag, @typeName(Type)));
+            return this.repr.data == comptime @enumToInt(@field(Tag, typeBaseName(@typeName(Type))));
         }
 
         pub inline fn isValidPtr(_ptr: ?*anyopaque) bool {
@@ -134,9 +136,9 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
         pub inline fn isValid(this: This) bool {
             return switch (this.repr.data) {
                 @enumToInt(
-                    @field(Tag, @typeName(Types[Types.len - 1])),
+                    @field(Tag, typeBaseName(@typeName(Types[Types.len - 1]))),
                 )...@enumToInt(
-                    @field(Tag, @typeName(Types[0])),
+                    @field(Tag, typeBaseName(@typeName(Types[0]))),
                 ) => true,
                 else => false,
             };
@@ -152,9 +154,10 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn init(_ptr: anytype) This {
             const Type = std.meta.Child(@TypeOf(_ptr));
+            const name = comptime typeBaseName(@typeName(Type));
 
             // there will be a compiler error if the passed in type doesn't exist in the enum
-            return This{ .repr = TaggedPointer.init(_ptr, @enumToInt(@field(Tag, @typeName(Type)))) };
+            return This{ .repr = TaggedPointer.init(_ptr, @enumToInt(@field(Tag, name))) };
         }
     };
 }

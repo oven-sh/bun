@@ -39,7 +39,7 @@ pub fn PLCrashReportHandler() void {
 pub var start_time: i128 = 0;
 pub fn main() void {
     if (comptime Environment.isRelease)
-        CrashReporter.start(null, Report.CrashReportWriter.printFrame, Report.handleCrash);
+        CrashReporter.start(null, Report.CrashReportWriter.printFrame, Report.handleCrash) catch unreachable;
 
     start_time = std.time.nanoTimestamp();
 

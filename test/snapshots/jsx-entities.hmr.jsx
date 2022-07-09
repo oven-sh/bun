@@ -11,14 +11,14 @@ __require as require
 import {
 __FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
-import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-var JSX = require($2f488e5b);
-import * as $bbcd215f from "http://localhost:8080/node_modules/react/index.js";
-var JSXClassic = require($bbcd215f);
+import * as $1407d117 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($1407d117);
+import * as $45b81229 from "http://localhost:8080/node_modules/react/index.js";
+var JSXClassic = require($45b81229);
 var jsx = require(JSX).jsxDEV, JSXFrag = require(JSXClassic).Fragment;
-import * as $1f6f0e67 from "http://localhost:8080/node_modules/react-dom/server.browser.js";
-var ReactDOM = require($1f6f0e67);
-var hmr = new FastHMR(817082122, "jsx-entities.jsx", FastRefresh), exports = hmr.exports;
+import * as $72f3f54c from "http://localhost:8080/node_modules/react-dom/server.browser.js";
+var ReactDOM = require($72f3f54c);
+var hmr = new FastHMR(2026553427, "jsx-entities.jsx", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   const elements = {
     [ReactDOM.renderToString(jsx(JSXFrag, {

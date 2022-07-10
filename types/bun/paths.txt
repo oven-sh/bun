@@ -17,3 +17,4 @@
 ./string_decoder.d.ts
 ./timers.d.ts
 ./stream.d.ts
+./crypto.d.ts

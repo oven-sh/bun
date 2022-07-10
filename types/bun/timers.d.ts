@@ -8,14 +8,17 @@
  * built around the Node.js [Event Loop](https://nodejs.org/en/docs/guides/event-loop-timers-and-nexttick/#setimmediate-vs-settimeout).
  * @see [source](https://github.com/nodejs/node/blob/v18.0.0/lib/timers.js)
  */
+
 declare module 'timers' {
-  export {
-    setTimeout,
-    clearTimeout,
-    setInterval,
-    clearInterval
-  }
+  const _exported: {
+    clearTimeout: typeof clearTimeout,
+    clearInterval: typeof clearInterval,
+    setTimeout: typeof setTimeout,
+    setInterval: typeof setInterval,
+  };
+  export = _exported;
 }
 declare module 'node:timers' {
-  export * from 'timers';
+  import timers = require('timers');
+  export = timers;
 }

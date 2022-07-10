@@ -18,9 +18,6 @@
  */
  declare module 'stream' {
   import { EventEmitter, Abortable } from 'node:events';
-  import * as streamPromises from 'node:stream/promises';
-  import * as streamConsumers from 'node:stream/consumers';
-  import * as streamWeb from 'node:stream/web';
   class internal extends EventEmitter {
       pipe<T extends WritableStream>(
           destination: T,
@@ -45,27 +42,31 @@
           encoding?: BufferEncoding | undefined;
           read?(this: Readable, size: number): void;
       }
-      /**
-       */
-      class Readable extends Stream implements ReadableStream {
+      class Readable<R = any> extends Stream implements ReadableStream {
+          readonly locked: boolean;
+          cancel(reason?: any): Promise<void>;
+          getReader(): ReadableStreamDefaultReader<R>;
+          pipeThrough<T>(
+            transform: ReadableWritablePair<T, R>,
+            options?: StreamPipeOptions
+          ): ReadableStream<T>;
+          pipeTo(
+            destination: WritableStream<R>,
+            options?: StreamPipeOptions
+          ): Promise<void>;
+          tee(): [ReadableStream<R>, ReadableStream<R>];
+          forEach(
+            callbackfn: (value: any, key: number, parent: ReadableStream<R>) => void,
+            thisArg?: any
+          ): void;
           /**
            * A utility method for creating Readable Streams out of iterators.
            */
           static from(iterable: Iterable<any> | AsyncIterable<any>, options?: ReadableOptions): Readable;
           /**
-           * A utility method for creating a `Readable` from a web `ReadableStream`.
-           * @experimental
-           */
-          static fromWeb(readableStream: streamWeb.ReadableStream, options?: Pick<ReadableOptions, 'encoding' | 'highWaterMark' | 'objectMode' | 'signal'>): Readable;
-          /**
            * Returns whether the stream has been read from or cancelled.
            */
           static isDisturbed(stream: Readable | ReadableStream): boolean;
-          /**
-           * A utility method for creating a web `ReadableStream` from a `Readable`.
-           * @experimental
-           */
-          static toWeb(streamReadable: Readable): streamWeb.ReadableStream;
           /**
            * Returns whether the stream was destroyed or errored before emitting `'end'`.
            * @experimental
@@ -76,11 +77,6 @@
            * the stream has not been destroyed or emitted `'error'` or `'end'`.
            */
           readable: boolean;
-          /**
-           * Returns whether `'data'` has been emitted.
-           * @experimental
-           */
-          readonly readableDidRead: boolean;
           /**
            * Getter for the property `encoding` of a given `Readable` stream. The `encoding`property can be set using the `readable.setEncoding()` method.
            */
@@ -482,9 +478,11 @@
           ): void;
           final?(this: Writable, callback: (error?: Error | null) => void): void;
       }
-      /**
-       */
-      class Writable extends Stream implements WritableStream {
+      class Writable<W = any> extends Stream implements WritableStream {
+          readonly locked: boolean;
+          abort(reason?: any): Promise<void>;
+          close(): Promise<void>;
+          getWriter(): WritableStreamDefaultWriter<W>;
           /**
            * Is `true` if it is safe to call `writable.write()`, which means
            * the stream has not been destroyed, errored or ended.
@@ -788,9 +786,13 @@
            *
            * This can be changed manually to change the half-open behavior of an existing`Duplex` stream instance, but must be changed before the `'end'` event is
            * emitted.
+           * @since v0.9.4
            */
           allowHalfOpen: boolean;
           constructor(opts?: DuplexOptions);
+          abort(reason?: any): Promise<void>;
+          close(): Promise<void>;
+          getWriter(): WritableStreamDefaultWriter<any>;
           /**
            * A utility method for creating duplex streams.
            *
@@ -810,6 +812,7 @@
            *   `Duplex` will write to the `writable` and read from the `readable`.
            * - `Promise` converts into readable `Duplex`. Value `null` is ignored.
            *
+           * @since v16.8.0
            */
           static from(src: Stream | Blob | ArrayBuffer | string | Iterable<any> | AsyncIterable<any> | AsyncGeneratorFunction | Promise<any> | Object): Duplex;
           _write(chunk: any, encoding: BufferEncoding, callback: (error?: Error | null) => void): void;
@@ -858,6 +861,7 @@
        *
        * * `zlib streams`
        * * `crypto streams`
+       * @since v0.9.4
        */
       class Transform extends Duplex {
           constructor(opts?: TransformOptions);
@@ -1240,9 +1244,6 @@
        * Returns whether the stream is readable.
        */
       function isReadable(stream: Readable | ReadableStream): boolean;
-
-      const promises: typeof streamPromises;
-      const consumers: typeof streamConsumers;
   }
   export = internal;
 }

@@ -20,3 +20,4 @@
 ./crypto.d.ts
 ./constants.d.ts
 ./url.d.ts
+./tty.d.ts

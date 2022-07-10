@@ -825,3 +825,10 @@
 declare module 'node:http' {
   export * from 'http';
 }
+// XXX: temporary types till theres a proper http(s) module
+declare module 'https' {
+  export * from 'http';
+}
+declare module 'node:https' {
+  export * from 'http';
+}

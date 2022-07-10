@@ -1493,7 +1493,6 @@ pub const Bundler = struct {
         } else {
             const output_dir = bundler.options.output_dir_handle orelse {
                 Output.printError("Invalid or missing output directory.", .{});
-                Output.flush();
                 Global.crash();
             };
 

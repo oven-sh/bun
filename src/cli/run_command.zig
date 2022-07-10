@@ -304,20 +304,17 @@ pub const RunCommand = struct {
                     if (rc == 0) {
                         if (std.os.S.ISDIR(stat.mode)) {
                             Output.prettyErrorln("<r><red>error<r>: Failed to run directory \"<b>{s}<r>\"\n", .{executable});
-                            Output.flush();
                             Global.exit(1);
                         }
                     }
                 }
             }
             Output.prettyErrorln("<r><red>error<r>: Failed to run \"<b>{s}<r>\" due to error <b>{s}<r>", .{ std.fs.path.basename(executable), @errorName(err) });
-            Output.flush();
             Global.exit(1);
         };
 
         if (result.Exited > 0) {
             Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), result.Exited });
-            Output.flush();
             Global.exit(result.Exited);
         }
 
@@ -629,7 +626,6 @@ pub const RunCommand = struct {
                             var shebang_buf: [64]u8 = undefined;
                             const shebang_size = file.pread(&shebang_buf, 0) catch |err| {
                                 Output.prettyErrorln("<r><red>error<r>: Failed to read file <b>{s}<r> due to error <b>{s}<r>", .{ file_path, @errorName(err) });
-                                Output.flush();
                                 Global.exit(1);
                             };
 
@@ -653,7 +649,6 @@ pub const RunCommand = struct {
                                     std.fs.path.basename(file_path),
                                     @errorName(err),
                                 });
-                                Output.flush();
                                 Global.exit(1);
                             };
 
@@ -913,8 +908,7 @@ pub const RunCommand = struct {
 
         if (script_name_to_search.len == 0) {
             if (comptime log_errors) {
-                Output.prettyError("<r>No \"scripts\" in package.json found.", .{});
-                Output.flush();
+                Output.prettyError("<r>No \"scripts\" in package.json found.\n", .{});
                 Global.exit(0);
             }
 
@@ -961,7 +955,6 @@ pub const RunCommand = struct {
 
         if (comptime log_errors) {
             Output.prettyError("<r><red>error:<r> Missing script \"<b>{s}<r>\"\n", .{script_name_to_search});
-            Output.flush();
             Global.exit(0);
         }
 

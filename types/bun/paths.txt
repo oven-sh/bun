@@ -9,3 +9,4 @@
 ./bun-test.d.ts
 ./jsc.d.ts
 ./assert.d.ts
+./events.d.ts

@@ -204,6 +204,15 @@ interface Process {
 
 declare var process: Process;
 
+declare module 'process' {
+  var process: Process;
+  export = process;
+}
+declare module 'node:process' {
+    import process = require('process');
+    export = process;
+}
+
 interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;

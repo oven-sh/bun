@@ -1,10 +1,10 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -euo pipefail
 
-killall -9 $(basename $BUN_BIN) || echo ""
+killall -9 "$(basename "$BUN_BIN")" || echo ""
 
-dir=$(mktemp -d --suffix=bun-dev-check)
+DIR=$(mktemp -d -t bun-dev-check)
 
 index_content="<html><body>index.html</body></html>"
 bacon_content="<html><body>bacon.html</body></html>"
@@ -14,13 +14,13 @@ css_not_transpiled_content="@import url(/index.js); @import url(/i-dont-exist.cs
 css_is_transpiled_import="*{background-color:red;}"
 css_is_transpiled="@import url(./css_is_transpiled_import.css);"
 
-echo $index_content >"$dir/index.html"
-echo $js_content >"$dir/index.js"
-echo $bacon_content >"$dir/bacon.html"
-echo $static_content >"$dir/static.txt"
-echo $css_not_transpiled_content >"$dir/css_not_transpiled_content.css"
+echo $index_content >"$DIR/index.html"
+echo $js_content >"$DIR/index.js"
+echo $bacon_content >"$DIR/bacon.html"
+echo $static_content >"$DIR/static.txt"
+echo $css_not_transpiled_content >"$DIR/css_not_transpiled_content.css"
 
-cd $dir
+cd "$DIR"
 $BUN_BIN dev --port 8087 &
 sleep 0.005
 
@@ -65,5 +65,5 @@ if [[ "$(curl --fail -sS http://localhost:8087/bacon.html)" != "$bacon_content" 
     exit 1
 fi
 
-killall -9 $(basename $BUN_BIN) || echo ""
+killall -9 "$(basename "$BUN_BIN")" || echo ""
 echo "✅ bun dev index html check passed."

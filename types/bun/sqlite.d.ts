@@ -28,7 +28,7 @@ declare module "bun:sqlite" {
     /**
      * Open or create a SQLite3 database
      *
-     * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` for an in-memory database.
+     * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
      * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
      *
      * @example
@@ -60,7 +60,7 @@ declare module "bun:sqlite" {
      * ```
      */
     constructor(
-      filename: string,
+      filename?: string,
       options?:
         | number
         | {
@@ -167,14 +167,14 @@ declare module "bun:sqlite" {
      */
     run<ParamsType = SQLQueryBindings>(
       sqlQuery: string,
-      ...bindings: ParamsType
+      ...bindings: ParamsType[]
     ): void;
     /** 
         This is an alias of {@link Database.prototype.run}
      */
     exec<ParamsType = SQLQueryBindings>(
       sqlQuery: string,
-      ...bindings: ParamsType
+      ...bindings: ParamsType[]
     ): void;
 
     /**
@@ -356,8 +356,6 @@ declare module "bun:sqlite" {
       exclusive: (...args: any) => void;
     };
   }
-
-  export { default as Database };
 
   /**
    * A prepared statement.
@@ -744,4 +742,6 @@ declare module "bun:sqlite" {
     | boolean
     | null
     | Record<string, string | bigint | TypedArray | number | boolean | null>;
+
+  export default Database;
 }

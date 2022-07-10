@@ -1,22 +1,22 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -euo pipefail
 
-killall -9 $(basename $BUN_BIN) || echo ""
+killall -9 "$(basename "$BUN_BIN")" || echo ""
 
-dir=$(mktemp -d --suffix=bun-dev-check)
+DIR=$(mktemp -d -t bun-dev-check)
 
 index_content="<html><body>index.html</body></html>"
 bacon_content="<html><body>bacon.html</body></html>"
 js_content="console.log('hi')"
 
-mkdir -p $dir/public
+mkdir -p "$DIR/public"
 
-echo $index_content >"$dir/public/index.html"
-echo $js_content >"$dir/index.js"
-echo $bacon_content >"$dir/public/bacon.html"
+echo $index_content >"$DIR/public/index.html"
+echo $js_content >"$DIR/index.js"
+echo $bacon_content >"$DIR/public/bacon.html"
 
-cd $dir
+cd "$DIR"
 
 $BUN_BIN dev --port 8087 &
 sleep 0.005

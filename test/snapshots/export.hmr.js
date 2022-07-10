@@ -1,16 +1,16 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:3000/bun:wrap";
-Bun.activate(true);
+} from "http://localhost:8080/bun:wrap";
+Bun.activate(false);
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:3000/bun:wrap";
-import what from "http://localhost:3000/_auth.js";
-import * as where from "http://localhost:3000/_auth.js";
-var hmr = new FastHMR(1879780259, "export.js", FastRefresh), exports = hmr.exports;
+} from "http://localhost:8080/bun:wrap";
+import what from "http://localhost:8080/_auth.js";
+import * as where from "http://localhost:8080/_auth.js";
+var hmr = new FastHMR(2026450590, "export.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var yoyoyo = "yoyoyo";
   function hey() {
@@ -70,9 +70,9 @@ export {
   $$hmr_booop as booop,
   $$hmr_test as test
 };
-export { default as auth } from "http://localhost:3000/_auth.js";
-export { default as login } from "http://localhost:3000/_login.js";
-export * from "http://localhost:3000/_bacon.js";
-export {  } from "http://localhost:3000/_bacon.js";
+export { default as auth } from "http://localhost:8080/_auth.js";
+export { default as login } from "http://localhost:8080/_login.js";
+export * from "http://localhost:8080/_bacon.js";
+export {  } from "http://localhost:8080/_bacon.js";
 
-//# sourceMappingURL=http://localhost:3000/export.js.map
+//# sourceMappingURL=http://localhost:8080/export.js.map

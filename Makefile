@@ -1,4 +1,4 @@
-SHELL := /bin/bash # Use bash syntax to be consistent
+SHELL :=  $(shell which bash) # Use bash syntax to be consistent
 
 OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
@@ -425,8 +425,12 @@ vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder b
 prepare-types:
 	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) types/bun/bundle.ts packages/bun-types
 	echo "Generated types for $(PACKAGE_JSON_VERSION) in packages/bun-types"
+	cp packages/bun-types/types.d.ts /tmp/bun-types.d.ts
+	cd /tmp && tsc /tmp/bun-types.d.ts
 
 release-types:
+	# can be removed when/if "bun publish" is implemented
+	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
 	cd packages/bun-types && npm publish
 
 format:
@@ -509,7 +513,7 @@ require:
 	@if [ $(CLANG_VERSION) -lt "13" ]; then echo -e "ERROR: clang version >=13 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@13"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)
-	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
+	@$(NPM_CLIENT) --version >/dev/null 2>&1 || (echo -e "ERROR: NPM client (bun or npm) is required."; exit 1)
 	@go version >/dev/null 2>&1 || (echo -e "ERROR: go is required."; exit 1)
 	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install automake"; exit 1)
 	@which $(LIBTOOL) > /dev/null || (echo -e "ERROR: libtool is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install libtool"; exit 1)

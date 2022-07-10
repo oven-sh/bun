@@ -1496,8 +1496,8 @@ JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject,
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     // nanoseconds to seconds
     uint64_t time = Bun__readOriginTimer(global->bunVM());
-    double result = time / 1000000000.0;
-    return JSValue::encode(jsNumber(time));
+    double result = time / 1000000.0;
+    return JSValue::encode(jsNumber(result));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);

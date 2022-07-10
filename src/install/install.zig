@@ -185,7 +185,13 @@ const NetworkTask = struct {
         PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
     }
 
-    const default_headers_buf: string = "Acceptapplication/vnd.npm.install-v1+json";
+    // We must use a less restrictive Acccept header value
+    // https://github.com/Jarred-Sumner/bun/issues/341
+    // https://www.jfrog.com/jira/browse/RTFACT-18398
+    const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
+
+    const default_headers_buf: string = "Accept" ++ accept_header_value;
+
     pub fn forManifest(
         this: *NetworkTask,
         name: string,
@@ -218,7 +224,7 @@ const NetworkTask = struct {
         }
 
         if (header_builder.header_count > 0) {
-            header_builder.count("Accept", "application/vnd.npm.install-v1+json");
+            header_builder.count("Accept", accept_header_value);
             if (last_modified.len > 0 and etag.len > 0) {
                 header_builder.content.count(last_modified);
             }
@@ -236,7 +242,7 @@ const NetworkTask = struct {
                 header_builder.append("If-Modified-Since", last_modified);
             }
 
-            header_builder.append("Accept", "application/vnd.npm.install-v1+json");
+            header_builder.append("Accept", accept_header_value);
 
             if (last_modified.len > 0 and etag.len > 0) {
                 last_modified = header_builder.content.append(last_modified);
@@ -1145,8 +1151,8 @@ pub const CacheLevel = struct {
     use_last_modified: bool,
 };
 
-// We can't know all the package s we need until we've downloaded all the packages
-// The easy way wouild be:
+// We can't know all the packages we need until we've downloaded all the packages
+// The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependnecies for resolution
 // 2.
 pub const PackageManager = struct {
@@ -1782,7 +1788,7 @@ pub const PackageManager = struct {
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
         std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
-        var rng = std.rand.Gimli.init(secret).random();
+        var rng = std.rand.Xoodoo.init(secret).random();
         var base64_bytes: [64]u8 = undefined;
         rng.bytes(&base64_bytes);
 

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 cd src
 rg -l "^test " --type zig | sed  -e 's/\(.*\)/@import\(\".\/\1"\);/' | sed  '/schema/d' | sed '/deps/d' > /tmp/tests.zig

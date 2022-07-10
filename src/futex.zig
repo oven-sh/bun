@@ -163,7 +163,7 @@ const LinuxFutex = struct {
         switch (linux.getErrno(linux.futex_wake(
             @ptrCast(*const i32, ptr),
             linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
-            std.math.cast(i32, num_waiters) catch std.math.maxInt(i32),
+            std.math.cast(i32, num_waiters) orelse std.math.maxInt(i32),
         ))) {
             .SUCCESS => {}, // successful wake up
             .INVAL => {}, // invalid futex_wait() on ptr done elsewhere

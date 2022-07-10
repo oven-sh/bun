@@ -177,25 +177,23 @@ const InstallBox = ({ desktop = false }) => (
     className={
       "InstallBox " + (desktop ? "InstallBox--desktop" : "InstallBox--mobile")
     }
-    id="install"
   >
-    <div id="install-label">
-      <div className="unselectable" id="install-label-heading">
-        Install Bun CLI v0.1.0 (beta)
+    <div className="InstallBox-label">
+      <div className="InstallBox-label-heading">
+        Install Bun CLI v{process.version} (beta)
       </div>
-      <div className="unselectable" id="install-label-subtitle">
+      <div className="InstallBox-label-subtitle">
         macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux
       </div>
     </div>
-    <div id="code-box">
-      <div id="curl">curl https://bun.sh/install | bash</div>
-      <button className="unselectable" id="code-box-copy" aria-label="Copy installation script">
+    <div className="InstallBox-code-box">
+      <div className="InstallBox-curl">curl https://bun.sh/install | bash</div>
+      <button className="InstallBox-copy" aria-label="Copy installation script">
         copy
       </button>
     </div>
     <a
-      className="unselectable"
-      id="view-source-link"
+      className="InstallBox-view-source-link"
       target="_blank"
       href="https://bun.sh/install"
     >
@@ -211,7 +209,7 @@ const Group = ({ children, ...props }) => (
 );
 
 export default ({ inlineCSS }) => (
-  <html>
+  <html lang="en">
     <head>
       <meta charSet="UTF-8" />
 
@@ -226,6 +224,19 @@ export default ({ inlineCSS }) => (
         projects – all in Bun. Bun is a new JavaScript runtime with
         a native bundler, transpiler, task runner and npm client built-in.`}
       />
+      <meta name="og:locale" content="en_US" />
+      <meta name="twitter:site" content="@jarredsumner" />
+      <meta
+        name="description"
+        content={`Bundle, transpile, install and run JavaScript & TypeScript
+        projects – all in Bun. Bun is a new JavaScript runtime with
+        a native bundler, transpiler, task runner and npm client built-in.`}
+      />
+      <meta name="theme-color" content="#fbf0df" />
+      <link rel="manifest" href="manifest.json" />
+      <link rel="icon" type="image/png" sizes="256x256" href="/logo-square.png" />
+      <link rel="icon" type="image/png" sizes="32x32" href="/logo-square@32px.png" />
+      <link rel="icon" type="image/png" sizes="16x16" href="/logo-square@16px.png" />
       <title>Bun is a fast all-in-one JavaScript runtime</title>
 
       {inlineCSS ? (
@@ -243,7 +254,7 @@ export default ({ inlineCSS }) => (
       <div id="header-wrap">
         <header>
           <a href="/" id="logo-link" aria-label="home">
-            <img height="61px" src="/logo.png" srcSet="/logo.png 1x, /logo@2x.png 2x" alt="Bun logo" id="logo" />
+            <img height="61px" src="/logo.svg" alt="Bun logo" id="logo" />
             <img
               height="31.65px"
               src="/Bun.png"
@@ -254,24 +265,26 @@ export default ({ inlineCSS }) => (
           </a>
 
           <nav className="Navigation">
-            <li>
-              <a className="NavText" href={DOCS}>
-                Docs
-              </a>
-            </li>
-            <li>
-              <a className="NavText" href="https://bun.sh/discord">
-                Discord
-              </a>
-            </li>
-            <li>
-              <a
-                className="NavText"
-                href="https://github.com/Jarred-Sumner/bun"
-              >
-                GitHub
-              </a>
-            </li>
+            <ul>
+              <li>
+                <a className="NavText" href={DOCS}>
+                  Docs
+                </a>
+              </li>
+              <li>
+                <a className="NavText" href="https://bun.sh/discord">
+                  Discord
+                </a>
+              </li>
+              <li>
+                <a
+                  className="NavText"
+                  href="https://github.com/Jarred-Sumner/bun"
+                >
+                  GitHub
+                </a>
+              </li>
+            </ul>
           </nav>
         </header>
       </div>
@@ -291,23 +304,39 @@ export default ({ inlineCSS }) => (
           </div>
 
           <div className="Graphs Graphs--active-react">
-            <ul className="Tabs" role="tablist">
-              <li className="Tab">
-                <button data-tab="react" id="tab-react" aria-controls="react-tab-content" className="TabButton" role="tab" aria-selected tabIndex={0}>
-                  Bun.serve
-                </button>
-              </li>
-              <li className="Tab">
-                <button data-tab="sqlite" id="tab-sqlite" aria-controls="sqlite-tab-content" className="TabButton" role="tab" tabIndex={-1}>
-                  bun:sqlite
-                </button>
-              </li>
-              <li className="Tab">
-                <button data-tab="ffi" id="tab-ffi" aria-controls="ffi-tab-content" className="TabButton" role="tab" tabIndex={-1}>
-                  bun:ffi
-                </button>
-              </li>
-            </ul>
+            <div className="Tabs" role="tablist">
+              <button
+                data-tab="react"
+                id="tab-react"
+                aria-controls="react-tab-content"
+                className="Tab"
+                role="tab"
+                aria-selected
+                tabIndex={0}
+              >
+                Bun.serve
+              </button>
+              <button
+                data-tab="sqlite"
+                id="tab-sqlite"
+                aria-controls="sqlite-tab-content"
+                className="Tab"
+                role="tab"
+                tabIndex={-1}
+              >
+                bun:sqlite
+              </button>
+              <button
+                data-tab="ffi"
+                id="tab-ffi"
+                aria-controls="ffi-tab-content"
+                className="Tab"
+                role="tab"
+                tabIndex={-1}
+              >
+                bun:ffi
+              </button>
+            </div>
             <div id="active-tab" className="ActiveTab">
               <div role="tabpanel" tabIndex={0} id="react-tab-content" aria-labelledby="tab-react" className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark">
                 <h2 className="BarGraph-heading">
@@ -539,7 +568,7 @@ export default ({ inlineCSS }) => (
             <li>
               bun.js automatically loads environment variables from{" "}
               <Bun>.env</Bun> files. No more{" "}
-              <code class="mono">require("dotenv").load()</code>
+              <code class="mono">require("dotenv").config()</code>
             </li>
             <li>
               bun ships with a fast SQLite3 client builtin <Bun>bun:sqlite</Bun>
@@ -600,7 +629,7 @@ export default ({ inlineCSS }) => (
             but one general theme:{" "}
             <a href="https://ziglang.org/">
               <Zig></Zig>
-            </a>{" "}
+            </a>
             's low-level control over memory and lack of hidden control flow
             makes it much simpler to write fast software.{" "}
             <a href="https://github.com/sponsors/ziglang">
@@ -731,10 +760,10 @@ export default {
       <script
         dangerouslySetInnerHTML={{
           __html: `
-[...document.querySelectorAll(".TabButton")].map(el => {
+[...document.querySelectorAll(".Tab")].map(el => {
   el.addEventListener("click", function(e) {
     var tab = e.srcElement.getAttribute("data-tab");
-    [...document.querySelectorAll(".TabButton")].map(el => {
+    [...document.querySelectorAll(".Tab")].map(el => {
       var active = el.getAttribute("data-tab") === tab;
       el.setAttribute("tabindex", active ? 0 : -1);
       el.setAttribute("aria-selected", active);
@@ -747,8 +776,8 @@ export default {
   });
 
   el.addEventListener("keydown", e => {
-    var tabs = [...document.querySelectorAll(".TabButton")];
-    var activeTabEl = document.querySelector(".TabButton[aria-selected='true']");
+    var tabs = [...document.querySelectorAll(".Tab")];
+    var activeTabEl = document.querySelector(".Tab[aria-selected='true']");
     var activeTabIndex = tabs.indexOf(activeTabEl);
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault();
@@ -775,10 +804,11 @@ export default {
   });
 });
 
-document.querySelector("#code-box-copy").addEventListener("click", async e => {
-  var el = document.querySelector("#code-box");
-  await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
-});
+for (const el of document.querySelectorAll(".InstallBox-copy")) {
+  el.addEventListener("click", async e => {
+    await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
+  });
+}
       `,
         }}
       />

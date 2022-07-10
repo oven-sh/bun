@@ -14,6 +14,7 @@ const domain_code: string = @embedFile("./node-fallbacks/out/domain.js");
 const events_code: string = @embedFile("./node-fallbacks/out/events.js");
 const http_code: string = @embedFile("./node-fallbacks/out/http.js");
 const https_code: string = @embedFile("./node-fallbacks/out/https.js");
+const net_code: string = @embedFile("./node-fallbacks/out/net.js");
 const os_code: string = @embedFile("./node-fallbacks/out/os.js");
 const path_code: string = @embedFile("./node-fallbacks/out/path.js");
 const process_code: string = @embedFile("./node-fallbacks/out/process.js");
@@ -42,6 +43,7 @@ const domain_import_path = "/bun-vfs/node_modules/domain/index.js";
 const events_import_path = "/bun-vfs/node_modules/events/index.js";
 const http_import_path = "/bun-vfs/node_modules/http/index.js";
 const https_import_path = "/bun-vfs/node_modules/https/index.js";
+const net_import_path = "/bun-vfs/node_modules/net/index.js";
 const os_import_path = "/bun-vfs/node_modules/os/index.js";
 const path_import_path = "/bun-vfs/node_modules/path/index.js";
 const process_import_path = "/bun-vfs/node_modules/process/index.js";
@@ -141,6 +143,15 @@ const https_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/https/package.json", ""),
+};
+const net_package_json = PackageJSON{
+    .name = "net",
+    .version = "0.0.0-polyfill",
+    .module_type = .cjs,
+    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "net@0.0.0-polyfill")),
+    .main_fields = undefined,
+    .browser_map = undefined,
+    .source = logger.Source.initPathString("/bun-vfs/node_modules/net/package.json", ""),
 };
 const os_package_json = PackageJSON{
     .name = "os",
@@ -353,6 +364,11 @@ pub const FallbackModule = struct {
         .code = https_code,
         .package_json = &https_package_json,
     };
+    pub const @"net" = FallbackModule{
+        .path = Fs.Path.initWithNamespaceVirtual(net_import_path, "node", "net"),
+        .code = net_code,
+        .package_json = &net_package_json,
+    };
     pub const @"os" = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(os_import_path, "node", "os"),
         .code = os_code,
@@ -454,6 +470,7 @@ pub const Map = ComptimeStringMap(FallbackModule, .{
     &.{ "events", FallbackModule.events },
     &.{ "http", FallbackModule.http },
     &.{ "https", FallbackModule.https },
+    &.{ "net", FallbackModule.net },
     &.{ "os", FallbackModule.os },
     &.{ "path", FallbackModule.path },
     &.{ "process", FallbackModule.process },

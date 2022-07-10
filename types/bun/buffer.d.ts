@@ -44,7 +44,6 @@
  * @see [source](https://github.com/nodejs/node/blob/v18.0.0/lib/buffer.js)
  */
 declare module 'buffer' {
-  import { BinaryLike } from 'node:crypto';
   export const INSPECT_MAX_BYTES: number;
   export const kMaxLength: number;
   export type TranscodeEncoding = 'ascii' | 'utf8' | 'utf16le' | 'ucs2' | 'latin1' | 'binary';
@@ -232,7 +231,7 @@ declare module 'buffer' {
            * @param [encoding='utf8'] If `string` is a string, this is its encoding.
            * @return The number of bytes contained within `string`.
            */
-          byteLength(string: string | NodeJS.ArrayBufferView | ArrayBuffer | SharedArrayBuffer, encoding?: BufferEncoding): number;
+          byteLength(string: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, encoding?: BufferEncoding): number;
           /**
            * Returns a new `Buffer` which is the result of concatenating all the `Buffer`instances in the `list` together.
            *

@@ -3278,15 +3278,13 @@ make vendor identifier-cache jsc dev
 First ensure the node dependencies are installed
 
 ```bash
-cd test/snippets
-npm i
+(cd test/snippets && npm i)
+(cd test/scripts && npm i)
 ```
 
 Then
 
 ```bash
-# if you’re not already in the bun root directory
-cd ../../
 make test-dev-all
 ```
 

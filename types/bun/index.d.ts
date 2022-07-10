@@ -29,3 +29,4 @@
 /// <reference path="./tty.d.ts" />
 /// <reference path="./http.d.ts" />
 /// <reference path="./punycode.d.ts" />
+/// <reference path="./zlib.d.ts" />

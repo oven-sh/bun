@@ -23,3 +23,4 @@
 ./tty.d.ts
 ./http.d.ts
 ./punycode.d.ts
+./zlib.d.ts

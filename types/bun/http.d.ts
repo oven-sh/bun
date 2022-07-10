@@ -167,7 +167,7 @@
    * Node.js does not check whether Content-Length and the length of the
    * body which has been transmitted are equal or not.
    */
-  class ClientRequest extends OutgoingMessage {
+  class ClientRequest {
       /**
        * The `request.aborted` property will be `true` if the request has
        * been aborted.

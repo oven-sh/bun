@@ -11,3 +11,4 @@
 ./assert.d.ts
 ./events.d.ts
 ./os.d.ts
+./domain.d.ts

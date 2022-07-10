@@ -17,3 +17,4 @@
 /// <reference path="./assert.d.ts" />
 /// <reference path="./events.d.ts" />
 /// <reference path="./os.d.ts" />
+/// <reference path="./domain.d.ts" />

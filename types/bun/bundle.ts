@@ -19,20 +19,15 @@ const filesToCat = (
   await file(join(import.meta.dir, "paths.txt")).text()
 ).split("\n");
 
-const text =
-  header +
-  (
-    await Promise.all(
-      filesToCat.map(
-        async (name) =>
-          "// " +
-          name +
-          "\n\n" +
-          (await file(resolve(import.meta.dir, name)).text()) +
-          "\n"
-      )
-    )
-  ).join("\n");
+const fileContents: string[] = [];
+
+for (let i = 0; i < filesToCat.length; i++) {
+  const name = filesToCat[i];
+  fileContents.push("// " + name + "\n\n" + (await file(resolve(import.meta.dir, name)).text()) + "\n");
+}
+
+const text = header + fileContents.join("\n");
+
 const destination = resolve(folder, "types.d.ts");
 try {
   unlinkSync(destination);

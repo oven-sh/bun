@@ -14235,6 +14235,12 @@ declare module 'node:util' {
 declare module 'node:util/types' {
   export * from 'util/types';
 }
+declare module 'sys' {
+  export * from 'util';
+}
+declare module 'node:sys' {
+  export * from 'util';
+}
 
 // ./querystring.d.ts
 

@@ -75,7 +75,7 @@ pub fn main() anyerror!void {
     std.fs.deleteFileAbsolute(video) catch {};
     var screen_recorder_argv = [_][]const u8{ "screencapture", "-v", video };
 
-    var recorder = try std.ChildProcess.init(&screen_recorder_argv, allocator);
+    var recorder = std.ChildProcess.init(&screen_recorder_argv, allocator);
     recorder.stdin_behavior = .Pipe;
     try recorder.spawn();
     std.time.sleep(std.time.ns_per_s);

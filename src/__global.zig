@@ -48,9 +48,9 @@ pub fn setThreadName(name: StringTypes.stringZ) void {
 }
 
 /// Flushes output and exits with a success status code.
-pub fn exit(code: u8) noreturn {
+pub fn exit() noreturn {
     Output.flush();
-    std.os.exit(code);
+    std.os.exit(0);
 }
 
 /// Flushes output and exits with a failure status code.

@@ -69,7 +69,7 @@ pub const InstallCompletionsCommand = struct {
         if (std.os.getenvZ("IS_BUN_AUTO_UPDATE") == null) {
             if (!stdout.isTty()) {
                 try stdout.writeAll(shell.completions());
-                Global.exit(0);
+                Global.exit();
             }
         }
 

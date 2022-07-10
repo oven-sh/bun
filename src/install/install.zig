@@ -3409,7 +3409,7 @@ pub const PackageManager = struct {
 
                 clap.help(Output.writer(), params) catch {};
 
-                Global.exit(0);
+                Global.exit();
             }
 
             var cli = CommandLineArguments{};
@@ -3693,7 +3693,7 @@ pub const PackageManager = struct {
                             \\
                         , .{});
                     }
-                    Global.exit(0);
+                    Global.exit();
                 },
                 .remove => {
                     const filler = @import("../cli.zig").HelpCommand.packages_to_remove_filler;
@@ -3735,7 +3735,7 @@ pub const PackageManager = struct {
 
                     Output.flush();
 
-                    Global.exit(0);
+                    Global.exit();
                 },
             }
         }
@@ -3794,7 +3794,7 @@ pub const PackageManager = struct {
                 current_package_json.asProperty("peerDependencies") == null)
             {
                 Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to remove!", .{});
-                Global.exit(0);
+                Global.exit();
                 return;
             }
         }

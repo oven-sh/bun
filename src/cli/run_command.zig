@@ -907,7 +907,7 @@ pub const RunCommand = struct {
         if (script_name_to_search.len == 0) {
             if (comptime log_errors) {
                 Output.prettyError("<r>No \"scripts\" in package.json found.\n", .{});
-                Global.exit(0);
+                Global.exit();
             }
 
             return false;
@@ -953,7 +953,7 @@ pub const RunCommand = struct {
 
         if (comptime log_errors) {
             Output.prettyError("<r><red>error:<r> Missing script \"<b>{s}<r>\"\n", .{script_name_to_search});
-            Global.exit(0);
+            Global.exit();
         }
 
         return false;

@@ -64,8 +64,8 @@ CXX = $(shell which clang++-13 || which clang++)
 
 ifeq ($(OS_NAME),darwin)
 LLVM_PREFIX ?= $(shell brew --prefix llvm)
-LDFLAGS += " -L$(LLVM_PREFIX)/lib"
-CPPFLAGS += " -I$(LLVM_PREFIX)/include"
+LDFLAGS += -L$(LLVM_PREFIX)/lib
+CPPFLAGS += -I$(LLVM_PREFIX)/include
 CC = $(LLVM_PREFIX)/bin/clang
 CXX = $(LLVM_PREFIX)/bin/clang++
 CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning | awk '/Apple Development/ { print $$2 }')

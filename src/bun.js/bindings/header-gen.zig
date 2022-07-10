@@ -7,6 +7,7 @@ const EnumMeta = std.builtin.TypeInfo.Enum;
 const UnionMeta = std.builtin.TypeInfo.Union;
 const warn = std.debug.warn;
 const StaticExport = @import("./static_export.zig");
+const typeBaseName = @import("../../meta.zig").typeBaseName;
 
 const TypeNameMap = std.StringHashMap([]const u8);
 
@@ -156,7 +157,7 @@ pub const C_Generator = struct {
 
                     switch (@typeInfo(ArgType)) {
                         .Enum => {
-                            self.write(comptime std.fmt.comptimePrint(" {s}{d}", .{ @typeName(ArgType), i }));
+                            self.write(comptime std.fmt.comptimePrint(" {s}{d}", .{ typeBaseName(@typeName(ArgType)), i }));
                         },
 
                         else => {
@@ -202,7 +203,7 @@ pub const C_Generator = struct {
             // } else {
             const ArgType = arg.arg_type.?;
             if (@typeInfo(ArgType) == .Enum) {
-                self.write(comptime std.fmt.comptimePrint(" {s}{d}", .{ @typeName(ArgType), i }));
+                self.write(comptime std.fmt.comptimePrint(" {s}{d}", .{ typeBaseName(@typeName(ArgType)), i }));
             } else {
                 self.write(comptime std.fmt.comptimePrint(" arg{d}", .{i}));
             }
@@ -419,7 +420,7 @@ pub const C_Generator = struct {
                     self.writeType(Enum.tag_type);
                 },
                 else => {
-                    return self.write(@typeName(T));
+                    return self.write(comptime typeBaseName(@typeName(T)));
                 },
             }
         }
@@ -472,7 +473,7 @@ pub fn getCStruct(comptime T: type) ?NamedStruct {
         if (std.mem.eql(u8, decl.name, "Type")) {
             switch (decl.data) {
                 .Type => {
-                    return NamedStruct{ .Type = T, .name = @typeName(T) };
+                    return NamedStruct{ .Type = T, .name = comptime typeBaseName(@typeName(T)) };
                 },
                 else => {},
             }

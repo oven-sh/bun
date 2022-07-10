@@ -29,7 +29,7 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
                     return std.mem.readIntNative(T, &tmp);
                 },
                 max_bytes => {
-                    return std.mem.readIntSliceNative(T, str);
+                    return std.mem.readIntSliceNative(T, str[0..]);
                 },
                 0 => {
                     return 0;

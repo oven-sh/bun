@@ -435,8 +435,8 @@ pub const Loader = struct {
         return this.get(key) orelse key;
     }
 
-    /// Load values from the environment into Define. 
-    /// 
+    /// Load values from the environment into Define.
+    ///
     /// If there is a framework, values from the framework are inserted with a
     /// **lower priority** so that users may override defaults. Unlike regular
     /// defines, environment variables are loaded as JavaScript string literals.
@@ -959,8 +959,8 @@ pub const Map = struct {
 
     map: HashTable,
 
-    pub fn cloneToBufMap(this: *Map, allocator: std.mem.Allocator) !std.BufMap {
-        var buf_map = std.BufMap.init(allocator);
+    pub fn cloneToEnvMap(this: *Map, allocator: std.mem.Allocator) !std.process.EnvMap {
+        var env_map = std.process.EnvMap.init(allocator);
 
         const Convert = struct {
             pub fn constStrToU8(s: string) []u8 {
@@ -970,10 +970,10 @@ pub const Map = struct {
 
         var iter_ = this.map.iterator();
         while (iter_.next()) |entry| {
-            try buf_map.putMove(Convert.constStrToU8(entry.key_ptr.*), Convert.constStrToU8(entry.value_ptr.*));
+            try env_map.putMove(Convert.constStrToU8(entry.key_ptr.*), Convert.constStrToU8(entry.value_ptr.*));
         }
 
-        return buf_map;
+        return env_map;
     }
 
     pub inline fn init(allocator: std.mem.Allocator) Map {

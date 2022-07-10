@@ -145,7 +145,7 @@ private:
 
 public:
     template<bool isSSL, bool isServer>
-    us_socket_context_t* connnectedWebSocketContext()
+    us_socket_context_t* connectedWebSocketContext()
     {
         if constexpr (isSSL) {
             if (!m_connected_ssl_client_websockets_ctx) {

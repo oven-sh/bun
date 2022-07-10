@@ -3257,7 +3257,7 @@ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@13)/include"
 
 On fish that looks like `fish_add_path (brew --prefix llvm@13)/bin`
 
-You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expected is the HEAD in [oven-sh/zig](https://github.com/oven-sh/zig).
+You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expected is the HEAD in [Jarred-Sumner/zig](https://github.com/Jarred-Sumner/zig).
 
 #### Build bun (macOS)
 

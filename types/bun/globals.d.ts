@@ -830,7 +830,7 @@ interface Blob {
    * Read the contents of the [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) as a JSON object
    * @warn in browsers, this function is only available for `Response` and `Request`
    */
-  json(): Promise<any>;
+  json<T = any>(): Promise<T>;
   /**
    * Read the [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) as a UTF-8 string
    * @link https://developer.mozilla.org/en-US/docs/Web/API/Blob/text
@@ -1726,3 +1726,6 @@ interface Transformer<I = any, O = any> {
   transform?: TransformerTransformCallback<I, O>;
   writableType?: undefined;
 }
+
+declare const __dirname: string
+declare const __filename: string

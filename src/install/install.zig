@@ -1788,7 +1788,7 @@ pub const PackageManager = struct {
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
         std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
-        var rng = std.rand.Gimli.init(secret).random();
+        var rng = std.rand.Xoodoo.init(secret).random();
         var base64_bytes: [64]u8 = undefined;
         rng.bytes(&base64_bytes);
 

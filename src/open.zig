@@ -25,7 +25,7 @@ pub fn openURL(url: string) !void {
     }
 
     var args_buf = [_]string{ opener, url };
-    var child_process = try std.ChildProcess.init(&args_buf, default_allocator);
+    var child_process = std.ChildProcess.init(&args_buf, default_allocator);
     child_process.stderr_behavior = .Pipe;
     child_process.stdin_behavior = .Ignore;
     child_process.stdout_behavior = .Pipe;
@@ -311,14 +311,14 @@ pub const Editor = enum(u8) {
             },
         }
 
-        spawned.child_process = try std.ChildProcess.init(args_buf[0..i], default_allocator);
+        spawned.child_process = std.ChildProcess.init(args_buf[0..i], default_allocator);
         var thread = try std.Thread.spawn(.{}, autoClose, .{spawned});
         thread.detach();
     }
     const SpawnedEditorContext = struct {
         file_path_buf: [1024 + bun.MAX_PATH_BYTES]u8 = undefined,
         buf: [10]string = undefined,
-        child_process: *std.ChildProcess = undefined,
+        child_process: std.ChildProcess = undefined,
     };
 
     fn autoClose(spawned: *SpawnedEditorContext) void {

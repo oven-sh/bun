@@ -3270,7 +3270,7 @@ In `bun`:
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1
-make vendor jsc identifier-cache dev
+make vendor identifier-cache jsc dev
 ```
 
 #### Verify it worked (macOS)

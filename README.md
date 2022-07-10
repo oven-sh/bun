@@ -34,7 +34,6 @@ docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
 
 If using Linux, kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 
-
 ## Table of Contents
 
 - [Install](#install)

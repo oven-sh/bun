@@ -146,11 +146,7 @@ ffiWrappers[FFIType.double] = function double(val) {
     }
   }
 
-  if (!val) {
-    return 0 + 0.00000000000001 - 0.00000000000001;
-  }
-
-  return val + 0.00000000000001 - 0.00000000000001;
+  return (val || 0) + 0.00000000000001 - 0.00000000000001;
 };
 
 ffiWrappers[FFIType.float] = ffiWrappers[10] = function float(val) {

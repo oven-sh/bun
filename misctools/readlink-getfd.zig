@@ -50,7 +50,7 @@ pub fn main() anyerror!void {
             switch (err) {
                 error.NotDir, error.FileNotFound => {
                     Output.prettyError("<r><red>404 Not Found<r>: <b>\"{s}\"<r>", .{joined_z});
-                    Global.exit(1);
+                    Global.crash();
                 },
                 else => {
                     return err;

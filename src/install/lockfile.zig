@@ -894,14 +894,14 @@ pub const Printer = struct {
                         try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                     }
                 }
-                Global.exit(1);
+                Global.crash();
                 return;
             },
             .not_found => {
                 Output.prettyErrorln("<r><red>lockfile not found:<r> {s}", .{
                     std.mem.span(lockfile_path),
                 });
-                Global.exit(1);
+                Global.crash();
                 return;
             },
 
@@ -1368,7 +1368,7 @@ pub fn verifyResolutions(this: *Lockfile, local_features: Features, remote_featu
     }
 
     if (any_failed) {
-        Global.exit(1);
+        Global.crash();
     }
 }
 
@@ -2204,7 +2204,7 @@ pub const Package = extern struct {
             }
 
             Output.prettyErrorln("<r><red>{s}<r> parsing package.json in <b>\"{s}\"<r>", .{ @errorName(err), source.path.prettyDir() });
-            Global.exit(1);
+            Global.crash();
         };
 
         var string_builder = lockfile.stringBuilder();

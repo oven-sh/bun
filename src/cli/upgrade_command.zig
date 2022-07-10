@@ -218,10 +218,10 @@ pub const UpgradeCommand = struct {
                     } else {
                         try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                     }
-                    Global.exit(1);
+                    Global.crash();
                 } else {
                     Output.prettyErrorln("Error parsing releases from GitHub: <r><red>{s}<r>", .{@errorName(err)});
-                    Global.exit(1);
+                    Global.crash();
                 }
             }
 
@@ -238,7 +238,7 @@ pub const UpgradeCommand = struct {
                 } else {
                     try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                 }
-                Global.exit(1);
+                Global.crash();
             }
 
             return null;
@@ -253,7 +253,7 @@ pub const UpgradeCommand = struct {
 
                 const json_type: js_ast.Expr.Tag = @as(js_ast.Expr.Tag, expr.data);
                 Output.prettyErrorln("JSON error - expected an object but received {s}", .{@tagName(json_type)});
-                Global.exit(1);
+                Global.crash();
             }
 
             return null;
@@ -271,7 +271,7 @@ pub const UpgradeCommand = struct {
                 refresher.refresh();
 
                 Output.prettyErrorln("JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{s}", .{metadata_body.list.items});
-                Global.exit(1);
+                Global.crash();
             }
 
             return null;
@@ -338,7 +338,7 @@ pub const UpgradeCommand = struct {
 
         _exec(ctx) catch |err| {
             Output.prettyErrorln("<r>bun upgrade failed with error: <red><b>{s}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>curl https://bun.sh/install | bash<r>\n\n", .{@errorName(err)});
-            Global.exit(1);
+            Global.crash();
         };
     }
 
@@ -381,7 +381,7 @@ pub const UpgradeCommand = struct {
                     "<r><red>error:<r> bun versions are currently unavailable (the latest version name didn't match the expeccted format)",
                     .{},
                 );
-                Global.exit(1);
+                Global.crash();
             }
         }
 
@@ -427,7 +427,7 @@ pub const UpgradeCommand = struct {
 
             if (bytes.len == 0) {
                 Output.prettyErrorln("<r><red>error:<r> Failed to download the latest version of bun. Received empty content", .{});
-                Global.exit(1);
+                Global.crash();
             }
 
             const version_name = version.name().?;
@@ -435,11 +435,11 @@ pub const UpgradeCommand = struct {
             var save_dir_ = filesystem.tmpdir();
             var save_dir = save_dir_.makeOpenPath(version_name, .{ .iterate = true }) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temporary directory", .{});
-                Global.exit(1);
+                Global.crash();
             };
             var tmpdir_path = std.os.getFdPath(save_dir.fd, &tmpdir_path_buf) catch {
                 Output.prettyErrorln("<r><red>error:<r> Failed to read temporary directory", .{});
-                Global.exit(1);
+                Global.crash();
             };
 
             tmpdir_path_buf[tmpdir_path.len] = 0;
@@ -450,14 +450,14 @@ pub const UpgradeCommand = struct {
 
             var zip_file = save_dir.createFileZ(tmpname, .{ .truncate = true }) catch |err| {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open temp file {s}", .{@errorName(err)});
-                Global.exit(1);
+                Global.crash();
             };
 
             {
                 _ = zip_file.writeAll(bytes) catch |err| {
                     save_dir.deleteFileZ(tmpname) catch {};
                     Output.prettyErrorln("<r><red>error:<r> Failed to write to temp file {s}", .{@errorName(err)});
-                    Global.exit(1);
+                    Global.crash();
                 };
                 zip_file.close();
             }
@@ -470,7 +470,7 @@ pub const UpgradeCommand = struct {
                 const unzip_exe = which(&unzip_path_buf, env_loader.map.get("PATH") orelse "", filesystem.top_level_dir, "unzip") orelse {
                     save_dir.deleteFileZ(tmpname) catch {};
                     Output.prettyErrorln("<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work.", .{});
-                    Global.exit(1);
+                    Global.crash();
                 };
 
                 // We could just embed libz2
@@ -493,13 +493,13 @@ pub const UpgradeCommand = struct {
                 const unzip_result = unzip_process.spawnAndWait() catch |err| {
                     save_dir.deleteFileZ(tmpname) catch {};
                     Output.prettyErrorln("<r><red>error:<r> Failed to spawn unzip due to {s}.", .{@errorName(err)});
-                    Global.exit(1);
+                    Global.crash();
                 };
 
                 if (unzip_result.Exited != 0) {
                     Output.prettyErrorln("<r><red>Unzip failed<r> (exit code: {d})", .{unzip_result.Exited});
                     save_dir.deleteFileZ(tmpname) catch {};
-                    Global.exit(1);
+                    Global.crash();
                 }
             }
 
@@ -517,13 +517,13 @@ pub const UpgradeCommand = struct {
                 }) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
                     Output.prettyErrorln("<r><red>error<r> Failed to verify bun {s}<r>)", .{@errorName(err)});
-                    Global.exit(1);
+                    Global.crash();
                 };
 
                 if (result.term.Exited != 0) {
                     save_dir_.deleteTree(version_name) catch {};
                     Output.prettyErrorln("<r><red>error<r> failed to verify bun<r> (exit code: {d})", .{result.term.Exited});
-                    Global.exit(1);
+                    Global.crash();
                 }
 
                 if (!strings.eql(std.mem.trim(u8, result.stdout, " \n\r\t"), version_name)) {
@@ -536,7 +536,7 @@ pub const UpgradeCommand = struct {
                             version_name,
                         },
                     );
-                    Global.exit(1);
+                    Global.crash();
                 }
             }
 
@@ -552,14 +552,14 @@ pub const UpgradeCommand = struct {
             var target_dir = std.fs.openDirAbsoluteZ(target_dirname, .{ .iterate = true }) catch |err| {
                 save_dir_.deleteTree(version_name) catch {};
                 Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
-                Global.exit(1);
+                Global.crash();
             };
 
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
                 C.moveFileZ(save_dir.fd, exe_subpath, target_dir.fd, target_filename) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
                     Output.prettyErrorln("<r><red>error:<r> Failed to move new version of bun due to {s}. You could try the install script instead:\n   curl -L https://bun.sh/install | bash", .{@errorName(err)});
-                    Global.exit(1);
+                    Global.crash();
                 };
             }
 

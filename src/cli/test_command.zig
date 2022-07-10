@@ -376,7 +376,7 @@ pub const TestCommand = struct {
         Output.flush();
 
         if (reporter.summary.fail > 0) {
-            Global.exit(1);
+            Global.crash();
         }
     }
 

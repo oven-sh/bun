@@ -943,7 +943,7 @@ const PackageInstall = struct {
                             progress_.refresh();
 
                             Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                            Global.exit(1);
+                            Global.crash();
                         };
                     };
                     defer outfile.close();
@@ -961,7 +961,7 @@ const PackageInstall = struct {
                             progress_.refresh();
 
                             Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                            Global.exit(1);
+                            Global.crash();
                         };
                     };
                 }
@@ -3446,7 +3446,7 @@ pub const PackageManager = struct {
             //         cli.omit.peer = true;
             //     } else {
             //         Output.prettyErrorln("<b>error<r><d>:<r> Invalid argument <b>\"--omit\"<r> must be one of <cyan>\"dev\"<r>, <cyan>\"optional\"<r>, or <cyan>\"peer\"<r>. ", .{});
-            //         Global.exit(1);
+            //         Global.crash();
             //     }
             // }
 
@@ -3556,7 +3556,7 @@ pub const PackageManager = struct {
                         });
                     }
 
-                    Global.exit(1);
+                    Global.crash();
                 }
 
                 request.name = std.mem.trim(u8, request.name, "\n\r\t");
@@ -3578,7 +3578,7 @@ pub const PackageManager = struct {
                         });
                     }
 
-                    Global.exit(1);
+                    Global.crash();
                 }
 
                 if (request.version_buf.len == 0) {
@@ -3782,11 +3782,11 @@ pub const PackageManager = struct {
         if (op == .remove) {
             if (current_package_json.data != .e_object) {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json is not an Object {{}}, so there's nothing to remove!", .{});
-                Global.exit(1);
+                Global.crash();
                 return;
             } else if (current_package_json.data.e_object.properties.len == 0) {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json is empty {{}}, so there's nothing to remove!", .{});
-                Global.exit(1);
+                Global.crash();
                 return;
             } else if (current_package_json.asProperty("devDependencies") == null and
                 current_package_json.asProperty("dependencies") == null and
@@ -3857,7 +3857,7 @@ pub const PackageManager = struct {
 
                 if (!any_changes) {
                     Output.prettyErrorln("\n<red>error<r><d>:<r> \"<b>{s}<r>\" is not in a package.json file", .{updates[0].name});
-                    Global.exit(1);
+                    Global.crash();
                     return;
                 }
                 manager.to_remove = updates;
@@ -3897,7 +3897,7 @@ pub const PackageManager = struct {
         if (op == .update or op == .add) {
             for (manager.package_json_updates) |update| {
                 if (update.failed) {
-                    Global.exit(1);
+                    Global.crash();
                     return;
                 }
             }
@@ -3908,7 +3908,7 @@ pub const PackageManager = struct {
             // so we can commit the version we changed from the lockfile
             current_package_json = json_parser.ParseJSONUTF8(&source, ctx.log, manager.allocator) catch |err| {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json failed to parse due to error {s}", .{@errorName(err)});
-                Global.exit(1);
+                Global.crash();
                 return;
             };
 
@@ -4186,7 +4186,7 @@ pub const PackageManager = struct {
 
                                         if (this.manager.options.enable.fail_early) {
                                             installer.uninstall() catch {};
-                                            Global.exit(1);
+                                            Global.crash();
                                         }
                                     }
                                 }
@@ -4476,7 +4476,7 @@ pub const PackageManager = struct {
                         }
 
                         if (this.options.enable.fail_early) {
-                            Global.exit(1);
+                            Global.crash();
                         }
                     }
 
@@ -4578,7 +4578,7 @@ pub const PackageManager = struct {
                     Output.flush();
                 }
 
-                if (manager.options.enable.fail_early) Global.exit(1);
+                if (manager.options.enable.fail_early) Global.crash();
             },
             .ok => {
                 differ: {
@@ -4632,7 +4632,7 @@ pub const PackageManager = struct {
                             Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                         }
 
-                        Global.exit(1);
+                        Global.crash();
                     }
 
                     // If you changed packages, we will copy over the new package from the new lockfile
@@ -4718,7 +4718,7 @@ pub const PackageManager = struct {
                     Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                 }
 
-                Global.exit(1);
+                Global.crash();
             }
 
             try Lockfile.Package.parseMain(
@@ -4792,7 +4792,7 @@ pub const PackageManager = struct {
         }
 
         if (manager.log.errors > 0) {
-            Global.exit(1);
+            Global.crash();
         }
 
         // sleep on since we might not need it anymore

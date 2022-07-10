@@ -67,7 +67,7 @@ pub const Run = struct {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
             Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            Global.crash();
         };
         run.vm.bundler.configureDefines() catch {
             if (Output.enable_ansi_colors_stderr) {
@@ -76,7 +76,7 @@ pub const Run = struct {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
             Output.prettyErrorln("\n", .{});
-            Global.exit(1);
+            Global.crash();
         };
         AsyncHTTP.max_simultaneous_requests = 255;
 
@@ -115,7 +115,7 @@ pub const Run = struct {
 
         if (promise.status(this.vm.global.vm()) == .Rejected) {
             this.vm.runErrorHandler(promise.result(this.vm.global.vm()), null);
-            Global.exit(1);
+            Global.crash();
         }
 
         _ = promise.result(this.vm.global.vm());

@@ -107,7 +107,7 @@ inline fn _invariant(comptime fmt: string, args: anytype) noreturn {
         @panic(fmt);
     } else {
         Output.prettyErrorln(fmt, args);
-        Global.exit(1);
+        Global.crash();
     }
 }
 
@@ -119,7 +119,7 @@ pub fn notimpl() noreturn {
 // Make sure we always print any leftover
 pub fn crash() noreturn {
     @setCold(true);
-    Global.exit(1);
+    Global.crash();
 }
 
 const Global = @This();

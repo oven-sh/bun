@@ -75,7 +75,7 @@ pub const Cli = struct {
             switch (err) {
                 error.MissingEntryPoint => {
                     Output.prettyErrorln("<r><red>MissingEntryPoint<r> what do you want to bundle?\n\n<d>Example:\n\n<r>  <b><cyan>bun bun --use next<r>\n\n  <b><cyan>bun bun ./src/index.ts ./src/file2.ts<r>\n", .{});
-                    Global.exit(1);
+                    Global.crash();
                 },
                 else => {
                     // Always dump the logs
@@ -220,7 +220,7 @@ pub const Arguments = struct {
                 @errorName(err),
                 std.mem.span(config_path),
             });
-            Global.exit(1);
+            Global.crash();
         };
         defer config_file.close();
         var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
@@ -229,7 +229,7 @@ pub const Arguments = struct {
                 @errorName(err),
                 std.mem.span(config_path),
             });
-            Global.exit(1);
+            Global.crash();
         };
 
         js_ast.Stmt.Data.Store.create(allocator);
@@ -330,7 +330,7 @@ pub const Arguments = struct {
             clap.help(Output.errorWriter(), params_to_use) catch {};
             Output.errorWriter().writeAll("\n") catch {};
             diag.report(Output.errorWriter(), err) catch {};
-            Global.exit(1);
+            Global.crash();
         };
 
         if (args.flag("--version")) {
@@ -1191,7 +1191,7 @@ pub const Command = struct {
                                     std.fs.path.basename(file_path),
                                     @errorName(err),
                                 });
-                                Global.exit(1);
+                                Global.crash();
                             };
                         }
                     }
@@ -1205,19 +1205,19 @@ pub const Command = struct {
                     Output.prettyErrorln("<r><red>error<r>: Script not found \"<b>{s}<r>\"", .{
                         ctx.positionals[0],
                     });
-                    Global.exit(1);
+                    Global.crash();
                 }
 
                 if (was_js_like) {
                     Output.prettyErrorln("<r><red>error<r>: Module not found \"<b>{s}<r>\"", .{
                         ctx.positionals[0],
                     });
-                    Global.exit(1);
+                    Global.crash();
                 } else if (ctx.positionals.len > 0) {
                     Output.prettyErrorln("<r><red>error<r>: File not found \"<b>{s}<r>\"", .{
                         ctx.positionals[0],
                     });
-                    Global.exit(1);
+                    Global.crash();
                 }
 
                 try HelpCommand.exec(allocator);

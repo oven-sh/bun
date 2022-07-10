@@ -115,12 +115,12 @@ pub const Arguments = struct {
 
                 var body_file = std.fs.openFileAbsoluteZ(absolute_path_, .{ .mode = .read_only }) catch |err| {
                     Output.printErrorln("<r><red>{s}<r> opening file {s}", .{ @errorName(err), absolute_path });
-                    Global.exit(1);
+                    Global.crash();
                 };
 
                 var file_contents = body_file.readToEndAlloc(allocator, try body_file.getEndPos()) catch |err| {
                     Output.printErrorln("<r><red>{s}<r> reading file {s}", .{ @errorName(err), absolute_path });
-                    Global.exit(1);
+                    Global.crash();
                 };
                 body_string = file_contents;
             }
@@ -138,14 +138,14 @@ pub const Arguments = struct {
 
             if (raw_args.items.len == 0) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Missing URL<r>\n\nExample:\n<r><b>fetch GET https://example.com<r>\n\n<b>fetch example.com/foo<r>\n\n", .{});
-                Global.exit(1);
+                Global.crash();
             }
 
             const url_position = raw_args.items.len - 1;
             url = URL.parse(raw_args.swapRemove(url_position));
             if (!url.isAbsolute()) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Invalid URL<r>\n\nExample:\n<r><b>fetch GET https://example.com<r>\n\n<b>fetch example.com/foo<r>\n\n", .{});
-                Global.exit(1);
+                Global.crash();
             }
         }
 
@@ -213,7 +213,7 @@ pub fn main() anyerror!void {
         while (channel.tryReadItem() catch null) |http| {
             var response = http.response orelse {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> <b>HTTP response missing<r>", .{});
-                Global.exit(1);
+                Global.crash();
             };
 
             switch (response.status_code) {

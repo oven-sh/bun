@@ -3474,7 +3474,7 @@ pub const Server = struct {
                         },
                         else => {
                             Output.prettyErrorln("<r><red>{s} while trying to start listening on port {d}.\n\n", .{ @errorName(err), port });
-                            Global.exit(1);
+                            Global.crash();
                         },
                     }
                 };
@@ -3493,7 +3493,7 @@ pub const Server = struct {
                         random_number.random().intRangeAtMost(u16, 3011, 65535),
                     },
                 );
-                Global.exit(1);
+                Global.crash();
             }
         }
 

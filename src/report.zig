@@ -286,7 +286,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
     @setCold(true);
 
     if (@atomicRmw(bool, &globalError_ranOnce, .Xchg, true, .Monotonic)) {
-        Global.exit(1);
+        Global.crash();
     }
 
     switch (err) {
@@ -295,7 +295,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 "\n<r><red>SyntaxError<r><d>:<r> An error occurred while parsing code",
                 .{},
             );
-            Global.exit(1);
+            Global.crash();
         },
         error.OutOfMemory => {
             Output.prettyError(
@@ -303,24 +303,24 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 .{},
             );
             printMetadata();
-            Global.exit(1);
+            Global.crash();
         },
         error.CurrentWorkingDirectoryUnlinked => {
             Output.prettyError(
                 "\n<r><red>error: <r>The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
                 .{},
             );
-            Global.exit(1);
+            Global.crash();
         },
         error.BundleFailed => {
             Output.prettyError(
                 "\n<r><red>BundleFailed<r>",
                 .{},
             );
-            Global.exit(1);
+            Global.crash();
         },
         error.InvalidArgument, error.InstallFailed => {
-            Global.exit(1);
+            Global.crash();
         },
         error.SystemFdQuotaExceeded => {
             const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
@@ -378,10 +378,10 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 }
             }
 
-            Global.exit(1);
+            Global.crash();
         },
         error.@"Invalid Bunfig" => {
-            Global.exit(1);
+            Global.crash();
         },
         error.ProcessFdQuotaExceeded => {
             const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
@@ -443,7 +443,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 }
             }
 
-            Global.exit(1);
+            Global.crash();
         },
         // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
         error.NotOpenForReading, error.Unexpected => {
@@ -496,7 +496,7 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     );
                 }
 
-                Global.exit(1);
+                Global.crash();
             }
         },
         error.FileNotFound => {
@@ -517,17 +517,17 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
             }
 
-            Global.exit(1);
+            Global.crash();
         },
         error.MissingPackageJSON => {
             Output.prettyError(
                 "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nbun could not find a package.json file.\n",
                 .{},
             );
-            Global.exit(1);
+            Global.crash();
         },
         error.MissingValue => {
-            Global.exit(1);
+            Global.crash();
         },
         else => {},
     }
@@ -541,5 +541,5 @@ pub noinline fn globalError(err: anyerror) noreturn {
         std.debug.writeStackTrace(trace.*, Output.errorWriter(), default_allocator, debug_info, std.debug.detectTTYConfig()) catch break :print_stacktrace;
     }
 
-    Global.exit(1);
+    Global.crash();
 }

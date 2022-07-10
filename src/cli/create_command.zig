@@ -418,7 +418,7 @@ pub const CreateCommand = struct {
 
                                 const examples = try Example.fetchAllLocalAndRemote(ctx, null, &env_loader, filesystem);
                                 Example.print(examples.items, dirname);
-                                Global.exit(1);
+                                Global.crash();
                             },
                             else => {
                                 node.end();
@@ -531,7 +531,7 @@ pub const CreateCommand = struct {
                         }
 
                         Output.prettyErrorln("<r>\n<d>To download {s} anyway, use --force<r>", .{template});
-                        Global.exit(1);
+                        Global.crash();
                     }
                 }
 
@@ -569,7 +569,7 @@ pub const CreateCommand = struct {
                     progress.refresh();
 
                     Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(err), template });
-                    Global.exit(1);
+                    Global.crash();
                 };
 
                 std.fs.deleteTreeAbsolute(destination) catch {};
@@ -579,7 +579,7 @@ pub const CreateCommand = struct {
                     progress.refresh();
 
                     Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
-                    Global.exit(1);
+                    Global.crash();
                 };
 
                 const Walker = @import("../walker_skippable.zig");
@@ -606,7 +606,7 @@ pub const CreateCommand = struct {
                                     progress_.refresh();
 
                                     Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                                    Global.exit(1);
+                                    Global.crash();
                                 };
                             };
                             defer outfile.close();
@@ -626,7 +626,7 @@ pub const CreateCommand = struct {
                                     progress_.refresh();
 
                                     Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                                    Global.exit(1);
+                                    Global.crash();
                                 };
                             };
                         }
@@ -1928,10 +1928,10 @@ pub const Example = struct {
                 } else {
                     try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                 }
-                Global.exit(1);
+                Global.crash();
             } else {
                 Output.prettyErrorln("Error parsing package: <r><red>{s}<r>", .{@errorName(err)});
-                Global.exit(1);
+                Global.crash();
             }
         };
 
@@ -1944,7 +1944,7 @@ pub const Example = struct {
             } else {
                 try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
             }
-            Global.exit(1);
+            Global.crash();
         }
 
         const tarball_url: string = brk: {
@@ -1962,7 +1962,7 @@ pub const Example = struct {
             refresher.refresh();
 
             Output.prettyErrorln("package.json is missing tarball url. This is an internal error!", .{});
-            Global.exit(1);
+            Global.crash();
         };
 
         progress.name = "Downloading tarball";
@@ -1986,7 +1986,7 @@ pub const Example = struct {
             progress.end();
             refresher.refresh();
             Output.prettyErrorln("Error fetching tarball: <r><red>{d}<r>", .{response.status_code});
-            Global.exit(1);
+            Global.crash();
         }
 
         refresher.refresh();
@@ -2012,18 +2012,18 @@ pub const Example = struct {
             switch (err) {
                 error.WouldBlock => {
                     Output.prettyErrorln("Request timed out while trying to fetch examples list. Please try again", .{});
-                    Global.exit(1);
+                    Global.crash();
                 },
                 else => {
                     Output.prettyErrorln("<r><red>{s}<r> while trying to fetch examples list. Please try again", .{@errorName(err)});
-                    Global.exit(1);
+                    Global.crash();
                 },
             }
         };
 
         if (response.status_code != 200) {
             Output.prettyErrorln("<r><red>{d}<r> fetching examples :( {s}", .{ response.status_code, mutable.list.items });
-            Global.exit(1);
+            Global.crash();
         }
 
         initializeStore();
@@ -2035,10 +2035,10 @@ pub const Example = struct {
                 } else {
                     try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                 }
-                Global.exit(1);
+                Global.crash();
             } else {
                 Output.prettyErrorln("Error parsing examples: <r><red>{s}<r>", .{@errorName(err)});
-                Global.exit(1);
+                Global.crash();
             }
         };
 
@@ -2048,7 +2048,7 @@ pub const Example = struct {
             } else {
                 try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
             }
-            Global.exit(1);
+            Global.crash();
         }
 
         if (examples_object.asProperty("examples")) |q| {
@@ -2072,7 +2072,7 @@ pub const Example = struct {
         }
 
         Output.prettyErrorln("Corrupt examples data: expected object but received {s}", .{@tagName(examples_object.data)});
-        Global.exit(1);
+        Global.crash();
     }
 };
 
@@ -2129,7 +2129,7 @@ const GitHandler = struct {
 
         thread = std.Thread.spawn(.{}, spawnThread, .{ destination, PATH, verbose }) catch |err| {
             Output.prettyErrorln("<r><red>{s}<r>", .{@errorName(err)});
-            Global.exit(1);
+            Global.crash();
         };
     }
 

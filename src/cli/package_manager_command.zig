@@ -22,13 +22,13 @@ pub const PackageManagerCommand = struct {
         if (load_lockfile == .not_found) {
             if (pm.options.log_level != .silent)
                 Output.prettyError("Lockfile not found", .{});
-            Global.exit(1);
+            Global.crash();
         }
 
         if (load_lockfile == .err) {
             if (pm.options.log_level != .silent)
                 Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-            Global.exit(1);
+            Global.crash();
         }
 
         Output.flush();
@@ -88,13 +88,13 @@ pub const PackageManagerCommand = struct {
             if (load_lockfile == .not_found) {
                 if (pm.options.log_level != .silent)
                     Output.prettyError("Lockfile not found", .{});
-                Global.exit(1);
+                Global.crash();
             }
 
             if (load_lockfile == .err) {
                 if (pm.options.log_level != .silent)
                     Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-                Global.exit(1);
+                Global.crash();
             }
 
             _ = try pm.lockfile.hasMetaHashChanged(false);
@@ -109,13 +109,13 @@ pub const PackageManagerCommand = struct {
             if (load_lockfile == .not_found) {
                 if (pm.options.log_level != .silent)
                     Output.prettyError("Lockfile not found", .{});
-                Global.exit(1);
+                Global.crash();
             }
 
             if (load_lockfile == .err) {
                 if (pm.options.log_level != .silent)
                     Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-                Global.exit(1);
+                Global.crash();
             }
 
             Output.flush();
@@ -128,13 +128,13 @@ pub const PackageManagerCommand = struct {
             if (load_lockfile == .not_found) {
                 if (pm.options.log_level != .silent)
                     Output.prettyError("Lockfile not found", .{});
-                Global.exit(1);
+                Global.crash();
             }
 
             if (load_lockfile == .err) {
                 if (pm.options.log_level != .silent)
                     Output.prettyError("Error loading lockfile: {s}", .{@errorName(load_lockfile.err.value)});
-                Global.exit(1);
+                Global.crash();
             }
 
             _ = try pm.lockfile.hasMetaHashChanged(true);
@@ -176,7 +176,7 @@ pub const PackageManagerCommand = struct {
             Output.prettyErrorln("\n<red>error<r>: \"{s}\" unknown command\n", .{first});
             Output.flush();
 
-            Global.exit(1);
+            Global.crash();
         } else {
             Global.exit(0);
         }

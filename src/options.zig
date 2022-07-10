@@ -1527,14 +1527,14 @@ pub const BundleOptions = struct {
                                 "error: access denied when trying to open directory for static files: \"{s}\".\nPlease re-open bun with access to this folder or pass a different folder via \"--public-dir\". Note: --public-dir is relative to --cwd (or the process' current working directory).\n\nThe public folder is where static assets such as images, fonts, and .html files go.",
                                 .{opts.routes.static_dir},
                             );
-                            Global.exit(1);
+                            Global.crash();
                         },
                         else => {
                             Output.prettyErrorln(
                                 "error: \"{s}\" when accessing public folder: \"{s}\"",
                                 .{ @errorName(err), opts.routes.static_dir },
                             );
-                            Global.exit(1);
+                            Global.crash();
                         },
                     }
 

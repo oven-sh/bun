@@ -63,12 +63,23 @@ CC = $(shell which clang-13 || which clang)
 CXX = $(shell which clang++-13 || which clang++)
 
 ifeq ($(OS_NAME),darwin)
-LLVM_PREFIX ?= $(shell brew --prefix llvm)
-LDFLAGS += -L$(LLVM_PREFIX)/lib
-CPPFLAGS += -I$(LLVM_PREFIX)/include
-CC = $(LLVM_PREFIX)/bin/clang
-CXX = $(LLVM_PREFIX)/bin/clang++
-CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning | awk '/Apple Development/ { print $$2 }')
+# Find LLVM
+	ifeq ($(wildcard $(LLVM_PREFIX)),)
+		LLVM_PREFIX = $(shell brew --prefix llvm@13)
+	endif
+	ifeq ($(wildcard $(LLVM_PREFIX)),)
+		LLVM_PREFIX = $(shell brew --prefix llvm)
+	endif
+	ifeq ($(wildcard $(LLVM_PREFIX)),)
+#   This is kinda ugly, but I can't find a better way to error :(
+		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@13' or set LLVM_PREFIX=/path/to/llvm")
+	endif
+
+	LDFLAGS += -L$(LLVM_PREFIX)/lib
+	CPPFLAGS += -I$(LLVM_PREFIX)/include
+	CC = $(LLVM_PREFIX)/bin/clang
+	CXX = $(LLVM_PREFIX)/bin/clang++
+	CODESIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning | awk '/Apple Development/ { print $$2 }')
 endif
 
 # macOS sed is different

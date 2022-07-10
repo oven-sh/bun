@@ -21,3 +21,4 @@
 ./constants.d.ts
 ./url.d.ts
 ./tty.d.ts
+./http.d.ts

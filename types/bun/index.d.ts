@@ -27,3 +27,4 @@
 /// <reference path="./constants.d.ts" />
 /// <reference path="./url.d.ts" />
 /// <reference path="./tty.d.ts" />
+/// <reference path="./http.d.ts" />

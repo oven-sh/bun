@@ -13,3 +13,4 @@
 ./os.d.ts
 ./domain.d.ts
 ./util.d.ts
+./querystring.d.ts

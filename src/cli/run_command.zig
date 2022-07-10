@@ -913,7 +913,7 @@ pub const RunCommand = struct {
 
         if (script_name_to_search.len == 0) {
             if (comptime log_errors) {
-                Output.prettyError("<r>No \"scripts\" in package.json found.", .{});
+                Output.prettyError("<r>No \"scripts\" in package.json found.\n", .{});
                 Output.flush();
                 Global.exit(0);
             }

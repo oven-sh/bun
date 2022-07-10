@@ -67,7 +67,6 @@ pub const Run = struct {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
             Output.prettyErrorln("\n", .{});
-            Output.flush();
             Global.exit(1);
         };
         run.vm.bundler.configureDefines() catch {
@@ -77,7 +76,6 @@ pub const Run = struct {
                 run.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
             }
             Output.prettyErrorln("\n", .{});
-            Output.flush();
             Global.exit(1);
         };
         AsyncHTTP.max_simultaneous_requests = 255;

@@ -78,7 +78,6 @@ pub const InstallCompletionsCommand = struct {
             var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var cwd = std.os.getcwd(&cwd_buf) catch {
                 Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
-                Output.flush();
                 Global.exit(fail_exit_code);
             };
 
@@ -99,7 +98,6 @@ pub const InstallCompletionsCommand = struct {
 
                         if (!std.fs.path.isAbsolute(completions_dir)) {
                             Output.prettyErrorln("<r><red>error:<r> Please pass an absolute path. {s} is invalid", .{completions_dir});
-                            Output.flush();
                             Global.exit(fail_exit_code);
                         }
 
@@ -107,7 +105,6 @@ pub const InstallCompletionsCommand = struct {
                             .iterate = true,
                         }) catch |err| {
                             Output.prettyErrorln("<r><red>error:<r> accessing {s} errored {s}", .{ completions_dir, @errorName(err) });
-                            Output.flush();
                             Global.exit(fail_exit_code);
                         };
                     }
@@ -247,7 +244,6 @@ pub const InstallCompletionsCommand = struct {
                 "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                 .{},
             );
-            Output.flush();
             Global.exit(fail_exit_code);
         };
 
@@ -267,7 +263,6 @@ pub const InstallCompletionsCommand = struct {
                 filename,
                 @errorName(err),
             });
-            Output.flush();
             Global.exit(fail_exit_code);
         };
 
@@ -276,7 +271,6 @@ pub const InstallCompletionsCommand = struct {
                 filename,
                 @errorName(err),
             });
-            Output.flush();
             Global.exit(fail_exit_code);
         };
 

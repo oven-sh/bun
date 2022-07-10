@@ -183,7 +183,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
                     name,
                 },
             );
-            Output.flush();
             Global.crash();
         };
         _ = if (PackageManager.verbose_install)
@@ -243,7 +242,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
                 folder_name,
             },
         );
-        Output.flush();
         Global.crash();
     };
 
@@ -257,7 +255,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
                 name,
             },
         );
-        Output.flush();
         Global.crash();
     };
     defer final_dir.close();
@@ -273,7 +270,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
                 name,
             },
         );
-        Output.flush();
         Global.crash();
     };
     return try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);

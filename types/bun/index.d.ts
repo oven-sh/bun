@@ -30,3 +30,4 @@
 /// <reference path="./http.d.ts" />
 /// <reference path="./punycode.d.ts" />
 /// <reference path="./zlib.d.ts" />
+/// <reference path="./supports-color.d.ts" />

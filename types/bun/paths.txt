@@ -19,3 +19,4 @@
 ./stream.d.ts
 ./crypto.d.ts
 ./constants.d.ts
+./url.d.ts

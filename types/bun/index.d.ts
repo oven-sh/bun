@@ -25,3 +25,4 @@
 /// <reference path="./stream.d.ts" />
 /// <reference path="./crypto.d.ts" />
 /// <reference path="./constants.d.ts" />
+/// <reference path="./url.d.ts" />

@@ -10,3 +10,4 @@
 ./jsc.d.ts
 ./assert.d.ts
 ./events.d.ts
+./os.d.ts

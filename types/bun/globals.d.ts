@@ -1,4 +1,44 @@
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
+type Platform = 'aix' | 'android' | 'darwin' | 'freebsd' | 'haiku' | 'linux' | 'openbsd' | 'sunos' | 'win32' | 'cygwin' | 'netbsd';
+type Architecture = 'arm' | 'arm64' | 'ia32' | 'mips' | 'mipsel' | 'ppc' | 'ppc64' | 's390' | 's390x' | 'x64';
+type Signals =
+    | 'SIGABRT'
+    | 'SIGALRM'
+    | 'SIGBUS'
+    | 'SIGCHLD'
+    | 'SIGCONT'
+    | 'SIGFPE'
+    | 'SIGHUP'
+    | 'SIGILL'
+    | 'SIGINT'
+    | 'SIGIO'
+    | 'SIGIOT'
+    | 'SIGKILL'
+    | 'SIGPIPE'
+    | 'SIGPOLL'
+    | 'SIGPROF'
+    | 'SIGPWR'
+    | 'SIGQUIT'
+    | 'SIGSEGV'
+    | 'SIGSTKFLT'
+    | 'SIGSTOP'
+    | 'SIGSYS'
+    | 'SIGTERM'
+    | 'SIGTRAP'
+    | 'SIGTSTP'
+    | 'SIGTTIN'
+    | 'SIGTTOU'
+    | 'SIGUNUSED'
+    | 'SIGURG'
+    | 'SIGUSR1'
+    | 'SIGUSR2'
+    | 'SIGVTALRM'
+    | 'SIGWINCH'
+    | 'SIGXCPU'
+    | 'SIGXFSZ'
+    | 'SIGBREAK'
+    | 'SIGLOST'
+    | 'SIGINFO';
 
 interface console {
   assert(condition?: boolean, ...data: any[]): void;
@@ -141,20 +181,8 @@ interface Process {
   versions: Record<string, string>;
   ppid: number;
   pid: number;
-  arch:
-    | "arm64"
-    | "arm"
-    | "ia32"
-    | "mips"
-    | "mipsel"
-    | "ppc"
-    | "ppc64"
-    | "s390"
-    | "s390x"
-    | "x32"
-    | "x64"
-    | "x86";
-  platform: "darwin" | "freebsd" | "linux" | "openbsd" | "sunos" | "win32";
+  arch: Architecture;
+  platform: Platform;
   argv: string[];
   // execArgv: string[];
   env: Record<string, string> & {
@@ -1739,4 +1767,12 @@ interface Transformer<I = any, O = any> {
   start?: TransformerStartCallback<O>;
   transform?: TransformerTransformCallback<I, O>;
   writableType?: undefined;
+}
+
+interface Dict<T> {
+  [key: string]: T | undefined;
+}
+
+interface ReadOnlyDict<T> {
+  readonly [key: string]: T | undefined;
 }

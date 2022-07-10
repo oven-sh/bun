@@ -30,7 +30,7 @@ if test -t 1; then
 fi
 
 if ! command -v unzip >/dev/null; then
-    echo -e "\n${Red}error${Color_Off}: unzip is required to install bun (see: https://github.com/Jarred-Sumner/bun#unzip-is-required)." 1>&2
+    echo -e "\n${Red}error${Color_Off}: unzip is required to install bun (see: https://github.com/oven-sh/bun#unzip-is-required)." 1>&2
     exit 1
 fi
 
@@ -57,7 +57,7 @@ if [ "$target" = "darwin-x64" ]; then
     fi
 fi
 
-github_repo="https://github.com/Jarred-Sumner/bun-releases-for-updater"
+github_repo="https://github.com/oven-sh/bun-releases-for-updater"
 
 if [ $# -eq 0 ]; then
     bun_uri="$github_repo/releases/latest/download/bun-${target}.zip"

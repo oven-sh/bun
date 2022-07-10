@@ -427,7 +427,7 @@ export default ({ inlineCSS }) => (
                   />
                   <BarGraphLabel
                     name="better-sqlite3"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.better-sqlite3.mjs"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.better-sqlite3.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
@@ -684,7 +684,7 @@ export default {
             <br />
             <br />
             See{" "}
-            <a href="https://github.com/Jarred-Sumner/bun/tree/main/examples">
+            <a href="https://github.com/oven-sh/bun/tree/main/examples">
               more examples
             </a>{" "}
             and check out <a href={DOCS}>the docs</a>. If you have any questions

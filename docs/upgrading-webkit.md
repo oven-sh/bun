@@ -1,6 +1,6 @@
 # Upgrading WebKit
 
-Bun uses [a fork](https://github.com/Jarred-Sumner/WebKit) of WebKit with a small number of changes.
+Bun uses [a fork](https://github.com/oven-sh/WebKit) of WebKit with a small number of changes.
 
 It's important to periodically update WebKit for many reasons:
 

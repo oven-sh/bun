@@ -55,11 +55,11 @@ pub const InstallCompletionsCommand = struct {
         switch (shell) {
             .bash => {
                 Output.prettyErrorln("<r><red>error:<r> Bash completions aren't implemented yet, just zsh & fish. A PR is welcome!", .{});
-                Global.exit(fail_exit_code);
+                Global.exitOther(fail_exit_code);
             },
             .unknown => {
                 Output.prettyErrorln("<r><red>error:<r> Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash. To manually output completions, run this:\n      bun getcompletes", .{});
-                Global.exit(fail_exit_code);
+                Global.exitOther(fail_exit_code);
             },
             else => {},
         }
@@ -78,7 +78,7 @@ pub const InstallCompletionsCommand = struct {
             var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
             var cwd = std.os.getcwd(&cwd_buf) catch {
                 Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
-                Global.exit(fail_exit_code);
+                Global.exitOther(fail_exit_code);
             };
 
             for (std.os.argv) |arg, i| {
@@ -98,14 +98,14 @@ pub const InstallCompletionsCommand = struct {
 
                         if (!std.fs.path.isAbsolute(completions_dir)) {
                             Output.prettyErrorln("<r><red>error:<r> Please pass an absolute path. {s} is invalid", .{completions_dir});
-                            Global.exit(fail_exit_code);
+                            Global.exitOther(fail_exit_code);
                         }
 
                         break :found std.fs.openDirAbsolute(completions_dir, .{
                             .iterate = true,
                         }) catch |err| {
                             Output.prettyErrorln("<r><red>error:<r> accessing {s} errored {s}", .{ completions_dir, @errorName(err) });
-                            Global.exit(fail_exit_code);
+                            Global.exitOther(fail_exit_code);
                         };
                     }
 
@@ -244,7 +244,7 @@ pub const InstallCompletionsCommand = struct {
                 "Please either pipe it:\n   bun completions > /to/a/file\n\n Or pass a directory:\n\n   bun completions /my/completions/dir\n",
                 .{},
             );
-            Global.exit(fail_exit_code);
+            Global.exitOther(fail_exit_code);
         };
 
         const filename = switch (shell) {
@@ -263,7 +263,7 @@ pub const InstallCompletionsCommand = struct {
                 filename,
                 @errorName(err),
             });
-            Global.exit(fail_exit_code);
+            Global.exitOther(fail_exit_code);
         };
 
         output_file.writeAll(shell.completions()) catch |err| {
@@ -271,7 +271,7 @@ pub const InstallCompletionsCommand = struct {
                 filename,
                 @errorName(err),
             });
-            Global.exit(fail_exit_code);
+            Global.exitOther(fail_exit_code);
         };
 
         defer output_file.close();

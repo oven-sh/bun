@@ -263,9 +263,7 @@ pub const RunCommand = struct {
 
         if (result.Exited > 0) {
             Output.prettyErrorln("<r><red>Script error<r> <b>\"{s}\"<r> exited with {d} status<r>", .{ name, result.Exited });
-            Output.flush();
-
-            Global.exit(result.Exited);
+            Global.exitOther(result.Exited);
         }
 
         return true;
@@ -315,7 +313,7 @@ pub const RunCommand = struct {
 
         if (result.Exited > 0) {
             Output.prettyErrorln("<r><red>error<r> \"<b>{s}<r>\" exited with {d} status<r>", .{ std.fs.path.basename(executable), result.Exited });
-            Global.exit(result.Exited);
+            Global.exitOther(result.Exited);
         }
 
         return true;

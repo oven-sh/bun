@@ -864,7 +864,7 @@
        * undefined, a default error message is assigned. If the `message` parameter is an
        * instance of an `Error` then it will be thrown instead of the `AssertionError`.
        */
-      // TODO: this is typed, but not in the browserify polyfill?
+      // FIXME: assert.doesNotMatch is typed, but not in the browserify polyfill?
       // function doesNotMatch(value: string, regExp: RegExp, message?: string | Error): void;
 
       const strict: Omit<typeof assert, 'equal' | 'notEqual' | 'deepEqual' | 'notDeepEqual' | 'ok' | 'strictEqual' | 'deepStrictEqual' | 'ifError' | 'strict'> & {

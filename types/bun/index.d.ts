@@ -18,3 +18,4 @@
 /// <reference path="./events.d.ts" />
 /// <reference path="./os.d.ts" />
 /// <reference path="./domain.d.ts" />
+/// <reference path="./util.d.ts" />

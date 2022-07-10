@@ -741,8 +741,12 @@ declare function btoa(base64Text: string): string;
  *
  */
 declare class TextEncoder {
-  constructor(encoding?: "utf-8");
+  /**
+   * The encoding supported by the `TextEncoder` instance. Always set to `'utf-8'`.
+   */
   readonly encoding: "utf-8";
+
+  constructor(encoding?: "utf-8");
 
   /**
    * UTF-8 encodes the `input` string and returns a `Uint8Array` containing the
@@ -766,15 +770,35 @@ declare class TextEncoder {
   encodeInto(src?: string, dest?: TypedArray): EncodeIntoResult;
 }
 
+/**
+ * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API.
+ *
+ * ```js
+ * const decoder = new TextDecoder();
+ * const u8arr = new Uint8Array([72, 101, 108, 108, 111]);
+ * console.log(decoder.decode(u8arr)); // Hello
+ * ```
+ */
 declare class TextDecoder {
+  /**
+   * The encoding supported by the `TextDecoder` instance.
+   */
+  readonly encoding: string;
+  /**
+   * The value will be `true` if decoding errors result in a `TypeError` being
+   * thrown.
+   */
+  readonly fatal: boolean;
+  /**
+   * The value will be `true` if the decoding result will include the byte order
+   * mark.
+   */
+  readonly ignoreBOM: boolean;
+
   constructor(
     encoding?: Encoding,
     options?: { fatal?: boolean; ignoreBOM?: boolean }
   );
-
-  encoding: Encoding;
-  ignoreBOM: boolean;
-  fatal: boolean;
 
   /**
    * Decodes the `input` and returns a string. If `options.stream` is `true`, any

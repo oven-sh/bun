@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "description": "A simple Youtube Scraper made with pure Js and Bun.js",
+  "description": "A simple Youtube Scraper made with Bun HTMLrewriter",
   "name": "bunyoutubescraper",
-  "main": "src/bunYoutubeScraper.js",
+  "main": "bunYoutubeScraper.js",
   "devDependencies": {
     "bun-types": "^0.0.83"
   },

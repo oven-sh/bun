@@ -14,3 +14,4 @@
 /// <reference path="./path.d.ts" />
 /// <reference path="./bun-test.d.ts" />
 /// <reference path="./jsc.d.ts" />
+/// <reference path="./assert.d.ts" />

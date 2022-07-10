@@ -188,6 +188,9 @@ interface Process {
   env: Record<string, string> & {
     NODE_ENV: string;
   };
+  
+  /** Whether you are using Bun */
+  isBun: 1; // FIXME: this should actually return a boolean
   // execPath: string;
   // abort(): void;
   chdir(directory: string): void;

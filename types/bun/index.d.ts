@@ -20,3 +20,4 @@
 /// <reference path="./domain.d.ts" />
 /// <reference path="./util.d.ts" />
 /// <reference path="./querystring.d.ts" />
+/// <reference path="./string_decoder.d.ts" />

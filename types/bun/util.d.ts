@@ -55,12 +55,6 @@
   export interface InspectOptionsStylized extends InspectOptions {
       stylize(text: string, styleType: Style): string;
   }
-  export interface ErrnoException extends Error {
-      errno?: number | undefined;
-      code?: string | undefined;
-      path?: string | undefined;
-      syscall?: string | undefined;
-  }
   /**
    * The `util.format()` method returns a formatted string using the first argument
    * as a `printf`\-like format string which can contain zero or more format

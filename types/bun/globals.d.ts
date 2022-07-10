@@ -1658,6 +1658,8 @@ declare var WritableStreamDefaultWriter: {
   new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
 };
 
+interface ReadWriteStream extends ReadableStream, WritableStream { }
+
 interface TransformerFlushCallback<O> {
   (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
 }
@@ -1811,4 +1813,11 @@ interface Dict<T> {
 
 interface ReadOnlyDict<T> {
   readonly [key: string]: T | undefined;
+}
+
+interface ErrnoException extends Error {
+  errno?: number | undefined;
+  code?: string | undefined;
+  path?: string | undefined;
+  syscall?: string | undefined;
 }

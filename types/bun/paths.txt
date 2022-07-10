@@ -16,3 +16,4 @@
 ./querystring.d.ts
 ./string_decoder.d.ts
 ./timers.d.ts
+./stream.d.ts

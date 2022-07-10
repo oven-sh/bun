@@ -22,3 +22,4 @@
 /// <reference path="./querystring.d.ts" />
 /// <reference path="./string_decoder.d.ts" />
 /// <reference path="./timers.d.ts" />
+/// <reference path="./stream.d.ts" />

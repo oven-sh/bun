@@ -22,3 +22,4 @@
 ./url.d.ts
 ./tty.d.ts
 ./http.d.ts
+./punycode.d.ts

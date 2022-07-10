@@ -34,7 +34,6 @@ docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
 
 If using Linux, kernel version 5.6 or higher is strongly recommended, but the minimum is 5.1.
 
-*NOTE: Bun currently only works on CPUs supporting the AVX2 instruction set. To run on older CPUs this can be emulated using Intel SDE, however bun won't be as fast as it would be when running on CPUs with AVX2 support.*
 
 ## Table of Contents
 
@@ -898,6 +897,8 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 If you’re interested in adding a framework integration, please reach out. There’s a lot here and it’s not entirely documented yet.
 
 ## Troubleshooting
+
+Bun currently only works on CPUs supporting the AVX2 instruction set. To run on older CPUs this can be emulated using Intel SDE, however bun won't be as fast as it would be when running on CPUs with AVX2 support.
 
 ### bun not running on an M1 (or Apple Silicon)
 

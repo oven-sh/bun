@@ -119,6 +119,7 @@ export class IncomingMessage extends Readable {
     this.complete = false;
     this.rawTrailers = [];
     this.headers = headers;
+    this._socket = undefined;
     this.httpVersion = '1.1';
     this.method = req.method;
     this.httpVersionMajor = 1;
@@ -145,11 +146,13 @@ export class IncomingMessage extends Readable {
   }
 
   get socket() {
-    const duplex = new EventEmitter();
+    if (this._socket) return this._socket;
+
+    this._socket = new EventEmitter();
     this.on('end', () => duplex.emit('end'));
     this.on('close', () => duplex.emit('close'));
 
-    return duplex;
+    return this._socket;
   }
 
   setTimeout(msecs, callback) {

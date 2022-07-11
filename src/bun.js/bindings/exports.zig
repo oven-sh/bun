@@ -1722,7 +1722,8 @@ pub const ZigConsoleClient = struct {
                                 return;
                             },
                             .Request => {
-                                this.printAs(.JSON, Writer, writer_, value, .Object, enable_ansi_colors);
+                                var request = priv_data.as(JSC.WebCore.Request);
+                                request.writeFormat(this, writer_, enable_ansi_colors) catch {};
                                 return;
                             },
                             else => {},

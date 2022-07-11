@@ -64,14 +64,21 @@ export class Server extends EventEmitter {
   }
 }
 
+async function req_read_body(req, size) {
+  // TODO: streaming
+  try {
+    req._body = Buffer.from(await req.arrayBuffer());
+    req.push(req._body.subarray(req._body_offset, req._body_offset += size));
+  } catch (err) {
+    req.destroy(err);
+  }
+};
+
 export class IncomingMessage extends Readable {
   constructor(req) {
-    let body;
-    let body_offset = 0;
     const rawHeaders = [];
     const method = req.method;
     const headers = Object.create(null);
-    const no_body = 'GET' === method || 'HEAD' === method;
 
     for (const key of req.headers.keys()) {
       const value = req.headers.get(key);
@@ -80,54 +87,44 @@ export class IncomingMessage extends Readable {
       rawHeaders.push(key, value);
     }
 
-    const read_body = async (size) => {
-      // TODO: streaming
-      try {
-        body = Buffer.from(await req.arrayBuffer());
-        this.push(body.subarray(body_offset, body_offset += size));
-      } catch (err) {
-        this.destroy(err);
-      }
-    };
-
-    super({
-      read: size => {
-        if (no_body) {
-          this.push(null);
-          this.complete = true;
-        }
-
-        else {
-          if (!body) read_body(size);
-
-          else {
-            if (body_offset >= body.length) {
-              this.push(null);
-              this.complete = true;
-            } else {
-              this.push(body.subarray(body_offset, body_offset += size));
-            }
-          }
-        }
-      },
-    });
+    super();
 
     const url = new URL(req.url);
     // TODO: reuse trailer object?
     // TODO: get hostname and port from Bun.serve and calculate substring() offset
 
+    this._req = req;
+    this.method = method;
     this.complete = false;
-    this.rawTrailers = [];
+    this._body_offset = 0;
     this.headers = headers;
+    this._body = undefined;
     this._socket = undefined;
-    this.httpVersion = '1.1';
-    this.method = req.method;
-    this.httpVersionMajor = 1;
-    this.httpVersionMinor = 1;
     this.rawHeaders = rawHeaders;
-    this.trailers = Object.create(null);
     this.url = url.pathname + url.search;
+    this._no_body = 'GET' === method || 'HEAD' === method || 'TRACE' === method || 'CONNECT' === method || 'OPTIONS' === method;
   }
+
+  _read(size) {
+    if (this._no_body) {
+      this.push(null);
+      this.complete = true;
+    }
+
+    else {
+      if (!this._body) req_read_body(this, size);
+
+      else {
+        if (this._body_offset >= this._body.length) {
+          this.push(null);
+          this.complete = true;
+        } else {
+          this.push(this._body.subarray(this._body_offset, this._body_offset += size));
+        }
+      }
+    }
+  }
+
 
   get aborted() {
     throw new Error('not implemented');
@@ -143,6 +140,26 @@ export class IncomingMessage extends Readable {
 
   get statusMessage() {
     throw new Error('not implemented');
+  }
+
+  get httpVersion() {
+    return 1.1;
+  }
+
+  get rawTrailers() {
+    return [];
+  }
+
+  get httpVersionMajor() {
+    return 1;
+  }
+
+  get httpVersionMinor() {
+    return 1;
+  }
+
+  get trailers() {
+    return Object.create(null);
   }
 
   get socket() {
@@ -164,60 +181,51 @@ export class ServerResponse extends Writable {
   constructor({ req, reply }) {
     const headers = new Headers;
     const sink = new Bun.ArrayBufferSink();
+    sink.start({ stream: false, asUint8Array: true });
 
-    super({
-      construct: callback => {
-        sink.start({
-          stream: false,
-          asUint8Array: true,
-        });
-
-        callback();
-      },
-
-      write: (chunk, encoding, callback) => {
-        this.headersSent = true;
-
-        sink.write(chunk);
-
-        callback();
-      },
-
-      writev: (chunks, callback) => {
-        this.headersSent = true;
-
-        for (const chunk of chunks) {
-          sink.write(chunk.chunk);
-        }
-
-        callback();
-      },
-
-      final: callback => {
-        callback();
-        this.headersSent = true;
-
-        if (this.sendDate && !headers.has('date')) {
-          headers.set('date', new Date().toUTCString());
-        }
-
-        reply(new Response(sink.end(), {
-          headers,
-          status: this.statusCode,
-          statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
-        }));
-      },
-    });
-
+    super();
     this.req = req;
+    this._sink = sink;
+    this._reply = reply;
     this.sendDate = true;
     this.statusCode = 200;
     this._headers = headers;
-    this.shouldKeepAlive = true;
-    this.chunkedEncoding = false;
+    this.headersSent = false;
     this.statusMessage = undefined;
-    this.useChunkedEncodingByDefault = true;
   }
+
+  _write(chunk, encoding, callback) {
+    this.headersSent = true;
+    this._sink.write(chunk);
+
+    callback();
+  }
+
+  _writev(chunks, callback) {
+    this.headersSent = true;
+
+    for (const chunk of chunks) {
+      this._sink.write(chunk.chunk);
+    }
+
+    callback();
+  }
+
+  _final(callback) {
+    callback();
+    this.headersSent = true;
+
+    if (this.sendDate && !this._headers.has('date')) {
+      this._headers.set('date', new Date().toUTCString());
+    }
+
+    this._reply(new Response(this._sink.end(), {
+      headers: this._headers,
+      status: this.statusCode,
+      statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
+    }));
+  }
+
 
   get socket() {
     throw new Error('not implemented');
@@ -225,10 +233,6 @@ export class ServerResponse extends Writable {
 
   get connection() {
     throw new Error('not implemented');
-  }
-
-  flushHeaders() {
-    
   }
 
   writeProcessing() {
@@ -254,6 +258,32 @@ export class ServerResponse extends Writable {
   setTimeout(msecs, callback) {
     throw new Error('not implemented');
   }
+
+  get shouldKeepAlive() {
+    return true;
+  }
+
+  get chunkedEncoding() {
+    return false;
+  }
+
+  set chunkedEncoding(value) {
+    // throw new Error('not implemented');
+  }
+
+  set shouldKeepAlive(value) {
+    // throw new Error('not implemented');
+  }
+
+  get useChunkedEncodingByDefault() {
+    return true;
+  }
+
+  set useChunkedEncodingByDefault(value) {
+    // throw new Error('not implemented');
+  }
+
+  flushHeaders() {}
 
   removeHeader(name) {
     this._headers.delete(name);

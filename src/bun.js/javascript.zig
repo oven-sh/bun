@@ -1225,7 +1225,8 @@ pub const VirtualMachine = struct {
                     source
             else
                 jsc_vm.bundler.fs.top_level_dir,
-            specifier,
+            // TODO: do we need to handle things like query string params?
+            if (strings.hasPrefixComptime(specifier, "file://")) specifier["file://".len..] else specifier,
             .stmt,
         );
 
@@ -1347,12 +1348,10 @@ pub const VirtualMachine = struct {
         var slice = slice_;
         if (slice.len == 0) return slice;
         var was_http = false;
-        if (strings.hasPrefix(slice, "https://")) {
+        if (strings.hasPrefixComptime(slice, "https://")) {
             slice = slice["https://".len..];
             was_http = true;
-        }
-
-        if (strings.hasPrefix(slice, "http://")) {
+        } else if (strings.hasPrefixComptime(slice, "http://")) {
             slice = slice["http://".len..];
             was_http = true;
         }
@@ -2781,12 +2780,17 @@ pub const HardcodedModule = enum {
             .{ "node:fs/promises", "node:fs/promises" },
             .{ "node:module", "node:module" },
             .{ "node:path", "node:path" },
+            .{ "node:path/posix", "node:path" },
+            .{ "node:path/win32", "node:path" },
+            .{ "node:perf_hooks", "node:perf_hooks" },
             .{ "node:streams/consumer", "node:streams/consumer" },
             .{ "node:streams/web", "node:streams/web" },
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
             .{ "node:url", "node:url" },
             .{ "path", "node:path" },
+            .{ "path/posix", "node:path" },
+            .{ "path/win32", "node:path" },
             .{ "perf_hooks", "node:perf_hooks" },
             .{ "streams/consumer", "node:streams/consumer" },
             .{ "streams/web", "node:streams/web" },

@@ -105,6 +105,14 @@ it("self-referencing imports works", async () => {
   var b = import.meta.require(namespace);
   expect(a.bar).toBe(1);
   expect(b.bar).toBe(1);
+
+  // test that file:// works
+  Loader.registry.delete(baz);
+  Loader.registry.delete(namespace);
+  var a = import.meta.require("file://" + baz);
+  var b = import.meta.require("file://" + namespace);
+  expect(a.bar).toBe(1);
+  expect(b.bar).toBe(1);
 });
 
 function writePackageJSONExportsFixture() {

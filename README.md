@@ -902,7 +902,9 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 If you’re interested in adding a framework integration, please reach out. There’s a lot here and it’s not entirely documented yet.
 
 ## Troubleshooting
+
 ### Illegal Instruction (Core Dumped)
+Bun currently only works on CPUs supporting the AVX2 instruction set. To run on older CPUs this can be emulated using Intel SDE, however bun won't be as fast as it would be when running on CPUs with AVX2 support.
 If you get this error while bun is initializing, You probably need to wrap the bun executable with intel-sde
   1. Install intel-sde
     - Arch Linux: `yay -S intel-sde`
@@ -922,6 +924,7 @@ If you get this error while bun is initializing, You probably need to wrap the b
 $ echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
 ```
 You can replace `.bashrc` with `.zshrc` if you use zsh instead of bash
+
 ### bun not running on an M1 (or Apple Silicon)
 
 If you see a message like this

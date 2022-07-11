@@ -107,6 +107,10 @@ pub const GlobalClasses = [_]type{
     WebCore.Crypto.Class,
     WebCore.Crypto.Prototype,
 
+    WebCore.Alert.Class,
+    WebCore.Confirm.Class,
+    WebCore.Prompt.Class,
+
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
 };

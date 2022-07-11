@@ -2,23 +2,23 @@
 
 set -euo pipefail
 
-killall -9 "$(basename "$BUN_BIN")" || echo ""
+killall -9 $(basename $BUN_BIN) || echo ""
 
-DIR=$(mktemp -d -t bun-dev-check)
+dir=$(mktemp -d --suffix=bun-dev-check)
 
 index_content="<html><body>index.html</body></html>"
 bacon_content="<html><body>bacon.html</body></html>"
 js_content="console.log('hi')"
 
-mkdir -p "$DIR/public"
+mkdir -p $dir/public
 
-echo $index_content >"$DIR/public/index.html"
-echo $js_content >"$DIR/index.js"
-echo $bacon_content >"$DIR/public/bacon.html"
+echo $index_content >"$dir/public/index.html"
+echo $js_content >"$dir/index.js"
+echo $bacon_content >"$dir/public/bacon.html"
 
-cd "$DIR"
+cd $dir
 
-$BUN_BIN dev --port 8087 &
+$BUN_BIN --port 8087 &
 sleep 0.005
 
 if [ "$(curl --fail -sS http://localhost:8087/)" != "$index_content" ]; then

@@ -540,7 +540,7 @@ export default ({ inlineCSS }) => (
               <WebAPI href="https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream">
                 ReadableStream
               </WebAPI>{" "}
-              are built-in
+              are built-in.
             </li>
             <li>
               <NodeJS>node_modules</NodeJS> bun implements Node.js' module
@@ -555,11 +555,11 @@ export default ({ inlineCSS }) => (
             <li>
               bun supports <code className="">"paths"</code>,{" "}
               <code>"jsxImportSource"</code>
-              and more from <TypeScript>tsconfig.json</TypeScript> files
+              and more from <TypeScript>tsconfig.json</TypeScript> files.
             </li>
             <li>
               <Bun>Bun.Transpiler</Bun> bun's JSX &amp; TypeScript transpiler is
-              available as an API in Bun.js
+              available as an API in Bun.js.
             </li>
             <li>
               use the fastest system calls available with <Bun>Bun.write</Bun>{" "}
@@ -588,7 +588,7 @@ export default ({ inlineCSS }) => (
             </li>
             <li>
               <Bun>bun:ffi</Bun> call native code from JavaScript with bun's
-              low-overhead foreign function interface
+              low-overhead foreign function interface.
             </li>
             <li>
               <NodeJS>node:fs</NodeJS> <NodeJS>node:path</NodeJS> bun.js
@@ -680,7 +680,7 @@ export default {
             <a target="_blank" href="http://localhost:3000">
               http://localhost:3000
             </a>{" "}
-            in your browser
+            in your browser.
             <br />
             <br />
             See{" "}
@@ -689,7 +689,7 @@ export default {
             </a>{" "}
             and check out <a href={DOCS}>the docs</a>. If you have any questions
             or want help, join{" "}
-            <a href="https://bun.sh/discord">Bun's Discord</a>
+            <a href="https://bun.sh/discord">Bun's Discord</a>.
           </p>
 
           <h2>Bun CLI</h2>
@@ -733,13 +733,13 @@ export default {
             <Command>bun wiptest</Command>
             <p>
               A Jest-like test runner for JavaScript &amp; TypeScript projects
-              built-in to bun
+              built-in to bun.
             </p>
             <Label>
               <PerformanceClaim href="https://twitter.com/jarredsumner/status/1542824445810642946">
                 You've never seen a JavaScript test runner this fast
               </PerformanceClaim>{" "}
-              (or incomplete)
+              (or incomplete).
             </Label>
           </Group>
 
@@ -749,7 +749,7 @@ export default {
           </p>
           <h2>How do I see the source code?</h2>
           <p>
-            Bun is on <a href="https://github.com/oven-sh/bun">GitHub</a>
+            Bun is on <a href="https://github.com/oven-sh/bun">GitHub</a>.
           </p>
         </div>
       </section>

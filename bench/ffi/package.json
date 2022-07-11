@@ -1,15 +1,11 @@
 {
   "name": "bench",
 
-  "dependencies": {
-    "better-sqlite3": "^7.6.0"
-  },
-
   "scripts": {
-    "build": "exit 0",
     "bench:bun": "$BUN bun.js",
     "bench:node": "$NODE node.mjs",
-    "deps": "npm install && sh src/download.sh",
+    "deps": "cd src && bun run deps",
+    "build": "cd src && bun run build",
     "bench:deno": "$DENO run -A --unstable deno.js",
     "bench": "bun run bench:bun && bun run bench:node && bun run bench:deno"
   }

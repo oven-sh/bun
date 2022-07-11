@@ -1,3 +1,6 @@
+// TODO: remove this module from being bundled into bun
+// This is a temporary workaround for a CommonJS <> ESM interop issue.
+
 /*!
  * depd
  * Copyright(c) 2015 Douglas Christopher Wilson
@@ -83,8 +86,9 @@ var require_browser = __commonJS({
 var import_depd = __toESM(require_browser());
 var bundle_default = import_depd.default;
 
-depd[Symbol.for("CommonJS")] = true; // TODO: this requires hacky default export
-
-export default function depd(...args) {
+function depd(...args) {
   return args.length ? bundle_default(...args) : bundle_default;
 }
+depd[Symbol.for("CommonJS")] = true; // TODO: this requires hacky default export
+
+export default depd;

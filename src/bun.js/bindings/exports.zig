@@ -2139,29 +2139,29 @@ pub const ZigConsoleClient = struct {
                 },
                 .TypedArray => {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
-                    if (arrayBuffer.len == 0) {
-                        writer.writeAll("[]");
-                        return;
-                    }
 
                     writer.writeAll(std.mem.span(@tagName(arrayBuffer.typed_array_type)));
                     writer.print("({d}) [ ", .{arrayBuffer.len});
 
                     const slice = arrayBuffer.slice();
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{slice[0]});
-                    var leftover = slice[1..];
-                    const max = 512;
-                    leftover = leftover[0..@minimum(leftover.len, max)];
-                    for (leftover) |el| {
-                        this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                        writer.writeAll(" ");
 
-                        writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{el});
+                    if (slice.len > 0) {
+                        writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{slice[0]});
+                        var leftover = slice[1..];
+                        const max = 512;
+                        leftover = leftover[0..@minimum(leftover.len, max)];
+                        for (leftover) |el| {
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            writer.writeAll(" ");
+
+                            writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{el});
+                        }
+
+                        if (slice.len > max + 1) {
+                            writer.print(comptime Output.prettyFmt("<r><d>, ... {d} more<r>", enable_ansi_colors), .{slice.len - max - 1});
+                        }
                     }
 
-                    if (slice.len > max + 1) {
-                        writer.print(comptime Output.prettyFmt("<r><d>, ... {d} more<r>", enable_ansi_colors), .{slice.len - max - 1});
-                    }
                     writer.writeAll(" ]");
                 },
                 else => {},

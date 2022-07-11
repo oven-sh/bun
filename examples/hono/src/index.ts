@@ -9,6 +9,6 @@ const home = app.get("/", (c) => {
 console.log(`Running at http://localhost:${port}`);
 
 export default {
-  port: 3000,
+  port,
   fetch: home.fetch,
 };

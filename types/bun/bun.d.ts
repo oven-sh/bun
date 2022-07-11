@@ -992,7 +992,7 @@ declare module "bun" {
    *
    * I don't know how to make this something Chrome or Safari can read.
    *
-   * If you have any ideas, please file an issue https://github.com/Jarred-Sumner/bun
+   * If you have any ideas, please file an issue https://github.com/oven-sh/bun
    */
   interface HeapSnapshot {
     /** "2" */

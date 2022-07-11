@@ -24,7 +24,7 @@ pub const MainPanicHandler = panicky.NewPanicHandler(std.builtin.default_panic);
 const js = @import("bun.js/bindings/bindings.zig");
 const JavaScript = @import("bun.js/javascript.zig");
 pub const io_mode = .blocking;
-pub const bindgen = @import("build_options").bindgen;
+pub const bindgen = if (@import("builtin").is_test) undefined else @import("build_options").bindgen;
 const Report = @import("./report.zig");
 pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace) noreturn {
     MainPanicHandler.handle_panic(msg, error_return_trace);

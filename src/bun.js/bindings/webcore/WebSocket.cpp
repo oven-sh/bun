@@ -909,11 +909,11 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
 {
     this->m_upgradeClient = nullptr;
     if (m_isSecure) {
-        us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<true, false>();
+        us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<true, false>();
         this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject());
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
     } else {
-        us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connnectedWebSocketContext<false, false>();
+        us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<false, false>();
         this->m_connectedWebSocket.client = Bun__WebSocketClient__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject());
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }

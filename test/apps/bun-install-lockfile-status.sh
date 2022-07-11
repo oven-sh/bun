@@ -1,12 +1,12 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -euo pipefail
 
-killall -9 "$(basename "$BUN_BIN")" || echo ""
+killall -9 $(basename $BUN_BIN) || echo ""
 
-DIR=$(mktemp -d -t bun-lockfile)
+dir=$(mktemp -d --suffix=bun-lockfile)
 
-cd "$DIR"
+cd $dir
 
 $BUN_BIN add react
 

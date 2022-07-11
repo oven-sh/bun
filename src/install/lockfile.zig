@@ -894,7 +894,6 @@ pub const Printer = struct {
                         try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                     }
                 }
-                Output.flush();
                 Global.exit(1);
                 return;
             },
@@ -902,7 +901,6 @@ pub const Printer = struct {
                 Output.prettyErrorln("<r><red>lockfile not found:<r> {s}", .{
                     std.mem.span(lockfile_path),
                 });
-                Output.flush();
                 Global.exit(1);
                 return;
             },
@@ -1378,7 +1376,6 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
             Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
-            Output.flush();
             Global.crash();
         };
     }
@@ -1388,7 +1385,7 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     var tmpfile = FileSystem.RealFS.Tmpfile{};
     var secret: [32]u8 = undefined;
     std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
-    var rng = std.rand.Gimli.init(secret);
+    var rng = std.rand.Xoodoo.init(secret);
     var base64_bytes: [64]u8 = undefined;
     rng.random().bytes(&base64_bytes);
 
@@ -1398,7 +1395,6 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
 
     tmpfile.create(&FileSystem.instance.fs, tmpname) catch |err| {
         Output.prettyErrorln("<r><red>error:<r> failed to open lockfile: {s}", .{@errorName(err)});
-        Output.flush();
         Global.crash();
     };
 
@@ -1407,7 +1403,6 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     Lockfile.Serializer.save(this, std.fs.File, file) catch |err| {
         tmpfile.dir().deleteFileZ(tmpname) catch {};
         Output.prettyErrorln("<r><red>error:<r> failed to serialize lockfile: {s}", .{@errorName(err)});
-        Output.flush();
         Global.crash();
     };
 
@@ -1420,7 +1415,6 @@ pub fn saveToDisk(this: *Lockfile, filename: stringZ) void {
     tmpfile.promote(tmpname, std.fs.cwd().fd, filename) catch |err| {
         tmpfile.dir().deleteFileZ(tmpname) catch {};
         Output.prettyErrorln("<r><red>error:<r> failed to save lockfile: {s}", .{@errorName(err)});
-        Output.flush();
         Global.crash();
     };
 }

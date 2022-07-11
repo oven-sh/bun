@@ -25,4 +25,3 @@
 ./punycode.d.ts
 ./zlib.d.ts
 ./supports-color.d.ts
-./ws.d.ts

@@ -1,3 +1,6 @@
+type BinaryType = "arraybuffer" | "blob";
+type Transferable = ArrayBuffer | MessagePort | ImageBitmap;
+type MessageEventSource = MessagePort;
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
 type Platform = 'aix' | 'android' | 'darwin' | 'freebsd' | 'haiku' | 'linux' | 'openbsd' | 'sunos' | 'win32' | 'cygwin' | 'netbsd';
 type Architecture = 'arm' | 'arm64' | 'ia32' | 'mips' | 'mipsel' | 'ppc' | 'ppc64' | 's390' | 's390x' | 'x64';
@@ -153,6 +156,10 @@ declare var __filename: string;
 
 /** @deprecated Please use `import.meta.dir` instead. */
 declare var __dirname: string;
+
+interface StructuredSerializeOptions {
+  transfer?: Transferable[];
+}
 
 interface EncodeIntoResult {
   /**
@@ -1030,6 +1037,20 @@ interface ErrorEventInit extends EventInit {
   message?: string;
 }
 
+interface CloseEventInit extends EventInit {
+  code?: number;
+  reason?: string;
+  wasClean?: boolean;
+}
+
+interface MessageEventInit<T = any> extends EventInit {
+  data?: T;
+  lastEventId?: string;
+  origin?: string;
+  ports?: MessagePort[];
+  source?: MessageEventSource | null;
+}
+
 interface EventInit {
   bubbles?: boolean;
   cancelable?: boolean;
@@ -1254,6 +1275,127 @@ interface ErrorEvent extends Event {
 declare var ErrorEvent: {
   prototype: ErrorEvent;
   new (type: string, eventInitDict?: ErrorEventInit): ErrorEvent;
+};
+
+/** A CloseEvent is sent to clients using WebSockets when the connection is closed. This is delivered to the listener indicated by the WebSocket object's onclose attribute. */
+interface CloseEvent extends Event {
+  /** Returns the WebSocket connection close code provided by the server. */
+  readonly code: number;
+  /** Returns the WebSocket connection close reason provided by the server. */
+  readonly reason: string;
+  /** Returns true if the connection closed cleanly; false otherwise. */
+  readonly wasClean: boolean;
+}
+
+declare var CloseEvent: {
+  prototype: CloseEvent;
+  new(type: string, eventInitDict?: CloseEventInit): CloseEvent;
+};
+
+/** A message received by a target object. */
+interface MessageEvent<T = any> extends Event {
+  /** Returns the data of the message. */
+  readonly data: T;
+  /** Returns the last event ID string, for server-sent events. */
+  readonly lastEventId: string;
+  /** Returns the origin of the message, for server-sent events and cross-document messaging. */
+  readonly origin: string;
+  /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
+  readonly ports: ReadonlyArray<MessagePort>;
+  /** Returns the WindowProxy of the source window, for cross-document messaging, and the MessagePort being attached, in the connect event fired at SharedWorkerGlobalScope objects. */
+  readonly source: MessageEventSource | null;
+  /** @deprecated */
+  initMessageEvent(type: string, bubbles?: boolean, cancelable?: boolean, data?: any, origin?: string, lastEventId?: string, source?: MessageEventSource | null, ports?: MessagePort[]): void;
+}
+
+declare var MessageEvent: {
+  prototype: MessageEvent;
+  new<T>(type: string, eventInitDict?: MessageEventInit<T>): MessageEvent<T>;
+};
+
+/**
+ * WebSocket
+ */
+interface MessagePortEventMap {
+  "message": MessageEvent;
+  "messageerror": MessageEvent;
+}
+
+/** This Channel Messaging API interface represents one of the two ports of a MessageChannel, allowing messages to be sent from one port and listening out for them arriving at the other. */
+interface MessagePort extends EventTarget {
+  onmessage: ((this: MessagePort, ev: MessageEvent) => any) | null;
+  onmessageerror: ((this: MessagePort, ev: MessageEvent) => any) | null;
+  /** Disconnects the port, so that it is no longer active. */
+  close(): void;
+  /**
+   * Posts a message through the channel. Objects listed in transfer are transferred, not just cloned, meaning that they are no longer usable on the sending side.
+   *
+   * Throws a "DataCloneError" DOMException if transfer contains duplicate objects or port, or if message could not be cloned.
+   */
+  postMessage(message: any, transfer: Transferable[]): void;
+  postMessage(message: any, options?: StructuredSerializeOptions): void;
+  /** Begins dispatching messages received on the port. */
+  start(): void;
+  addEventListener<K extends keyof MessagePortEventMap>(type: K, listener: (this: MessagePort, ev: MessagePortEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+  removeEventListener<K extends keyof MessagePortEventMap>(type: K, listener: (this: MessagePort, ev: MessagePortEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+}
+
+interface WebSocketEventMap {
+  "close": CloseEvent;
+  "error": Event;
+  "message": MessageEvent;
+  "open": Event;
+}
+
+/** Provides the API for creating and managing a WebSocket connection to a server, as well as for sending and receiving data on the connection. */
+interface WebSocket extends EventTarget {
+  /**
+   * Returns a string that indicates how binary data from the WebSocket object is exposed to scripts:
+   *
+   * Can be set, to change how binary data is returned. The default is "blob".
+   */
+  binaryType: BinaryType;
+  /**
+   * Returns the number of bytes of application data (UTF-8 text and binary data) that have been queued using send() but not yet been transmitted to the network.
+   *
+   * If the WebSocket connection is closed, this attribute's value will only increase with each call to the send() method. (The number does not reset to zero once the connection closes.)
+   */
+  readonly bufferedAmount: number;
+  /** Returns the extensions selected by the server, if any. */
+  readonly extensions: string;
+  onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
+  onerror: ((this: WebSocket, ev: Event) => any) | null;
+  onmessage: ((this: WebSocket, ev: MessageEvent) => any) | null;
+  onopen: ((this: WebSocket, ev: Event) => any) | null;
+  /** Returns the subprotocol selected by the server, if any. It can be used in conjunction with the array form of the constructor's second argument to perform subprotocol negotiation. */
+  readonly protocol: string;
+  /** Returns the state of the WebSocket object's connection. It can have the values described below. */
+  readonly readyState: number;
+  /** Returns the URL that was used to establish the WebSocket connection. */
+  readonly url: string;
+  /** Closes the WebSocket connection, optionally using code as the the WebSocket connection close code and reason as the the WebSocket connection close reason. */
+  close(code?: number, reason?: string): void;
+  /** Transmits data using the WebSocket connection. data can be a string, a Blob, an ArrayBuffer, or an ArrayBufferView. */
+  send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void;
+  readonly CLOSED: number;
+  readonly CLOSING: number;
+  readonly CONNECTING: number;
+  readonly OPEN: number;
+  addEventListener<K extends keyof WebSocketEventMap>(type: K, listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+  removeEventListener<K extends keyof WebSocketEventMap>(type: K, listener: (this: WebSocket, ev: WebSocketEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+}
+
+declare var WebSocket: {
+  prototype: WebSocket;
+  new(url: string | URL, protocols?: string | string[]): WebSocket;
+  readonly CLOSED: number;
+  readonly CLOSING: number;
+  readonly CONNECTING: number;
+  readonly OPEN: number;
 };
 
 /**

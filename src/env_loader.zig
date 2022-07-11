@@ -268,7 +268,11 @@ pub const Lexer = struct {
                     this.has_newline_before = true;
                     continue;
                 },
-
+                ' ' => {
+                    this.step();
+                    while (this.codepoint() == ' ') this.step();
+                    continue;
+                },
                 // Valid keys:
                 'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {
                     this.start = this.current;

@@ -10,7 +10,6 @@
  * forms, and are accessible using both CommonJS syntax and ES6 Modules (ESM).
  */
 declare module "fs" {
-  type Buffer = Uint8Array;
   import type { SystemError } from "bun";
 
   interface ObjectEncodingOptions {
@@ -1263,7 +1262,7 @@ declare module "fs" {
      * Use `fs.rm(path, { recursive: true, force: true })` instead.
      *
      * If `true`, perform a recursive directory removal. In
-     * recursive mode soperations are retried on failure.
+     * recursive mode operations are retried on failure.
      * @default false
      */
     recursive?: boolean | undefined;

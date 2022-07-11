@@ -1,7 +1,7 @@
 //! Futex is a mechanism used to block (`wait`) and unblock (`wake`) threads using a 32bit memory address as hints.
 //! Blocking a thread is acknowledged only if the 32bit memory address is equal to a given value.
 //! This check helps avoid block/unblock deadlocks which occur if a `wake()` happens before a `wait()`.
-//! Using Futex, other Thread synchronization primitives can be built which efficiently wait for cross-thread events or signals.  
+//! Using Futex, other Thread synchronization primitives can be built which efficiently wait for cross-thread events or signals.
 
 // This is copy-pasted from Zig's source code to fix an issue with linking on macOS Catalina and earlier.
 
@@ -22,7 +22,7 @@ const spinLoopHint = std.atomic.spinLoopHint;
 /// - The value at `ptr` is no longer equal to `expect`.
 /// - The caller is unblocked by a matching `wake()`.
 /// - The caller is unblocked spuriously by an arbitrary internal signal.
-/// 
+///
 /// If `timeout` is provided, and the caller is blocked for longer than `timeout` nanoseconds`, `error.TimedOut` is returned.
 ///
 /// The checking of `ptr` and `expect`, along with blocking the caller, is done atomically
@@ -200,9 +200,10 @@ const DarwinFutex = struct {
         // true so that we we know to ignore the ETIMEDOUT result.
         var timeout_overflowed = false;
         const status = blk: {
-            const timeout_us = std.math.cast(u32, timeout_ns / std.time.ns_per_us) catch overflow: {
-                timeout_overflowed = true;
-                break :overflow std.math.maxInt(u32);
+            const timeout_us = cast: {
+                const timeout_u32 = std.math.cast(u32, timeout_ns / std.time.ns_per_us);
+                timeout_overflowed = timeout_u32 == null;
+                break :cast timeout_u32 orelse std.math.maxInt(u32);
             };
             break :blk darwin.__ulock_wait(flags, addr, expect, timeout_us);
         };

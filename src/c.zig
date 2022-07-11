@@ -1,5 +1,5 @@
 const std = @import("std");
-const Enviroment = @import("./env.zig");
+const Environment = @import("./env.zig");
 
 const PlatformSpecific = switch (@import("builtin").target.os.tag) {
     .macos => @import("./darwin_c.zig"),
@@ -135,11 +135,11 @@ pub fn moveFileZSlowWithHandle(in_handle: std.os.fd_t, to_dir: std.os.fd_t, dest
     std.os.unlinkatZ(to_dir, destination, 0) catch {};
     const out_handle = try std.os.openatZ(to_dir, destination, std.os.O.WRONLY | std.os.O.CREAT | std.os.O.CLOEXEC, 022);
     defer std.os.close(out_handle);
-    if (comptime Enviroment.isLinux) {
+    if (comptime Environment.isLinux) {
         _ = std.os.system.fallocate(out_handle, 0, 0, @intCast(i64, stat_.size));
         _ = try std.os.sendfile(out_handle, in_handle, 0, @intCast(usize, stat_.size), &[_]std.os.iovec_const{}, &[_]std.os.iovec_const{}, 0);
     } else {
-        if (comptime Enviroment.isMac) {
+        if (comptime Environment.isMac) {
             // if this fails, it doesn't matter
             // we only really care about read & write succeeding
             PlatformSpecific.preallocate_file(

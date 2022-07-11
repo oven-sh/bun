@@ -164,7 +164,7 @@ pub const Jest = struct {
         exception: js.ExceptionRef,
     ) js.JSValueRef {
         var runner_ = runner orelse {
-            JSError(getAllocator(ctx), "Run bun test to run a test", .{}, ctx, exception);
+            JSError(getAllocator(ctx), "Run bun wiptest to run a test", .{}, ctx, exception);
             return js.JSValueMakeUndefined(ctx);
         };
 

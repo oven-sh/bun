@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import * as shiki from "shiki";
 
-const DOCS = "https://github.com/Jarred-Sumner/bun#Reference";
+const DOCS = "https://github.com/oven-sh/bun#Reference";
 
 // because we don't want to wait for it to reload everytime this page reloads
 globalThis._highlighter ||= await shiki.getHighlighter({
@@ -279,7 +279,7 @@ export default ({ inlineCSS }) => (
               <li>
                 <a
                   className="NavText"
-                  href="https://github.com/Jarred-Sumner/bun"
+                  href="https://github.com/oven-sh/bun"
                 >
                   GitHub
                 </a>
@@ -371,17 +371,17 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun"
                     version="v0.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.jsx"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world.jsx"
                   />
                   <BarGraphLabel
                     name="node"
                     version="v18.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.node.jsx"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world.node.jsx"
                   />
                   <BarGraphLabel
                     name="deno"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.deno.jsx"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world.deno.jsx"
                   />
                 </div>
               </div>
@@ -423,17 +423,17 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun:sqlite"
                     version="v0.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.js"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.js"
                   />
                   <BarGraphLabel
                     name="better-sqlite3"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.better-sqlite3.mjs"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.better-sqlite3.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (x/sqlite)"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.deno.js"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.deno.js"
                   />
                 </div>
               </div>
@@ -473,17 +473,17 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun:ffi"
                     version="v0.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.bun.js"
+                    source="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.bun.js"
                   />
                   <BarGraphLabel
                     name="node (napi)"
-                    source="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.napi.mjs"
+                    source="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.napi.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (ffi)"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.deno.js"
+                    source="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.deno.js"
                   />
                 </div>
               </div>
@@ -574,7 +574,7 @@ export default ({ inlineCSS }) => (
               bun ships with a fast SQLite3 client builtin <Bun>bun:sqlite</Bun>
             </li>
             <li>
-              <NodeJS href="https://github.com/Jarred-Sumner/bun/issues/158">
+              <NodeJS href="https://github.com/oven-sh/bun/issues/158">
                 Node-API
               </NodeJS>{" "}
               bun.js implements most of{" "}
@@ -684,7 +684,7 @@ export default {
             <br />
             <br />
             See{" "}
-            <a href="https://github.com/Jarred-Sumner/bun/tree/main/examples">
+            <a href="https://github.com/oven-sh/bun/tree/main/examples">
               more examples
             </a>{" "}
             and check out <a href={DOCS}>the docs</a>. If you have any questions
@@ -749,7 +749,7 @@ export default {
           </p>
           <h2>How do I see the source code?</h2>
           <p>
-            Bun is on <a href="https://github.com/Jarred-Sumner/bun">GitHub</a>
+            Bun is on <a href="https://github.com/oven-sh/bun">GitHub</a>
           </p>
         </div>
       </section>

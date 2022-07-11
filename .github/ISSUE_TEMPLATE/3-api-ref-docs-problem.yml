@@ -1,6 +1,6 @@
 name: 📗 Open an issue regarding the bun docs
 description: Let us know about any problematic documentations
-labels: [doc]
+labels: [documentation]
 body:
   - type: markdown
     attributes:

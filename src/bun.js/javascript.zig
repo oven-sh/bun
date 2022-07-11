@@ -956,6 +956,17 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"depd" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./depd.exports.js")),
+                        ),
+                        .specifier = ZigString.init("depd"),
+                        .source_url = ZigString.init("depd"),
+                        .hash = 0,
+                    };
+                },
             }
         } else if (_specifier.len > js_ast.Macro.namespaceWithColon.len and
             strings.eqlComptimeIgnoreLen(_specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
@@ -2711,6 +2722,7 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:sqlite",
+    @"depd",
     @"detect-libc",
     @"node:fs",
     @"node:fs/promises",
@@ -2732,6 +2744,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
+            .{ "depd", HardcodedModule.@"depd" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "ffi", HardcodedModule.@"bun:ffi" },
             .{ "fs", HardcodedModule.@"node:fs" },
@@ -2761,6 +2774,7 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", "bun:jsc" },
             .{ "bun:sqlite", "bun:sqlite" },
             .{ "bun:wrap", "bun:wrap" },
+            .{ "depd", "depd" },
             .{ "detect-libc", "detect-libc" },
             .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
             .{ "ffi", "bun:ffi" },

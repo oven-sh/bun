@@ -1,4 +1,44 @@
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
+type Platform = 'aix' | 'android' | 'darwin' | 'freebsd' | 'haiku' | 'linux' | 'openbsd' | 'sunos' | 'win32' | 'cygwin' | 'netbsd';
+type Architecture = 'arm' | 'arm64' | 'ia32' | 'mips' | 'mipsel' | 'ppc' | 'ppc64' | 's390' | 's390x' | 'x64';
+type Signals =
+    | 'SIGABRT'
+    | 'SIGALRM'
+    | 'SIGBUS'
+    | 'SIGCHLD'
+    | 'SIGCONT'
+    | 'SIGFPE'
+    | 'SIGHUP'
+    | 'SIGILL'
+    | 'SIGINT'
+    | 'SIGIO'
+    | 'SIGIOT'
+    | 'SIGKILL'
+    | 'SIGPIPE'
+    | 'SIGPOLL'
+    | 'SIGPROF'
+    | 'SIGPWR'
+    | 'SIGQUIT'
+    | 'SIGSEGV'
+    | 'SIGSTKFLT'
+    | 'SIGSTOP'
+    | 'SIGSYS'
+    | 'SIGTERM'
+    | 'SIGTRAP'
+    | 'SIGTSTP'
+    | 'SIGTTIN'
+    | 'SIGTTOU'
+    | 'SIGUNUSED'
+    | 'SIGURG'
+    | 'SIGUSR1'
+    | 'SIGUSR2'
+    | 'SIGVTALRM'
+    | 'SIGWINCH'
+    | 'SIGXCPU'
+    | 'SIGXFSZ'
+    | 'SIGBREAK'
+    | 'SIGLOST'
+    | 'SIGINFO';
 
 interface console {
   assert(condition?: boolean, ...data: any[]): void;
@@ -108,6 +148,12 @@ interface ImportMeta {
   resolve(moduleId: string, parent: string): Promise<string>;
 }
 
+/** @deprecated Please use `import.meta.path` instead. */
+declare var __filename: string;
+
+/** @deprecated Please use `import.meta.dir` instead. */
+declare var __dirname: string;
+
 interface EncodeIntoResult {
   /**
    * The read Unicode code units of input.
@@ -135,25 +181,16 @@ interface Process {
   versions: Record<string, string>;
   ppid: number;
   pid: number;
-  arch:
-    | "arm64"
-    | "arm"
-    | "ia32"
-    | "mips"
-    | "mipsel"
-    | "ppc"
-    | "ppc64"
-    | "s390"
-    | "s390x"
-    | "x32"
-    | "x64"
-    | "x86";
-  platform: "darwin" | "freebsd" | "linux" | "openbsd" | "sunos" | "win32";
+  arch: Architecture;
+  platform: Platform;
   argv: string[];
   // execArgv: string[];
   env: Record<string, string> & {
     NODE_ENV: string;
   };
+  
+  /** Whether you are using Bun */
+  isBun: 1; // FIXME: this should actually return a boolean
   // execPath: string;
   // abort(): void;
   chdir(directory: string): void;
@@ -166,6 +203,15 @@ interface Process {
 }
 
 declare var process: Process;
+
+declare module 'process' {
+  var process: Process;
+  export = process;
+}
+declare module 'node:process' {
+    import process = require('process');
+    export = process;
+}
 
 interface BlobInterface {
   text(): Promise<string>;
@@ -200,6 +246,9 @@ interface Headers {
   get(name: string): string | null;
   has(name: string): boolean;
   set(name: string, value: string): void;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
   forEach(
     callbackfn: (value: string, key: string, parent: Headers) => void,
     thisArg?: any
@@ -243,6 +292,11 @@ declare class Blob implements BlobInterface {
    * Read the data from the blob as a string. It will be decoded from UTF-8.
    */
   text(): Promise<string>;
+
+  /**
+   * Read the data from the blob as a ReadableStream.
+   */
+  stream(): ReadableStream<Uint8Array>;
 
   /**
    * Read the data from the blob as an ArrayBuffer.
@@ -655,7 +709,7 @@ declare class Request implements BlobInterface {
 }
 
 interface Crypto {
-  getRandomValues(array: TypedArray): void;
+  getRandomValues<T extends TypedArray = TypedArray>(array: T): T;
   /**
    * Generate a cryptographically secure random UUID.
    *
@@ -696,8 +750,12 @@ declare function btoa(base64Text: string): string;
  *
  */
 declare class TextEncoder {
-  constructor(encoding?: "utf-8");
+  /**
+   * The encoding supported by the `TextEncoder` instance. Always set to `'utf-8'`.
+   */
   readonly encoding: "utf-8";
+
+  constructor(encoding?: "utf-8");
 
   /**
    * UTF-8 encodes the `input` string and returns a `Uint8Array` containing the
@@ -721,15 +779,35 @@ declare class TextEncoder {
   encodeInto(src?: string, dest?: TypedArray): EncodeIntoResult;
 }
 
+/**
+ * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API.
+ *
+ * ```js
+ * const decoder = new TextDecoder();
+ * const u8arr = new Uint8Array([72, 101, 108, 108, 111]);
+ * console.log(decoder.decode(u8arr)); // Hello
+ * ```
+ */
 declare class TextDecoder {
+  /**
+   * The encoding supported by the `TextDecoder` instance.
+   */
+  readonly encoding: string;
+  /**
+   * The value will be `true` if decoding errors result in a `TypeError` being
+   * thrown.
+   */
+  readonly fatal: boolean;
+  /**
+   * The value will be `true` if the decoding result will include the byte order
+   * mark.
+   */
+  readonly ignoreBOM: boolean;
+
   constructor(
     encoding?: Encoding,
     options?: { fatal?: boolean; ignoreBOM?: boolean }
   );
-
-  encoding: Encoding;
-  ignoreBOM: boolean;
-  fatal: boolean;
 
   /**
    * Decodes the `input` and returns a string. If `options.stream` is `true`, any
@@ -1580,6 +1658,8 @@ declare var WritableStreamDefaultWriter: {
   new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
 };
 
+interface ReadWriteStream extends ReadableStream, WritableStream { }
+
 interface TransformerFlushCallback<O> {
   (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
 }
@@ -1725,4 +1805,19 @@ interface Transformer<I = any, O = any> {
   start?: TransformerStartCallback<O>;
   transform?: TransformerTransformCallback<I, O>;
   writableType?: undefined;
+}
+
+interface Dict<T> {
+  [key: string]: T | undefined;
+}
+
+interface ReadOnlyDict<T> {
+  readonly [key: string]: T | undefined;
+}
+
+interface ErrnoException extends Error {
+  errno?: number | undefined;
+  code?: string | undefined;
+  path?: string | undefined;
+  syscall?: string | undefined;
 }

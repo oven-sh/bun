@@ -222,8 +222,7 @@ export default ({ inlineCSS }) => (
         property="og:description"
         content={`Bundle, transpile, install and run JavaScript & TypeScript
         projects – all in Bun. Bun is a new JavaScript runtime with
-        a native bundler, transpiler, task runner and npm client built-in
-	.`}
+        a native bundler, transpiler, task runner and npm client built-in.`}
       />
       <meta name="og:locale" content="en_US" />
       <meta name="twitter:site" content="@jarredsumner" />

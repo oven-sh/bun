@@ -16044,7 +16044,7 @@ fn NewParser_(
                                     return;
                                 },
                                 .s_class => |class| {
-                                    // TODO: https://github.com/Jarred-Sumner/bun/issues/51
+                                    // TODO: https://github.com/oven-sh/bun/issues/51
                                     _ = p.visitClass(s2.loc, &class.class);
 
                                     if (p.is_control_flow_dead)
@@ -17175,7 +17175,7 @@ fn NewParser_(
             stmts.append(closure) catch unreachable;
         }
 
-        // TODO: https://github.com/Jarred-Sumner/bun/issues/51
+        // TODO: https://github.com/oven-sh/bun/issues/51
         fn lowerClass(
             p: *P,
             stmtorexpr: js_ast.StmtOrExpr,

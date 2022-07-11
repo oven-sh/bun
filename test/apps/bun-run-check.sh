@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
-
-(killall -9 "$(basename "$BUN_BIN")" || echo "") >/dev/null 2>&1
+# TODO: move this test to bun once we have a child_process equivalent.
+(killall -9 $(basename $BUN_BIN) || echo "") >/dev/null 2>&1
 
 # https://github.com/Jarred-Sumner/bun/issues/40
 # Define a function (details aren't important)
@@ -10,10 +9,11 @@ fn() { :; }
 # The important bit: export the function
 export -f fn
 
-DIR=$(mktemp -d -t bun-run-check)
+rm -rf /tmp/bun-run-check
+mkdir -p /tmp/bun-run-check
 
-cp ./bun-run-check-package.json "$DIR/package.json"
-cd "$DIR"
+cp ./bun-run-check-package.json /tmp/bun-run-check/package.json
+cd /tmp/bun-run-check
 
 $BUN_BIN run bash -- -c ""
 
@@ -23,12 +23,12 @@ if (($?)); then
 fi
 
 # https://github.com/Jarred-Sumner/bun/issues/53
-rm -f "$DIR/bun-run-out.expected.txt" "$DIR/bun-run-out.txt" >/dev/null 2>&1
+rm -f /tmp/bun-run-out.expected.txt /tmp/bun-run-out.txt >/dev/null 2>&1
 
-$BUN_BIN run --silent argv -- foo bar baz > "$DIR/bun-run-out.txt"
-npm run --silent argv -- foo bar baz > "$DIR/bun-run-out.expected.txt"
+$BUN_BIN run --silent argv -- foo bar baz >/tmp/bun-run-out.txt
+npm run --silent argv -- foo bar baz >/tmp/bun-run-out.expected.txt
 
-cmp -s "$DIR/bun-run-out.expected.txt" "$DIR/bun-run-out.txt"
+cmp -s /tmp/bun-run-out.expected.txt /tmp/bun-run-out.txt
 if (($?)); then
     echo "argv failed"
     exit 1

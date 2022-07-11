@@ -952,6 +952,17 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:http" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./http.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:http"),
+                        .source_url = ZigString.init("node:http"),
+                        .hash = 0,
+                    };
+                },
             }
         } else if (_specifier.len > js_ast.Macro.namespaceWithColon.len and
             strings.eqlComptimeIgnoreLen(_specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
@@ -2709,6 +2720,7 @@ pub const HardcodedModule = enum {
     @"bun:sqlite",
     @"detect-libc",
     @"node:fs",
+    @"node:http",
     @"node:fs/promises",
     @"node:module",
     @"node:path",
@@ -2731,8 +2743,10 @@ pub const HardcodedModule = enum {
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "ffi", HardcodedModule.@"bun:ffi" },
             .{ "fs", HardcodedModule.@"node:fs" },
+            .{ "http", HardcodedModule.@"node:http" },
             .{ "module", HardcodedModule.@"node:module" },
             .{ "node:fs", HardcodedModule.@"node:fs" },
+            .{ "node:http", HardcodedModule.@"node:http" },
             .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
             .{ "node:module", HardcodedModule.@"node:module" },
             .{ "node:path", HardcodedModule.@"node:path" },
@@ -2761,9 +2775,11 @@ pub const HardcodedModule = enum {
             .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
             .{ "ffi", "bun:ffi" },
             .{ "fs", "node:fs" },
+            .{ "http", "node:http" },
             .{ "fs/promises", "node:fs/promises" },
             .{ "module", "node:module" },
             .{ "node:fs", "node:fs" },
+            .{ "node:http", "node:http" },
             .{ "node:fs/promises", "node:fs/promises" },
             .{ "node:module", "node:module" },
             .{ "node:path", "node:path" },
@@ -2790,11 +2806,9 @@ pub const DisabledModule = bun.ComptimeStringMap(
     void,
     .{
         .{"child_process"},
-        .{"http"},
         .{"https"},
         .{"net"},
         .{"node:child_process"},
-        .{"node:http"},
         .{"node:https"},
         .{"node:net"},
         .{"node:tls"},

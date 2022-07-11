@@ -3727,7 +3727,7 @@ pub const Body = struct {
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll("bodyUsed: ");
         formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
-        try formatter.printComma(Writer, writer, enable_ansi_colors);
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
         try writer.writeAll("\n");
 
         // if (this.init.headers) |headers| {
@@ -4164,6 +4164,32 @@ pub const Request = struct {
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
 
+    pub fn writeFormat(this: *const Request, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        const Writer = @TypeOf(writer);
+        try formatter.writeIndent(Writer, writer);
+        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.slice().len)});
+        {
+            formatter.indent += 1;
+            defer formatter.indent -|= 1;
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll("method: \"");
+            try writer.writeAll(std.mem.span(@tagName(this.method)));
+            try writer.writeAll("\"");
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll("url: \"");
+            try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.url});
+            try writer.writeAll("\"");
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+        }
+        try writer.writeAll("\n");
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll("}");
+    }
+
     pub fn fromRequestContext(ctx: *RequestContext, global: *JSGlobalObject) !Request {
         var req = Request{
             .url = ZigString.init(std.mem.span(ctx.getFullURL())),
@@ -4414,7 +4440,37 @@ pub const Request = struct {
         switch (arguments.len) {
             0 => {},
             1 => {
-                request.url = JSC.JSValue.fromRef(arguments[0]).getZigString(ctx.ptr());
+                const urlOrObject = JSC.JSValue.c(arguments[0]);
+                if (urlOrObject.isString()) {
+                    request.url = urlOrObject.getZigString(ctx.ptr());
+                } else {
+                    if (Body.Init.init(getAllocator(ctx), ctx, arguments[0]) catch null) |req_init| {
+                        request.headers = req_init.headers;
+                        request.method = req_init.method;
+                    }
+
+                    if (urlOrObject.get(ctx.ptr(), "url")) |url| {
+                        request.url = url.getZigString(ctx.ptr()).clone(bun.default_allocator) catch {
+                            return js.JSValueMakeUndefined(ctx.ptr());
+                        };
+                    }
+
+                    if (urlOrObject.get(ctx.ptr(), "body")) |body_| {
+                        if (Blob.fromJS(ctx.ptr(), body_, true, false)) |blob| {
+                            if (blob.size > 0) {
+                                request.body = Body.Value{ .Blob = blob };
+                            }
+                        } else |err| {
+                            if (err == error.InvalidArguments) {
+                                JSC.JSError(getAllocator(ctx), "Expected an Array", .{}, ctx, exception);
+                                return null;
+                            }
+
+                            JSC.JSError(getAllocator(ctx), "Invalid Body", .{}, ctx, exception);
+                            return null;
+                        }
+                    }
+                }
             },
             else => {
                 request.url = JSC.JSValue.fromRef(arguments[0]).getZigString(ctx.ptr());

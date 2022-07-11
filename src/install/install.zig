@@ -1061,7 +1061,7 @@ const PackageInstall = struct {
                         return result;
                     } else |err| {
                         switch (err) {
-                            error.NotSameFileSystem, error.NotSupported => {
+                            error.NotSupported => {
                                 supported_method = .copyfile;
                             },
                             error.FileNotFound => return Result{

@@ -1,5 +1,15 @@
 import { it, expect } from "bun:test";
 
+it("Request object", () => {
+  expect(Bun.inspect(new Request({ url: "https://example.com" })).trim()).toBe(
+    `
+Request (0 KB) {
+  method: "GET",
+  url: "https://example.com",
+}`.trim()
+  );
+});
+
 // https://github.com/oven-sh/bun/issues/561
 it("TypedArray prints", () => {
   // TODO: add tests for all variants of typed arrays

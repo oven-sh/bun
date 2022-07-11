@@ -2141,9 +2141,9 @@ pub const ZigConsoleClient = struct {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
 
                     writer.writeAll(std.mem.span(@tagName(arrayBuffer.typed_array_type)));
-                    writer.print("({d}) [ ", .{arrayBuffer.len});
-
                     const slice = arrayBuffer.slice();
+
+                    writer.print("({d}) [ ", .{slice.len});
 
                     if (slice.len > 0) {
                         writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{slice[0]});

@@ -1,5 +1,25 @@
 import { it, expect } from "bun:test";
 
+// https://github.com/oven-sh/bun/issues/561
+it("TypedArray prints", () => {
+  // TODO: add tests for all variants of typed arrays
+  // even if the code is the same for each implementation, we should test it
+  const buffer = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+  const input = Bun.inspect(buffer);
+
+  expect(input).toBe(
+    `Uint8Array(${buffer.length}) [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]`
+  );
+  for (let i = 1; i < buffer.length + 1; i++) {
+    expect(Bun.inspect(buffer.subarray(i))).toBe(
+      `Uint8Array(${buffer.length - i}) [ ` +
+        [...buffer.subarray(i)].join(", ") +
+        " ]"
+    );
+  }
+});
+
 it("jsx with two elements", () => {
   const input = Bun.inspect(
     <div hello="quoted">

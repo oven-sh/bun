@@ -161,7 +161,7 @@ jobs:
             org.opencontainers.image.title=bun
             org.opencontainers.image.description=bun is a fast bundler, transpiler, JavaScript Runtime environment and package manager for web software. The image is an Ubuntu 20.04 image with bun preinstalled into /opt/bun.
             org.opencontainers.image.vendor=bun
-            org.opencontainers.image.source=https://github.com/Jarred-Sumner/bun
+            org.opencontainers.image.source=https://github.com/oven-sh/bun
             org.opencontainers.image.url=https://bun.sh
           builder: ${{ steps.buildx.outputs.name }}
           push: true

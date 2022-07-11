@@ -298,7 +298,7 @@ pub const Lexer = struct {
 
                                 // we don't need to do special parsing on process-level environment variable values
                                 // if they're quoted, we should keep them quoted.
-                                // https://github.com/Jarred-Sumner/bun/issues/40
+                                // https://github.com/oven-sh/bun/issues/40
                                 if (comptime is_process_env) {
                                     const current = this.current;
                                     // TODO: remove this loop

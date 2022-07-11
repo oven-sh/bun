@@ -9,11 +9,11 @@ describe("url", () => {
     expect(
       Bun.inspect(
         new URL(
-          "https://github.com/Jarred-Sumner/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"
+          "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"
         )
       )
     ).toBe(
-      "https://github.com/Jarred-Sumner/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"
+      "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"
     );
   });
   it("works", () => {

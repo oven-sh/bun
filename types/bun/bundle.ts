@@ -47,7 +47,7 @@ const packageJSON = {
   files: ["types.d.ts"],
   private: false,
   keywords: ["bun", "bun.js", "types"],
-  repository: "https://github.com/Jarred-Sumner/bun",
+  repository: "https://github.com/oven-sh/bun",
   homepage: "https://bun.sh",
 };
 

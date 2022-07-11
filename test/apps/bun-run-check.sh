@@ -4,7 +4,7 @@ set -euo pipefail
 
 (killall -9 "$(basename "$BUN_BIN")" || echo "") >/dev/null 2>&1
 
-# https://github.com/Jarred-Sumner/bun/issues/40
+# https://github.com/oven-sh/bun/issues/40
 # Define a function (details aren't important)
 fn() { :; }
 # The important bit: export the function
@@ -22,7 +22,7 @@ if (($?)); then
     exit 1
 fi
 
-# https://github.com/Jarred-Sumner/bun/issues/53
+# https://github.com/oven-sh/bun/issues/53
 rm -f "$DIR/bun-run-out.expected.txt" "$DIR/bun-run-out.txt" >/dev/null 2>&1
 
 $BUN_BIN run --silent argv -- foo bar baz > "$DIR/bun-run-out.txt"

@@ -583,7 +583,7 @@ pub const UpgradeCommand = struct {
 
             Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
 
-            Output.prettyErrorln("<r> Upgraded.\n\n<b><green>Welcome to bun v{s}!<r>\n\n  Report any bugs:\n    https://github.com/Jarred-Sumner/bun/issues\n\n  What's new:\n    https://github.com/Jarred-Sumner/bun/releases/tag/{s}<r>", .{ version_name, version.tag });
+            Output.prettyErrorln("<r> Upgraded.\n\n<b><green>Welcome to bun v{s}!<r>\n\n  Report any bugs:\n    https://github.com/oven-sh/bun/issues\n\n  What's new:\n    https://github.com/oven-sh/bun/releases/tag/{s}<r>", .{ version_name, version.tag });
             Output.flush();
             return;
         }

@@ -30,7 +30,7 @@ if test -t 1; then
 fi
 
 if ! command -v unzip >/dev/null; then
-    echo -e "\n${Red}error${Color_Off}: unzip is required to install bun (see: https://github.com/Jarred-Sumner/bun#unzip-is-required)." 1>&2
+    echo -e "\n${Red}error${Color_Off}: unzip is required to install bun (see: https://github.com/oven-sh/bun#unzip-is-required)." 1>&2
     exit 1
 fi
 

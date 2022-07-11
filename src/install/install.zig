@@ -186,7 +186,7 @@ const NetworkTask = struct {
     }
 
     // We must use a less restrictive Acccept header value
-    // https://github.com/Jarred-Sumner/bun/issues/341
+    // https://github.com/oven-sh/bun/issues/341
     // https://www.jfrog.com/jira/browse/RTFACT-18398
     const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 

@@ -2510,7 +2510,7 @@ As measured in [this simple benchmark](./bench/ffi/plus100)
 
 Bun generates & just-in-time compiles C bindings that efficiently convert values between JavaScript types and native types.
 
-To compile C, Bun embeds [TinyCC](https://github.com/TinyCC/tinycc) a small and fast C compiler.
+To compile C, Bun embeds [TinyCC](https://github.com/TinyCC/tinycc), a small and fast C compiler.
 
 </details>
 

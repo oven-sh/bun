@@ -25,7 +25,6 @@ export class Server extends EventEmitter {
     if (callback) this.on('request', callback);
   }
 
-  // @ts-ignore
   close() {
     if (this.#server) {
       this.emit('close');
@@ -34,7 +33,6 @@ export class Server extends EventEmitter {
     }
   }
 
-  // @ts-ignore
   listen(...args) {
     const server = this;
     const [options, listening_cb] = _normalizeArgs(args);

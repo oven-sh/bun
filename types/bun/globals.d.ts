@@ -170,7 +170,7 @@ declare var process: Process;
 interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 }
 
 type BlobPart = string | Blob | ArrayBufferView | ArrayBuffer;
@@ -257,7 +257,7 @@ declare class Blob implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   type: string;
   size: number;
@@ -376,7 +376,7 @@ declare class Response implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   /**
    * Read the data from the Response as a Blob.
@@ -583,7 +583,7 @@ declare class Request implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   /**
    * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a `Blob`.

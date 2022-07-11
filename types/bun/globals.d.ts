@@ -1314,7 +1314,7 @@ declare var MessageEvent: {
 };
 
 /**
- * WebSocket
+ * An implementation of the [WebSocket API](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
  */
 interface MessagePortEventMap {
   "message": MessageEvent;

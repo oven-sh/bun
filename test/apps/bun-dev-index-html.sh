@@ -21,7 +21,7 @@ echo $static_content >"$dir/static.txt"
 echo $css_not_transpiled_content >"$dir/css_not_transpiled_content.css"
 
 cd $dir
-$BUN_BIN --port 8087 &
+$BUN_BIN dev --port 8087 &
 sleep 0.005
 
 if [[ "$(curl --fail -sS http://localhost:8087/)" != "$index_content" ]]; then

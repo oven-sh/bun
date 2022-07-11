@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 set -euo pipefail
 
@@ -18,7 +18,7 @@ echo $bacon_content >"$dir/public/bacon.html"
 
 cd $dir
 
-$BUN_BIN --port 8087 &
+$BUN_BIN dev --port 8087 &
 sleep 0.005
 
 if [ "$(curl --fail -sS http://localhost:8087/)" != "$index_content" ]; then

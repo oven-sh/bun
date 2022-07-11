@@ -952,7 +952,7 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
-                @"depd" => {
+                .@"depd" => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(

@@ -107,7 +107,6 @@ inline fn _invariant(comptime fmt: string, args: anytype) noreturn {
         @panic(fmt);
     } else {
         Output.prettyErrorln(fmt, args);
-        Output.flush();
         Global.exit(1);
     }
 }
@@ -120,7 +119,6 @@ pub fn notimpl() noreturn {
 // Make sure we always print any leftover
 pub fn crash() noreturn {
     @setCold(true);
-    Output.flush();
     Global.exit(1);
 }
 

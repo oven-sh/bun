@@ -239,7 +239,7 @@ bun.js prefers Web API compatibility instead of designing new APIs when possible
 - `.env` files automatically load into `process.env` and `Bun.env`
 - top level await
 
-The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/Jarred-Sumner/bun/blob/HEAD/src/bun.js/bindings/webcore/JSFetchHeaders.cpp).
+The runtime uses JavaScriptCore, the JavaScript engine powering WebKit and Safari. Some web APIs like [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) and [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) directly use [Safari's implementation](https://github.com/oven-sh/bun/blob/HEAD/src/bun.js/bindings/webcore/JSFetchHeaders.cpp).
 
 `cat` clone that runs [2x faster than GNU cat](https://twitter.com/jarredsumner/status/1511707890708586496) for large files on Linux
 
@@ -565,7 +565,7 @@ And to the `types` field in your `tsconfig.json`:
 
 bun is a project with an incredibly large scope and is still in its early days.
 
-You can see [Bun's Roadmap](https://github.com/Jarred-Sumner/bun/issues/159), but here are some additional things that are planned:
+You can see [Bun's Roadmap](https://github.com/oven-sh/bun/issues/159), but here are some additional things that are planned:
 
 | Feature                                                                               | In             |
 | ------------------------------------------------------------------------------------- | -------------- |
@@ -585,7 +585,7 @@ You can see [Bun's Roadmap](https://github.com/Jarred-Sumner/bun/issues/159), bu
 | `@jsxPragma` comments                                                                 | JS Transpiler  |
 | Sharing `.bun` files                                                                  | bun            |
 | Dates & timestamps                                                                    | TOML parser    |
-| [Hash components for Fast Refresh](https://github.com/Jarred-Sumner/bun/issues/18)    | JSX Transpiler |
+| [Hash components for Fast Refresh](https://github.com/oven-sh/bun/issues/18)    | JSX Transpiler |
 
 <small>
 JS Transpiler == JavaScript Transpiler
@@ -1217,7 +1217,7 @@ Packages, metadata for those packages, the hoisted install order, dependencies f
 
 #### Why is it fast?
 
-It uses linear arrays for all data. [Packages](https://github.com/Jarred-Sumner/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
+It uses linear arrays for all data. [Packages](https://github.com/oven-sh/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
 
 #### Cache
 
@@ -1519,7 +1519,7 @@ Run `bun bun ./path-to.js` to generate a `node_modules.bun` file containing all 
 
 #### What is `.bun`?
 
-Note: [This format may change soon](https://github.com/Jarred-Sumner/bun/issues/121)
+Note: [This format may change soon](https://github.com/oven-sh/bun/issues/121)
 
 The `.bun` file contains:
 
@@ -2836,7 +2836,7 @@ const out = encode_png(
 );
 ```
 
-The [auto-generated wrapper](https://github.com/Jarred-Sumner/bun/blob/c6d732eee2721cd6191672cbe2c57fb17c3fffe4/src/bun.js/ffi.exports.js#L146-L148) converts the pointer to a TypedArray
+The [auto-generated wrapper](https://github.com/oven-sh/bun/blob/c6d732eee2721cd6191672cbe2c57fb17c3fffe4/src/bun.js/ffi.exports.js#L146-L148) converts the pointer to a TypedArray
 
 <details>
 
@@ -2904,7 +2904,7 @@ await Bun.write("out.png", png);
 
 Bun.js implements 90% of the APIs available in [Node-API](https://nodejs.org/api/n-api.html) (napi).
 
-You can see the status of [this here](https://github.com/Jarred-Sumner/bun/issues/158).
+You can see the status of [this here](https://github.com/oven-sh/bun/issues/158).
 
 Loading Node-API modules in Bun.js works the same as in Node.js:
 
@@ -2935,7 +2935,7 @@ require("./my-node-module.node");
 import.meta.require("./my-node-module.node");
 ```
 
-Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore builtin function](https://github.com/Jarred-Sumner/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/bun.js/bindings/builtins/js/JSZigGlobalObject.js#L26).
+Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore builtin function](https://github.com/oven-sh/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/bun.js/bindings/builtins/js/JSZigGlobalObject.js#L26).
 
 ### `Bun.Transpiler`
 
@@ -3258,7 +3258,7 @@ Inside the container, run this:
 ```bash
 # First time setup
 gh auth login
-gh repo clone Jarred-Sumner/bun . -- --depth=1 --progress -j8
+gh repo clone oven-sh/bun . -- --depth=1 --progress -j8
 
 # update all submodules except webkit because webkit takes awhile and it's already compiled for you.
 git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress

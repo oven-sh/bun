@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "name": "blank",
+  "main": "src/index.js",
+  "devDependencies": {
+    "bun-types": "^0.0.83"
+  },
+  "dependencies": {
+    "hono": "^1.6.4"
+  },
+  "scripts": {
+    "start": "cd src && bun run index.ts"
+  }
+}

@@ -2,18 +2,20 @@
 
 
 file_arguments() {
-    local cur_word="${1}";
-    local extension="${2}";
-    [[ -z "${cur_word}" ]] && {
-        COMPREPLY=( $(compgen -G "*.${extension}" -- "${cur_word}") );
-    }
-    COMPREPLY=( $(compgen -fG "${cur_word}*.${extension}" -- "${cur_word}") );
+    shopt -s extglob globstar
+    local extensions="${1}";
+
+    if [[ -z "${cur_word}" ]]; then
+        COMPREPLY=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
+    else
+        COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
+    fi
+    shopt -u extglob globstar
 }
 
 long_short_completion() {
-    local cur_word="${1}";
-    local wordlist="${2}";
-    local short_options="${3}"
+    local wordlist="${1}";
+    local short_options="${2}"
 
     [[ -z "${cur_word}" || "${cur_word}" =~ ^- ]] && {
         COMPREPLY=( $(compgen -W "${wordlist}" -- "${cur_word}"));
@@ -25,8 +27,10 @@ long_short_completion() {
     }
 }
 
+# loads the scripts block in package.json
 read_scripts_in_package_json() {
     local package_json;
+    local return_package_json
     local line=0;
     local working_dir="${PWD}";
 
@@ -35,35 +39,54 @@ read_scripts_in_package_json() {
     done
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<${working_dir}/package.json);
-    
+
     [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
         local package_json_compreply;
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
-
         shopt -s extglob;
         scripts="${scripts//@(\"|\')/}";
         shopt -u extglob;
-
         readarray -td, scripts <<<"${scripts}";
-
         for completion in "${scripts[@]}"; do
             package_json_compreply+=( "${completion%:*}" );
         done
-
         COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
     }
+
+    # when a script is passed as an option, do not show other scripts as part of the completion anymore
+    local re_prev_script="(^| )${prev}($| )";
+    [[
+        ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
+            ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
+    ]] && {
+        local re_script=$(echo ${package_json_compreply[@]} | sed 's/[^ ]*/(&)/g');
+        local new_reply=$(echo "${COMPREPLY[@]}" | sed -E "s/$re_script//");
+        COMPREPLY=( $(compgen -W "${new_reply}" -- "${cur_word}") );
+        replaced_script="${prev}";
+    }
 }
+
+
+subcommand_comp_reply() {
+    local cur_word="${1}"
+    local sub_commands="${2}"
+    local regexp_subcommand="^[dbcriauh]";
+    [[ "${prev}" =~ ${regexp_subcommand} ]] && {
+        COMPREPLY+=( $(compgen -W "${sub_commands}" -- "${cur_word}") );
+    }
+}
+
 
 _bun_completions() {
     declare -A GLOBAL_OPTIONS;
     declare -A PACKAGE_OPTIONS;
 
-    SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help";
+    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
-    
+
     PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional";
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="";
@@ -77,15 +100,14 @@ _bun_completions() {
 
     case "${prev}" in
         help|--help|-h|-v|--version) return;;
-        -c|--config)      file_arguments "${cur_word}" "toml"       && return;;
-        --bunfile)        file_arguments "${cur_word}" "bun"        && return;;
-        --server-bunfile) file_arguments "${cur_word}" "server.bun" && return;;
+        -c|--config)      file_arguments "!*.toml" && return;;
+        --bunfile)        file_arguments "!*.bun" && return;;
+        --server-bunfile) file_arguments && return;;
         --backend)
             case "${COMP_WORDS[1]}" in
                 a|add|remove|rm|install|i)
                     COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir" -- "${cur_word}") );
                     ;;
-                *) : ;;
             esac
             return ;;
         --cwd|--public-dir)
@@ -107,16 +129,14 @@ _bun_completions() {
     esac
 
     case "${COMP_WORDS[1]}" in
-        help|--help|-h|-v|--version) return;;
+        help|completions|--help|-h|-v|--version) return;;
         add|a)
             long_short_completion \
-                "${cur_word}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}"
             return;;
         remove|rm|i|install)
             long_short_completion \
-                "${cur_word}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
             return;;
@@ -127,22 +147,34 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
             return;;
         run)
-            COMPREPLY=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
+            file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
+            COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
             read_scripts_in_package_json;
             return;;
         *)
+            local replaced_script;
             long_short_completion \
-                "${cur_word}" \
                 "${GLOBAL_OPTIONS[*]}" \
                 "${GLOBAL_OPTIONS[SHORT_OPTIONS]}"
+
             read_scripts_in_package_json;
-            local regexp_subcommand="^[dbcriauh]";
-            [[ "${prev}" =~ ${regexp_subcommand} ]] && {
-                COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
-            }
+            subcommand_comp_reply "${cur_word}" "${SUBCOMMANDS}";
+
+            # determine if completion should be continued
+            # when the current word is an empty string
+            # the previous word is not part of the allowed completion
+            # the previous word is not an argument to the last two option
             [[ -z "${cur_word}" ]] && {
                 declare -A comp_reply_associative="( $(echo ${COMPREPLY[@]} | sed 's/[^ ]*/[&]=&/g') )";
-                [[ -z "${comp_reply_associative[${prev}]}" ]] && unset COMPREPLY;
+                [[ -z "${comp_reply_associative[${prev}]}" ]] && {
+                    local re_prev_prev="(^| )${COMP_WORDS[(( COMP_CWORD - 2 ))]}($| )";
+                    local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
+                    [[
+                        ( -n "${replaced_script}" && "${replaced_script}" == "${prev}" ) || \
+                            ( "${global_option_with_extra_args}" =~ ${re_prev_prev} )
+                    ]] && return;
+                    unset COMPREPLY;
+                }
             }
             return;;
     esac

@@ -3236,7 +3236,7 @@ It is very similar to my own development environment.
 Install LLVM 13 and homebrew dependencies:
 
 ```bash
-brew install llvm@13 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild go
+brew install llvm@13 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild go rust
 ```
 
 bun (& the version of Zig) need LLVM 13 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
@@ -3261,16 +3261,15 @@ You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expe
 
 #### Build bun (macOS)
 
-If you’re building on an Apple Silicon device, you’ll need to do is ensure you have set an environment variable `CODESIGN_IDENTITY`. You can find the correct value by visiting `Keychain Access` and looking under your `login` profile for `Certificates`. The name would usually look like `Apple Development: user@example.com (WDYABC123)`
+If you're building on a macOS device you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one.
 
-If you’re not familiar with the process, there’s a guide [here](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode)
 
 In `bun`:
 
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1
-make vendor jsc identifier-cache dev
+make vendor identifier-cache jsc dev
 ```
 
 #### Verify it worked (macOS)
@@ -3278,15 +3277,13 @@ make vendor jsc identifier-cache dev
 First ensure the node dependencies are installed
 
 ```bash
-cd test/snippets
-npm i
+(cd test/snippets && npm i)
+(cd test/scripts && npm i)
 ```
 
 Then
 
 ```bash
-# if you’re not already in the bun root directory
-cd ../../
 make test-dev-all
 ```
 

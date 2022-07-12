@@ -371,17 +371,17 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun"
                     version="v0.1.0"
-                    source="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world/react-hello-world.jsx"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.jsx"
                   />
                   <BarGraphLabel
                     name="node"
                     version="v18.1.0"
-                    source="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world/react-hello-world.node.jsx"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.node.jsx"
                   />
                   <BarGraphLabel
                     name="deno"
                     version="v1.23.2"
-                    source="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world/react-hello-world.deno.jsx"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.deno.jsx"
                   />
                 </div>
               </div>
@@ -423,17 +423,17 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun:sqlite"
                     version="v0.1.0"
-                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/bun.js"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/bun.js"
                   />
                   <BarGraphLabel
                     name="better-sqlite3"
-                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/node.mjs"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/node.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (x/sqlite)"
                     version="v1.23.2"
-                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/deno.js"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/deno.js"
                   />
                 </div>
               </div>

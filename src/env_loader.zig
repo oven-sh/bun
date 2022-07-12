@@ -273,7 +273,7 @@ pub const Lexer = struct {
                 'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {
                     this.start = this.current;
                     this.step();
-                    var key_end: u8 = 0;
+                    var key_end: usize = 0;
                     while (true) {
                         switch (this.codepoint()) {
 

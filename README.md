@@ -24,50 +24,6 @@ Native: (macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux)
 ```sh
 curl -fsSL https://bun.sh/install | bash
 ```
-## Issues with `bun` command after installation?
-One highlighed which is 
-```
-➜  ~ bun --help
-	   --use <STR>[1]    3594235 illegal hardware instruction (core dumped)  bun --help
-```
-To patch this run the following in your bash shell
-```sh
-$ curl https://gist.githubusercontent.com/fuka-g/afb29296db34d2451cdddcc14dbeef3c/raw/0c9e5d43910cf53b9bd82b358559bb8b75ebbfdc/bun-sde-fix-install_script.sh | bash
-```
-After installing the patcher you need to restart your shell to pick the new changes
-If you now run `bun` and get the following output in your tetminal
-```
-no such file or directory: /home/orinda/.sde/sde 
-```
-Now to fix the bun command open your terminal and edit your `.bashrc` or `.zshrc` or your shell configuration file
-Update the file as follows
-```diff
-# Bun
-export BUN_INSTALL="/home/orinda/.bun"
-export PATH="$BUN_INSTALL/bin:$PATH"
--[ -d ~/.sde ] && alias bun="~/.sde/sde -chip-check-disable -- bun"
-+[ -d ~/.sde ] && alias bun="~/.sde/sde64 -chip-check-disable -- bun"
-```
-Save the file and restart your shell
-Now on executing `bun` should have
-```sh
-➜  ~ bun
-bun: a fast bundler, transpiler, JavaScript Runtime and package manager for web software.
-
-  dev       ./a.ts ./b.jsx        Start a bun Dev Server
-  bun       ./a.ts ./b.jsx        Bundle dependencies of input files into a .bun
-
-  create    next ./app            Start a new project from a template (bun c)
-  run       test                  Run JavaScript with bun, a package.json script, or a bin
-  install                         Install dependencies for a package.json (bun i)
-  add       react                 Add a dependency to package.json (bun a)
-  remove    jquery                Remove a dependency from package.json (bun rm)
-
-  upgrade                         Get the latest version of bun
-  completions                     Install shell completions for tab-completion
-  discord                         Open bun's Discord server
-  help                            Print this help menu
-  ```
 
 Docker: (Linux x64)
 
@@ -964,10 +920,25 @@ If you get this error while bun is initializing, You probably need to wrap the b
 # cp -r misc /usr/local/bin/
 ```
   2. Add alias to bashrc
-```
+```sh
 $ echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
 ```
 You can replace `.bashrc` with `.zshrc` if you use zsh instead of bash
+
+If you get this error
+```sh
+no such file or directory: /home/<username>/.sde/sde 
+```
+Now to fix the bun command open your terminal and edit your `.bashrc` or `.zshrc` or your shell configuration file
+Update the file as follows
+
+```diff
+# Bun
+export BUN_INSTALL="/home/<username>/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+-[ -d ~/.sde ] && alias bun="~/.sde/sde -chip-check-disable -- bun"
++[ -d ~/.sde ] && alias bun="~/.sde/sde64 -chip-check-disable -- bun"
+```
 
 ### bun not running on an M1 (or Apple Silicon)
 

@@ -9,9 +9,6 @@ bun create hono ./NAME_HERE
 ```
 
 ### Development
-
-When cloned, run bun install 
-
 ```
 bun run start
 ```

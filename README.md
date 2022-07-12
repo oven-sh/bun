@@ -1172,7 +1172,7 @@ For now, the easiest thing is to run `bun install -y`. That prints a Yarn v1-sty
 
 #### What does the lockfile store?
 
-Packages, metadata for those packages, the hoisted install order, dependencies for each package, what packages those dependencies resolved to, an integrity hash (if available), what each package was resolved to and which version (or equivalent)
+Packages, metadata for those packages, the hoisted install order, dependencies for each package, what packages those dependencies resolved to, an integrity hash (if available), what each package was resolved to and which version (or equivalent).
 
 #### Why is it fast?
 

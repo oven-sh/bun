@@ -227,6 +227,7 @@ export default ({ inlineCSS }) => (
       <meta name="og:locale" content="en_US" />
       <meta name="twitter:site" content="@jarredsumner" />
       <meta name="twitter:card" content="summary_large_image" />
+      <meta property="og:image" content="/share.png" />
       <meta
         name="description"
         content={`Bundle, transpile, install and run JavaScript & TypeScript
@@ -238,7 +239,7 @@ export default ({ inlineCSS }) => (
       <link rel="icon" type="image/png" sizes="256x256" href="/logo-square.png" />
       <link rel="icon" type="image/png" sizes="32x32" href="/logo-square@32px.png" />
       <link rel="icon" type="image/png" sizes="16x16" href="/logo-square@16px.png" />
-      <meta property="og:image" content="/share.png" />
+      
       <title>Bun is a fast all-in-one JavaScript runtime</title>
 
       {inlineCSS ? (

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "name": "hono",
+  "name": "@bun-examples/hono",
   "main": "src/index.js",
   "devDependencies": {
     "bun-types": "^0.0.83"

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 echo "Running next at 24ms"
 PROJECT=next SLEEP_INTERVAL=24 make generate &

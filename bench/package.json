@@ -1,12 +1,16 @@
 {
-  "name": "snippets",
-  "version": "1.0.0",
-  "main": "index.js",
-  "license": "MIT",
+  "name": "bench",
   "dependencies": {
-    "@babel/core": "^7.16.10",
-    "@babel/preset-react": "^7.16.7",
+    "mitata": "^0.1.6",
+    "esbuild": "^0.14.12",
     "@swc/core": "^1.2.133",
-    "esbuild": "^0.14.12"
+    "@babel/core": "^7.16.10",
+    "@babel/preset-react": "^7.16.7"
+  },
+  "scripts": {
+    "ffi": "cd ffi && bun run deps && bun run build && bun run bench",
+    "gzip": "cd gzip && bun run deps && bun run build && bun run bench",
+    "async": "cd async && bun run deps && bun run build && bun run bench",
+    "sqlite": "cd sqlite && bun run deps && bun run build && bun run bench"
   }
 }

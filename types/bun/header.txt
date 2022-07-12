@@ -1,5 +1,5 @@
 // Type definitions for bun 0.0
-// Project: https://github.com/Jarred-Sumner/bun
+// Project: https://github.com/oven-sh/bun
 // Definitions by: Jarred Sumner <https://github.com/Jarred-Sumner>
 // Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
 /// <reference no-default-lib="true" />

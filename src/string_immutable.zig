@@ -16,11 +16,19 @@ pub inline fn contains(self: string, str: string) bool {
 }
 
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
-    const Static = struct {
-        pub const literal = std.unicode.utf8ToUtf16LeStringLiteral(str);
-    };
+    comptime {
+        comptime var output: [str.len]u16 = undefined;
 
-    return Static.literal;
+        for (str) |c, i| {
+            output[i] = c;
+        }
+
+        const Static = struct {
+            pub const literal: []const u16 = output[0..];
+        };
+
+        return Static.literal;
+    }
 }
 
 const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
@@ -2863,7 +2871,7 @@ test "decodeHexToBytes" {
     var good: [4096]u8 = undefined;
     var ours_buf: [4096]u8 = undefined;
     var match = try std.fmt.hexToBytes(good[0..1024], hex);
-    var ours = decodeHexToBytes(&ours_buf, hex);
+    var ours = decodeHexToBytes(&ours_buf, u8, hex);
     try std.testing.expectEqualSlices(u8, match, ours_buf[0..ours]);
     try std.testing.expectEqualSlices(u8, &buffer, ours_buf[0..ours]);
 }
@@ -3016,7 +3024,7 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
     return null;
 }
 
-/// Fast path for printing template literal strings 
+/// Fast path for printing template literal strings
 pub fn @"nextUTF16NonASCIIOr$`\\"(
     comptime Slice: type,
     slice: Slice,

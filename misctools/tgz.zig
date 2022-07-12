@@ -34,8 +34,7 @@ pub fn main() anyerror!void {
     var args = try std.process.argsAlloc(std.heap.c_allocator);
     if (args.len < 2) {
         Output.prettyErrorln("<r><b>usage<r>: tgz ./tar.gz", .{});
-        Output.flush();
-        std.os.abort();
+        Global.exit(1);
     }
 
     var tarball_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

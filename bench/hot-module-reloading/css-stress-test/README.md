@@ -36,7 +36,7 @@ bun is 14x faster than Next.js at hot reloading CSS.
 
 It times pixels instead of builds. `color-looper.zig` writes color updates and the timestamp to a css file, while simultaneously screen recording a non-headless Chromium instance. After it finishes, it OCRs the video frames and verifies the scanned timestamps against the actual data. This data measures (1) how long each update took from saving to disk up to the pixels visible on the screen and (2) what % of frames were rendered.
 
-The intent is to be as accurate as possible. Measuring times reported client-side is simpler, but lower accuracy since those times may not correspond to pixels on the screen and do not start from when the data was written to disk (at best, they measure when the filesystem watcher detected the update, but often not that either). `color-looper.zig` must run separately from `browser.js` or the results will be innaccurate.
+The intent is to be as accurate as possible. Measuring times reported client-side is simpler, but lower accuracy since those times may not correspond to pixels on the screen and do not start from when the data was written to disk (at best, they measure when the filesystem watcher detected the update, but often not that either). `color-looper.zig` must run separately from `browser.js` or the results will be inaccurate.
 
 It works like this:
 

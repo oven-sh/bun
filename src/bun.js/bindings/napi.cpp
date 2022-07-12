@@ -1291,3 +1291,30 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
     scope.clearException();
     return napi_ok;
 }
+
+extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
+    napi_value* result)
+{
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue jsValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(object));
+    if (!jsValue || !jsValue.isObject()) {
+        return napi_invalid_arg;
+    }
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
+    JSC::JSValue value = JSC::ownPropertyKeys(globalObject, jsValue.getObject(), PropertyNameMode::Strings, DontEnumPropertiesMode::Include, std::nullopt);
+    if (UNLIKELY(scope.exception())) {
+        *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::jsUndefined()));
+        return napi_generic_failure;
+    }
+    scope.clearException();
+    JSC::EnsureStillAliveScope ensureStillAlive1(value);
+
+    *result = toNapi(value);
+
+    return napi_ok;
+}

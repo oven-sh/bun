@@ -186,7 +186,7 @@ const NetworkTask = struct {
     }
 
     // We must use a less restrictive Acccept header value
-    // https://github.com/Jarred-Sumner/bun/issues/341
+    // https://github.com/oven-sh/bun/issues/341
     // https://www.jfrog.com/jira/browse/RTFACT-18398
     const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
 
@@ -943,7 +943,6 @@ const PackageInstall = struct {
                             progress_.refresh();
 
                             Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                            Output.flush();
                             Global.exit(1);
                         };
                     };
@@ -962,7 +961,6 @@ const PackageInstall = struct {
                             progress_.refresh();
 
                             Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                            Output.flush();
                             Global.exit(1);
                         };
                     };
@@ -1036,8 +1034,11 @@ const PackageInstall = struct {
         this.file_count = FileCopier.copy(
             subdir,
             &walker_,
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .copying_files },
+        ) catch |err| switch (err) {
+            error.NotSameFileSystem => return err,
+            else => return Result{
+                .fail = .{ .err = err, .step = .copying_files },
+            },
         };
 
         return Result{
@@ -1100,7 +1101,7 @@ const PackageInstall = struct {
                     return result;
                 } else |err| {
                     switch (err) {
-                        error.NotSameFileSystem, error.NotSupported => {
+                        error.NotSameFileSystem => {
                             supported_method = .copyfile;
                         },
                         error.FileNotFound => return Result{
@@ -1151,8 +1152,8 @@ pub const CacheLevel = struct {
     use_last_modified: bool,
 };
 
-// We can't know all the package s we need until we've downloaded all the packages
-// The easy way wouild be:
+// We can't know all the packages we need until we've downloaded all the packages
+// The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependnecies for resolution
 // 2.
 pub const PackageManager = struct {
@@ -1317,7 +1318,6 @@ pub const PackageManager = struct {
 
             return std.fs.cwd().makeOpenPath("node_modules/.cache", .{ .iterate = true }) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: bun is unable to write files: {s}", .{@errorName(err)});
-                Output.flush();
                 Global.crash();
             };
         }
@@ -1339,7 +1339,6 @@ pub const PackageManager = struct {
             tried_dot_tmp = true;
             break :brk cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
-                Output.flush();
                 Global.crash();
             };
         };
@@ -1353,7 +1352,6 @@ pub const PackageManager = struct {
 
                     tempdir = cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err| {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to access tempdir: {s}", .{@errorName(err)});
-                        Output.flush();
                         Global.crash();
                     };
                     continue :brk;
@@ -1361,7 +1359,6 @@ pub const PackageManager = struct {
                 Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
                     @errorName(err2),
                 });
-                Output.flush();
                 Global.crash();
             };
 
@@ -1370,7 +1367,6 @@ pub const PackageManager = struct {
                     tried_dot_tmp = true;
                     tempdir = cache_directory.makeOpenPath(".tmp", .{ .iterate = true }) catch |err2| {
                         Output.prettyErrorln("<r><red>error<r>: bun is unable to write files to tempdir: {s}", .{@errorName(err2)});
-                        Output.flush();
                         Global.crash();
                     };
                     continue :brk;
@@ -1379,7 +1375,6 @@ pub const PackageManager = struct {
                 Output.prettyErrorln("<r><red>error<r>: {s} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>", .{
                     @errorName(err),
                 });
-                Output.flush();
                 Global.crash();
             };
             cache_directory.deleteFileZ(tmpname) catch {};
@@ -1788,7 +1783,7 @@ pub const PackageManager = struct {
         var tmpfile = FileSystem.RealFS.Tmpfile{};
         var secret: [32]u8 = undefined;
         std.mem.writeIntNative(u64, secret[0..8], @intCast(u64, std.time.milliTimestamp()));
-        var rng = std.rand.Gimli.init(secret).random();
+        var rng = std.rand.Xoodoo.init(secret).random();
         var base64_bytes: [64]u8 = undefined;
         rng.bytes(&base64_bytes);
 
@@ -1798,7 +1793,6 @@ pub const PackageManager = struct {
 
         tmpfile.create(&FileSystem.instance.fs, tmpname) catch |err| {
             Output.prettyErrorln("<r><red>error:<r> failed to create tmpfile: {s}", .{@errorName(err)});
-            Output.flush();
             Global.crash();
         };
 
@@ -3418,7 +3412,6 @@ pub const PackageManager = struct {
 
                 clap.help(Output.writer(), params) catch {};
 
-                Output.flush();
                 Global.exit(0);
             }
 
@@ -3456,7 +3449,6 @@ pub const PackageManager = struct {
             //         cli.omit.peer = true;
             //     } else {
             //         Output.prettyErrorln("<b>error<r><d>:<r> Invalid argument <b>\"--omit\"<r> must be one of <cyan>\"dev\"<r>, <cyan>\"optional\"<r>, or <cyan>\"peer\"<r>. ", .{});
-            //         Output.flush();
             //         Global.exit(1);
             //     }
             // }
@@ -3566,7 +3558,6 @@ pub const PackageManager = struct {
                             @tagName(op),
                         });
                     }
-                    Output.flush();
 
                     Global.exit(1);
                 }
@@ -3589,7 +3580,6 @@ pub const PackageManager = struct {
                             @tagName(op),
                         });
                     }
-                    Output.flush();
 
                     Global.exit(1);
                 }
@@ -3706,7 +3696,6 @@ pub const PackageManager = struct {
                             \\
                         , .{});
                     }
-                    Output.flush();
                     Global.exit(0);
                 },
                 .remove => {
@@ -3765,7 +3754,6 @@ pub const PackageManager = struct {
                 }
             }
 
-            Output.flush();
             Global.crash();
         }
 
@@ -3797,12 +3785,10 @@ pub const PackageManager = struct {
         if (op == .remove) {
             if (current_package_json.data != .e_object) {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json is not an Object {{}}, so there's nothing to remove!", .{});
-                Output.flush();
                 Global.exit(1);
                 return;
             } else if (current_package_json.data.e_object.properties.len == 0) {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json is empty {{}}, so there's nothing to remove!", .{});
-                Output.flush();
                 Global.exit(1);
                 return;
             } else if (current_package_json.asProperty("devDependencies") == null and
@@ -3811,7 +3797,6 @@ pub const PackageManager = struct {
                 current_package_json.asProperty("peerDependencies") == null)
             {
                 Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to remove!", .{});
-                Output.flush();
                 Global.exit(0);
                 return;
             }
@@ -3875,7 +3860,6 @@ pub const PackageManager = struct {
 
                 if (!any_changes) {
                     Output.prettyErrorln("\n<red>error<r><d>:<r> \"<b>{s}<r>\" is not in a package.json file", .{updates[0].name});
-                    Output.flush();
                     Global.exit(1);
                     return;
                 }
@@ -3927,7 +3911,6 @@ pub const PackageManager = struct {
             // so we can commit the version we changed from the lockfile
             current_package_json = json_parser.ParseJSONUTF8(&source, ctx.log, manager.allocator) catch |err| {
                 Output.prettyErrorln("<red>error<r><d>:<r> package.json failed to parse due to error {s}", .{@errorName(err)});
-                Output.flush();
                 Global.exit(1);
                 return;
             };
@@ -4315,12 +4298,10 @@ pub const PackageManager = struct {
             skip_verify = true;
             std.fs.cwd().makeDirZ("node_modules") catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
-                Output.flush();
                 Global.crash();
             };
             break :brk std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
-                Output.flush();
                 Global.crash();
             };
         };
@@ -4814,7 +4795,6 @@ pub const PackageManager = struct {
         }
 
         if (manager.log.errors > 0) {
-            Output.flush();
             Global.exit(1);
         }
 

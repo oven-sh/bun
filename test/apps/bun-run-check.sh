@@ -1,5 +1,6 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
+# TODO: move this test to bun once we have a child_process equivalent.
 (killall -9 $(basename $BUN_BIN) || echo "") >/dev/null 2>&1
 
 # https://github.com/Jarred-Sumner/bun/issues/40

@@ -70,8 +70,7 @@ pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
             Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{s}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
         }
 
-        Output.flush();
-        os.exit(1);
+        Global.exit(1);
     };
 
     AsyncIO.global_loaded = true;

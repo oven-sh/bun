@@ -1,4 +1,44 @@
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
+type Platform = 'aix' | 'android' | 'darwin' | 'freebsd' | 'haiku' | 'linux' | 'openbsd' | 'sunos' | 'win32' | 'cygwin' | 'netbsd';
+type Architecture = 'arm' | 'arm64' | 'ia32' | 'mips' | 'mipsel' | 'ppc' | 'ppc64' | 's390' | 's390x' | 'x64';
+type Signals =
+    | 'SIGABRT'
+    | 'SIGALRM'
+    | 'SIGBUS'
+    | 'SIGCHLD'
+    | 'SIGCONT'
+    | 'SIGFPE'
+    | 'SIGHUP'
+    | 'SIGILL'
+    | 'SIGINT'
+    | 'SIGIO'
+    | 'SIGIOT'
+    | 'SIGKILL'
+    | 'SIGPIPE'
+    | 'SIGPOLL'
+    | 'SIGPROF'
+    | 'SIGPWR'
+    | 'SIGQUIT'
+    | 'SIGSEGV'
+    | 'SIGSTKFLT'
+    | 'SIGSTOP'
+    | 'SIGSYS'
+    | 'SIGTERM'
+    | 'SIGTRAP'
+    | 'SIGTSTP'
+    | 'SIGTTIN'
+    | 'SIGTTOU'
+    | 'SIGUNUSED'
+    | 'SIGURG'
+    | 'SIGUSR1'
+    | 'SIGUSR2'
+    | 'SIGVTALRM'
+    | 'SIGWINCH'
+    | 'SIGXCPU'
+    | 'SIGXFSZ'
+    | 'SIGBREAK'
+    | 'SIGLOST'
+    | 'SIGINFO';
 
 interface console {
   assert(condition?: boolean, ...data: any[]): void;
@@ -108,6 +148,12 @@ interface ImportMeta {
   resolve(moduleId: string, parent: string): Promise<string>;
 }
 
+/** @deprecated Please use `import.meta.path` instead. */
+declare var __filename: string;
+
+/** @deprecated Please use `import.meta.dir` instead. */
+declare var __dirname: string;
+
 interface EncodeIntoResult {
   /**
    * The read Unicode code units of input.
@@ -135,25 +181,16 @@ interface Process {
   versions: Record<string, string>;
   ppid: number;
   pid: number;
-  arch:
-    | "arm64"
-    | "arm"
-    | "ia32"
-    | "mips"
-    | "mipsel"
-    | "ppc"
-    | "ppc64"
-    | "s390"
-    | "s390x"
-    | "x32"
-    | "x64"
-    | "x86";
-  platform: "darwin" | "freebsd" | "linux" | "openbsd" | "sunos" | "win32";
+  arch: Architecture;
+  platform: Platform;
   argv: string[];
   // execArgv: string[];
   env: Record<string, string> & {
     NODE_ENV: string;
   };
+
+  /** Whether you are using Bun */
+  isBun: 1; // FIXME: this should actually return a boolean
   // execPath: string;
   // abort(): void;
   chdir(directory: string): void;
@@ -167,10 +204,19 @@ interface Process {
 
 declare var process: Process;
 
+declare module "process" {
+  var process: Process;
+  export = process;
+}
+declare module "node:process" {
+  import process = require("process");
+  export = process;
+}
+
 interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 }
 
 type BlobPart = string | Blob | ArrayBufferView | ArrayBuffer;
@@ -200,6 +246,9 @@ interface Headers {
   get(name: string): string | null;
   has(name: string): boolean;
   set(name: string, value: string): void;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
   forEach(
     callbackfn: (value: string, key: string, parent: Headers) => void,
     thisArg?: any
@@ -245,6 +294,11 @@ declare class Blob implements BlobInterface {
   text(): Promise<string>;
 
   /**
+   * Read the data from the blob as a ReadableStream.
+   */
+  stream(): ReadableStream<Uint8Array>;
+
+  /**
    * Read the data from the blob as an ArrayBuffer.
    *
    * This copies the data into a new ArrayBuffer.
@@ -257,7 +311,7 @@ declare class Blob implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   type: string;
   size: number;
@@ -376,7 +430,7 @@ declare class Response implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   /**
    * Read the data from the Response as a Blob.
@@ -450,8 +504,13 @@ type ReferrerPolicy =
   | "unsafe-url";
 type RequestInfo = Request | string;
 
-type BodyInit = XMLHttpRequestBodyInit;
+type BodyInit = ReadableStream | XMLHttpRequestBodyInit;
 type XMLHttpRequestBodyInit = Blob | BufferSource | string;
+type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
+type ReadableStreamDefaultReadResult<T> =
+  | ReadableStreamDefaultReadValueResult<T>
+  | ReadableStreamDefaultReadDoneResult;
+type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
 
 interface RequestInit {
   /**
@@ -578,7 +637,7 @@ declare class Request implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   /**
    * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a `Blob`.
@@ -650,7 +709,7 @@ declare class Request implements BlobInterface {
 }
 
 interface Crypto {
-  getRandomValues(array: TypedArray): void;
+  getRandomValues<T extends TypedArray = TypedArray>(array: T): T;
   /**
    * Generate a cryptographically secure random UUID.
    *
@@ -691,8 +750,12 @@ declare function btoa(base64Text: string): string;
  *
  */
 declare class TextEncoder {
-  constructor(encoding?: "utf-8");
+  /**
+   * The encoding supported by the `TextEncoder` instance. Always set to `'utf-8'`.
+   */
   readonly encoding: "utf-8";
+
+  constructor(encoding?: "utf-8");
 
   /**
    * UTF-8 encodes the `input` string and returns a `Uint8Array` containing the
@@ -716,15 +779,35 @@ declare class TextEncoder {
   encodeInto(src?: string, dest?: TypedArray): EncodeIntoResult;
 }
 
+/**
+ * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API.
+ *
+ * ```js
+ * const decoder = new TextDecoder();
+ * const u8arr = new Uint8Array([72, 101, 108, 108, 111]);
+ * console.log(decoder.decode(u8arr)); // Hello
+ * ```
+ */
 declare class TextDecoder {
+  /**
+   * The encoding supported by the `TextDecoder` instance.
+   */
+  readonly encoding: string;
+  /**
+   * The value will be `true` if decoding errors result in a `TypeError` being
+   * thrown.
+   */
+  readonly fatal: boolean;
+  /**
+   * The value will be `true` if the decoding result will include the byte order
+   * mark.
+   */
+  readonly ignoreBOM: boolean;
+
   constructor(
     encoding?: Encoding,
     options?: { fatal?: boolean; ignoreBOM?: boolean }
   );
-
-  encoding: Encoding;
-  ignoreBOM: boolean;
-  fatal: boolean;
 
   /**
    * Decodes the `input` and returns a string. If `options.stream` is `true`, any
@@ -1423,3 +1506,322 @@ declare var Loader: {
    */
   resolveSync: (specifier: string, from: string) => string;
 };
+
+/** This Streams API interface represents a readable stream of byte data. The Fetch API offers a concrete instance of a ReadableStream through the body property of a Response object. */
+interface ReadableStream<R = any> {
+  readonly locked: boolean;
+  cancel(reason?: any): Promise<void>;
+  getReader(): ReadableStreamDefaultReader<R>;
+  pipeThrough<T>(
+    transform: ReadableWritablePair<T, R>,
+    options?: StreamPipeOptions
+  ): ReadableStream<T>;
+  pipeTo(
+    destination: WritableStream<R>,
+    options?: StreamPipeOptions
+  ): Promise<void>;
+  tee(): [ReadableStream<R>, ReadableStream<R>];
+  forEach(
+    callbackfn: (value: any, key: number, parent: ReadableStream<R>) => void,
+    thisArg?: any
+  ): void;
+}
+
+declare var ReadableStream: {
+  prototype: ReadableStream;
+  new <R = any>(
+    underlyingSource?: DirectUnderlyingSource<R> | UnderlyingSource<R>,
+    strategy?: QueuingStrategy<R>
+  ): ReadableStream<R>;
+};
+
+interface QueuingStrategy<T = any> {
+  highWaterMark?: number;
+  size?: QueuingStrategySize<T>;
+}
+
+interface QueuingStrategyInit {
+  /**
+   * Creates a new ByteLengthQueuingStrategy with the provided high water mark.
+   *
+   * Note that the provided high water mark will not be validated ahead of time. Instead, if it is negative, NaN, or not a number, the resulting ByteLengthQueuingStrategy will cause the corresponding stream constructor to throw.
+   */
+  highWaterMark: number;
+}
+
+/** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
+interface ByteLengthQueuingStrategy extends QueuingStrategy<ArrayBufferView> {
+  readonly highWaterMark: number;
+  readonly size: QueuingStrategySize<ArrayBufferView>;
+}
+
+declare var ByteLengthQueuingStrategy: {
+  prototype: ByteLengthQueuingStrategy;
+  new (init: QueuingStrategyInit): ByteLengthQueuingStrategy;
+};
+
+interface ReadableStreamDefaultController<R = any> {
+  readonly desiredSize: number | null;
+  close(): void;
+  enqueue(chunk?: R): void;
+  error(e?: any): void;
+}
+
+interface ReadableStreamDirectController {
+  close(error?: Error): void;
+  write(data: ArrayBufferView | ArrayBuffer | string): number | Promise<number>;
+  end(): number | Promise<number>;
+  flush(): number | Promise<number>;
+  start(): void;
+}
+
+declare var ReadableStreamDefaultController: {
+  prototype: ReadableStreamDefaultController;
+  new (): ReadableStreamDefaultController;
+};
+
+interface ReadableStreamDefaultReader<R = any>
+  extends ReadableStreamGenericReader {
+  read(): Promise<ReadableStreamDefaultReadResult<R>>;
+  releaseLock(): void;
+}
+
+declare var ReadableStreamDefaultReader: {
+  prototype: ReadableStreamDefaultReader;
+  new <R = any>(stream: ReadableStream<R>): ReadableStreamDefaultReader<R>;
+};
+
+interface ReadableStreamGenericReader {
+  readonly closed: Promise<undefined>;
+  cancel(reason?: any): Promise<void>;
+}
+
+interface ReadableStreamDefaultReadDoneResult {
+  done: true;
+  value?: undefined;
+}
+
+interface ReadableStreamDefaultReadValueResult<T> {
+  done: false;
+  value: T;
+}
+
+interface ReadableWritablePair<R = any, W = any> {
+  readable: ReadableStream<R>;
+  /**
+   * Provides a convenient, chainable way of piping this readable stream through a transform stream (or any other { writable, readable } pair). It simply pipes the stream into the writable side of the supplied pair, and returns the readable side for further use.
+   *
+   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
+   */
+  writable: WritableStream<W>;
+}
+
+/** This Streams API interface provides a standard abstraction for writing streaming data to a destination, known as a sink. This object comes with built-in backpressure and queuing. */
+interface WritableStream<W = any> {
+  readonly locked: boolean;
+  abort(reason?: any): Promise<void>;
+  close(): Promise<void>;
+  getWriter(): WritableStreamDefaultWriter<W>;
+}
+
+declare var WritableStream: {
+  prototype: WritableStream;
+  new <W = any>(
+    underlyingSink?: UnderlyingSink<W>,
+    strategy?: QueuingStrategy<W>
+  ): WritableStream<W>;
+};
+
+/** This Streams API interface represents a controller allowing control of a WritableStream's state. When constructing a WritableStream, the underlying sink is given a corresponding WritableStreamDefaultController instance to manipulate. */
+interface WritableStreamDefaultController {
+  error(e?: any): void;
+}
+
+declare var WritableStreamDefaultController: {
+  prototype: WritableStreamDefaultController;
+  new (): WritableStreamDefaultController;
+};
+
+/** This Streams API interface is the object returned by WritableStream.getWriter() and once created locks the < writer to the WritableStream ensuring that no other streams can write to the underlying sink. */
+interface WritableStreamDefaultWriter<W = any> {
+  readonly closed: Promise<undefined>;
+  readonly desiredSize: number | null;
+  readonly ready: Promise<undefined>;
+  abort(reason?: any): Promise<void>;
+  close(): Promise<void>;
+  releaseLock(): void;
+  write(chunk?: W): Promise<void>;
+}
+
+declare var WritableStreamDefaultWriter: {
+  prototype: WritableStreamDefaultWriter;
+  new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
+};
+
+interface ReadWriteStream extends ReadableStream, WritableStream {}
+
+interface TransformerFlushCallback<O> {
+  (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
+}
+
+interface TransformerStartCallback<O> {
+  (controller: TransformStreamDefaultController<O>): any;
+}
+
+interface TransformerTransformCallback<I, O> {
+  (
+    chunk: I,
+    controller: TransformStreamDefaultController<O>
+  ): void | PromiseLike<void>;
+}
+
+interface UnderlyingSinkAbortCallback {
+  (reason?: any): void | PromiseLike<void>;
+}
+
+interface UnderlyingSinkCloseCallback {
+  (): void | PromiseLike<void>;
+}
+
+interface UnderlyingSinkStartCallback {
+  (controller: WritableStreamDefaultController): any;
+}
+
+interface UnderlyingSinkWriteCallback<W> {
+  (
+    chunk: W,
+    controller: WritableStreamDefaultController
+  ): void | PromiseLike<void>;
+}
+
+interface UnderlyingSourceCancelCallback {
+  (reason?: any): void | PromiseLike<void>;
+}
+
+interface UnderlyingSink<W = any> {
+  abort?: UnderlyingSinkAbortCallback;
+  close?: UnderlyingSinkCloseCallback;
+  start?: UnderlyingSinkStartCallback;
+  type?: undefined | "default" | "bytes";
+  write?: UnderlyingSinkWriteCallback<W>;
+}
+
+interface UnderlyingSource<R = any> {
+  cancel?: UnderlyingSourceCancelCallback;
+  pull?: UnderlyingSourcePullCallback<R>;
+  start?: UnderlyingSourceStartCallback<R>;
+  type?: undefined;
+}
+
+interface DirectUnderlyingSource<R = any> {
+  cancel?: UnderlyingSourceCancelCallback;
+  pull: (
+    controller: ReadableStreamDirectController
+  ) => void | PromiseLike<void>;
+  type: "direct";
+}
+
+interface UnderlyingSourcePullCallback<R> {
+  (controller: ReadableStreamController<R>): void | PromiseLike<void>;
+}
+
+interface UnderlyingSourceStartCallback<R> {
+  (controller: ReadableStreamController<R>): any;
+}
+
+interface GenericTransformStream {
+  readonly readable: ReadableStream;
+  readonly writable: WritableStream;
+}
+
+interface TransformStream<I = any, O = any> {
+  readonly readable: ReadableStream<O>;
+  readonly writable: WritableStream<I>;
+}
+
+declare var TransformStream: {
+  prototype: TransformStream;
+  new <I = any, O = any>(
+    transformer?: Transformer<I, O>,
+    writableStrategy?: QueuingStrategy<I>,
+    readableStrategy?: QueuingStrategy<O>
+  ): TransformStream<I, O>;
+};
+
+interface TransformStreamDefaultController<O = any> {
+  readonly desiredSize: number | null;
+  enqueue(chunk?: O): void;
+  error(reason?: any): void;
+  terminate(): void;
+}
+
+declare var TransformStreamDefaultController: {
+  prototype: TransformStreamDefaultController;
+  new (): TransformStreamDefaultController;
+};
+
+interface StreamPipeOptions {
+  preventAbort?: boolean;
+  preventCancel?: boolean;
+  /**
+   * Pipes this readable stream to a given writable stream destination. The way in which the piping process behaves under various error conditions can be customized with a number of passed options. It returns a promise that fulfills when the piping process completes successfully, or rejects if any errors were encountered.
+   *
+   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
+   *
+   * Errors and closures of the source and destination streams propagate as follows:
+   *
+   * An error in this source readable stream will abort destination, unless preventAbort is truthy. The returned promise will be rejected with the source's error, or with any error that occurs during aborting the destination.
+   *
+   * An error in destination will cancel this source readable stream, unless preventCancel is truthy. The returned promise will be rejected with the destination's error, or with any error that occurs during canceling the source.
+   *
+   * When this source readable stream closes, destination will be closed, unless preventClose is truthy. The returned promise will be fulfilled once this process completes, unless an error is encountered while closing the destination, in which case it will be rejected with that error.
+   *
+   * If destination starts out closed or closing, this source readable stream will be canceled, unless preventCancel is true. The returned promise will be rejected with an error indicating piping to a closed stream failed, or with any error that occurs during canceling the source.
+   *
+   * The signal option can be set to an AbortSignal to allow aborting an ongoing pipe operation via the corresponding AbortController. In this case, this source readable stream will be canceled, and destination aborted, unless the respective options preventCancel or preventAbort are set.
+   */
+  preventClose?: boolean;
+  signal?: AbortSignal;
+}
+
+/** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
+interface CountQueuingStrategy extends QueuingStrategy {
+  readonly highWaterMark: number;
+  readonly size: QueuingStrategySize;
+}
+
+declare var CountQueuingStrategy: {
+  prototype: CountQueuingStrategy;
+  new (init: QueuingStrategyInit): CountQueuingStrategy;
+};
+
+interface QueuingStrategySize<T = any> {
+  (chunk?: T): number;
+}
+
+interface Transformer<I = any, O = any> {
+  flush?: TransformerFlushCallback<O>;
+  readableType?: undefined;
+  start?: TransformerStartCallback<O>;
+  transform?: TransformerTransformCallback<I, O>;
+  writableType?: undefined;
+}
+
+interface Dict<T> {
+  [key: string]: T | undefined;
+}
+
+interface ReadOnlyDict<T> {
+  readonly [key: string]: T | undefined;
+}
+
+interface ErrnoException extends Error {
+  errno?: number | undefined;
+  code?: string | undefined;
+  path?: string | undefined;
+  syscall?: string | undefined;
+}
+
+declare function alert(message?: string): void;
+declare function confirm(message?: string): boolean;
+declare function prompt(message?: string, _default?: string): string | null;

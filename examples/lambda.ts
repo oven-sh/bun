@@ -26,7 +26,7 @@ if (!sourcefile.startsWith("/")) {
   sourcefile = `./${sourcefile}`;
 }
 function noop() {}
-const method = (handlerDot > 0 ? _HANDLER.substring(handlerDot) : "") || "GET";
+const method = handlerDot > 0 ? _HANDLER.substring(handlerDot) : "GET";
 
 if (typeof process.env.VERBOSE !== "undefined") {
   console.time(`Loaded ${sourcefile}`);
@@ -101,10 +101,7 @@ export default {
   process.exit(1);
 }
 
-let baseURLString = AWS_LAMBDA_RUNTIME_API;
-if ("baseURI" in Handler.default) {
-  baseURLString = Handler.default.baseURI?.toString();
-}
+const baseURLString = "baseURI" in Handler.default ? Handler.default.baseURI?.toString() : AWS_LAMBDA_RUNTIME_API;
 
 let baseURL;
 try {

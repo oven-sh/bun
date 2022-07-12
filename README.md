@@ -548,7 +548,7 @@ JS Transpiler == JavaScript Transpiler
 <br/>
 TS Transpiler == TypeScript Transpiler
 <br/>
-Package manager == `bun install`
+Package manager == <code>bun install</code>
 <br/>
 bun.js == bun’s JavaScriptCore integration that executes JavaScript. Similar to how Node.js & Deno embed V8.
 </small>

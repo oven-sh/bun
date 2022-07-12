@@ -68,7 +68,9 @@ const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
     className={`BarGraphItem BarGraphItem--${type}`}
     style={{ "--amount": amount, "--max": max }}
   >
-    <div className="visually-hidden">{`${type}: ${fmt.format(amount)} ${label}`}</div>
+    <div className="visually-hidden">{`${type}: ${fmt.format(
+      amount
+    )} ${label}`}</div>
     <div
       style={{ "--amount": amount, "--max": max }}
       className="BarGraphBar"
@@ -85,7 +87,12 @@ const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
 );
 
 const BarGraphLabel = ({ name, version, source }) => (
-  <a href={source} target="_blank" className="BarGraphKeyItem" aria-label={`${name} benchmark source`}>
+  <a
+    href={source}
+    target="_blank"
+    className="BarGraphKeyItem"
+    aria-label={`${name} benchmark source`}
+  >
     <div className="BarGraphKeyItem-label">{name}</div>
     <div className="BarGraphKeyItem-value">{version}</div>
     <div className="BarGraphKeyItem-viewSource">View source</div>
@@ -234,9 +241,24 @@ export default ({ inlineCSS }) => (
       />
       <meta name="theme-color" content="#fbf0df" />
       <link rel="manifest" href="manifest.json" />
-      <link rel="icon" type="image/png" sizes="256x256" href="/logo-square.png" />
-      <link rel="icon" type="image/png" sizes="32x32" href="/logo-square@32px.png" />
-      <link rel="icon" type="image/png" sizes="16x16" href="/logo-square@16px.png" />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes="256x256"
+        href="/logo-square.png"
+      />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes="32x32"
+        href="/logo-square@32px.png"
+      />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes="16x16"
+        href="/logo-square@16px.png"
+      />
       <title>Bun is a fast all-in-one JavaScript runtime</title>
 
       {inlineCSS ? (
@@ -277,10 +299,7 @@ export default ({ inlineCSS }) => (
                 </a>
               </li>
               <li>
-                <a
-                  className="NavText"
-                  href="https://github.com/oven-sh/bun"
-                >
+                <a className="NavText" href="https://github.com/oven-sh/bun">
                   GitHub
                 </a>
               </li>
@@ -338,7 +357,13 @@ export default ({ inlineCSS }) => (
               </button>
             </div>
             <div id="active-tab" className="ActiveTab">
-              <div role="tabpanel" tabIndex={0} id="react-tab-content" aria-labelledby="tab-react" className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark">
+              <div
+                role="tabpanel"
+                tabIndex={0}
+                id="react-tab-content"
+                aria-labelledby="tab-react"
+                className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark"
+              >
                 <h2 className="BarGraph-heading">
                   Server-side rendering React
                 </h2>
@@ -386,7 +411,13 @@ export default ({ inlineCSS }) => (
                 </div>
               </div>
 
-              <div role="tabpanel" tabIndex={-1} id="sqlite-tab-content" aria-labelledby="tab-sqlite" className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark">
+              <div
+                role="tabpanel"
+                tabIndex={-1}
+                id="sqlite-tab-content"
+                aria-labelledby="tab-sqlite"
+                className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark"
+              >
                 <h2 className="BarGraph-heading">Load a huge table</h2>
                 <p className="BarGraph-subheading">
                   Average queries per second
@@ -438,52 +469,54 @@ export default ({ inlineCSS }) => (
                 </div>
               </div>
 
-              <div role="tabpanel" tabIndex={-1} id="ffi-tab-content" aria-labelledby="tab-ffi" className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark">
-                <h2 className="BarGraph-heading">How fast can it get?</h2>
+              <div
+                role="tabpanel"
+                tabIndex={-1}
+                id="ffi-tab-content"
+                aria-labelledby="tab-ffi"
+                className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark"
+              >
+                <h2 className="BarGraph-heading">
+                  How fast can it get? (Hashing)
+                </h2>
                 <p className="BarGraph-subheading">Operations per second</p>
 
                 <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
-                    amount={(115473441).toFixed(2)}
+                    amount={(13080444).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(
-                      Math.max(115473441, 43478261, 2891761) * 1.25
-                    )}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
                   />
                   <BarGraphItem
                     type="Node-API"
-                    amount={(43478261).toFixed(2)}
+                    amount={(6870963).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(
-                      Math.max(115473441, 43478261, 2891761) * 1.25
-                    )}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
                   />
                   <BarGraphItem
                     type="deno"
-                    amount={(2891761).toFixed(2)}
+                    amount={(5239717).toFixed(2)}
                     label="operations per iteration"
-                    max={Math.ceil(
-                      Math.max(115473441, 43478261, 2891761) * 1.25
-                    )}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
                   />
                 </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
                     name="bun:ffi"
-                    version="v0.1.0"
-                    source="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.bun.js"
+                    version="v0.1.3"
+                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/bun.js"
                   />
                   <BarGraphLabel
                     name="node (napi)"
-                    source="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.napi.mjs"
+                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/node.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (ffi)"
                     version="v1.23.2"
-                    source="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.deno.js"
+                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/deno.js"
                   />
                 </div>
               </div>
@@ -571,7 +604,8 @@ export default ({ inlineCSS }) => (
               <code class="mono">require("dotenv").config()</code>
             </li>
             <li>
-              bun ships with a fast SQLite3 client built-in <Bun>bun:sqlite</Bun>
+              bun ships with a fast SQLite3 client built-in{" "}
+              <Bun>bun:sqlite</Bun>
             </li>
             <li>
               <NodeJS href="https://github.com/oven-sh/bun/issues/158">

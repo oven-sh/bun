@@ -1,10 +1,8 @@
 {
   "name": "bench",
-
   "dependencies": {
     "better-sqlite3": "^7.6.0"
   },
-
   "scripts": {
     "build": "exit 0",
     "bench:bun": "$BUN bun.js",

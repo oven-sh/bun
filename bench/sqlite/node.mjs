@@ -1,8 +1,8 @@
-import { run, bench } from 'mitata';
-import { createRequire } from 'module';
+import { run, bench } from "mitata";
+import { createRequire } from "module";
 
 const require = createRequire(import.meta.url);
-const db = require("better-sqlite3")('./src/northwind.sqlite');
+const db = require("better-sqlite3")("./src/northwind.sqlite");
 
 {
   const sql = db.prepare(`SELECT * FROM "Order"`);

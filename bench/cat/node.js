@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 const input = path.resolve(process.argv[process.argv.length - 1]);
 

@@ -1,4 +1,4 @@
-import { resolve } from 'path';
+import { resolve } from "path";
 const { write, stdout, file } = Bun;
 const input = resolve(process.argv[process.argv.length - 1]);
 

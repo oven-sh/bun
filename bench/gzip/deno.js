@@ -1,6 +1,6 @@
-import { run, bench } from '../node_modules/mitata/src/cli.mjs';
+import { run, bench } from "../node_modules/mitata/src/cli.mjs";
 
-const data = new TextEncoder().encode('Hello World!'.repeat(9999));
+const data = new TextEncoder().encode("Hello World!".repeat(9999));
 
 const compressed = await compress(data);
 
@@ -19,7 +19,7 @@ bench(`gunzip("Hello World!".repeat(9999)))`, async () => {
 await run();
 
 async function compress(buffer) {
-  const cs = new CompressionStream('gzip');
+  const cs = new CompressionStream("gzip");
 
   const writer = cs.writable.getWriter();
 
@@ -52,7 +52,7 @@ async function compress(buffer) {
 }
 
 async function decompress(buffer) {
-  const ds = new DecompressionStream('gzip');
+  const ds = new DecompressionStream("gzip");
 
   const writer = ds.writable.getWriter();
 

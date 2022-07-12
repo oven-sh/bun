@@ -1,15 +1,12 @@
 {
   "name": "bench",
-
   "napi": {
     "name": "napi"
   },
-
   "dependencies": {
     "@napi-rs/cli": "^2.10.1",
     "@node-rs/helper": "^1.3.3"
   },
-
   "scripts": {
     "deps": "bun install",
     "build:ffi": "cargo build --release",

@@ -1,7 +1,7 @@
-import { run, bench } from 'mitata';
-import { gzipSync, gunzipSync } from 'zlib';
+import { run, bench } from "mitata";
+import { gzipSync, gunzipSync } from "zlib";
 
-const data = new TextEncoder().encode('Hello World!'.repeat(9999));
+const data = new TextEncoder().encode("Hello World!".repeat(9999));
 
 const compressed = gzipSync(data);
 

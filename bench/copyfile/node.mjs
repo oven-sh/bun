@@ -1,4 +1,4 @@
-import { copyFileSync } from 'node:fs';
+import { copyFileSync } from "node:fs";
 
 const arg = process.argv.slice(2);
 

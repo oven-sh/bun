@@ -1,6 +1,5 @@
 {
   "name": "bench",
-
   "dependencies": {
     "mitata": "^0.1.6",
     "esbuild": "^0.14.12",
@@ -8,7 +7,6 @@
     "@babel/core": "^7.16.10",
     "@babel/preset-react": "^7.16.7"
   },
-
   "scripts": {
     "ffi": "cd ffi && bun run deps && bun run build && bun run bench",
     "gzip": "cd gzip && bun run deps && bun run build && bun run bench",

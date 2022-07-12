@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "name": "hono",
+  "main": "src/index.js",
+  "devDependencies": {
+    "bun-types": "^0.0.83"
+  },
+  "dependencies": {
+    "hono": "^1.6.4"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts"
+  }
+}

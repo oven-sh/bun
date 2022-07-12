@@ -1,5 +1,4 @@
-const { serve, file, resolveSync } = Bun;
-const { path } = import.meta;
+const { serve, file } = Bun;
 serve({
   fetch(req: Request) {
     return new Response(file(new URL(req.url).pathname.substring(1)));

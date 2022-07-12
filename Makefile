@@ -88,7 +88,7 @@ SED = $(shell which gsed || which sed)
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BUN_DEPS_DIR ?= $(shell pwd)/src/deps
 BUN_DEPS_OUT_DIR ?= $(BUN_DEPS_DIR)
-CPUS ?= $(shell nproc)
+CPUS ?= $(shell ./scripts/nproc)
 USER ?= $(echo $USER)
 
 BUN_RELEASE_DIR ?= $(shell pwd)/../bun-release

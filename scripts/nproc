@@ -1,0 +1,7 @@
+#!/bin/sh
+
+if [[ $OSTYPE == 'darwin'* ]]; then
+  sysctl -n hw.logicalcpu
+else
+  nproc
+fi

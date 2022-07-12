@@ -700,7 +700,7 @@ pub const Resolver = struct {
         while (iter.next()) |path| {
             var dir: *DirInfo = (r.readDirInfo(path.name.dir) catch continue) orelse continue;
             if (result.package_json) |existing| {
-                if (existing.name.len == 0) result.package_json = null;
+                if (existing.name.len == 0 or r.care_about_bin_folder) result.package_json = null;
             }
 
             result.package_json = result.package_json orelse dir.enclosing_package_json;
@@ -2597,7 +2597,8 @@ pub const Resolver = struct {
             info.enclosing_tsconfig_json = parent.?.enclosing_tsconfig_json;
 
             if (parent.?.package_json) |parent_package_json| {
-                if (parent_package_json.name.len > 0) {
+                // https://github.com/oven-sh/bun/issues/229
+                if (parent_package_json.name.len > 0 or r.care_about_bin_folder) {
                     info.enclosing_package_json = parent_package_json;
                 }
             }
@@ -2645,7 +2646,7 @@ pub const Resolver = struct {
                         info.package_json_for_browser_field = pkg;
                     }
 
-                    if (pkg.name.len > 0)
+                    if (pkg.name.len > 0 or r.care_about_bin_folder)
                         info.enclosing_package_json = pkg;
 
                     if (r.debug_logs) |*logs| {

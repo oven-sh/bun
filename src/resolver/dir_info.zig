@@ -31,6 +31,8 @@ enclosing_tsconfig_json: ?*const TSConfigJSON = null,
 
 /// package.json used for bundling
 /// it's the deepest one in the hierarchy with a "name" field
+/// or, if using `bun run`, the name field is optional
+/// https://github.com/oven-sh/bun/issues/229
 enclosing_package_json: ?*PackageJSON = null,
 
 abs_path: string = "",

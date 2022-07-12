@@ -2,7 +2,7 @@
 
 [TOML](https://toml.io/) is a minimal configuration file format designed to be easy for humans to read.
 
-Bun implements a TOML parser with a few tweaks designed for better interopability with INI files and with JavaScript.
+Bun implements a TOML parser with a few tweaks designed for better interoperability with INI files and with JavaScript.
 
 ### ; and # are comments
 

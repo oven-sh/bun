@@ -946,7 +946,9 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 If you’re interested in adding a framework integration, please reach out. There’s a lot here and it’s not entirely documented yet.
 
 ## Troubleshooting
+
 ### Illegal Instruction (Core Dumped)
+Bun currently only works on CPUs supporting the AVX2 instruction set. To run on older CPUs this can be emulated using Intel SDE, however bun won't be as fast as it would be when running on CPUs with AVX2 support.
 If you get this error while bun is initializing, You probably need to wrap the bun executable with intel-sde
   1. Install intel-sde
     - Arch Linux: `yay -S intel-sde`
@@ -966,6 +968,7 @@ If you get this error while bun is initializing, You probably need to wrap the b
 $ echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
 ```
 You can replace `.bashrc` with `.zshrc` if you use zsh instead of bash
+
 ### bun not running on an M1 (or Apple Silicon)
 
 If you see a message like this
@@ -1138,7 +1141,7 @@ export interface Install {
   globalBinDir: string;
   cache: Cache;
   lockfile: Lockfile;
-  logLevel: "verbose" | "error" | "warn";
+  logLevel: "debug" | "error" | "warn";
 }
 
 type Registry =
@@ -2554,7 +2557,7 @@ As measured in [this simple benchmark](./bench/ffi/plus100)
 
 Bun generates & just-in-time compiles C bindings that efficiently convert values between JavaScript types and native types.
 
-To compile C, Bun embeds [TinyCC](https://github.com/TinyCC/tinycc) a small and fast C compiler.
+To compile C, Bun embeds [TinyCC](https://github.com/TinyCC/tinycc), a small and fast C compiler.
 
 </details>
 
@@ -3169,7 +3172,7 @@ export const loader = () => import('./loader');
 
 ## Credits
 
-- While written in Zig instead of Go, bun’s JS transpiler, CSS lexer, and node module resolver source code is based off of @evanw’s esbuild project. @evanw did a fantastic job with esbuild.
+- While written in Zig instead of Go, bun’s JS transpiler, CSS lexer, and node module resolver source code is based on @evanw’s esbuild project. @evanw did a fantastic job with esbuild.
 - The idea for the name "bun" came from [@kipply](https://github.com/kipply)
 
 ## License
@@ -3280,7 +3283,7 @@ It is very similar to my own development environment.
 Install LLVM 13 and homebrew dependencies:
 
 ```bash
-brew install llvm@13 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild go
+brew install llvm@13 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild go rust
 ```
 
 bun (& the version of Zig) need LLVM 13 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
@@ -3305,16 +3308,15 @@ You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expe
 
 #### Build bun (macOS)
 
-If you’re building on an Apple Silicon device, you’ll need to do is ensure you have set an environment variable `CODESIGN_IDENTITY`. You can find the correct value by visiting `Keychain Access` and looking under your `login` profile for `Certificates`. The name would usually look like `Apple Development: user@example.com (WDYABC123)`
+If you're building on a macOS device you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one.
 
-If you’re not familiar with the process, there’s a guide [here](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode)
 
 In `bun`:
 
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1
-make vendor jsc identifier-cache dev
+make vendor identifier-cache jsc dev
 ```
 
 #### Verify it worked (macOS)
@@ -3322,15 +3324,13 @@ make vendor jsc identifier-cache dev
 First ensure the node dependencies are installed
 
 ```bash
-cd test/snippets
-npm i
+(cd test/snippets && npm i)
+(cd test/scripts && npm i)
 ```
 
 Then
 
 ```bash
-# if you’re not already in the bun root directory
-cd ../../
 make test-dev-all
 ```
 

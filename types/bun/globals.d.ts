@@ -195,7 +195,7 @@ interface Process {
   env: Record<string, string> & {
     NODE_ENV: string;
   };
-  
+
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean
   // execPath: string;
@@ -211,13 +211,13 @@ interface Process {
 
 declare var process: Process;
 
-declare module 'process' {
+declare module "process" {
   var process: Process;
   export = process;
 }
-declare module 'node:process' {
-    import process = require('process');
-    export = process;
+declare module "node:process" {
+  import process = require("process");
+  export = process;
 }
 
 interface BlobInterface {
@@ -1800,7 +1800,7 @@ declare var WritableStreamDefaultWriter: {
   new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
 };
 
-interface ReadWriteStream extends ReadableStream, WritableStream { }
+interface ReadWriteStream extends ReadableStream, WritableStream {}
 
 interface TransformerFlushCallback<O> {
   (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
@@ -1963,3 +1963,7 @@ interface ErrnoException extends Error {
   path?: string | undefined;
   syscall?: string | undefined;
 }
+
+declare function alert(message?: string): void;
+declare function confirm(message?: string): boolean;
+declare function prompt(message?: string, _default?: string): string | null;

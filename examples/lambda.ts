@@ -17,8 +17,8 @@ if (process.cwd() !== sourceDir) {
   } catch (e) {}
 }
 
-var handlerDot = _HANDLER.lastIndexOf(".");
-var sourcefile = handlerDot > 0 ? _HANDLER.substring(0, handlerDot) : _HANDLER;
+const handlerDot = _HANDLER.lastIndexOf(".");
+let sourcefile = handlerDot > 0 ? _HANDLER.substring(0, handlerDot) : _HANDLER;
 if (sourcefile.length === 0) {
   throw new Error("handler is not set");
 }
@@ -31,7 +31,7 @@ const method = (handlerDot > 0 ? _HANDLER.substring(handlerDot) : "") || "GET";
 if (typeof process.env.VERBOSE !== "undefined") {
   console.time(`Loaded ${sourcefile}`);
 }
-var Handler;
+let Handler;
 
 try {
   Handler = await import(sourcefile);
@@ -101,12 +101,12 @@ export default {
   process.exit(1);
 }
 
-var baseURLString = AWS_LAMBDA_RUNTIME_API;
+let baseURLString = AWS_LAMBDA_RUNTIME_API;
 if ("baseURI" in Handler.default) {
   baseURLString = Handler.default.baseURI?.toString();
 }
 
-var baseURL;
+let baseURL;
 try {
   baseURL = new URL(baseURLString);
 } catch (e) {
@@ -137,7 +137,7 @@ try {
 async function runHandler(response: Response) {
   const traceID = response.headers.get("Lambda-Runtime-Trace-Id");
   const requestID = response.headers.get("Lambda-Runtime-Aws-Request-Id");
-  var request = new Request(baseURL.href, {
+  const request = new Request(baseURL.href, {
     method,
     headers: response.headers,
     body:
@@ -149,7 +149,7 @@ async function runHandler(response: Response) {
   // allow it to be GC'd
   response = undefined;
 
-  var result: Response;
+  let result: Response;
   try {
     if (typeof process.env.VERBOSE !== "undefined") {
       console.time(`[${traceID}] Run ${request.url}`);

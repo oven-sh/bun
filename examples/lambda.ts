@@ -152,7 +152,7 @@ async function runHandler(response: Response) {
       console.time(`[${traceID}] Run ${request.url}`);
     }
     result = handlerFunction(request, {});
-    if (result && result.then) {
+    if (result) {
       await result;
     }
   } catch (e1) {

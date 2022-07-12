@@ -180,7 +180,7 @@ const InstallBox = ({ desktop = false }) => (
   >
     <div className="InstallBox-label">
       <div className="InstallBox-label-heading">
-        Install Bun CLI v{process.version} (beta)
+        Install Bun CLI {process.version} (beta)
       </div>
       <div className="InstallBox-label-subtitle">
         macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux
@@ -371,17 +371,17 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun"
                     version="v0.1.0"
-                    source="https://github.com/oven-sh/bun/bench/react-hello-world.jsx"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world.jsx"
                   />
                   <BarGraphLabel
                     name="node"
                     version="v18.1.0"
-                    source="https://github.com/oven-sh/bun/bench/react-hello-world.node.jsx"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world.node.jsx"
                   />
                   <BarGraphLabel
                     name="deno"
                     version="v1.23.2"
-                    source="https://github.com/oven-sh/bun/bench/react-hello-world.deno.jsx"
+                    source="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world.deno.jsx"
                   />
                 </div>
               </div>
@@ -540,7 +540,7 @@ export default ({ inlineCSS }) => (
               <WebAPI href="https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream">
                 ReadableStream
               </WebAPI>{" "}
-              are builtin
+              are built-in
             </li>
             <li>
               <NodeJS>node_modules</NodeJS> bun implements Node.js' module
@@ -571,7 +571,7 @@ export default ({ inlineCSS }) => (
               <code class="mono">require("dotenv").config()</code>
             </li>
             <li>
-              bun ships with a fast SQLite3 client builtin <Bun>bun:sqlite</Bun>
+              bun ships with a fast SQLite3 client built-in <Bun>bun:sqlite</Bun>
             </li>
             <li>
               <NodeJS href="https://github.com/oven-sh/bun/issues/158">
@@ -733,7 +733,7 @@ export default {
             <Command>bun wiptest</Command>
             <p>
               A Jest-like test runner for JavaScript &amp; TypeScript projects
-              builtin to bun
+              built-in to bun
             </p>
             <Label>
               <PerformanceClaim href="https://twitter.com/jarredsumner/status/1542824445810642946">

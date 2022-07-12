@@ -902,7 +902,9 @@ For developing frameworks, you can also do `bun bun --use ./relative-path-to-fra
 If you’re interested in adding a framework integration, please reach out. There’s a lot here and it’s not entirely documented yet.
 
 ## Troubleshooting
+
 ### Illegal Instruction (Core Dumped)
+Bun currently only works on CPUs supporting the AVX2 instruction set. To run on older CPUs this can be emulated using Intel SDE, however bun won't be as fast as it would be when running on CPUs with AVX2 support.
 If you get this error while bun is initializing, You probably need to wrap the bun executable with intel-sde
   1. Install intel-sde
     - Arch Linux: `yay -S intel-sde`
@@ -922,6 +924,7 @@ If you get this error while bun is initializing, You probably need to wrap the b
 $ echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
 ```
 You can replace `.bashrc` with `.zshrc` if you use zsh instead of bash
+
 ### bun not running on an M1 (or Apple Silicon)
 
 If you see a message like this
@@ -1094,7 +1097,7 @@ export interface Install {
   globalBinDir: string;
   cache: Cache;
   lockfile: Lockfile;
-  logLevel: "verbose" | "error" | "warn";
+  logLevel: "debug" | "error" | "warn";
 }
 
 type Registry =
@@ -2510,7 +2513,7 @@ As measured in [this simple benchmark](./bench/ffi/plus100)
 
 Bun generates & just-in-time compiles C bindings that efficiently convert values between JavaScript types and native types.
 
-To compile C, Bun embeds [TinyCC](https://github.com/TinyCC/tinycc) a small and fast C compiler.
+To compile C, Bun embeds [TinyCC](https://github.com/TinyCC/tinycc), a small and fast C compiler.
 
 </details>
 
@@ -3125,7 +3128,7 @@ export const loader = () => import('./loader');
 
 ## Credits
 
-- While written in Zig instead of Go, bun’s JS transpiler, CSS lexer, and node module resolver source code is based off of @evanw’s esbuild project. @evanw did a fantastic job with esbuild.
+- While written in Zig instead of Go, bun’s JS transpiler, CSS lexer, and node module resolver source code is based on @evanw’s esbuild project. @evanw did a fantastic job with esbuild.
 - The idea for the name "bun" came from [@kipply](https://github.com/kipply)
 
 ## License

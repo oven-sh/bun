@@ -103,7 +103,7 @@ header {
   font-size: 1.2rem;
 }
 
-nav {
+.Navigation ul {
   white-space: nowrap;
   display: flex;
   gap: 2rem;
@@ -162,25 +162,22 @@ header {
   background: #15140e;
   padding: 24px 24px;
   border-radius: 24px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  -moz-user-select: none;
 }
 
-#install-label-heading {
+.InstallBox-label-heading {
   font-size: 1.4rem;
   margin-bottom: 1rem;
   font-weight: 500;
   font-weight: 500;
 }
 
-#install-label-subtitle {
+.InstallBox-label-subtitle {
   font-size: 0.9rem;
   color: var(--orange-light);
-}
-
-.unselectable {
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-user-drag: none;
-  -moz-user-select: none;
 }
 
 #usecases-section {
@@ -226,7 +223,7 @@ header {
   padding: 0;
 }
 
-#code-box {
+.InstallBox-code-box {
   background-color: rgb(37, 36, 32);
   padding: 4px 16px;
   position: relative;
@@ -243,21 +240,7 @@ header {
   font-family: var(--monospace-font);
 }
 
-#curl:hover {
-  cursor: text;
-  pointer-events: auto;
-}
-
-#curl::before {
-  display: block;
-  content: "$" / "";
-  color: var(--orange);
-  pointer-events: none;
-  width: 1ch;
-  height: 1ch;
-}
-
-#curl {
+.InstallBox-curl {
   user-select: all;
   -webkit-user-select: text;
   pointer-events: auto;
@@ -268,11 +251,20 @@ header {
   gap: 2ch;
 }
 
-#view-source-link {
+.InstallBox-curl::before {
+  display: block;
+  content: "$" / "";
+  color: var(--orange);
+  pointer-events: none;
+  width: 1ch;
+  height: 1ch;
+}
+
+.InstallBox-view-source-link {
   color: var(--orange-light);
 }
 
-#code-box-copy {
+.InstallBox-copy {
   height: 100%;
   display: flex;
   align-items: center;
@@ -287,12 +279,12 @@ header {
   font-family: inherit;
 }
 
-#code-box-copy:hover {
+.InstallBox-copy:hover {
   color: var(--blue);
   transform: scale(1.06);
 }
 
-#code-box-copy:active {
+.InstallBox-copy:active {
   transform: scale(1.12);
 }
 
@@ -305,36 +297,26 @@ header {
   align-items: center;
   width: min-content;
   white-space: nowrap;
-  list-style-type: none;
   padding: 0;
 }
 
 .Tab {
   width: min-content;
+  border: none;
+  background-color: transparent;
   font-family: var(--monospace-font);
   text-align: center;
-  padding-bottom: 8px;
   border-bottom: 1px solid #ccc;
   cursor: pointer;
-  padding: 0;
-}
-
-.TabButton {
-  background: transparent;
-  border: none;
-  padding: 16px 16px;
+  padding: 16px;
   color: inherit;
   font-size: inherit;
-  font-family: inherit;
-  cursor: inherit;
 }
 
-.TabButton[data-tab="react"]:hover,
-.Graphs--active-react .TabButton[data-tab="react"],
-.TabButton[data-tab="sqlite"]:hover,
-.Graphs--active-sqlite .TabButton[data-tab="sqlite"],
-.TabButton[data-tab="ffi"]:hover,
-.Graphs--active-ffi .TabButton[data-tab="ffi"] {
+.Tab:hover,
+.Graphs--active-react .Tab[data-tab="react"],
+.Graphs--active-sqlite .Tab[data-tab="sqlite"],
+.Graphs--active-ffi .Tab[data-tab="ffi"] {
   border-bottom-color: aquamarine;
   background-color: rgba(130, 216, 247, 0.1);
   border-right-color: aquamarine;
@@ -564,14 +546,10 @@ header {
   background-color: var(--background);
   border-radius: 8px;
   padding: 3px 8px;
-  color: white;
+  color: black;
   text-decoration: none !important;
   display: inline-block;
   font-family: var(--monospace-font) !important;
-}
-
-.Tag:visited {
-  color: white;
 }
 
 .mono {
@@ -597,7 +575,6 @@ header {
 
 .Tag--WebAPI {
   --background: #29b6f6;
-  color: white;
   box-shadow: inset -1px -1px 3px rgb(231, 187, 73);
 }
 
@@ -607,6 +584,7 @@ header {
 
 .Tag--TypeScript {
   --background: rgb(69, 119, 192);
+  color: white;
 }
 
 .Tag--React {
@@ -625,7 +603,8 @@ header {
 }
 
 .Tag--Bun {
-  --background: #ff17ff;
+  --background: #e600e5;
+  color: white;
 }
 
 .mono {
@@ -701,7 +680,7 @@ header {
     gap: 1rem;
   }
 
-  #install {
+  .InstallBox {
     margin-top: 0;
   }
 
@@ -720,11 +699,11 @@ header {
 }
 
 @media (max-width: 599px) {
-  #code-box-copy {
+  .InstallBox-copy {
     display: none;
   }
 
-  #code-box {
+  .InstallBox-code-box {
     font-size: 0.8rem;
   }
 }
@@ -801,7 +780,7 @@ header {
 }
 
 @media (max-width: 929px) {
-  #code-box {
+  .InstallBox-code-box {
     width: fit-content;
   }
 
@@ -864,11 +843,6 @@ header {
   .Tab {
     width: 100%;
     border-bottom-color: #333;
-  }
-
-  .TabButton {
-    padding-top: 16px;
-    padding-bottom: 16px;
   }
 
   #pitch-content {

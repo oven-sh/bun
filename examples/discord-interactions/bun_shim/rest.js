@@ -40,7 +40,7 @@ export class FetchRequestHandler extends RequestHandler {
       body = Buffer.concat(form.finish());
     }
 
-    const res = await fetch('https://discord.com' + this.baseURL + url, { body, method, headers });
+    const res = await fetch(`https://discord.com${this.baseURL}${url}`, { body, method, headers });
 
     if (res.ok) return res.json();
     throw new Error(`${method} got ${res.status} - ${await res.text()}`);

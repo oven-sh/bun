@@ -1034,8 +1034,11 @@ const PackageInstall = struct {
         this.file_count = FileCopier.copy(
             subdir,
             &walker_,
-        ) catch |err| return Result{
-            .fail = .{ .err = err, .step = .copying_files },
+        ) catch |err| switch (err) {
+            error.NotSameFileSystem => return err,
+            else => return Result{
+                .fail = .{ .err = err, .step = .copying_files },
+            },
         };
 
         return Result{
@@ -1098,7 +1101,7 @@ const PackageInstall = struct {
                     return result;
                 } else |err| {
                     switch (err) {
-                        error.NotSameFileSystem, error.NotSupported => {
+                        error.NotSameFileSystem => {
                             supported_method = .copyfile;
                         },
                         error.FileNotFound => return Result{

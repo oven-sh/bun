@@ -9,6 +9,6 @@
     "hono": "^1.6.4"
   },
   "scripts": {
-    "start": "cd src && bun run index.ts"
+    "start": "bun run src/index.ts"
   }
 }

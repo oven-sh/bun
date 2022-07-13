@@ -11,14 +11,17 @@ const {
 } = Deno.dlopen(path, {
   ffi_noop: { parameters: [], result: "void" },
   ffi_string: { parameters: [], result: "pointer" },
-  ffi_hash: { parameters: ["pointer", "usize"], result: "u32" },
+  ffi_hash: { parameters: ["usize", "usize"], result: "u32" },
 });
 
 const bytes = new Uint8Array(64);
+// Deno represents pointers as bigint.
+// Coerce to number for a better comparison.
+const bytesPtr = Number(Deno.UnsafePointer.of(bytes));
 
 group("deno:ffi", () => {
   bench("noop", () => ffi_noop());
-  bench("hash", () => ffi_hash(bytes, bytes.byteLength));
+  bench("hash", () => ffi_hash(bytesPtr, bytes.byteLength));
   bench("c string", () =>
     new Deno.UnsafePointerView(ffi_string()).getCString()
   );

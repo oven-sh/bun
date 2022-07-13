@@ -1261,11 +1261,11 @@ JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg
     ZigString str
         = *arg0;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
             WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
     } else {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
             WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
     }

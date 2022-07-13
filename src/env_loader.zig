@@ -363,7 +363,7 @@ pub const Lexer = struct {
                             },
                             ' ' => {
                                 // Set key end to the last non space character
-                                key_end = this.current - 1;
+                                key_end = this.current;
                                 this.step();
                                 while (this.codepoint() == ' ') this.step();
                                 continue;

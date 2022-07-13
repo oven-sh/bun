@@ -11,7 +11,7 @@ const {
 } = dlopen("./src/ffi_napi_bench.node", {
   ffi_noop: { args: [], returns: "void" },
   ffi_string: { args: [], returns: "ptr" },
-  ffi_hash: { args: ["ptr", "usize"], returns: "u32" },
+  ffi_hash: { args: ["ptr", "u32"], returns: "u32" },
 });
 
 const bytes = new Uint8Array(64);

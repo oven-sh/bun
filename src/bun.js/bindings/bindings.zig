@@ -2247,7 +2247,7 @@ pub const JSValue = enum(JSValueReprInt) {
         return JSC.C.JSObjectCallAsFunctionReturnValue(
             globalThis.ref(),
             this.asObjectRef(),
-            thisValue.asObjectRef(),
+            @ptrCast(JSC.C.JSValueRef, thisValue.asNullableVoid()),
             args.len,
             @ptrCast([*]const JSC.C.JSValueRef, args.ptr),
         );
@@ -2905,13 +2905,17 @@ pub const JSValue = enum(JSValueReprInt) {
         std.mem.doNotOptimizeAway(@ptrCast(C_API.JSObjectRef, this.asVoid()));
     }
 
+    pub inline fn asNullableVoid(this: JSValue) ?*anyopaque {
+        return @intToPtr(?*anyopaque, @bitCast(usize, @enumToInt(this)));
+    }
+
     pub inline fn asVoid(this: JSValue) *anyopaque {
         if (comptime bun.Environment.allow_assert) {
             if (@enumToInt(this) == 0) {
                 @panic("JSValue is null");
             }
         }
-        return @intToPtr(*anyopaque, @bitCast(usize, @enumToInt(this)));
+        return this.asNullableVoid().?;
     }
 
     pub const Extern = [_][]const u8{ "createUninitializedUint8Array", "fromInt64NoTruncate", "fromUInt64NoTruncate", "toUInt64NoTruncate", "asPromise", "toInt64", "_then", "put", "makeWithNameAndPrototype", "parseJSON", "symbolKeyFor", "symbolFor", "getSymbolDescription", "createInternalPromise", "asInternalPromise", "asArrayBuffer_", "fromEntries", "createTypeError", "createRangeError", "createObject2", "getIfPropertyExistsImpl", "jsType", "jsonStringify", "kind_", "isTerminationException", "isSameValue", "getLengthOfArray", "toZigString", "createStringArray", "createEmptyObject", "putRecord", "asPromise", "isClass", "getNameProperty", "getClassName", "getErrorsProperty", "toInt32", "toBoolean", "isInt32", "isIterable", "forEach", "isAggregateError", "toZigException", "isException", "toWTFString", "hasProperty", "getPropertyNames", "getDirect", "putDirect", "getIfExists", "asString", "asObject", "asNumber", "isError", "jsNull", "jsUndefined", "jsTDZValue", "jsBoolean", "jsDoubleNumber", "jsNumberFromDouble", "jsNumberFromChar", "jsNumberFromU16", "jsNumberFromInt64", "isBoolean", "isAnyInt", "isUInt32AsAnyInt", "isInt32AsAnyInt", "isNumber", "isString", "isBigInt", "isHeapBigInt", "isBigInt32", "isSymbol", "isPrimitive", "isGetterSetter", "isCustomGetterSetter", "isObject", "isCell", "asCell", "toString", "toStringOrNull", "toPropertyKey", "toPropertyKeyValue", "toObject", "toString", "getPrototype", "getPropertyByPropertyName", "eqlValue", "eqlCell", "isCallable" };

@@ -23,7 +23,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between -127 and 127
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -42,7 +42,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between -127 and 127
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -62,7 +62,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 255
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -80,7 +80,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 255
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -99,7 +99,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between -32768 and 32767
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -118,7 +118,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between -32768 and 32767
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -138,7 +138,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 65535, inclusive.
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -157,7 +157,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 65535, inclusive.
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c

@@ -15,10 +15,11 @@ const {
 });
 
 const bytes = new Uint8Array(64);
+const bytesPtr = ptr(bytes);
 
 group("bun:ffi", () => {
   bench("noop", () => ffi_noop());
-  bench("hash", () => ffi_hash(ptr(bytes), bytes.byteLength));
+  bench("hash", () => ffi_hash(bytesPtr, bytes.byteLength));
 
   bench("c string", () => new CString(ffi_string()));
 });

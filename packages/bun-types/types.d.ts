@@ -8954,7 +8954,7 @@ declare class Response implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json(): Promise<unknown>;
 
   /**
    * Read the data from the Response as a Blob.

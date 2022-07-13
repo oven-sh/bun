@@ -273,6 +273,7 @@ pub const Lexer = struct {
                 'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {
                     this.start = this.current;
                     this.step();
+                    var key_end: usize = 0;
                     while (true) {
                         switch (this.codepoint()) {
 
@@ -292,6 +293,9 @@ pub const Lexer = struct {
                             'a'...'z', 'A'...'Z', '0'...'9', '_', '-', '.' => {},
                             '=' => {
                                 this.end = this.current;
+                                if (key_end > 0) {
+                                    this.end = key_end;
+                                }
                                 const key = this.source.contents[this.start..this.end];
                                 if (key.len == 0) return null;
                                 this.step();
@@ -358,6 +362,8 @@ pub const Lexer = struct {
                                 }
                             },
                             ' ' => {
+                                // Set key end to the last non space character
+                                key_end = this.current;
                                 this.step();
                                 while (this.codepoint() == ' ') this.step();
                                 continue;
@@ -1056,6 +1062,8 @@ test "DotEnv Loader - basic" {
         \\
         \\LEADING_SPACE_IN_UNQUOTED_VALUE_IS_TRIMMED=        yes
         \\
+        \\SPACE_BEFORE_EQUALS_SIGN    =yes
+        \\
         \\LINES_WITHOUT_EQUAL_ARE_IGNORED
         \\
         \\NO_VALUE_IS_EMPTY_STRING=
@@ -1099,6 +1107,7 @@ test "DotEnv Loader - basic" {
     try expect(map.get("NO_VALUE_IS_EMPTY_STRING").?.len == 0);
     try expectString(map.get("IGNORING_DOESNT_BREAK_OTHER_LINES").?, "yes");
     try expectString(map.get("LEADING_SPACE_IN_UNQUOTED_VALUE_IS_TRIMMED").?, "yes");
+    try expectString(map.get("SPACE_BEFORE_EQUALS_SIGN").?, "yes");
     try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
     try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
 }

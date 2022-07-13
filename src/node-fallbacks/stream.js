@@ -1,1 +1,1 @@
-export * from "stream-browserify";
+export * from "readable-stream";

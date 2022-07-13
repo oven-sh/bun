@@ -1,5 +1,5 @@
 // Type definitions for bun 0.0
-// Project: https://github.com/Jarred-Sumner/bun
+// Project: https://github.com/oven-sh/bun
 // Definitions by: Jarred Sumner <https://github.com/Jarred-Sumner>
 // Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
 /// <reference no-default-lib="true" />
@@ -1002,7 +1002,7 @@ declare module "bun" {
    *
    * I don't know how to make this something Chrome or Safari can read.
    *
-   * If you have any ideas, please file an issue https://github.com/Jarred-Sumner/bun
+   * If you have any ideas, please file an issue https://github.com/oven-sh/bun
    */
   interface HeapSnapshot {
     /** "2" */
@@ -3311,7 +3311,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between -127 and 127
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -3330,7 +3330,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between -127 and 127
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -3350,7 +3350,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 255
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -3368,7 +3368,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 255
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -3387,7 +3387,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between -32768 and 32767
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -3406,7 +3406,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between -32768 and 32767
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -3426,7 +3426,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 65535, inclusive.
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -3445,7 +3445,7 @@ declare module "bun:ffi" {
      *
      * Must be a value between 0 and 65535, inclusive.
      *
-     * When passing to a FFI function (C ABI), type coercsion is not performed.
+     * When passing to a FFI function (C ABI), type coercion is not performed.
      *
      * In C:
      * ```c
@@ -6068,7 +6068,7 @@ declare module "fs" {
      * Use `fs.rm(path, { recursive: true, force: true })` instead.
      *
      * If `true`, perform a recursive directory removal. In
-     * recursive mode soperations are retried on failure.
+     * recursive mode operations are retried on failure.
      * @default false
      */
     recursive?: boolean | undefined;
@@ -8712,7 +8712,7 @@ interface Process {
   env: Record<string, string> & {
     NODE_ENV: string;
   };
-  
+
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean
   // execPath: string;
@@ -8728,19 +8728,19 @@ interface Process {
 
 declare var process: Process;
 
-declare module 'process' {
+declare module "process" {
   var process: Process;
   export = process;
 }
-declare module 'node:process' {
-    import process = require('process');
-    export = process;
+declare module "node:process" {
+  import process = require("process");
+  export = process;
 }
 
 interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 }
 
 type BlobPart = string | Blob | ArrayBufferView | ArrayBuffer;
@@ -8835,7 +8835,7 @@ declare class Blob implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   type: string;
   size: number;
@@ -8954,7 +8954,7 @@ declare class Response implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   /**
    * Read the data from the Response as a Blob.
@@ -9161,7 +9161,7 @@ declare class Request implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   /**
    * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a `Blob`.
@@ -10182,7 +10182,7 @@ declare var WritableStreamDefaultWriter: {
   new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
 };
 
-interface ReadWriteStream extends ReadableStream, WritableStream { }
+interface ReadWriteStream extends ReadableStream, WritableStream {}
 
 interface TransformerFlushCallback<O> {
   (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
@@ -10345,6 +10345,11 @@ interface ErrnoException extends Error {
   path?: string | undefined;
   syscall?: string | undefined;
 }
+
+declare function alert(message?: string): void;
+declare function confirm(message?: string): boolean;
+declare function prompt(message?: string, _default?: string): string | null;
+
 
 // ./path.d.ts
 

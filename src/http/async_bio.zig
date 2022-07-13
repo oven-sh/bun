@@ -263,7 +263,7 @@ pub const Bio = struct {
         const len = @intCast(u32, len_);
 
         if (this.socket_fd == 0) {
-            if (comptime Environment.allow_assert) std.debug.assert(false); // socket_fd should never be 0
+            if (comptime Environment.allow_assert) std.debug.assert(this_bio.shutdown > 0); // socket_fd should never be 0
             return -1;
         }
 

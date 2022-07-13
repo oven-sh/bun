@@ -4064,19 +4064,21 @@ pub const PackageManager = struct {
             const name = this.names[package_id].slice(buf);
             const resolution = this.resolutions[package_id];
 
-            var callbacks = this.manager.task_queue.fetchRemove(Task.Id.forNPMPackage(
+            if (this.manager.task_queue.fetchRemove(Task.Id.forNPMPackage(
                 Task.Tag.extract,
                 name,
                 resolution.value.npm,
-            )).?.value;
-            defer callbacks.deinit(this.manager.allocator);
+            ))) |removed| {
+                var callbacks = removed.value;
+                defer callbacks.deinit(this.manager.allocator);
 
-            const prev_node_modules_folder = this.node_modules_folder;
-            defer this.node_modules_folder = prev_node_modules_folder;
-            for (callbacks.items) |cb| {
-                const node_modules_folder = cb.node_modules_folder;
-                this.node_modules_folder = std.fs.Dir{ .fd = @intCast(std.os.fd_t, node_modules_folder) };
-                this.installPackageWithNameAndResolution(package_id, log_level, name, resolution);
+                const prev_node_modules_folder = this.node_modules_folder;
+                defer this.node_modules_folder = prev_node_modules_folder;
+                for (callbacks.items) |cb| {
+                    const node_modules_folder = cb.node_modules_folder;
+                    this.node_modules_folder = std.fs.Dir{ .fd = @intCast(std.os.fd_t, node_modules_folder) };
+                    this.installPackageWithNameAndResolution(package_id, log_level, name, resolution);
+                }
             }
         }
 

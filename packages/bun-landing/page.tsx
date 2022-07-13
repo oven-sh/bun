@@ -234,7 +234,7 @@ export default ({ inlineCSS }) => (
       <meta name="og:locale" content="en_US" />
       <meta name="twitter:site" content="@jarredsumner" />
       <meta name="twitter:card" content="summary_large_image" />
-      <meta property="og:image" content="/share.png" />
+      <meta property="og:image" content="https://bun.sh/share.png" />
       <meta
         name="description"
         content={`Bundle, transpile, install and run JavaScript & TypeScript

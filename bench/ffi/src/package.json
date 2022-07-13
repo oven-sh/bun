@@ -12,6 +12,6 @@
     "build:ffi": "cargo build --release",
     "build": "bun run build:napi && bun run build:ffi",
     "cleanup": "rm -f index.js index.d.ts && mv napi.*.node ffi_napi_bench.node",
-    "build:napi": "napi build --release --platform --no-dts-header --features napi && bun run cleanup"
+    "build:napi": "napi build --release --platform --no-dts-header --features enable-napi && bun run cleanup"
   }
 }

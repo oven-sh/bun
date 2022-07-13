@@ -1,5 +1,5 @@
-#[cfg(feature="napi")] extern crate napi_build;
+#[cfg(feature="enable-napi")] extern crate napi_build;
 
 fn main() {
-  #[cfg(feature="napi")] napi_build::setup();
+  #[cfg(feature="enable-napi")] napi_build::setup();
 }

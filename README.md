@@ -548,7 +548,7 @@ JS Transpiler == JavaScript Transpiler
 <br/>
 TS Transpiler == TypeScript Transpiler
 <br/>
-Package manager == `bun install`
+Package manager == <code>bun install</code>
 <br/>
 bun.js == bun’s JavaScriptCore integration that executes JavaScript. Similar to how Node.js & Deno embed V8.
 </small>
@@ -1187,7 +1187,7 @@ For now, the easiest thing is to run `bun install -y`. That prints a Yarn v1-sty
 
 #### What does the lockfile store?
 
-Packages, metadata for those packages, the hoisted install order, dependencies for each package, what packages those dependencies resolved to, an integrity hash (if available), what each package was resolved to and which version (or equivalent)
+Packages, metadata for those packages, the hoisted install order, dependencies for each package, what packages those dependencies resolved to, an integrity hash (if available), what each package was resolved to and which version (or equivalent).
 
 #### Why is it fast?
 
@@ -3143,7 +3143,7 @@ export const loader = () => import('./loader');
 
 ## Credits
 
-- While written in Zig instead of Go, bun’s JS transpiler, CSS lexer, and node module resolver source code is based on @evanw’s esbuild project. @evanw did a fantastic job with esbuild.
+- While written in Zig instead of Go, bun’s JS transpiler, CSS lexer, and node module resolver source code is based on [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project. Evan did a fantastic job with esbuild.
 - The idea for the name "bun" came from [@kipply](https://github.com/kipply)
 
 ## License

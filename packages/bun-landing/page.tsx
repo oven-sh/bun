@@ -581,12 +581,12 @@ export default ({ inlineCSS }) => (
             <li>
               <NodeJS>node_modules</NodeJS> bun implements Node.js' module
               resolution algorithm, so you can use npm packages in bun.js. ESM
-              and CommonJS are supported, but Bun internally uses ESM.
+              and CommonJS are supported, but Bun internally uses ESM
             </li>
             <li>
               In bun.js, every file is transpiled.{" "}
               <TypeScript>TypeScript</TypeScript> &amp; <React>JSX</React> just
-              work.
+              work
             </li>
             <li>
               bun supports <code className="">"paths"</code>,{" "}
@@ -599,7 +599,7 @@ export default ({ inlineCSS }) => (
             </li>
             <li>
               use the fastest system calls available with <Bun>Bun.write</Bun>{" "}
-              to write, copy, pipe, send and clone files.
+              to write, copy, pipe, send and clone files
             </li>
             <li>
               bun.js automatically loads environment variables from{" "}
@@ -621,7 +621,7 @@ export default ({ inlineCSS }) => (
               >
                 Node-API (N-API)
               </a>
-              . Many Node.js native modules just work.
+              . Many Node.js native modules just work
             </li>
             <li>
               <Bun>bun:ffi</Bun> call native code from JavaScript with bun's
@@ -630,7 +630,7 @@ export default ({ inlineCSS }) => (
             <li>
               <NodeJS>node:fs</NodeJS> <NodeJS>node:path</NodeJS> bun.js
               natively supports a growing list of Node.js core modules along
-              with globals like Buffer and process.
+              with globals like Buffer and process
             </li>
           </ul>
 
@@ -671,7 +671,7 @@ export default ({ inlineCSS }) => (
             makes it much simpler to write fast software.{" "}
             <a href="https://github.com/sponsors/ziglang">
               Sponsor the Zig Software Foundation
-            </a>
+            </a>.
           </p>
           <h2>Getting started</h2>
           <p>
@@ -717,7 +717,7 @@ export default {
             <a target="_blank" href="http://localhost:3000">
               http://localhost:3000
             </a>{" "}
-            in your browser
+            in your browser.
             <br />
             <br />
             See{" "}
@@ -726,7 +726,7 @@ export default {
             </a>{" "}
             and check out <a href={DOCS}>the docs</a>. If you have any questions
             or want help, join{" "}
-            <a href="https://bun.sh/discord">Bun's Discord</a>
+            <a href="https://bun.sh/discord">Bun's Discord</a>.
           </p>
 
           <h2>Bun CLI</h2>
@@ -770,13 +770,13 @@ export default {
             <Command>bun wiptest</Command>
             <p>
               A Jest-like test runner for JavaScript &amp; TypeScript projects
-              built-in to bun
+              built-in to bun.
             </p>
             <Label>
               <PerformanceClaim href="https://twitter.com/jarredsumner/status/1542824445810642946">
                 You've never seen a JavaScript test runner this fast
               </PerformanceClaim>{" "}
-              (or incomplete)
+              (or incomplete).
             </Label>
           </Group>
 
@@ -786,7 +786,7 @@ export default {
           </p>
           <h2>How do I see the source code?</h2>
           <p>
-            Bun is on <a href="https://github.com/oven-sh/bun">GitHub</a>
+            Bun is on <a href="https://github.com/oven-sh/bun">GitHub</a>.
           </p>
         </div>
       </section>

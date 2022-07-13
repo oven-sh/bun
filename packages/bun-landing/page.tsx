@@ -540,30 +540,30 @@ export default ({ inlineCSS }) => (
               <WebAPI href="https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream">
                 ReadableStream
               </WebAPI>{" "}
-              are built-in.
+              are built-in
             </li>
             <li>
               <NodeJS>node_modules</NodeJS> bun implements Node.js' module
               resolution algorithm, so you can use npm packages in bun.js. ESM
-              and CommonJS are supported, but Bun internally uses ESM.
+              and CommonJS are supported, but Bun internally uses ESM
             </li>
             <li>
               In bun.js, every file is transpiled.{" "}
               <TypeScript>TypeScript</TypeScript> &amp; <React>JSX</React> just
-              work.
+              work
             </li>
             <li>
               bun supports <code className="">"paths"</code>,{" "}
               <code>"jsxImportSource"</code>
-              and more from <TypeScript>tsconfig.json</TypeScript> files.
+              and more from <TypeScript>tsconfig.json</TypeScript> files
             </li>
             <li>
               <Bun>Bun.Transpiler</Bun> bun's JSX &amp; TypeScript transpiler is
-              available as an API in Bun.js.
+              available as an API in Bun.js
             </li>
             <li>
               use the fastest system calls available with <Bun>Bun.write</Bun>{" "}
-              to write, copy, pipe, send and clone files.
+              to write, copy, pipe, send and clone files
             </li>
             <li>
               bun.js automatically loads environment variables from{" "}
@@ -584,16 +584,16 @@ export default ({ inlineCSS }) => (
               >
                 Node-API (N-API)
               </a>
-              . Many Node.js native modules just work.
+              . Many Node.js native modules just work
             </li>
             <li>
               <Bun>bun:ffi</Bun> call native code from JavaScript with bun's
-              low-overhead foreign function interface.
+              low-overhead foreign function interface
             </li>
             <li>
               <NodeJS>node:fs</NodeJS> <NodeJS>node:path</NodeJS> bun.js
               natively supports a growing list of Node.js core modules along
-              with globals like Buffer and process.
+              with globals like Buffer and process
             </li>
           </ul>
 
@@ -634,7 +634,7 @@ export default ({ inlineCSS }) => (
             makes it much simpler to write fast software.{" "}
             <a href="https://github.com/sponsors/ziglang">
               Sponsor the Zig Software Foundation
-            </a>
+            </a>.
           </p>
           <h2>Getting started</h2>
           <p>

@@ -420,7 +420,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
 // This is more efficient than using WTF::String::FromUTF8
 // it doesn't copy the string
 // but it's only safe to use if we are not setting a property
-// because we can't gurantee the lifetime of it
+// because we can't guarantee the lifetime of it
 #define PROPERTY_NAME_FROM_UTF8(identifierName) \
     size_t utf8Len = strlen(utf8name);          \
     JSC::PropertyName identifierName = LIKELY(charactersAreAllASCII(reinterpret_cast<const LChar*>(utf8name), utf8Len)) ? JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String(WTF::StringImpl::createWithoutCopying(utf8name, utf8Len)))) : JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8name)));

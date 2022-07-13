@@ -1,0 +1,8 @@
+# Dependencies
+node_modules/
+
+# dotenv
+.env
+
+# misc
+.DS_Store

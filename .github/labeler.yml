@@ -2,6 +2,10 @@ chore:
   - any: ['*']
     all: ['!packages/*', '!packages/**/*', '!src/*', '!src/**/*', '!types/*', '!types/**/*', '!test/*', '!test/**/*', '!bench/*', '!bench/**/*', '!examples/*', '!examples/**/*']
 
+'packages:bun':
+  - src/*
+  - src/**/*
+
 'packages:bun-darwin-aarch64':
   - packages/bun-darwin-aarch64/*
   - packages/bun-darwin-aarch64/**/*

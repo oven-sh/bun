@@ -3,7 +3,7 @@
   <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
 </p>
 
-bun is new:
+bun is a new:
 
 - JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more built-in. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
 - JavaScript/TypeScript/JSX transpiler
@@ -11,7 +11,7 @@ bun is new:
 - Task runner for package.json scripts
 - npm-compatible package manager
 
-All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need a bun.
+All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
 
 **bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#not-implemented-yet).
 
@@ -154,7 +154,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 ## Using bun.js - a new JavaScript runtime environment
 
-bun.js focuses on performance, developer experience, and compatibility with the JavaScript ecosystem.
+bun.js focuses on performance, developer experience and compatibility with the JavaScript ecosystem.
 
 ```ts
 // http.ts
@@ -339,7 +339,7 @@ sudo apt install --install-recommends linux-generic-hwe-20.04
 
 ## Using bun as a task runner
 
-Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for the bun.
+Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for bun.
 
 To use bun as a task runner, run `bun run` instead of `npm run`.
 
@@ -379,7 +379,7 @@ If you don't have a Discord bot/application yet, you can create one [here (https
 
 Invite bot to your server by visiting `https://discord.com/api/oauth2/authorize?client_id=<your_application_id>&scope=bot%20applications.commands`
 
-Afterward, you will need to get your bot's token, public key, and application id from the application page and put them into `.env.example` file
+Afterwards you will need to get your bot's token, public key, and application id from the application page and put them into `.env.example` file
 
 Then you can run the HTTP server that will handle your interactions:
 
@@ -721,7 +721,7 @@ This is useful for preventing flash of unstyled content.
 
 ### CSS Loader
 
-bun bundles `.css` files imported via `@import` into a single file. It doesn’t auto prefix or minifies CSS today. Multiple `.css` files imported in one JavaScript file will _not_ be bundled into one file. You’ll have to import those from a `.css` file.
+bun bundles `.css` files imported via `@import` into a single file. It doesn’t autoprefix or minify CSS today. Multiple `.css` files imported in one JavaScript file will _not_ be bundled into one file. You’ll have to import those from a `.css` file.
 
 This input:
 
@@ -1144,7 +1144,7 @@ bun always tries to use the fastest available installation method for the target
 
 bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce the chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk.
 
-When the `node_modules` folder exists, before installing, bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether it should install. It uses a custom JSON parser that stops parsing as soon as it finds `"name"` and `"version"`.
+When the `node_modules` folder exists, before installing, bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
 
 When a `bun.lockb` doesn’t exist or `package.json` has changed dependencies, tarballs are downloaded & extracted eagerly while resolving.
 
@@ -1191,7 +1191,7 @@ rm -rf ~/.bun/install/cache
 bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
 You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages.
 
-bun’s usage of `Cache-Control` ignores `Age`. This improves performance but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
+bun’s usage of `Cache-Control` ignores `Age`. This improves performance, but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
 
 ### `bun run`
 
@@ -2018,7 +2018,7 @@ Internally, this calls [`sqlite3_prepare_v3`](https://www.sqlite.org/c3ref/prepa
 
 #### Database.prototype.exec & Database.prototype.run
 
-`exec` is for one-off executing a query that does not need to return anything.
+`exec` is for one-off executing a query which does not need to return anything.
 `run` is an alias.
 
 ```ts

@@ -7,7 +7,7 @@ FROM alpine:latest as get
 
 # prepare environment
 WORKDIR /tmp
-RUN apk --update add unzip
+RUN apk --no-cache add unzip
 
 # get bun
 RUN wget https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip && \
@@ -22,7 +22,7 @@ RUN wget https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub && \
 ### IMAGE ###
 FROM alpine:latest
 
-# prepare bun
+# install bun
 COPY --from=get /tmp/bun-linux-x64/bun /usr/local/bin
 
 # prepare glibc
@@ -30,7 +30,12 @@ ARG GLIBC_RELEASE
 COPY --from=get /tmp/sgerrand.rsa.pub /etc/apk/keys
 COPY --from=get /tmp/glibc-${GLIBC_RELEASE}.apk /tmp
 
-# install, clean up, and sanity check
+# install glibc
 RUN apk --no-cache add /tmp/glibc-${GLIBC_RELEASE}.apk && \
-    rm -rf /tmp/* && \
-    bun
+
+# cleanup
+    rm /etc/apk/keys/sgerrand.rsa.pub && \
+    rm /tmp/glibc-${GLIBC_RELEASE}.apk && \
+
+# smoke test
+    bun --version

@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import * as shiki from "shiki";
 
-const DOCS = "https://github.com/Jarred-Sumner/bun#Reference";
+const DOCS = "https://github.com/oven-sh/bun#Reference";
 
 // because we don't want to wait for it to reload everytime this page reloads
 globalThis._highlighter ||= await shiki.getHighlighter({
@@ -64,14 +64,17 @@ const Label = ({ children, replace }) => {
 };
 
 const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
-  <div
+  <li
     className={`BarGraphItem BarGraphItem--${type}`}
     style={{ "--amount": amount, "--max": max }}
   >
+    <div className="visually-hidden">{`${type}: ${fmt.format(
+      amount
+    )} ${label}`}</div>
     <div
       style={{ "--amount": amount, "--max": max }}
-      title={`${amount} ${label}`}
       className="BarGraphBar"
+      aria-hidden
     >
       <div
         style={{ "--amount": amount, "--max": max }}
@@ -80,11 +83,16 @@ const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
         {fmt.format(amount)}
       </div>
     </div>
-  </div>
+  </li>
 );
 
 const BarGraphLabel = ({ name, version, source }) => (
-  <a href={source} target="_blank" className="BarGraphKeyItem">
+  <a
+    href={source}
+    target="_blank"
+    className="BarGraphKeyItem"
+    aria-label={`${name} benchmark source`}
+  >
     <div className="BarGraphKeyItem-label">{name}</div>
     <div className="BarGraphKeyItem-value">{version}</div>
     <div className="BarGraphKeyItem-viewSource">View source</div>
@@ -104,6 +112,7 @@ const Zig = () => (
     className="Zig"
     viewBox="0 0 400 140"
   >
+    <title>Zig</title>
     <g fill="#F7A41D">
       <g>
         <polygon points="46,22 28,44 19,30" />
@@ -175,25 +184,23 @@ const InstallBox = ({ desktop = false }) => (
     className={
       "InstallBox " + (desktop ? "InstallBox--desktop" : "InstallBox--mobile")
     }
-    id="install"
   >
-    <div id="install-label">
-      <div className="unselectable" id="install-label-heading">
-        Install Bun CLI v0.1.0 (beta)
+    <div className="InstallBox-label">
+      <div className="InstallBox-label-heading">
+        Install Bun CLI {process.version} (beta)
       </div>
-      <div className="unselectable" id="install-label-subtitle">
+      <div className="InstallBox-label-subtitle">
         macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux
       </div>
     </div>
-    <div id="code-box">
-      <div id="curl">curl https://bun.sh/install | bash</div>
-      <div className="unselectable" id="code-box-copy">
+    <div className="InstallBox-code-box">
+      <div className="InstallBox-curl">curl https://bun.sh/install | bash</div>
+      <button className="InstallBox-copy" aria-label="Copy installation script">
         copy
-      </div>
+      </button>
     </div>
     <a
-      className="unselectable"
-      id="view-source-link"
+      className="InstallBox-view-source-link"
       target="_blank"
       href="https://bun.sh/install"
     >
@@ -209,7 +216,7 @@ const Group = ({ children, ...props }) => (
 );
 
 export default ({ inlineCSS }) => (
-  <html>
+  <html lang="en">
     <head>
       <meta charSet="UTF-8" />
 
@@ -224,6 +231,37 @@ export default ({ inlineCSS }) => (
         projects – all in Bun. Bun is a new JavaScript runtime with
         a native bundler, transpiler, task runner and npm client built-in.`}
       />
+      <meta name="og:locale" content="en_US" />
+      <meta name="twitter:site" content="@jarredsumner" />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta property="og:image" content="https://bun.sh/share.png" />
+      <meta
+        name="description"
+        content={`Bundle, transpile, install and run JavaScript & TypeScript
+        projects – all in Bun. Bun is a new JavaScript runtime with
+        a native bundler, transpiler, task runner and npm client built-in.`}
+      />
+      <meta name="theme-color" content="#fbf0df" />
+      <link rel="manifest" href="manifest.json" />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes="256x256"
+        href="/logo-square.png"
+      />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes="32x32"
+        href="/logo-square@32px.png"
+      />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes="16x16"
+        href="/logo-square@16px.png"
+      />
+
       <title>Bun is a fast all-in-one JavaScript runtime</title>
 
       {inlineCSS ? (
@@ -240,35 +278,35 @@ export default ({ inlineCSS }) => (
     <body>
       <div id="header-wrap">
         <header>
-          <a href="/" id="logo-link">
-            <img height="61px" src={`/logo@2x.png`} alt="Bun" id="logo" />
+          <a href="/" id="logo-link" aria-label="home">
+            <img height="61px" src="/logo.svg" alt="Bun logo" id="logo" />
             <img
               height="31.65px"
-              src={`/Bun@2x.png`}
+              src="/Bun.png"
+              srcSet="/Bun.png 1x, /Bun@2x.png 2x"
               alt="Bun"
               id="logo-text"
             />
           </a>
 
           <nav className="Navigation">
-            <li>
-              <a className="NavText" href={DOCS}>
-                Docs
-              </a>
-            </li>
-            <li>
-              <a className="NavText" href="https://bun.sh/discord">
-                Discord
-              </a>
-            </li>
-            <li>
-              <a
-                className="NavText"
-                href="https://github.com/Jarred-Sumner/bun"
-              >
-                GitHub
-              </a>
-            </li>
+            <ul>
+              <li>
+                <a className="NavText" href={DOCS}>
+                  Docs
+                </a>
+              </li>
+              <li>
+                <a className="NavText" href="https://bun.sh/discord">
+                  Discord
+                </a>
+              </li>
+              <li>
+                <a className="NavText" href="https://github.com/oven-sh/bun">
+                  GitHub
+                </a>
+              </li>
+            </ul>
           </nav>
         </header>
       </div>
@@ -288,73 +326,107 @@ export default ({ inlineCSS }) => (
           </div>
 
           <div className="Graphs Graphs--active-react">
-            <div className="Tabs">
-              <div data-tab="react" className="Tab">
+            <div className="Tabs" role="tablist">
+              <button
+                data-tab="react"
+                id="tab-react"
+                aria-controls="react-tab-content"
+                className="Tab"
+                role="tab"
+                aria-selected
+                tabIndex={0}
+              >
                 Bun.serve
-              </div>
-              <div data-tab="sqlite" className="Tab">
+              </button>
+              <button
+                data-tab="sqlite"
+                id="tab-sqlite"
+                aria-controls="sqlite-tab-content"
+                className="Tab"
+                role="tab"
+                tabIndex={-1}
+              >
                 bun:sqlite
-              </div>
-              <div data-tab="ffi" className="Tab">
+              </button>
+              <button
+                data-tab="ffi"
+                id="tab-ffi"
+                aria-controls="ffi-tab-content"
+                className="Tab"
+                role="tab"
+                tabIndex={-1}
+              >
                 bun:ffi
-              </div>
+              </button>
             </div>
             <div id="active-tab" className="ActiveTab">
-              <div className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark">
-                <div className="BarGraph-heading">
+              <div
+                role="tabpanel"
+                tabIndex={0}
+                id="react-tab-content"
+                aria-labelledby="tab-react"
+                className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark"
+              >
+                <h2 className="BarGraph-heading">
                   Server-side rendering React
-                </div>
-                <div title="oha -z 5s" className="BarGraph-subheading">
+                </h2>
+                <p className="BarGraph-subheading">
                   HTTP requests per second (Linux AMD64)
-                </div>
+                </p>
 
-                <div style={{ "--count": 3 }} className="BarGraphList">
+                <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
                     amount={48936}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 12289) * 1.25}
+                    max={Math.max(48936, 16288, 15786) * 1.25}
                   />
                   <BarGraphItem
                     type="node"
                     amount={16288}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 12289) * 1.25}
+                    max={Math.max(48936, 16288, 15786) * 1.25}
                   />
                   <BarGraphItem
                     type="deno"
-                    amount={12289}
+                    amount={15786}
                     label="requests per second"
-                    max={Math.max(48936, 16288, 12289) * 1.25}
+                    max={Math.max(48936, 16288, 15786) * 1.25}
                   />
-                </div>
+                </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
                     name="bun"
                     version="v0.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.jsx"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.jsx"
                   />
                   <BarGraphLabel
                     name="node"
                     version="v18.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.node.jsx"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.node.jsx"
                   />
                   <BarGraphLabel
                     name="deno"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.deno.jsx"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.deno.jsx"
                   />
                 </div>
               </div>
 
-              <div className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark">
-                <div className="BarGraph-heading">Load a huge table</div>
-                <div className="BarGraph-subheading">
+              <div
+                role="tabpanel"
+                tabIndex={-1}
+                id="sqlite-tab-content"
+                aria-labelledby="tab-sqlite"
+                className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark"
+              >
+                <h2 className="BarGraph-heading">Load a huge table</h2>
+                <p className="BarGraph-subheading">
                   Average queries per second
-                </div>
+                </p>
 
-                <div style={{ "--count": 3 }} className="BarGraphList">
+                <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
                     amount={(1000 / 16.6).toFixed(2)}
@@ -379,73 +451,75 @@ export default ({ inlineCSS }) => (
                       Math.max(1000 / 16.6, 1000 / 42.96, 1000 / 104.69) * 1.25
                     )}
                   />
-                </div>
+                </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
                     name="bun:sqlite"
                     version="v0.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.js"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/bun.js"
                   />
                   <BarGraphLabel
                     name="better-sqlite3"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.better-sqlite3.mjs"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/node.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (x/sqlite)"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.deno.js"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/deno.js"
                   />
                 </div>
               </div>
 
-              <div className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark">
-                <div className="BarGraph-heading">How fast can it get?</div>
-                <div className="BarGraph-subheading">Operations per second</div>
+              <div
+                role="tabpanel"
+                tabIndex={-1}
+                id="ffi-tab-content"
+                aria-labelledby="tab-ffi"
+                className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark"
+              >
+                <h2 className="BarGraph-heading">
+                  How fast can it get? (Hashing)
+                </h2>
+                <p className="BarGraph-subheading">Operations per second</p>
 
-                <div style={{ "--count": 3 }} className="BarGraphList">
+                <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
-                    amount={(115473441).toFixed(2)}
+                    amount={(13080444).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(
-                      Math.max(115473441, 43478261, 2891761) * 1.25
-                    )}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
                   />
                   <BarGraphItem
                     type="Node-API"
-                    amount={(43478261).toFixed(2)}
+                    amount={(6870963).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(
-                      Math.max(115473441, 43478261, 2891761) * 1.25
-                    )}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
                   />
                   <BarGraphItem
                     type="deno"
-                    amount={(2891761).toFixed(2)}
-                    label="oeprations per iteration"
-                    max={Math.ceil(
-                      Math.max(115473441, 43478261, 2891761) * 1.25
-                    )}
+                    amount={(5239717).toFixed(2)}
+                    label="operations per iteration"
+                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
                   />
-                </div>
+                </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
                     name="bun:ffi"
-                    version="v0.1.0"
-                    source="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.bun.js"
+                    version="v0.1.3"
+                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/bun.js"
                   />
                   <BarGraphLabel
                     name="node (napi)"
-                    source="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.napi.mjs"
+                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/node.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (ffi)"
                     version="v1.23.2"
-                    source="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.deno.js"
+                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/deno.js"
                   />
                 </div>
               </div>
@@ -456,7 +530,7 @@ export default ({ inlineCSS }) => (
       </div>
       <section id="explain-section">
         <div id="explain">
-          <h1>Tell me more about Bun</h1>
+          <h2>Tell me more about Bun</h2>
           <p>
             Bun is a modern JavaScript runtime like Node or Deno. It was built
             from scratch to focus on three main things:
@@ -487,7 +561,7 @@ export default ({ inlineCSS }) => (
             future infrastructure, as well as developer productivity through
             better, simpler tooling.
           </p>
-          <h1>Batteries included</h1>
+          <h2>Batteries included</h2>
           <ul id="batteries">
             <li>
               Web APIs like{" "}
@@ -502,17 +576,17 @@ export default ({ inlineCSS }) => (
               <WebAPI href="https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream">
                 ReadableStream
               </WebAPI>{" "}
-              are builtin
+              are built-in
             </li>
             <li>
               <NodeJS>node_modules</NodeJS> bun implements Node.js' module
               resolution algorithm, so you can use npm packages in bun.js. ESM
-              and CommonJS are supported, but Bun internally uses ESM.
+              and CommonJS are supported, but Bun internally uses ESM
             </li>
             <li>
               In bun.js, every file is transpiled.{" "}
               <TypeScript>TypeScript</TypeScript> &amp; <React>JSX</React> just
-              work.
+              work
             </li>
             <li>
               bun supports <code className="">"paths"</code>,{" "}
@@ -525,28 +599,29 @@ export default ({ inlineCSS }) => (
             </li>
             <li>
               use the fastest system calls available with <Bun>Bun.write</Bun>{" "}
-              to write, copy, pipe, send and clone files.
+              to write, copy, pipe, send and clone files
             </li>
             <li>
               bun.js automatically loads environment variables from{" "}
               <Bun>.env</Bun> files. No more{" "}
-              <code class="mono">require("dotenv").load()</code>
+              <code class="mono">require("dotenv").config()</code>
             </li>
             <li>
-              bun ships with a fast SQLite3 client builtin <Bun>bun:sqlite</Bun>
+              bun ships with a fast SQLite3 client built-in{" "}
+              <Bun>bun:sqlite</Bun>
             </li>
             <li>
-              <NodeJS href="https://github.com/Jarred-Sumner/bun/issues/158">
+              <NodeJS href="https://github.com/oven-sh/bun/issues/158">
                 Node-API
               </NodeJS>{" "}
-              bun.js implements most of{' '}
+              bun.js implements most of{" "}
               <a
                 href="https://nodejs.org/api/n-api.html#node-api"
                 target="_blank"
               >
                 Node-API (N-API)
               </a>
-              . Many Node.js native modules just work.
+              . Many Node.js native modules just work
             </li>
             <li>
               <Bun>bun:ffi</Bun> call native code from JavaScript with bun's
@@ -555,11 +630,11 @@ export default ({ inlineCSS }) => (
             <li>
               <NodeJS>node:fs</NodeJS> <NodeJS>node:path</NodeJS> bun.js
               natively supports a growing list of Node.js core modules along
-              with globals like Buffer and process.
+              with globals like Buffer and process
             </li>
           </ul>
 
-          <h1>How does Bun work?</h1>
+          <h2>How does Bun work?</h2>
           <p>
             Bun.js uses the{" "}
             <a href="https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore">
@@ -584,21 +659,21 @@ export default ({ inlineCSS }) => (
             transpiler, npm client, bundler, SQLite client, HTTP client,
             WebSocket client and more.
           </p>
-          <h1>Why is Bun fast?</h1>
+          <h2>Why is Bun fast?</h2>
           <p>
             An enormous amount of time spent profiling, benchmarking and
             optimizing things. The answer is different for every part of Bun,
             but one general theme:{" "}
             <a href="https://ziglang.org/">
               <Zig></Zig>
-            </a>{" "}
+            </a>
             's low-level control over memory and lack of hidden control flow
             makes it much simpler to write fast software.{" "}
             <a href="https://github.com/sponsors/ziglang">
               Sponsor the Zig Software Foundation
-            </a>
+            </a>.
           </p>
-          <h1>Getting started</h1>
+          <h2>Getting started</h2>
           <p>
             To install bun, run this{" "}
             <a target="_blank" href="https://bun.sh/install">
@@ -642,20 +717,20 @@ export default {
             <a target="_blank" href="http://localhost:3000">
               http://localhost:3000
             </a>{" "}
-            in your browser
+            in your browser.
             <br />
             <br />
             See{" "}
-            <a href="https://github.com/Jarred-Sumner/bun/tree/main/examples">
+            <a href="https://github.com/oven-sh/bun/tree/main/examples">
               more examples
             </a>{" "}
             and check out <a href={DOCS}>the docs</a>. If you have any questions
             or want help, join{" "}
-            <a href="https://bun.sh/discord">Bun's Discord</a>
+            <a href="https://bun.sh/discord">Bun's Discord</a>.
           </p>
 
-          <h1>Bun CLI</h1>
-          <Group title="npm takes 160ms to run a script that does nothing">
+          <h2>Bun CLI</h2>
+          <Group>
             <Command>bun run</Command>
             <p>
               The same command for running JavaScript &amp; TypeScript files
@@ -675,7 +750,7 @@ export default {
             </div>{" "}
           </Group>
 
-          <Group title="JavaScript package managers are not using the fastest system calls">
+          <Group>
             <Command>bun install</Command>
             <p>
               bun install is an npm-compatible package manager. You probably
@@ -695,23 +770,23 @@ export default {
             <Command>bun wiptest</Command>
             <p>
               A Jest-like test runner for JavaScript &amp; TypeScript projects
-              builtin to bun
+              built-in to bun.
             </p>
             <Label>
               <PerformanceClaim href="https://twitter.com/jarredsumner/status/1542824445810642946">
                 You've never seen a JavaScript test runner this fast
               </PerformanceClaim>{" "}
-              (or incomplete)
+              (or incomplete).
             </Label>
           </Group>
 
-          <h1>What is the license?</h1>
+          <h2>What is the license?</h2>
           <p>
             MIT License, excluding dependencies which have various licenses.
           </p>
-          <h1>How do I see the source code?</h1>
+          <h2>How do I see the source code?</h2>
           <p>
-            Bun is on <a href="https://github.com/Jarred-Sumner/bun">GitHub</a>
+            Bun is on <a href="https://github.com/oven-sh/bun">GitHub</a>.
           </p>
         </div>
       </section>
@@ -722,15 +797,55 @@ export default {
       <script
         dangerouslySetInnerHTML={{
           __html: `
-[...document.querySelectorAll(".Tab")].map(el => el.addEventListener("click", function(e) {
-  var tab = e.srcElement.getAttribute("data-tab");
-  document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
-}));
+[...document.querySelectorAll(".Tab")].map(el => {
+  el.addEventListener("click", function(e) {
+    var tab = e.srcElement.getAttribute("data-tab");
+    [...document.querySelectorAll(".Tab")].map(el => {
+      var active = el.getAttribute("data-tab") === tab;
+      el.setAttribute("tabindex", active ? 0 : -1);
+      el.setAttribute("aria-selected", active);
+    });
+    [...document.querySelectorAll(".BarGraph")].map(el => {
+      var active = el.id === tab + "-tab-content";
+      el.setAttribute("tabindex", active ? 0 : -1);
+    });
+    document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
+  });
 
-document.querySelector("#code-box-copy").addEventListener("click", async e => {
-  var el = document.querySelector("#code-box");
-  await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
+  el.addEventListener("keydown", e => {
+    var tabs = [...document.querySelectorAll(".Tab")];
+    var activeTabEl = document.querySelector(".Tab[aria-selected='true']");
+    var activeTabIndex = tabs.indexOf(activeTabEl);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeTabIndex = (activeTabIndex + 1) % tabs.length;
+      tabs[activeTabIndex].click();
+      tabs[activeTabIndex].focus();
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeTabIndex = (activeTabIndex + tabs.length - 1) % tabs.length;
+      tabs[activeTabIndex].click();
+      tabs[activeTabIndex].focus();
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      tabs[0].click();
+      tabs[0].focus();    
+    }
+    if (e.key === 'End') {
+      e.preventDefault();
+      tabs[tabs.length - 1].click();
+      tabs[tabs.length - 1].focus();    
+    }
+  });
 });
+
+for (const el of document.querySelectorAll(".InstallBox-copy")) {
+  el.addEventListener("click", async e => {
+    await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
+  });
+}
       `,
         }}
       />

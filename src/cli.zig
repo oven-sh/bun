@@ -75,7 +75,6 @@ pub const Cli = struct {
             switch (err) {
                 error.MissingEntryPoint => {
                     Output.prettyErrorln("<r><red>MissingEntryPoint<r> what do you want to bundle?\n\n<d>Example:\n\n<r>  <b><cyan>bun bun --use next<r>\n\n  <b><cyan>bun bun ./src/index.ts ./src/file2.ts<r>\n", .{});
-                    Output.flush();
                     Global.exit(1);
                 },
                 else => {
@@ -211,7 +210,6 @@ pub const Arguments = struct {
     fn printVersionAndExit() noreturn {
         @setCold(true);
         Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
-        Output.flush();
         Global.exit(0);
     }
 
@@ -222,7 +220,6 @@ pub const Arguments = struct {
                 @errorName(err),
                 std.mem.span(config_path),
             });
-            Output.flush();
             Global.exit(1);
         };
         defer config_file.close();
@@ -232,7 +229,6 @@ pub const Arguments = struct {
                 @errorName(err),
                 std.mem.span(config_path),
             });
-            Output.flush();
             Global.exit(1);
         };
 
@@ -417,7 +413,6 @@ pub const Arguments = struct {
             Output.prettyln("\n-------\n\n", .{});
             Output.flush();
             HelpCommand.printWithReason(.explicit);
-            Output.flush();
             Global.exit(0);
         }
 
@@ -696,7 +691,7 @@ pub const HelpCommand = struct {
             \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
             \\
             \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(bun c)<r>
-            \\> <r> <b><magenta>run     <r><d>  test        <r>          Run a package.json script or executable<r>
+            \\> <r> <b><magenta>run     <r><d>  test        <r>          Run JavaScript with bun, a package.json script, or a bin<r>
             \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
             \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
             \\> <r> remove  <r><d>  {s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
@@ -1196,7 +1191,6 @@ pub const Command = struct {
                                     std.fs.path.basename(file_path),
                                     @errorName(err),
                                 });
-                                Output.flush();
                                 Global.exit(1);
                             };
                         }
@@ -1211,7 +1205,6 @@ pub const Command = struct {
                     Output.prettyErrorln("<r><red>error<r>: Script not found \"<b>{s}<r>\"", .{
                         ctx.positionals[0],
                     });
-                    Output.flush();
                     Global.exit(1);
                 }
 
@@ -1219,13 +1212,11 @@ pub const Command = struct {
                     Output.prettyErrorln("<r><red>error<r>: Module not found \"<b>{s}<r>\"", .{
                         ctx.positionals[0],
                     });
-                    Output.flush();
                     Global.exit(1);
                 } else if (ctx.positionals.len > 0) {
                     Output.prettyErrorln("<r><red>error<r>: File not found \"<b>{s}<r>\"", .{
                         ctx.positionals[0],
                     });
-                    Output.flush();
                     Global.exit(1);
                 }
 

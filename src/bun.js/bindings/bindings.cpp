@@ -89,12 +89,11 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 template<typename PromiseType, bool isInternal>
 static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), void (*ArgFn4)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
 {
-    gcProtect(promise);
+
     auto globalThis = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
         globalObject->vm(), globalObject, 1, String(), [ctx, promise, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
             ArgFn3(ctx, globalObject, callFrame);
-            gcUnprotect(promise);
 
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
@@ -102,7 +101,6 @@ static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObjec
         globalObject->vm(), globalObject, 1, String(),
         [ctx, promise, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
             ArgFn4(ctx, globalObject, callFrame);
-            gcUnprotect(promise);
 
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
@@ -965,7 +963,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSUint8Array* typedArray = JSC::jsCast<JSC::JSUint8Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::Uint8ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -983,7 +983,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSInt8Array* typedArray = JSC::jsCast<JSC::JSInt8Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::Int8ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -993,7 +995,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSUint8ClampedArray* typedArray = JSC::jsCast<JSC::JSUint8ClampedArray*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::Uint8ClampedArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -1002,7 +1006,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSInt16Array* typedArray = JSC::jsCast<JSC::JSInt16Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::Int16ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -1011,7 +1017,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSUint16Array* typedArray = JSC::jsCast<JSC::JSUint16Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::Uint16ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -1020,7 +1028,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSInt32Array* typedArray = JSC::jsCast<JSC::JSInt32Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::Int32ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -1029,7 +1039,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSUint32Array* typedArray = JSC::jsCast<JSC::JSUint32Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::Uint32ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -1038,7 +1050,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSFloat32Array* typedArray = JSC::jsCast<JSC::JSFloat32Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::Float32ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -1047,7 +1061,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSFloat64Array* typedArray = JSC::jsCast<JSC::JSFloat64Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::Float64ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -1056,7 +1072,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSBigInt64Array* typedArray = JSC::jsCast<JSC::JSBigInt64Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::BigInt64ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -1065,7 +1083,9 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         JSC::JSBigUint64Array* typedArray = JSC::jsCast<JSC::JSBigUint64Array*>(value);
         arg2->len = typedArray->length();
         arg2->byte_len = typedArray->byteLength();
-        arg2->offset = typedArray->byteOffset();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
         arg2->cell_type = JSC::JSType::BigUint64ArrayType;
         arg2->ptr = (char*)typedArray->vector();
         return true;
@@ -1075,7 +1095,7 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
             arg2->len = view->length();
             arg2->byte_len = view->byteLength();
-            arg2->offset = view->byteOffset();
+            arg2->offset = 0;
             arg2->cell_type = view->type();
             arg2->ptr = (char*)view->vector();
             return true;
@@ -1241,11 +1261,11 @@ JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg
     ZigString str
         = *arg0;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
             WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
     } else {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
             WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
     }

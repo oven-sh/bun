@@ -295,7 +295,6 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 "\n<r><red>SyntaxError<r><d>:<r> An error occurred while parsing code",
                 .{},
             );
-            Output.flush();
             Global.exit(1);
         },
         error.OutOfMemory => {
@@ -304,7 +303,6 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 .{},
             );
             printMetadata();
-            Output.flush();
             Global.exit(1);
         },
         error.CurrentWorkingDirectoryUnlinked => {
@@ -312,7 +310,6 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 "\n<r><red>error: <r>The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
                 .{},
             );
-            Output.flush();
             Global.exit(1);
         },
         error.BundleFailed => {
@@ -320,7 +317,6 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 "\n<r><red>BundleFailed<r>",
                 .{},
             );
-            Output.flush();
             Global.exit(1);
         },
         error.InvalidArgument, error.InstallFailed => {
@@ -382,11 +378,9 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 }
             }
 
-            Output.flush();
             Global.exit(1);
         },
         error.@"Invalid Bunfig" => {
-            Output.flush();
             Global.exit(1);
         },
         error.ProcessFdQuotaExceeded => {
@@ -449,7 +443,6 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 }
             }
 
-            Output.flush();
             Global.exit(1);
         },
         // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
@@ -503,7 +496,6 @@ pub noinline fn globalError(err: anyerror) noreturn {
                     );
                 }
 
-                Output.flush();
                 Global.exit(1);
             }
         },
@@ -532,7 +524,6 @@ pub noinline fn globalError(err: anyerror) noreturn {
                 "\n<r><red>error<r><d>:<r> <b>MissingPackageJSON<r>\nbun could not find a package.json file.\n",
                 .{},
             );
-            Output.flush();
             Global.exit(1);
         },
         error.MissingValue => {

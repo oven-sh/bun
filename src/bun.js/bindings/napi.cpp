@@ -420,7 +420,7 @@ extern "C" napi_status napi_set_named_property(napi_env env, napi_value object,
 // This is more efficient than using WTF::String::FromUTF8
 // it doesn't copy the string
 // but it's only safe to use if we are not setting a property
-// because we can't gurantee the lifetime of it
+// because we can't guarantee the lifetime of it
 #define PROPERTY_NAME_FROM_UTF8(identifierName) \
     size_t utf8Len = strlen(utf8name);          \
     JSC::PropertyName identifierName = LIKELY(charactersAreAllASCII(reinterpret_cast<const LChar*>(utf8name), utf8Len)) ? JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String(WTF::StringImpl::createWithoutCopying(utf8name, utf8Len)))) : JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8name)));
@@ -1289,5 +1289,32 @@ extern "C" napi_status napi_coerce_to_string(napi_env env, napi_value value,
         return napi_generic_failure;
     }
     scope.clearException();
+    return napi_ok;
+}
+
+extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
+    napi_value* result)
+{
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue jsValue = JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(object));
+    if (!jsValue || !jsValue.isObject()) {
+        return napi_invalid_arg;
+    }
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
+    JSC::JSValue value = JSC::ownPropertyKeys(globalObject, jsValue.getObject(), PropertyNameMode::Strings, DontEnumPropertiesMode::Include, std::nullopt);
+    if (UNLIKELY(scope.exception())) {
+        *result = reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::jsUndefined()));
+        return napi_generic_failure;
+    }
+    scope.clearException();
+    JSC::EnsureStillAliveScope ensureStillAlive1(value);
+
+    *result = toNapi(value);
+
     return napi_ok;
 }

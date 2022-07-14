@@ -1,19 +1,19 @@
 import {
 __HMRClient as Bun
-} from "http://localhost:3000/bun:wrap";
-Bun.activate(true);
+} from "http://localhost:8080/bun:wrap";
+Bun.activate(false);
 import {
 __FastRefreshModule as FastHMR
-} from "http://localhost:3000/bun:wrap";
+} from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
-} from "http://localhost:3000/bun:wrap";
-import _login from "http://localhost:3000/_login.js";
-import _auth from "http://localhost:3000/_auth.js";
-import * as _loginReally from "http://localhost:3000/_login.js";
-import * as _loginReally2 from "http://localhost:3000/_login.js";
-import * as _authReally from "http://localhost:3000/_auth.js";
-var hmr = new FastHMR(3878252498, "cjs-transform-shouldnt-have-static-imports-in-cjs-function.js", FastRefresh), exports = hmr.exports;
+} from "http://localhost:8080/bun:wrap";
+import _login from "http://localhost:8080/_login.js";
+import _auth from "http://localhost:8080/_auth.js";
+import * as _loginReally from "http://localhost:8080/_login.js";
+import * as _loginReally2 from "http://localhost:8080/_login.js";
+import * as _authReally from "http://localhost:8080/_auth.js";
+var hmr = new FastHMR(2970650542, "cjs-transform-shouldnt-have-static-imports-in-cjs-function.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   function test() {
     return testDone(import.meta.url);
@@ -42,4 +42,4 @@ export {
   $$hmr_bar as bar
 };
 
-//# sourceMappingURL=http://localhost:3000/cjs-transform-shouldnt-have-static-imports-in-cjs-function.js.map
+//# sourceMappingURL=http://localhost:8080/cjs-transform-shouldnt-have-static-imports-in-cjs-function.js.map

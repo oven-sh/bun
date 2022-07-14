@@ -320,27 +320,38 @@ declare module "bun" {
    */
   export function fileURLToPath(url: URL): string;
 
-  interface Sink<T> {
-    write(chunk: string | ArrayBufferView | ArrayBuffer): number;
-    drain(): Promise<number> | number;
-    end(): T;
-  }
-
   /**
-   * Fast incremental writer that becomes an ArrayBuffer on end().
+   * Fast incremental writer that becomes an `ArrayBuffer` on end().
    */
-  export class ArrayBufferSink implements Sink<ArrayBuffer> {
+  export class ArrayBufferSink {
     constructor();
 
-    start({
-      stream = false,
-      asUint8Array = false,
-      highWaterMark = 2048,
-    } = {}): void;
+    start(options?: {
+      asUint8Array?: boolean;
+      /**
+       * Preallocate an internal buffer of this size
+       * This can significantly improve performance when the chunk size is small
+       */
+      highWaterMark?: number;
+      /**
+       * On {@link ArrayBufferSink.flush}, return the written data as a `Uint8Array`.
+       * Writes will restart from the beginning of the buffer.
+       */
+      stream?: boolean;
+    }): void;
 
     write(chunk: string | ArrayBufferView | ArrayBuffer): number;
-    drain(): number;
-    end(): ArrayBuffer;
+    /**
+     * Flush the internal buffer
+     *
+     * If {@link ArrayBufferSink.start} was passed a `stream` option, this will return a `ArrayBuffer`
+     * If {@link ArrayBufferSink.start} was passed a `stream` option and `asUint8Array`, this will return a `Uint8Array`
+     * Otherwise, this will return the number of bytes written since the last flush
+     *
+     * This API might change later to separate Uint8ArraySink and ArrayBufferSink
+     */
+    flush(): number | Uint8Array | ArrayBuffer;
+    end(): ArrayBuffer | Uint8Array;
   }
 
   /**
@@ -981,7 +992,7 @@ declare module "bun" {
    *
    * I don't know how to make this something Chrome or Safari can read.
    *
-   * If you have any ideas, please file an issue https://github.com/Jarred-Sumner/bun
+   * If you have any ideas, please file an issue https://github.com/oven-sh/bun
    */
   interface HeapSnapshot {
     /** "2" */

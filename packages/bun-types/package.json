@@ -1,6 +1,6 @@
 {
   "name": "bun-types",
-  "version": "0.0.83",
+  "version": "0.1.4",
   "description": "Type definitions for bun.js",
   "types": "types.d.ts",
   "files": [
@@ -12,6 +12,6 @@
     "bun.js",
     "types"
   ],
-  "repository": "https://github.com/Jarred-Sumner/bun",
+  "repository": "https://github.com/oven-sh/bun",
   "homepage": "https://bun.sh"
 }

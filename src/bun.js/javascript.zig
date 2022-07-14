@@ -107,6 +107,10 @@ pub const GlobalClasses = [_]type{
     WebCore.Crypto.Class,
     WebCore.Crypto.Prototype,
 
+    WebCore.Alert.Class,
+    WebCore.Confirm.Class,
+    WebCore.Prompt.Class,
+
     // The last item in this array becomes "process.env"
     Bun.EnvironmentVariables.Class,
 };
@@ -952,6 +956,28 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:http" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./http.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:http"),
+                        .source_url = ZigString.init("node:http"),
+                        .hash = 0,
+                   };
+                },
+                .@"depd" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, @embedFile("./depd.exports.js")),
+                        ),
+                        .specifier = ZigString.init("depd"),
+                        .source_url = ZigString.init("depd"),
+                        .hash = 0,
+                    };
+                },
             }
         } else if (_specifier.len > js_ast.Macro.namespaceWithColon.len and
             strings.eqlComptimeIgnoreLen(_specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
@@ -1214,7 +1240,8 @@ pub const VirtualMachine = struct {
                     source
             else
                 jsc_vm.bundler.fs.top_level_dir,
-            specifier,
+            // TODO: do we need to handle things like query string params?
+            if (strings.hasPrefixComptime(specifier, "file://")) specifier["file://".len..] else specifier,
             .stmt,
         );
 
@@ -1336,12 +1363,10 @@ pub const VirtualMachine = struct {
         var slice = slice_;
         if (slice.len == 0) return slice;
         var was_http = false;
-        if (strings.hasPrefix(slice, "https://")) {
+        if (strings.hasPrefixComptime(slice, "https://")) {
             slice = slice["https://".len..];
             was_http = true;
-        }
-
-        if (strings.hasPrefix(slice, "http://")) {
+        } else if (strings.hasPrefixComptime(slice, "http://")) {
             slice = slice["http://".len..];
             was_http = true;
         }
@@ -2707,8 +2732,10 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:sqlite",
+    @"depd",
     @"detect-libc",
     @"node:fs",
+    @"node:http",
     @"node:fs/promises",
     @"node:module",
     @"node:path",
@@ -2728,11 +2755,14 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
+            .{ "depd", HardcodedModule.@"depd" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "ffi", HardcodedModule.@"bun:ffi" },
             .{ "fs", HardcodedModule.@"node:fs" },
+            .{ "http", HardcodedModule.@"node:http" },
             .{ "module", HardcodedModule.@"node:module" },
             .{ "node:fs", HardcodedModule.@"node:fs" },
+            .{ "node:http", HardcodedModule.@"node:http" },
             .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
             .{ "node:module", HardcodedModule.@"node:module" },
             .{ "node:path", HardcodedModule.@"node:path" },
@@ -2757,22 +2787,30 @@ pub const HardcodedModule = enum {
             .{ "bun:jsc", "bun:jsc" },
             .{ "bun:sqlite", "bun:sqlite" },
             .{ "bun:wrap", "bun:wrap" },
+            .{ "depd", "depd" },
             .{ "detect-libc", "detect-libc" },
             .{ "detect-libc/lib/detect-libc.js", "detect-libc" },
             .{ "ffi", "bun:ffi" },
             .{ "fs", "node:fs" },
+            .{ "http", "node:http" },
             .{ "fs/promises", "node:fs/promises" },
             .{ "module", "node:module" },
             .{ "node:fs", "node:fs" },
+            .{ "node:http", "node:http" },
             .{ "node:fs/promises", "node:fs/promises" },
             .{ "node:module", "node:module" },
             .{ "node:path", "node:path" },
+            .{ "node:path/posix", "node:path" },
+            .{ "node:path/win32", "node:path" },
+            .{ "node:perf_hooks", "node:perf_hooks" },
             .{ "node:streams/consumer", "node:streams/consumer" },
             .{ "node:streams/web", "node:streams/web" },
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
             .{ "node:url", "node:url" },
             .{ "path", "node:path" },
+            .{ "path/posix", "node:path" },
+            .{ "path/win32", "node:path" },
             .{ "perf_hooks", "node:perf_hooks" },
             .{ "streams/consumer", "node:streams/consumer" },
             .{ "streams/web", "node:streams/web" },
@@ -2790,13 +2828,9 @@ pub const DisabledModule = bun.ComptimeStringMap(
     void,
     .{
         .{"child_process"},
-        .{"http"},
         .{"https"},
-        .{"net"},
         .{"node:child_process"},
-        .{"node:http"},
         .{"node:https"},
-        .{"node:net"},
         .{"node:tls"},
         .{"node:worker_threads"},
         .{"tls"},

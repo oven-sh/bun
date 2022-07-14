@@ -1,6 +1,8 @@
-<!DOCTYPE html><html><head><meta charSet="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><meta property="og:title" content="Bun is a fast all-in-one JavaScript runtime"/><meta property="og:description" content="Bundle, transpile, install and run JavaScript &amp; TypeScript
+<!DOCTYPE html><html lang="en"><head><meta charSet="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><meta property="og:title" content="Bun is a fast all-in-one JavaScript runtime"/><meta property="og:description" content="Bundle, transpile, install and run JavaScript &amp; TypeScript
         projects – all in Bun. Bun is a new JavaScript runtime with
-        a native bundler, transpiler, task runner and npm client built-in."/><title>Bun is a fast all-in-one JavaScript runtime</title><style>:root {
+        a native bundler, transpiler, task runner and npm client built-in."/><meta name="og:locale" content="en_US"/><meta name="twitter:site" content="@jarredsumner"/><meta name="description" content="Bundle, transpile, install and run JavaScript &amp; TypeScript
+        projects – all in Bun. Bun is a new JavaScript runtime with
+        a native bundler, transpiler, task runner and npm client built-in."/><meta name="theme-color" content="#fbf0df"/><link rel="manifest" href="manifest.json"/><link rel="icon" type="image/png" sizes="256x256" href="/logo-square.png"/><link rel="icon" type="image/png" sizes="32x32" href="/logo-square@32px.png"/><link rel="icon" type="image/png" sizes="16x16" href="/logo-square@16px.png"/><title>Bun is a fast all-in-one JavaScript runtime</title><style>:root {
   --black: #0b0a08;
   --blue: #00a6e1;
   --orange: #f89b4b;
@@ -19,9 +21,11 @@
   --vertical-padding: 4rem;
   --line-height: 1.4;
 }
+
 * {
   box-sizing: border-box;
 }
+
 head,
 body,
 :root {
@@ -39,14 +43,17 @@ a {
   text-decoration: none;
   transition: transform 0.1s linear;
 }
+
 a:visited {
   color: inherit;
 }
+
 a:hover {
   text-decoration: underline;
   transform: scale(1.06, 1.06);
   transform-origin: middle center;
 }
+
 #header-wrap,
 #pitch {
   background-color: var(--black);
@@ -60,6 +67,7 @@ a:hover {
   gap: 24px;
   align-items: center;
 }
+
 main {
   width: auto;
 
@@ -67,6 +75,7 @@ main {
   max-width: var(--max-width);
   display: grid;
   grid-template-columns: auto auto;
+  overflow-y: hidden;
 }
 
 main,
@@ -97,7 +106,8 @@ header {
 .subtitle {
   font-size: 1.2rem;
 }
-nav {
+
+.Navigation ul {
   white-space: nowrap;
   display: flex;
   gap: 2rem;
@@ -141,6 +151,7 @@ header {
   cursor: pointer;
   transform: scale(1.06);
 }
+
 #HeaderInstallButton {
   transition: transform 0.1s linear;
   background: #00a6e1;
@@ -155,25 +166,22 @@ header {
   background: #15140e;
   padding: 24px 24px;
   border-radius: 24px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  -moz-user-select: none;
 }
 
-#install-label-heading {
+.InstallBox-label-heading {
   font-size: 1.4rem;
   margin-bottom: 1rem;
   font-weight: 500;
   font-weight: 500;
 }
 
-#install-label-subtitle {
+.InstallBox-label-subtitle {
   font-size: 0.9rem;
   color: var(--orange-light);
-}
-
-.unselectable {
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-user-drag: none;
-  -moz-user-select: none;
 }
 
 #usecases-section {
@@ -219,7 +227,7 @@ header {
   padding: 0;
 }
 
-#code-box {
+.InstallBox-code-box {
   background-color: rgb(37, 36, 32);
   padding: 4px 16px;
   position: relative;
@@ -228,32 +236,15 @@ header {
   align-items: center;
   border: 1px solid var(--orange);
   margin-top: 1rem;
-  display: grid;
+  display: flex;
+  justify-content: space-between;
   align-content: center;
   white-space: nowrap;
   margin-bottom: 1rem;
-}
-
-#code-box {
   font-family: var(--monospace-font);
-  position: relative;
 }
 
-#curl:hover {
-  cursor: text;
-  pointer-events: auto;
-}
-
-#curl::before {
-  display: block;
-  content: "$";
-  color: var(--orange);
-  pointer-events: none;
-  width: 1ch;
-  height: 1ch;
-}
-
-#curl {
+.InstallBox-curl {
   user-select: all;
   -webkit-user-select: text;
   pointer-events: auto;
@@ -264,34 +255,40 @@ header {
   gap: 2ch;
 }
 
-#view-source-link {
+.InstallBox-curl::before {
+  display: block;
+  content: "$" / "";
+  color: var(--orange);
+  pointer-events: none;
+  width: 1ch;
+  height: 1ch;
+}
+
+.InstallBox-view-source-link {
   color: var(--orange-light);
 }
 
-#code-box-copy {
-  position: absolute;
-  right: 16px;
-  top: 0;
-  bottom: 0;
+.InstallBox-copy {
   height: 100%;
-
   display: flex;
   align-items: center;
-  z-index: 5;
-
   color: var(--orange-light);
   transition: transform 0.05s linear;
   transition-property: color, transform;
   transform-origin: center center;
   cursor: pointer;
+  background: transparent;
+  border: none;
+  font-size: inherit;
+  font-family: inherit;
 }
 
-#code-box-copy:hover {
+.InstallBox-copy:hover {
   color: var(--blue);
   transform: scale(1.06);
 }
 
-#code-box-copy:active {
+.InstallBox-copy:active {
   transform: scale(1.12);
 }
 
@@ -304,23 +301,25 @@ header {
   align-items: center;
   width: min-content;
   white-space: nowrap;
+  padding: 0;
 }
 
 .Tab {
   width: min-content;
+  border: none;
+  background-color: transparent;
   font-family: var(--monospace-font);
   text-align: center;
-  padding-bottom: 8px;
   border-bottom: 1px solid #ccc;
   cursor: pointer;
-  padding: 16px 16px;
+  padding: 16px;
+  color: inherit;
+  font-size: inherit;
 }
 
-.Tab[data-tab="react"]:hover,
+.Tab:hover,
 .Graphs--active-react .Tab[data-tab="react"],
-.Tab[data-tab="sqlite"]:hover,
 .Graphs--active-sqlite .Tab[data-tab="sqlite"],
-.Tab[data-tab="ffi"]:hover,
 .Graphs--active-ffi .Tab[data-tab="ffi"] {
   border-bottom-color: aquamarine;
   background-color: rgba(130, 216, 247, 0.1);
@@ -337,12 +336,16 @@ header {
 .BarGraph-heading {
   font-weight: 500;
   font-size: 1.5rem;
+  margin: 0;
 }
 
 .BarGraphList {
   flex: 1;
   position: relative;
+  list-style-type: none;
+  padding: 0;
 }
+
 .BarGraph,
 .ActiveTab,
 .Graphs {
@@ -352,6 +355,7 @@ header {
 .BarGraph-subheading {
   font-size: 0.9rem;
   color: rgb(135, 134, 134);
+  margin: 0;
 }
 
 .BarGraphList {
@@ -387,28 +391,25 @@ header {
 
 .BarGraphBar {
   margin: 0 auto;
-
   width: var(--primary);
   height: var(--opposite);
-
   background-color: rgb(93, 89, 134);
-  transform-origin: bottom center;
-  transform: scaleY(var(--level));
   position: relative;
+  height: calc(200px * var(--level));
 }
 
 .BarGraphItem {
   border-right: 1px dashed var(--dark-border);
   border-top: 1px dashed var(--dark-border);
   border-bottom: 1px dashed var(--dark-border);
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 .BarGraphItem--deno {
   border-right-color: transparent;
-}
-
-.BarGraph--horizontal .BarGraphBar {
-  min-height: 200px;
 }
 
 .BarGraph--vertical .BarGraphBar {
@@ -421,8 +422,9 @@ header {
   font-family: var(--monospace-font);
   width: 100%;
   text-align: center;
-
   position: relative;
+  display: flex;
+  justify-content: center;
 }
 
 .CardContent {
@@ -436,14 +438,13 @@ header {
 }
 
 .BarGraph--horizontal .BarGraphBar-label {
-  transform: scaleY(var(--inverse));
-  top: calc(-20px * var(--inverse));
+  top: -22px;
 }
 
 .BarGraphItem--bun .BarGraphBar {
   background-color: rgb(249, 241, 225);
   box-shadow: inset 1px 1px 3px rgb(204, 198, 187);
-  background-image: url("/logo.png");
+  background-image: url("/logo.svg");
   background-repeat: no-repeat;
   background-size: 56px 48.8px;
   background-position: 6px 20%;
@@ -462,10 +463,8 @@ header {
 .BarGraph--vertical .BarGraphBar {
   height: var(--primary);
   width: var(--opposite);
-
   transform: scaleX(var(--level));
   transform-origin: bottom left;
-
   max-height: 40px;
   margin-top: 1rem;
   margin-bottom: 1rem;
@@ -486,13 +485,13 @@ header {
 }
 
 .BarGraphKeyItem-value {
-  color: #666;
+  color: #7a7a7a;
   margin-top: 0.5rem;
 }
 
 .BarGraphKeyItem-viewSource {
   margin-top: 0.5rem;
-  color: #666;
+  color: #7a7a7a;
   text-transform: lowercase;
   font-weight: thin;
   font-size: 0.8rem;
@@ -522,7 +521,7 @@ header {
 }
 
 .DemphasizedLabel {
-  color: #666;
+  color: #7a7a7a;
   font-weight: 300;
 }
 
@@ -537,8 +536,6 @@ header {
   display: grid;
 }
 
-#explain-section {
-}
 #explain ul {
   font-size: 1.2rem;
 }
@@ -553,14 +550,10 @@ header {
   background-color: var(--background);
   border-radius: 8px;
   padding: 3px 8px;
-  color: white;
+  color: black;
   text-decoration: none !important;
   display: inline-block;
   font-family: var(--monospace-font) !important;
-}
-
-.Tag:visited {
-  color: white;
 }
 
 .mono {
@@ -574,7 +567,7 @@ header {
 }
 
 .Tag--Command:before {
-  content: "❯";
+  content: "❯" / "";
   color: rgba(255, 255, 255, 0.35);
   margin-top: auto;
   margin-bottom: auto;
@@ -586,7 +579,6 @@ header {
 
 .Tag--WebAPI {
   --background: #29b6f6;
-  color: white;
   box-shadow: inset -1px -1px 3px rgb(231, 187, 73);
 }
 
@@ -596,6 +588,7 @@ header {
 
 .Tag--TypeScript {
   --background: rgb(69, 119, 192);
+  color: white;
 }
 
 .Tag--React {
@@ -605,20 +598,17 @@ header {
 
 .Tag--React:before {
   color: rgba(130, 216, 247, 0.5);
-  content: "<";
+  content: "<" / "";
 }
 
 .Tag--React:after {
   color: rgba(130, 216, 247, 0.5);
-  content: ">";
+  content: ">" / "";
 }
 
 .Tag--Bun {
-  --background: #ff17ff;
-}
-
-ul,
-li {
+  --background: #e600e5;
+  color: white;
 }
 
 .mono {
@@ -694,7 +684,7 @@ li {
     gap: 1rem;
   }
 
-  #install {
+  .InstallBox {
     margin-top: 0;
   }
 
@@ -713,11 +703,11 @@ li {
 }
 
 @media (max-width: 599px) {
-  #code-box-copy {
+  .InstallBox-copy {
     display: none;
   }
 
-  #code-box {
+  .InstallBox-code-box {
     font-size: 0.8rem;
   }
 }
@@ -794,7 +784,7 @@ li {
 }
 
 @media (max-width: 929px) {
-  #code-box {
+  .InstallBox-code-box {
     width: fit-content;
   }
 
@@ -817,9 +807,6 @@ li {
   header {
     grid-template-columns: min-content auto;
     gap: 2rem;
-  }
-
-  .Tabs {
   }
 
   .tagline,
@@ -854,15 +841,11 @@ li {
     margin: 0;
     gap: 0rem;
     width: 100%;
+    border-top: 1px solid rgba(200, 200, 200, 0.1);
   }
 
   .Tab {
     width: 100%;
-    padding-top: 16px;
-    padding-bottom: 16px;
-  }
-
-  .Tab {
     border-bottom-color: #333;
   }
 
@@ -874,10 +857,6 @@ li {
   .Graphs--active-sqlite .Tab[data-tab="sqlite"],
   .Graphs--active-ffi .Tab[data-tab="ffi"] {
     background-color: rgba(100, 100, 100, 0.1);
-  }
-
-  .Tabs {
-    border-top: 1px solid rgba(200, 200, 200, 0.1);
   }
 }
 
@@ -928,24 +907,74 @@ li {
 img {
   object-fit: contain;
 }
-</style></head><body><div id="header-wrap"><header><a href="/" id="logo-link"><img height="61px" src="/logo@2x.png" alt="Bun" id="logo"/><img height="31.65px" src="/Bun@2x.png" alt="Bun" id="logo-text"/></a><nav class="Navigation"><li><a class="NavText" href="https://github.com/Jarred-Sumner/bun#Reference">Docs</a></li><li><a class="NavText" href="https://bun.sh/discord">Discord</a></li><li><a class="NavText" href="https://github.com/Jarred-Sumner/bun">GitHub</a></li></nav></header></div><div id="pitch"><main><div id="pitch-content"><h1 class="tagline">Bun is a fast all-in-one JavaScript runtime</h1><p class="subtitle">Bundle, transpile, install and run JavaScript &amp; TypeScript projects — all in Bun. Bun is a new JavaScript runtime with a native bundler, transpiler, task runner and npm client built-in.</p><div class="InstallBox InstallBox--desktop" id="install"><div id="install-label"><div class="unselectable" id="install-label-heading">Install Bun CLI v0.1.0 (beta)</div><div class="unselectable" id="install-label-subtitle">macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux</div></div><div id="code-box"><div id="curl">curl https://bun.sh/install | bash</div><div class="unselectable" id="code-box-copy">copy</div></div><a class="unselectable" id="view-source-link" target="_blank" href="https://bun.sh/install">Show script source</a></div></div><div class="Graphs Graphs--active-react"><div class="Tabs"><div data-tab="react" class="Tab">Bun.serve</div><div data-tab="sqlite" class="Tab">bun:sqlite</div><div data-tab="ffi" class="Tab">bun:ffi</div></div><div id="active-tab" class="ActiveTab"><div class="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark"><div class="BarGraph-heading">Server-side rendering React</div><div title="oha -z 5s" class="BarGraph-subheading">HTTP requests per second (Linux AMD64)</div><div style="--count:3" class="BarGraphList"><div class="BarGraphItem BarGraphItem--bun" style="--amount:48936;--max:61170"><div style="--amount:48936;--max:61170" title="48936 requests per second" class="BarGraphBar"><div style="--amount:48936;--max:61170" class="BarGraphBar-label">48,936</div></div></div><div class="BarGraphItem BarGraphItem--node" style="--amount:16288;--max:61170"><div style="--amount:16288;--max:61170" title="16288 requests per second" class="BarGraphBar"><div style="--amount:16288;--max:61170" class="BarGraphBar-label">16,288</div></div></div><div class="BarGraphItem BarGraphItem--deno" style="--amount:12289;--max:61170"><div style="--amount:12289;--max:61170" title="12289 requests per second" class="BarGraphBar"><div style="--amount:12289;--max:61170" class="BarGraphBar-label">12,289</div></div></div></div><div style="--count:3" class="BarGraphKey"><a href="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.jsx" target="_blank" class="BarGraphKeyItem"><div class="BarGraphKeyItem-label">bun</div><div class="BarGraphKeyItem-value">v0.1.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.deno.jsx" target="_blank" class="BarGraphKeyItem"><div class="BarGraphKeyItem-label">node</div><div class="BarGraphKeyItem-value">v18.1.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/Jarred-Sumner/bun/bench/react-hello-world.node.jsx" target="_blank" class="BarGraphKeyItem"><div class="BarGraphKeyItem-label">deno</div><div class="BarGraphKeyItem-value">v1.23.2</div><div class="BarGraphKeyItem-viewSource">View source</div></a></div></div><div class="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark"><div class="BarGraph-heading">Load a huge table</div><div class="BarGraph-subheading">Average queries per second</div><div style="--count:3" class="BarGraphList"><div class="BarGraphItem BarGraphItem--bun" style="--amount:60.24;--max:76"><div style="--amount:60.24;--max:76" title="60.24 queries per second" class="BarGraphBar"><div style="--amount:60.24;--max:76" class="BarGraphBar-label">60.24</div></div></div><div class="BarGraphItem BarGraphItem--better-sqlite3" style="--amount:23.28;--max:76"><div style="--amount:23.28;--max:76" title="23.28 queries per second" class="BarGraphBar"><div style="--amount:23.28;--max:76" class="BarGraphBar-label">23.28</div></div></div><div class="BarGraphItem BarGraphItem--deno" style="--amount:9.55;--max:76"><div style="--amount:9.55;--max:76" title="9.55 queries per second" class="BarGraphBar"><div style="--amount:9.55;--max:76" class="BarGraphBar-label">9.55</div></div></div></div><div style="--count:3" class="BarGraphKey"><a href="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.js" target="_blank" class="BarGraphKeyItem"><div class="BarGraphKeyItem-label">bun:sqlite</div><div class="BarGraphKeyItem-value">v0.1.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.node.mjs" target="_blank" class="BarGraphKeyItem"><div class="BarGraphKeyItem-label">better-sqlite3</div><div class="BarGraphKeyItem-value">node v18.2.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/Jarred-Sumner/bun/blob/main/bench/sqlite/query.deno.js" target="_blank" class="BarGraphKeyItem"><div class="BarGraphKeyItem-label">deno (x/sqlite)</div><div class="BarGraphKeyItem-value">v1.23.2</div><div class="BarGraphKeyItem-viewSource">View source</div></a></div></div><div class="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark"><div class="BarGraph-heading">How fast can it get?</div><div class="BarGraph-subheading">Operations per second</div><div style="--count:3" class="BarGraphList"><div class="BarGraphItem BarGraphItem--bun" style="--amount:115473441.00;--max:144341802"><div style="--amount:115473441.00;--max:144341802" title="115473441.00 operations per second" class="BarGraphBar"><div style="--amount:115473441.00;--max:144341802" class="BarGraphBar-label">115,473,441</div></div></div><div class="BarGraphItem BarGraphItem--Node-API" style="--amount:43478261.00;--max:144341802"><div style="--amount:43478261.00;--max:144341802" title="43478261.00 operations per second" class="BarGraphBar"><div style="--amount:43478261.00;--max:144341802" class="BarGraphBar-label">43,478,261</div></div></div><div class="BarGraphItem BarGraphItem--deno" style="--amount:2891761.00;--max:144341802"><div style="--amount:2891761.00;--max:144341802" title="2891761.00 oeprations per iteration" class="BarGraphBar"><div style="--amount:2891761.00;--max:144341802" class="BarGraphBar-label">2,891,761</div></div></div></div><div style="--count:3" class="BarGraphKey"><a href="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.bun.js" target="_blank" class="BarGraphKeyItem"><div class="BarGraphKeyItem-label">bun:ffi</div><div class="BarGraphKeyItem-value">v0.1.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.napi.mjs" target="_blank" class="BarGraphKeyItem"><div class="BarGraphKeyItem-label">node (napi)</div><div class="BarGraphKeyItem-value">node v18.2.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/Jarred-Sumner/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.deno.js" target="_blank" class="BarGraphKeyItem"><div class="BarGraphKeyItem-label">deno (ffi)</div><div class="BarGraphKeyItem-value">v1.23.2</div><div class="BarGraphKeyItem-viewSource">View source</div></a></div></div></div></div><div class="InstallBox InstallBox--mobile" id="install"><div id="install-label"><div class="unselectable" id="install-label-heading">Install Bun CLI v0.1.0 (beta)</div><div class="unselectable" id="install-label-subtitle">macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux</div></div><div id="code-box"><div id="curl">curl https://bun.sh/install | bash</div><div class="unselectable" id="code-box-copy">copy</div></div><a class="unselectable" id="view-source-link" target="_blank" href="https://bun.sh/install">Show script source</a></div></main></div><section id="explain-section"><div id="explain"><h1>Tell me more about Bun</h1><p>Bun is a modern JavaScript runtime like Node or Deno. It was built from scratch to focus on three main things:</p><ul><li>Start fast (it has the edge in mind).</li><li>New levels of performance (extending JavaScriptCore, the engine).</li><li>Being a great and complete tool (bundler, transpiler, package manager).</li></ul><p>Bun is designed as a drop-in replacement for your current JavaScript &amp; TypeScript apps or scripts — on your local computer, server or on the edge. Bun natively implements hundreds of Node.js and Web APIs, including ~90% of<!-- --> <!-- --><a href="https://nodejs.org/api/n-api.html" target="_blank">Node-API</a> <!-- -->functions (native modules), fs, path, Buffer and more.<!-- --></p><p>The goal of Bun is to run most of the worlds JavaScript outside of browsers, bringing performance and complexity enhancements to your future infrastructure, as well as developer productivity through better, simpler tooling.</p><h1>Batteries included</h1><ul id="batteries"><li>Web APIs like<!-- --> <!-- --><a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/fetch" class="Tag Tag--WebAPI">fetch</a>,<!-- --> <!-- --><a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/WebSocket" class="Tag Tag--WebAPI">WebSocket</a>, and<!-- --> <!-- --><a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream" class="Tag Tag--WebAPI">ReadableStream</a> <!-- -->are builtin<!-- --></li><li><span target="_blank" class="Tag Tag--NodeJS">node_modules</span> bun implements Node.js&#x27; module resolution algorithm, so you can use npm packages in bun.js. ESM and CommonJS are supported, but Bun internally uses ESM.<!-- --></li><li>In bun.js, every file is transpiled.<!-- --> <!-- --><span target="_blank" class="Tag Tag--TypeScript">TypeScript</span> &amp; <!-- --><span target="_blank" class="Tag Tag--React">JSX</span> just work.<!-- --></li><li>bun supports <!-- --><code class="">&quot;paths&quot;</code>,<!-- --> <!-- --><code>&quot;jsxImportSource&quot;</code>and more from <!-- --><span target="_blank" class="Tag Tag--TypeScript">tsconfig.json</span> files<!-- --></li><li><span target="_blank" class="Tag Tag--Bun">Bun.Transpiler</span> bun&#x27;s JSX &amp; TypeScript transpiler is available as an API in Bun.js<!-- --></li><li>use the fastest system calls available with <!-- --><span target="_blank" class="Tag Tag--Bun">Bun.write</span> <!-- -->to write, copy, pipe, send and clone files.<!-- --></li><li>bun.js automatically loads environment variables from<!-- --> <!-- --><span target="_blank" class="Tag Tag--Bun">.env</span> files. No more<!-- --> <!-- --><code class="mono">require(&quot;dotenv&quot;).load()</code></li><li>bun ships with a fast SQLite3 client builtin <!-- --><span target="_blank" class="Tag Tag--Bun">bun:sqlite</span></li><li><a target="_blank" href="https://github.com/Jarred-Sumner/bun/issues/158" class="Tag Tag--NodeJS">Node-API</a> <!-- -->bun.js implements most of<!-- --> <!-- --><a href="https://nodejs.org/api/n-api.html#node-api" target="_blank">Node-API (N-API)</a>. Many Node.js native modules just work.<!-- --></li><li><span target="_blank" class="Tag Tag--Bun">bun:ffi</span> call native code from JavaScript with bun&#x27;s low-overhead foreign function interface<!-- --></li><li><span target="_blank" class="Tag Tag--NodeJS">node:fs</span> <!-- --><span target="_blank" class="Tag Tag--NodeJS">node:path</span> bun.js natively supports a growing list of Node.js core modules along with globals like Buffer and process.<!-- --></li></ul><h1>How does Bun work?</h1><p>Bun.js uses the<!-- --> <!-- --><a href="https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore">JavaScriptCore</a> <!-- -->engine, which tends<!-- --> <!-- --><a target="blank" href="https://twitter.com/jarredsumner/status/1499225725492076544">to start</a> <!-- -->and perform a little faster than more traditional choices like V8. Bun is written in<!-- --> <!-- --><a href="https://ziglang.org/"><svg xmlns="http://www.w3.org/2000/svg" height="1.2rem" class="Zig" viewBox="0 0 400 140"><g fill="#F7A41D"><g><polygon points="46,22 28,44 19,30"></polygon><polygon points="46,22 33,33 28,44 22,44 22,95 31,95 20,100 12,117 0,117 0,22" shape-rendering="crispEdges"></polygon><polygon points="31,95 12,117 4,106"></polygon></g><g><polygon points="56,22 62,36 37,44"></polygon><polygon points="56,22 111,22 111,44 37,44 56,32" shape-rendering="crispEdges"></polygon><polygon points="116,95 97,117 90,104"></polygon><polygon points="116,95 100,104 97,117 42,117 42,95" shape-rendering="crispEdges"></polygon><polygon points="150,0 52,117 3,140 101,22"></polygon></g><g><polygon points="141,22 140,40 122,45"></polygon><polygon points="153,22 153,117 106,117 120,105 125,95 131,95 131,45 122,45 132,36 141,22" shape-rendering="crispEdges"></polygon><polygon points="125,95 130,110 106,117"></polygon></g></g><g fill="#121212"><g><polygon points="260,22 260,37 229,40 177,40 177,22" shape-rendering="crispEdges"></polygon><polygon points="260,37 207,99 207,103 176,103 229,40 229,37"></polygon><polygon points="261,99 261,117 176,117 176,103 206,99" shape-rendering="crispEdges"></polygon></g><rect x="272" y="22" shape-rendering="crispEdges" width="22" height="95"></rect><g><polygon points="394,67 394,106 376,106 376,81 360,70 346,67" shape-rendering="crispEdges"></polygon><polygon points="360,68 376,81 346,67"></polygon><path d="M394,106c-10.2,7.3-24,12-37.7,12c-29,0-51.1-20.8-51.1-48.3c0-27.3,22.5-48.1,52-48.1
+
+.visually-hidden {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+</style></head><body><div id="header-wrap"><header><a href="/" id="logo-link" aria-label="home"><img height="61px" src="/logo.svg" alt="Bun logo" id="logo"/><img height="31.65px" src="/Bun.png" srcSet="/Bun.png 1x, /Bun@2x.png 2x" alt="Bun" id="logo-text"/></a><nav class="Navigation"><ul><li><a class="NavText" href="https://github.com/oven-sh/bun#Reference">Docs</a></li><li><a class="NavText" href="https://bun.sh/discord">Discord</a></li><li><a class="NavText" href="https://github.com/oven-sh/bun">GitHub</a></li></ul></nav></header></div><div id="pitch"><main><div id="pitch-content"><h1 class="tagline">Bun is a fast all-in-one JavaScript runtime</h1><p class="subtitle">Bundle, transpile, install and run JavaScript &amp; TypeScript projects — all in Bun. Bun is a new JavaScript runtime with a native bundler, transpiler, task runner and npm client built-in.</p><div class="InstallBox InstallBox--desktop"><div class="InstallBox-label"><div class="InstallBox-label-heading">Install Bun CLI <!-- -->v0.1.3<!-- --> (beta)<!-- --></div><div class="InstallBox-label-subtitle">macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux</div></div><div class="InstallBox-code-box"><div class="InstallBox-curl">curl https://bun.sh/install | bash</div><button class="InstallBox-copy" aria-label="Copy installation script">copy</button></div><a class="InstallBox-view-source-link" target="_blank" href="https://bun.sh/install">Show script source</a></div></div><div class="Graphs Graphs--active-react"><div class="Tabs" role="tablist"><button data-tab="react" id="tab-react" aria-controls="react-tab-content" class="Tab" role="tab" aria-selected="true" tabindex="0">Bun.serve</button><button data-tab="sqlite" id="tab-sqlite" aria-controls="sqlite-tab-content" class="Tab" role="tab" tabindex="-1">bun:sqlite</button><button data-tab="ffi" id="tab-ffi" aria-controls="ffi-tab-content" class="Tab" role="tab" tabindex="-1">bun:ffi</button></div><div id="active-tab" class="ActiveTab"><div role="tabpanel" tabindex="0" id="react-tab-content" aria-labelledby="tab-react" class="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark"><h2 class="BarGraph-heading">Server-side rendering React</h2><p class="BarGraph-subheading">HTTP requests per second (Linux AMD64)</p><ul style="--count:3" class="BarGraphList"><li class="BarGraphItem BarGraphItem--bun" style="--amount:48936;--max:61170"><div class="visually-hidden">bun: 48,936 requests per second</div><div style="--amount:48936;--max:61170" class="BarGraphBar" aria-hidden="true"><div style="--amount:48936;--max:61170" class="BarGraphBar-label">48,936</div></div></li><li class="BarGraphItem BarGraphItem--node" style="--amount:16288;--max:61170"><div class="visually-hidden">node: 16,288 requests per second</div><div style="--amount:16288;--max:61170" class="BarGraphBar" aria-hidden="true"><div style="--amount:16288;--max:61170" class="BarGraphBar-label">16,288</div></div></li><li class="BarGraphItem BarGraphItem--deno" style="--amount:15786;--max:61170"><div class="visually-hidden">deno: 15,786 requests per second</div><div style="--amount:15786;--max:61170" class="BarGraphBar" aria-hidden="true"><div style="--amount:15786;--max:61170" class="BarGraphBar-label">15,786</div></div></li></ul><div style="--count:3" class="BarGraphKey"><a href="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world.jsx" target="_blank" class="BarGraphKeyItem" aria-label="bun benchmark source"><div class="BarGraphKeyItem-label">bun</div><div class="BarGraphKeyItem-value">v0.1.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world.node.jsx" target="_blank" class="BarGraphKeyItem" aria-label="node benchmark source"><div class="BarGraphKeyItem-label">node</div><div class="BarGraphKeyItem-value">v18.1.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/oven-sh/bun/blob/main/bench/react-hello-world.deno.jsx" target="_blank" class="BarGraphKeyItem" aria-label="deno benchmark source"><div class="BarGraphKeyItem-label">deno</div><div class="BarGraphKeyItem-value">v1.23.2</div><div class="BarGraphKeyItem-viewSource">View source</div></a></div></div><div role="tabpanel" tabindex="-1" id="sqlite-tab-content" aria-labelledby="tab-sqlite" class="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark"><h2 class="BarGraph-heading">Load a huge table</h2><p class="BarGraph-subheading">Average queries per second</p><ul style="--count:3" class="BarGraphList"><li class="BarGraphItem BarGraphItem--bun" style="--amount:60.24;--max:76"><div class="visually-hidden">bun: 60.24 queries per second</div><div style="--amount:60.24;--max:76" class="BarGraphBar" aria-hidden="true"><div style="--amount:60.24;--max:76" class="BarGraphBar-label">60.24</div></div></li><li class="BarGraphItem BarGraphItem--better-sqlite3" style="--amount:23.28;--max:76"><div class="visually-hidden">better-sqlite3: 23.28 queries per second</div><div style="--amount:23.28;--max:76" class="BarGraphBar" aria-hidden="true"><div style="--amount:23.28;--max:76" class="BarGraphBar-label">23.28</div></div></li><li class="BarGraphItem BarGraphItem--deno" style="--amount:9.55;--max:76"><div class="visually-hidden">deno: 9.55 queries per second</div><div style="--amount:9.55;--max:76" class="BarGraphBar" aria-hidden="true"><div style="--amount:9.55;--max:76" class="BarGraphBar-label">9.55</div></div></li></ul><div style="--count:3" class="BarGraphKey"><a href="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.js" target="_blank" class="BarGraphKeyItem" aria-label="bun:sqlite benchmark source"><div class="BarGraphKeyItem-label">bun:sqlite</div><div class="BarGraphKeyItem-value">v0.1.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.better-sqlite3.mjs" target="_blank" class="BarGraphKeyItem" aria-label="better-sqlite3 benchmark source"><div class="BarGraphKeyItem-label">better-sqlite3</div><div class="BarGraphKeyItem-value">node v18.2.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.deno.js" target="_blank" class="BarGraphKeyItem" aria-label="deno (x/sqlite) benchmark source"><div class="BarGraphKeyItem-label">deno (x/sqlite)</div><div class="BarGraphKeyItem-value">v1.23.2</div><div class="BarGraphKeyItem-viewSource">View source</div></a></div></div><div role="tabpanel" tabindex="-1" id="ffi-tab-content" aria-labelledby="tab-ffi" class="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark"><h2 class="BarGraph-heading">How fast can it get?</h2><p class="BarGraph-subheading">Operations per second</p><ul style="--count:3" class="BarGraphList"><li class="BarGraphItem BarGraphItem--bun" style="--amount:115473441.00;--max:144341802"><div class="visually-hidden">bun: 115,473,441 operations per second</div><div style="--amount:115473441.00;--max:144341802" class="BarGraphBar" aria-hidden="true"><div style="--amount:115473441.00;--max:144341802" class="BarGraphBar-label">115,473,441</div></div></li><li class="BarGraphItem BarGraphItem--Node-API" style="--amount:43478261.00;--max:144341802"><div class="visually-hidden">Node-API: 43,478,261 operations per second</div><div style="--amount:43478261.00;--max:144341802" class="BarGraphBar" aria-hidden="true"><div style="--amount:43478261.00;--max:144341802" class="BarGraphBar-label">43,478,261</div></div></li><li class="BarGraphItem BarGraphItem--deno" style="--amount:2891761.00;--max:144341802"><div class="visually-hidden">deno: 2,891,761 operations per iteration</div><div style="--amount:2891761.00;--max:144341802" class="BarGraphBar" aria-hidden="true"><div style="--amount:2891761.00;--max:144341802" class="BarGraphBar-label">2,891,761</div></div></li></ul><div style="--count:3" class="BarGraphKey"><a href="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.bun.js" target="_blank" class="BarGraphKeyItem" aria-label="bun:ffi benchmark source"><div class="BarGraphKeyItem-label">bun:ffi</div><div class="BarGraphKeyItem-value">v0.1.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.napi.mjs" target="_blank" class="BarGraphKeyItem" aria-label="node (napi) benchmark source"><div class="BarGraphKeyItem-label">node (napi)</div><div class="BarGraphKeyItem-value">node v18.2.0</div><div class="BarGraphKeyItem-viewSource">View source</div></a><a href="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.deno.js" target="_blank" class="BarGraphKeyItem" aria-label="deno (ffi) benchmark source"><div class="BarGraphKeyItem-label">deno (ffi)</div><div class="BarGraphKeyItem-value">v1.23.2</div><div class="BarGraphKeyItem-viewSource">View source</div></a></div></div></div></div><div class="InstallBox InstallBox--mobile"><div class="InstallBox-label"><div class="InstallBox-label-heading">Install Bun CLI <!-- -->v0.1.3<!-- --> (beta)<!-- --></div><div class="InstallBox-label-subtitle">macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux</div></div><div class="InstallBox-code-box"><div class="InstallBox-curl">curl https://bun.sh/install | bash</div><button class="InstallBox-copy" aria-label="Copy installation script">copy</button></div><a class="InstallBox-view-source-link" target="_blank" href="https://bun.sh/install">Show script source</a></div></main></div><section id="explain-section"><div id="explain"><h2>Tell me more about Bun</h2><p>Bun is a modern JavaScript runtime like Node or Deno. It was built from scratch to focus on three main things:</p><ul><li>Start fast (it has the edge in mind).</li><li>New levels of performance (extending JavaScriptCore, the engine).</li><li>Being a great and complete tool (bundler, transpiler, package manager).</li></ul><p>Bun is designed as a drop-in replacement for your current JavaScript &amp; TypeScript apps or scripts — on your local computer, server or on the edge. Bun natively implements hundreds of Node.js and Web APIs, including ~90% of<!-- --> <!-- --><a href="https://nodejs.org/api/n-api.html" target="_blank">Node-API</a> <!-- -->functions (native modules), fs, path, Buffer and more.<!-- --></p><p>The goal of Bun is to run most of the worlds JavaScript outside of browsers, bringing performance and complexity enhancements to your future infrastructure, as well as developer productivity through better, simpler tooling.</p><h2>Batteries included</h2><ul id="batteries"><li>Web APIs like<!-- --> <!-- --><a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/fetch" class="Tag Tag--WebAPI">fetch</a>,<!-- --> <!-- --><a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/WebSocket" class="Tag Tag--WebAPI">WebSocket</a>, and<!-- --> <!-- --><a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream" class="Tag Tag--WebAPI">ReadableStream</a> <!-- -->are built-in<!-- --></li><li><span target="_blank" class="Tag Tag--NodeJS">node_modules</span> bun implements Node.js&#x27; module resolution algorithm, so you can use npm packages in bun.js. ESM and CommonJS are supported, but Bun internally uses ESM.<!-- --></li><li>In bun.js, every file is transpiled.<!-- --> <!-- --><span target="_blank" class="Tag Tag--TypeScript">TypeScript</span> &amp; <!-- --><span target="_blank" class="Tag Tag--React">JSX</span> just work.<!-- --></li><li>bun supports <!-- --><code class="">&quot;paths&quot;</code>,<!-- --> <!-- --><code>&quot;jsxImportSource&quot;</code>and more from <!-- --><span target="_blank" class="Tag Tag--TypeScript">tsconfig.json</span> files<!-- --></li><li><span target="_blank" class="Tag Tag--Bun">Bun.Transpiler</span> bun&#x27;s JSX &amp; TypeScript transpiler is available as an API in Bun.js<!-- --></li><li>use the fastest system calls available with <!-- --><span target="_blank" class="Tag Tag--Bun">Bun.write</span> <!-- -->to write, copy, pipe, send and clone files.<!-- --></li><li>bun.js automatically loads environment variables from<!-- --> <!-- --><span target="_blank" class="Tag Tag--Bun">.env</span> files. No more<!-- --> <!-- --><code class="mono">require(&quot;dotenv&quot;).config()</code></li><li>bun ships with a fast SQLite3 client built-in <!-- --><span target="_blank" class="Tag Tag--Bun">bun:sqlite</span></li><li><a target="_blank" href="https://github.com/oven-sh/bun/issues/158" class="Tag Tag--NodeJS">Node-API</a> <!-- -->bun.js implements most of<!-- --> <!-- --><a href="https://nodejs.org/api/n-api.html#node-api" target="_blank">Node-API (N-API)</a>. Many Node.js native modules just work.<!-- --></li><li><span target="_blank" class="Tag Tag--Bun">bun:ffi</span> call native code from JavaScript with bun&#x27;s low-overhead foreign function interface<!-- --></li><li><span target="_blank" class="Tag Tag--NodeJS">node:fs</span> <!-- --><span target="_blank" class="Tag Tag--NodeJS">node:path</span> bun.js natively supports a growing list of Node.js core modules along with globals like Buffer and process.<!-- --></li></ul><h2>How does Bun work?</h2><p>Bun.js uses the<!-- --> <!-- --><a href="https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore">JavaScriptCore</a> <!-- -->engine, which tends<!-- --> <!-- --><a target="blank" href="https://twitter.com/jarredsumner/status/1499225725492076544">to start</a> <!-- -->and perform a little faster than more traditional choices like V8. Bun is written in<!-- --> <!-- --><a href="https://ziglang.org/"><svg xmlns="http://www.w3.org/2000/svg" height="1.2rem" class="Zig" viewBox="0 0 400 140"><title>Zig</title><g fill="#F7A41D"><g><polygon points="46,22 28,44 19,30"></polygon><polygon points="46,22 33,33 28,44 22,44 22,95 31,95 20,100 12,117 0,117 0,22" shape-rendering="crispEdges"></polygon><polygon points="31,95 12,117 4,106"></polygon></g><g><polygon points="56,22 62,36 37,44"></polygon><polygon points="56,22 111,22 111,44 37,44 56,32" shape-rendering="crispEdges"></polygon><polygon points="116,95 97,117 90,104"></polygon><polygon points="116,95 100,104 97,117 42,117 42,95" shape-rendering="crispEdges"></polygon><polygon points="150,0 52,117 3,140 101,22"></polygon></g><g><polygon points="141,22 140,40 122,45"></polygon><polygon points="153,22 153,117 106,117 120,105 125,95 131,95 131,45 122,45 132,36 141,22" shape-rendering="crispEdges"></polygon><polygon points="125,95 130,110 106,117"></polygon></g></g><g fill="#121212"><g><polygon points="260,22 260,37 229,40 177,40 177,22" shape-rendering="crispEdges"></polygon><polygon points="260,37 207,99 207,103 176,103 229,40 229,37"></polygon><polygon points="261,99 261,117 176,117 176,103 206,99" shape-rendering="crispEdges"></polygon></g><rect x="272" y="22" shape-rendering="crispEdges" width="22" height="95"></rect><g><polygon points="394,67 394,106 376,106 376,81 360,70 346,67" shape-rendering="crispEdges"></polygon><polygon points="360,68 376,81 346,67"></polygon><path d="M394,106c-10.2,7.3-24,12-37.7,12c-29,0-51.1-20.8-51.1-48.3c0-27.3,22.5-48.1,52-48.1
 			c14.3,0,29.2,5.5,38.9,14l-13,15c-7.1-6.3-16.8-10-25.9-10c-17,0-30.2,12.9-30.2,29.5c0,16.8,13.3,29.6,30.3,29.6
-			c5.7,0,12.8-2.3,19-5.5L394,106z"></path></g></g></svg></a>, a low-level programming language with manual memory management.<!-- --><br/><br/>Most of Bun is written from scratch including the JSX/TypeScript transpiler, npm client, bundler, SQLite client, HTTP client, WebSocket client and more.<!-- --></p><h1>Why is Bun fast?</h1><p>An enormous amount of time spent profiling, benchmarking and optimizing things. The answer is different for every part of Bun, but one general theme:<!-- --> <!-- --><a href="https://ziglang.org/"><svg xmlns="http://www.w3.org/2000/svg" height="1.2rem" class="Zig" viewBox="0 0 400 140"><g fill="#F7A41D"><g><polygon points="46,22 28,44 19,30"></polygon><polygon points="46,22 33,33 28,44 22,44 22,95 31,95 20,100 12,117 0,117 0,22" shape-rendering="crispEdges"></polygon><polygon points="31,95 12,117 4,106"></polygon></g><g><polygon points="56,22 62,36 37,44"></polygon><polygon points="56,22 111,22 111,44 37,44 56,32" shape-rendering="crispEdges"></polygon><polygon points="116,95 97,117 90,104"></polygon><polygon points="116,95 100,104 97,117 42,117 42,95" shape-rendering="crispEdges"></polygon><polygon points="150,0 52,117 3,140 101,22"></polygon></g><g><polygon points="141,22 140,40 122,45"></polygon><polygon points="153,22 153,117 106,117 120,105 125,95 131,95 131,45 122,45 132,36 141,22" shape-rendering="crispEdges"></polygon><polygon points="125,95 130,110 106,117"></polygon></g></g><g fill="#121212"><g><polygon points="260,22 260,37 229,40 177,40 177,22" shape-rendering="crispEdges"></polygon><polygon points="260,37 207,99 207,103 176,103 229,40 229,37"></polygon><polygon points="261,99 261,117 176,117 176,103 206,99" shape-rendering="crispEdges"></polygon></g><rect x="272" y="22" shape-rendering="crispEdges" width="22" height="95"></rect><g><polygon points="394,67 394,106 376,106 376,81 360,70 346,67" shape-rendering="crispEdges"></polygon><polygon points="360,68 376,81 346,67"></polygon><path d="M394,106c-10.2,7.3-24,12-37.7,12c-29,0-51.1-20.8-51.1-48.3c0-27.3,22.5-48.1,52-48.1
+			c5.7,0,12.8-2.3,19-5.5L394,106z"></path></g></g></svg></a>, a low-level programming language with manual memory management.<!-- --><br/><br/>Most of Bun is written from scratch including the JSX/TypeScript transpiler, npm client, bundler, SQLite client, HTTP client, WebSocket client and more.<!-- --></p><h2>Why is Bun fast?</h2><p>An enormous amount of time spent profiling, benchmarking and optimizing things. The answer is different for every part of Bun, but one general theme:<!-- --> <!-- --><a href="https://ziglang.org/"><svg xmlns="http://www.w3.org/2000/svg" height="1.2rem" class="Zig" viewBox="0 0 400 140"><title>Zig</title><g fill="#F7A41D"><g><polygon points="46,22 28,44 19,30"></polygon><polygon points="46,22 33,33 28,44 22,44 22,95 31,95 20,100 12,117 0,117 0,22" shape-rendering="crispEdges"></polygon><polygon points="31,95 12,117 4,106"></polygon></g><g><polygon points="56,22 62,36 37,44"></polygon><polygon points="56,22 111,22 111,44 37,44 56,32" shape-rendering="crispEdges"></polygon><polygon points="116,95 97,117 90,104"></polygon><polygon points="116,95 100,104 97,117 42,117 42,95" shape-rendering="crispEdges"></polygon><polygon points="150,0 52,117 3,140 101,22"></polygon></g><g><polygon points="141,22 140,40 122,45"></polygon><polygon points="153,22 153,117 106,117 120,105 125,95 131,95 131,45 122,45 132,36 141,22" shape-rendering="crispEdges"></polygon><polygon points="125,95 130,110 106,117"></polygon></g></g><g fill="#121212"><g><polygon points="260,22 260,37 229,40 177,40 177,22" shape-rendering="crispEdges"></polygon><polygon points="260,37 207,99 207,103 176,103 229,40 229,37"></polygon><polygon points="261,99 261,117 176,117 176,103 206,99" shape-rendering="crispEdges"></polygon></g><rect x="272" y="22" shape-rendering="crispEdges" width="22" height="95"></rect><g><polygon points="394,67 394,106 376,106 376,81 360,70 346,67" shape-rendering="crispEdges"></polygon><polygon points="360,68 376,81 346,67"></polygon><path d="M394,106c-10.2,7.3-24,12-37.7,12c-29,0-51.1-20.8-51.1-48.3c0-27.3,22.5-48.1,52-48.1
 			c14.3,0,29.2,5.5,38.9,14l-13,15c-7.1-6.3-16.8-10-25.9-10c-17,0-30.2,12.9-30.2,29.5c0,16.8,13.3,29.6,30.3,29.6
-			c5.7,0,12.8-2.3,19-5.5L394,106z"></path></g></g></svg></a> <!-- -->&#x27;s low-level control over memory and lack of hidden control flow makes it much simpler to write fast software.<!-- --> <!-- --><a href="https://github.com/sponsors/ziglang">Sponsor the Zig Software Foundation</a></p><h1>Getting started</h1><p>To install bun, run this<!-- --> <!-- --><a target="_blank" href="https://bun.sh/install">install script</a> <!-- -->in your terminal. It downloads Bun from GitHub.<!-- --></p><div class="CodeBlock"><pre class="shiki" style="background-color: #282A36"><code><span class="line"><span style="color: #F8F8F2">curl https://bun.sh/install </span><span style="color: #FF79C6">|</span><span style="color: #F8F8F2"> bash</span></span></code></pre></div><p> <!-- -->Bun&#x27;s HTTP server is built on web standards like<!-- --> <!-- --><a class="Identifier" href="https://developer.mozilla.org/en-US/docs/Web/API/Request">Request</a> <!-- -->and<!-- --> <!-- --><a class="Identifier" href="https://developer.mozilla.org/en-US/docs/Web/API/Response">Response</a></p><div class="CodeBlock"><pre class="shiki" style="background-color: #282A36"><code><span class="line"><span style="color: #6272A4">// http.js</span></span>
+			c5.7,0,12.8-2.3,19-5.5L394,106z"></path></g></g></svg></a>&#x27;s low-level control over memory and lack of hidden control flow makes it much simpler to write fast software.<!-- --> <!-- --><a href="https://github.com/sponsors/ziglang">Sponsor the Zig Software Foundation</a></p><h2>Getting started</h2><p>To install bun, run this<!-- --> <!-- --><a target="_blank" href="https://bun.sh/install">install script</a> <!-- -->in your terminal. It downloads Bun from GitHub.<!-- --></p><div class="CodeBlock"><pre class="shiki" style="background-color: #282A36"><code><span class="line"><span style="color: #F8F8F2">curl https://bun.sh/install </span><span style="color: #FF79C6">|</span><span style="color: #F8F8F2"> bash</span></span></code></pre></div><p> <!-- -->Bun&#x27;s HTTP server is built on web standards like<!-- --> <!-- --><a class="Identifier" href="https://developer.mozilla.org/en-US/docs/Web/API/Request">Request</a> <!-- -->and<!-- --> <!-- --><a class="Identifier" href="https://developer.mozilla.org/en-US/docs/Web/API/Response">Response</a></p><div class="CodeBlock"><pre class="shiki" style="background-color: #282A36"><code><span class="line"><span style="color: #6272A4">// http.js</span></span>
 <span class="line"><span style="color: #FF79C6">export</span><span style="color: #F8F8F2"> </span><span style="color: #FF79C6">default</span><span style="color: #F8F8F2"> {</span></span>
 <span class="line"><span style="color: #F8F8F2">  port</span><span style="color: #FF79C6">:</span><span style="color: #F8F8F2"> </span><span style="color: #BD93F9">3000</span><span style="color: #F8F8F2">,</span></span>
 <span class="line"><span style="color: #F8F8F2">  </span><span style="color: #50FA7B">fetch</span><span style="color: #F8F8F2">(</span><span style="color: #FFB86C; font-style: italic">request</span><span style="color: #F8F8F2">) {</span></span>
 <span class="line"><span style="color: #F8F8F2">    </span><span style="color: #FF79C6">return</span><span style="color: #F8F8F2"> </span><span style="color: #FF79C6; font-weight: bold">new</span><span style="color: #F8F8F2"> </span><span style="color: #50FA7B">Response</span><span style="color: #F8F8F2">(</span><span style="color: #E9F284">&quot;</span><span style="color: #F1FA8C">Welcome to Bun!</span><span style="color: #E9F284">&quot;</span><span style="color: #F8F8F2">);</span></span>
 <span class="line"><span style="color: #F8F8F2">  },</span></span>
-<span class="line"><span style="color: #F8F8F2">};</span></span></code></pre></div><p>Run it with bun:</p><div class="CodeBlock"><pre class="shiki" style="background-color: #282A36"><code><span class="line"><span style="color: #F8F8F2">bun run http.js</span></span></code></pre></div><p>Then open<!-- --> <!-- --><a target="_blank" href="http://localhost:3000">http://localhost:3000</a> <!-- -->in your browser<!-- --><br/><br/>See<!-- --> <!-- --><a href="https://github.com/Jarred-Sumner/bun/tree/main/examples">more examples</a> <!-- -->and check out <!-- --><a href="https://github.com/Jarred-Sumner/bun#Reference">the docs</a>. If you have any questions or want help, join<!-- --> <!-- --><a href="https://bun.sh/discord">Bun&#x27;s Discord</a></p><h1>Bun CLI</h1><div title="npm takes 160ms to run a script that does nothing" class="Group"><span target="_blank" class="Tag Tag--Command">bun run</span><p>The same command for running JavaScript &amp; TypeScript files with bun&#x27;s JavaScript runtime also runs package.json<!-- --> <!-- --><code class="mono">&quot;scripts&quot;</code>.<!-- --></p><strong>Replace <!-- --><code class="mono">npm run</code> with<!-- --> <!-- --><code class="mono">bun run</code> and save 160ms on every run.<!-- --></strong><br/><div>bun runs package.json scripts<!-- --> <!-- --><a href="https://twitter.com/jarredsumner/status/1454218996983623685" target="_blank" class="PerformanceClaim">30x faster than <!-- --><code class="mono">npm run</code></a></div> <!-- --></div><div title="JavaScript package managers are not using the fastest system calls" class="Group"><span target="_blank" class="Tag Tag--Command">bun install</span><p>bun install is an npm-compatible package manager. You probably will be surprised by how much faster copying files can get.</p><strong>Replace <!-- --><code class="mono">yarn</code> with<!-- --> <!-- --><code class="mono">bun install</code> and get 20x faster package installs.<!-- --></strong><br/><div>bun install uses the fastest system calls available to copy files.</div></div><div class="Group"><span target="_blank" class="Tag Tag--Command">bun wiptest</span><p>A Jest-like test runner for JavaScript &amp; TypeScript projects builtin to bun</p><div class="Label"><a href="https://twitter.com/jarredsumner/status/1542824445810642946" target="_blank" class="PerformanceClaim">You&#x27;ve never seen a JavaScript test runner this fast</a> <!-- -->(or incomplete)<!-- --></div></div><h1>What is the license?</h1><p>MIT License, excluding dependencies which have various licenses.</p><h1>How do I see the source code?</h1><p>Bun is on <!-- --><a href="https://github.com/Jarred-Sumner/bun">GitHub</a></p></div></section><section id="explain-section"><div id="explain"></div></section><script>
-[...document.querySelectorAll(".Tab")].map(el => el.addEventListener("click", function(e) {
-  var tab = e.srcElement.getAttribute("data-tab");
-  document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
-}));
+<span class="line"><span style="color: #F8F8F2">};</span></span></code></pre></div><p>Run it with bun:</p><div class="CodeBlock"><pre class="shiki" style="background-color: #282A36"><code><span class="line"><span style="color: #F8F8F2">bun run http.js</span></span></code></pre></div><p>Then open<!-- --> <!-- --><a target="_blank" href="http://localhost:3000">http://localhost:3000</a> <!-- -->in your browser<!-- --><br/><br/>See<!-- --> <!-- --><a href="https://github.com/oven-sh/bun/tree/main/examples">more examples</a> <!-- -->and check out <!-- --><a href="https://github.com/oven-sh/bun#Reference">the docs</a>. If you have any questions or want help, join<!-- --> <!-- --><a href="https://bun.sh/discord">Bun&#x27;s Discord</a></p><h2>Bun CLI</h2><div class="Group"><span target="_blank" class="Tag Tag--Command">bun run</span><p>The same command for running JavaScript &amp; TypeScript files with bun&#x27;s JavaScript runtime also runs package.json<!-- --> <!-- --><code class="mono">&quot;scripts&quot;</code>.<!-- --></p><strong>Replace <!-- --><code class="mono">npm run</code> with<!-- --> <!-- --><code class="mono">bun run</code> and save 160ms on every run.<!-- --></strong><br/><div>bun runs package.json scripts<!-- --> <!-- --><a href="https://twitter.com/jarredsumner/status/1454218996983623685" target="_blank" class="PerformanceClaim">30x faster than <!-- --><code class="mono">npm run</code></a></div> <!-- --></div><div class="Group"><span target="_blank" class="Tag Tag--Command">bun install</span><p>bun install is an npm-compatible package manager. You probably will be surprised by how much faster copying files can get.</p><strong>Replace <!-- --><code class="mono">yarn</code> with<!-- --> <!-- --><code class="mono">bun install</code> and get 20x faster package installs.<!-- --></strong><br/><div>bun install uses the fastest system calls available to copy files.</div></div><div class="Group"><span target="_blank" class="Tag Tag--Command">bun wiptest</span><p>A Jest-like test runner for JavaScript &amp; TypeScript projects built-in to bun</p><div class="Label"><a href="https://twitter.com/jarredsumner/status/1542824445810642946" target="_blank" class="PerformanceClaim">You&#x27;ve never seen a JavaScript test runner this fast</a> <!-- -->(or incomplete)<!-- --></div></div><h2>What is the license?</h2><p>MIT License, excluding dependencies which have various licenses.</p><h2>How do I see the source code?</h2><p>Bun is on <!-- --><a href="https://github.com/oven-sh/bun">GitHub</a></p></div></section><section id="explain-section"><div id="explain"></div></section><script>
+[...document.querySelectorAll(".Tab")].map(el => {
+  el.addEventListener("click", function(e) {
+    var tab = e.srcElement.getAttribute("data-tab");
+    [...document.querySelectorAll(".Tab")].map(el => {
+      var active = el.getAttribute("data-tab") === tab;
+      el.setAttribute("tabindex", active ? 0 : -1);
+      el.setAttribute("aria-selected", active);
+    });
+    [...document.querySelectorAll(".BarGraph")].map(el => {
+      var active = el.id === tab + "-tab-content";
+      el.setAttribute("tabindex", active ? 0 : -1);
+    });
+    document.querySelector(".Graphs").setAttribute("class", "Graphs Graphs--active-" + tab);
+  });
 
-document.querySelector("#code-box-copy").addEventListener("click", async e => {
-  var el = document.querySelector("#code-box");
-  await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
+  el.addEventListener("keydown", e => {
+    var tabs = [...document.querySelectorAll(".Tab")];
+    var activeTabEl = document.querySelector(".Tab[aria-selected='true']");
+    var activeTabIndex = tabs.indexOf(activeTabEl);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      activeTabIndex = (activeTabIndex + 1) % tabs.length;
+      tabs[activeTabIndex].click();
+      tabs[activeTabIndex].focus();
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      activeTabIndex = (activeTabIndex + tabs.length - 1) % tabs.length;
+      tabs[activeTabIndex].click();
+      tabs[activeTabIndex].focus();
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      tabs[0].click();
+      tabs[0].focus();    
+    }
+    if (e.key === 'End') {
+      e.preventDefault();
+      tabs[tabs.length - 1].click();
+      tabs[tabs.length - 1].focus();    
+    }
+  });
 });
-      </script><div class="Built">Built with Bun <!-- -->v0.1.1<!-- --></div></body></html>
+
+for (const el of document.querySelectorAll(".InstallBox-copy")) {
+  el.addEventListener("click", async e => {
+    await navigator.clipboard.writeText("curl https://bun.sh/install | bash");
+  });
+}
+      </script><div class="Built">Built with Bun <!-- -->v0.1.3<!-- --></div></body></html>

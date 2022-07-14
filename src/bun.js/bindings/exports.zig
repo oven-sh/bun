@@ -29,6 +29,8 @@ const JSPrivateDataPtr = @import("../base.zig").JSPrivateDataPtr;
 const Backtrace = @import("../../deps/backtrace.zig");
 const JSPrinter = @import("../../js_printer.zig");
 const JSLexer = @import("../../js_lexer.zig");
+const typeBaseName = @import("../../meta.zig").typeBaseName;
+
 pub const ZigGlobalObject = extern struct {
     pub const shim = Shimmer("Zig", "GlobalObject", @This());
     bytes: shim.Bytes,
@@ -40,7 +42,7 @@ pub const ZigGlobalObject = extern struct {
 
     pub fn create(class_ref: [*]CAPI.JSClassRef, count: i32, console: *anyopaque) *JSGlobalObject {
         var global = shim.cppFn("create", .{ class_ref, count, console });
-        Backtrace.reloadHandlers();
+        Backtrace.reloadHandlers() catch unreachable;
         return global;
     }
 
@@ -186,7 +188,7 @@ pub const JSHTTPResponseSink = JSC.WebCore.HTTPResponseSink.JSSink;
 
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPClient;
-pub const WebSocketHTTSPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPSClient;
+pub const WebSocketHTTPSClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPSClient;
 pub const WebSocketClient = @import("../../http/websocket_http_client.zig").WebSocketClient;
 pub const WebSocketClientTLS = @import("../../http/websocket_http_client.zig").WebSocketClientTLS;
 
@@ -194,7 +196,7 @@ pub fn Errorable(comptime Type: type) type {
     return extern struct {
         result: Result,
         success: bool,
-        pub const name = "Errorable" ++ @typeName(Type);
+        pub const name = "Errorable" ++ typeBaseName(@typeName(Type));
 
         pub const Result = extern union {
             value: Type,
@@ -1615,7 +1617,7 @@ pub const ZigConsoleClient = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
                 },
                 .Double => {
-                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}n<r>", enable_ansi_colors), .{value.asNumber()});
+                    writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{value.asNumber()});
                 },
                 .Undefined => {
                     writer.print(comptime Output.prettyFmt("<r><d>undefined<r>", enable_ansi_colors), .{});
@@ -1720,7 +1722,8 @@ pub const ZigConsoleClient = struct {
                                 return;
                             },
                             .Request => {
-                                this.printAs(.JSON, Writer, writer_, value, .Object, enable_ansi_colors);
+                                var request = priv_data.as(JSC.WebCore.Request);
+                                request.writeFormat(this, writer_, enable_ansi_colors) catch {};
                                 return;
                             },
                             else => {},
@@ -2136,23 +2139,28 @@ pub const ZigConsoleClient = struct {
                     writer.writeAll(" }");
                 },
                 .TypedArray => {
-                    const len = value.getLengthOfArray(this.globalThis);
-                    if (len == 0) {
-                        writer.writeAll("[]");
-                        return;
-                    }
+                    const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
 
-                    writer.writeAll("[ ");
-                    var i: u32 = 0;
-                    var buffer = JSC.Buffer.fromJS(this.globalThis, value, null).?;
-                    const slice = buffer.slice();
-                    while (i < len) : (i += 1) {
-                        if (i > 0) {
+                    writer.writeAll(std.mem.span(@tagName(arrayBuffer.typed_array_type)));
+                    const slice = arrayBuffer.slice();
+
+                    writer.print("({d}) [ ", .{slice.len});
+
+                    if (slice.len > 0) {
+                        writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{slice[0]});
+                        var leftover = slice[1..];
+                        const max = 512;
+                        leftover = leftover[0..@minimum(leftover.len, max)];
+                        for (leftover) |el| {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             writer.writeAll(" ");
+
+                            writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{el});
                         }
 
-                        writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{slice[i]});
+                        if (slice.len > max + 1) {
+                            writer.print(comptime Output.prettyFmt("<r><d>, ... {d} more<r>", enable_ansi_colors), .{slice.len - max - 1});
+                        }
                     }
 
                     writer.writeAll(" ]");
@@ -2169,7 +2177,7 @@ pub const ZigConsoleClient = struct {
             defer this.globalThis = prevGlobalThis;
             this.globalThis = globalThis;
 
-            // This looks incredibly redudant. We make the ZigConsoleClient.Formatter.Tag a
+            // This looks incredibly redundant. We make the ZigConsoleClient.Formatter.Tag a
             // comptime var so we have to repeat it here. The rationale there is
             // it _should_ limit the stack usage because each version of the
             // function will be relatively small
@@ -2519,7 +2527,7 @@ pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugSSLServer.RequestConte
 comptime {
     if (!is_bindgen) {
         WebSocketHTTPClient.shim.ref();
-        WebSocketHTTSPClient.shim.ref();
+        WebSocketHTTPSClient.shim.ref();
         WebSocketClient.shim.ref();
         WebSocketClientTLS.shim.ref();
 

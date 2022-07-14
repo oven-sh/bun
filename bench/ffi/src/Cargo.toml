@@ -1,0 +1,18 @@
+[package]
+edition = "2021"
+version = "0.1.0"
+name = "ffi_napi_bench"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+enable-napi = []
+
+[dependencies]
+napi = "2"
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2.0.1"

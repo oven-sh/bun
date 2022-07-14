@@ -128,7 +128,7 @@ pub const RequestContext = struct {
     pub var fallback_only = false;
 
     const default_favicon = @embedFile("favicon.png");
-    const default_favicon_shasum = "07877ad4cdfe472cc70759d1f237d358ae1f6a9b";
+    const default_favicon_shasum = "68d5047bec9a8cd56e2e8999d74cad7ba448dce9";
     pub fn sendFavicon(ctx: *RequestContext) !void {
         ctx.appendHeader("Content-Type", MimeType.byExtension("png").value);
         ctx.appendHeader("ETag", default_favicon_shasum);
@@ -3474,7 +3474,6 @@ pub const Server = struct {
                         },
                         else => {
                             Output.prettyErrorln("<r><red>{s} while trying to start listening on port {d}.\n\n", .{ @errorName(err), port });
-                            Output.flush();
                             Global.exit(1);
                         },
                     }
@@ -3494,7 +3493,6 @@ pub const Server = struct {
                         random_number.random().intRangeAtMost(u16, 3011, 65535),
                     },
                 );
-                Output.flush();
                 Global.exit(1);
             }
         }

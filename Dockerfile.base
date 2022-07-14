@@ -19,6 +19,7 @@ RUN apt-get update && \
     wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
     chmod +x llvm.sh && \
     ./llvm.sh 13 && \
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get update && \
     apt-get install --no-install-recommends -y \
     ca-certificates \
@@ -35,7 +36,6 @@ RUN apt-get update && \
     nodejs \
     gcc \
     g++ \
-    npm \
     clang-13 \
     clang-format-13 \
     libc++-13-dev \
@@ -90,7 +90,7 @@ ARG BUILDARCH=amd64
 WORKDIR $GITHUB_WORKSPACE
 
 RUN cd $GITHUB_WORKSPACE && \
-    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/mar4/zig-linux-$BUILDARCH.zip && \
+    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
     unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 

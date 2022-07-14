@@ -1,13 +1,7 @@
 import Head from "next/head";
-import Link from "next/link";
 import React from "react";
 import styles from "../styles/Home.module.css";
 import nextPackage from "next/package.json";
-export async function getStaticProps(ctx) {
-  return {
-    props: {},
-  };
-}
 
 export default function Home({}) {
   return (

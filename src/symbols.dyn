@@ -65,6 +65,7 @@
     _napi_get_node_version;
     _napi_get_null;
     _napi_get_property;
+    _napi_get_property_names;
     _napi_get_prototype;
     _napi_get_reference_value;
     _napi_get_threadsafe_function_context;

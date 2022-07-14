@@ -107,8 +107,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     const npm_args = 2 * @intCast(usize, @boolToInt(npm_client != null));
     const total = count + npm_args;
     var argv = allocator.alloc(string, total) catch return;
-    var proc: *std.ChildProcess = undefined;
-    defer proc.deinit();
+    var proc: std.ChildProcess = undefined;
     defer if (argv.len > 32) allocator.free(argv);
 
     if (npm_client) |client| {
@@ -145,7 +144,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     Output.disableBuffering();
     defer Output.enableBuffering();
 
-    proc = std.ChildProcess.init(argv, allocator) catch return;
+    proc = std.ChildProcess.init(argv, allocator) ;
     proc.stdin_behavior = .Inherit;
     proc.stdout_behavior = .Inherit;
     proc.stderr_behavior = .Inherit;
@@ -419,7 +418,6 @@ pub const CreateCommand = struct {
 
                                 const examples = try Example.fetchAllLocalAndRemote(ctx, null, &env_loader, filesystem);
                                 Example.print(examples.items, dirname);
-                                Output.flush();
                                 Global.exit(1);
                             },
                             else => {
@@ -533,7 +531,6 @@ pub const CreateCommand = struct {
                         }
 
                         Output.prettyErrorln("<r>\n<d>To download {s} anyway, use --force<r>", .{template});
-                        Output.flush();
                         Global.exit(1);
                     }
                 }
@@ -572,7 +569,6 @@ pub const CreateCommand = struct {
                     progress.refresh();
 
                     Output.prettyErrorln("<r><red>{s}<r>: opening dir {s}", .{ @errorName(err), template });
-                    Output.flush();
                     Global.exit(1);
                 };
 
@@ -583,7 +579,6 @@ pub const CreateCommand = struct {
                     progress.refresh();
 
                     Output.prettyErrorln("<r><red>{s}<r>: creating dir {s}", .{ @errorName(err), destination });
-                    Output.flush();
                     Global.exit(1);
                 };
 
@@ -611,7 +606,6 @@ pub const CreateCommand = struct {
                                     progress_.refresh();
 
                                     Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                                    Output.flush();
                                     Global.exit(1);
                                 };
                             };
@@ -632,7 +626,6 @@ pub const CreateCommand = struct {
                                     progress_.refresh();
 
                                     Output.prettyErrorln("<r><red>{s}<r>: copying file {s}", .{ @errorName(err), entry.path });
-                                    Output.flush();
                                     Global.exit(1);
                                 };
                             };
@@ -1514,7 +1507,7 @@ pub const CreateCommand = struct {
             Output.pretty("<r>\n", .{});
             Output.flush();
 
-            var process = try std.ChildProcess.init(install_args, ctx.allocator);
+            var process = std.ChildProcess.init(install_args, ctx.allocator);
             process.cwd = destination;
 
             defer {
@@ -1526,7 +1519,6 @@ pub const CreateCommand = struct {
                 Output.print("\n", .{});
                 Output.flush();
             }
-            defer process.deinit();
 
             _ = try process.spawnAndWait();
 
@@ -1648,7 +1640,7 @@ pub const CreateCommand = struct {
         if (create_options.open) {
             if (which(&bun_path_buf, PATH, destination, "bun")) |bin| {
                 var argv = [_]string{std.mem.span(bin)};
-                var child = try std.ChildProcess.init(&argv, ctx.allocator);
+                var child = std.ChildProcess.init(&argv, ctx.allocator);
                 child.cwd = destination;
                 child.stdin_behavior = .Inherit;
                 child.stdout_behavior = .Inherit;
@@ -1878,11 +1870,9 @@ pub const Example = struct {
 
             if (content_type.len > 0) {
                 Output.prettyErrorln("<r><red>error<r>: Unexpected content type from GitHub: {s}", .{content_type});
-                Output.flush();
                 Global.crash();
             } else {
                 Output.prettyErrorln("<r><red>error<r>: Invalid response from GitHub (missing content type)", .{});
-                Output.flush();
                 Global.crash();
             }
         }
@@ -1892,7 +1882,6 @@ pub const Example = struct {
             refresher.refresh();
 
             Output.prettyErrorln("<r><red>error<r>: Invalid response from GitHub (missing body)", .{});
-            Output.flush();
             Global.crash();
         }
 
@@ -1939,11 +1928,9 @@ pub const Example = struct {
                 } else {
                     try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                 }
-                Output.flush();
                 Global.exit(1);
             } else {
                 Output.prettyErrorln("Error parsing package: <r><red>{s}<r>", .{@errorName(err)});
-                Output.flush();
                 Global.exit(1);
             }
         };
@@ -1957,7 +1944,6 @@ pub const Example = struct {
             } else {
                 try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
             }
-            Output.flush();
             Global.exit(1);
         }
 
@@ -1976,7 +1962,6 @@ pub const Example = struct {
             refresher.refresh();
 
             Output.prettyErrorln("package.json is missing tarball url. This is an internal error!", .{});
-            Output.flush();
             Global.exit(1);
         };
 
@@ -2001,7 +1986,6 @@ pub const Example = struct {
             progress.end();
             refresher.refresh();
             Output.prettyErrorln("Error fetching tarball: <r><red>{d}<r>", .{response.status_code});
-            Output.flush();
             Global.exit(1);
         }
 
@@ -2028,12 +2012,10 @@ pub const Example = struct {
             switch (err) {
                 error.WouldBlock => {
                     Output.prettyErrorln("Request timed out while trying to fetch examples list. Please try again", .{});
-                    Output.flush();
                     Global.exit(1);
                 },
                 else => {
                     Output.prettyErrorln("<r><red>{s}<r> while trying to fetch examples list. Please try again", .{@errorName(err)});
-                    Output.flush();
                     Global.exit(1);
                 },
             }
@@ -2041,7 +2023,6 @@ pub const Example = struct {
 
         if (response.status_code != 200) {
             Output.prettyErrorln("<r><red>{d}<r> fetching examples :( {s}", .{ response.status_code, mutable.list.items });
-            Output.flush();
             Global.exit(1);
         }
 
@@ -2055,10 +2036,8 @@ pub const Example = struct {
                     try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
                 }
                 Global.exit(1);
-                Output.flush();
             } else {
                 Output.prettyErrorln("Error parsing examples: <r><red>{s}<r>", .{@errorName(err)});
-                Output.flush();
                 Global.exit(1);
             }
         };
@@ -2069,7 +2048,6 @@ pub const Example = struct {
             } else {
                 try ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
             }
-            Output.flush();
             Global.exit(1);
         }
 
@@ -2094,7 +2072,6 @@ pub const Example = struct {
         }
 
         Output.prettyErrorln("Corrupt examples data: expected object but received {s}", .{@tagName(examples_object.data)});
-        Output.flush();
         Global.exit(1);
     }
 };
@@ -2152,7 +2129,6 @@ const GitHandler = struct {
 
         thread = std.Thread.spawn(.{}, spawnThread, .{ destination, PATH, verbose }) catch |err| {
             Output.prettyErrorln("<r><red>{s}<r>", .{@errorName(err)});
-            Output.flush();
             Global.exit(1);
         };
     }
@@ -2210,7 +2186,7 @@ const GitHandler = struct {
             const git_commands = .{
                 &[_]string{ std.mem.span(git), "init", "--quiet" },
                 &[_]string{ std.mem.span(git), "add", destination, "--ignore-errors" },
-                &[_]string{ std.mem.span(git), "commit", "-am", "\"Initial commit (via bun create)\"", "--quiet" },
+                &[_]string{ std.mem.span(git), "commit", "-am", "Initial commit (via bun create)", "--quiet" },
             };
 
             if (comptime verbose) {
@@ -2221,12 +2197,11 @@ const GitHandler = struct {
 
             inline for (comptime std.meta.fieldNames(@TypeOf(Commands))) |command_field| {
                 const command: []const string = @field(git_commands, command_field);
-                var process = try std.ChildProcess.init(command, default_allocator);
+                var process = std.ChildProcess.init(command, default_allocator);
                 process.cwd = destination;
                 process.stdin_behavior = .Inherit;
                 process.stdout_behavior = .Inherit;
                 process.stderr_behavior = .Inherit;
-                defer process.deinit();
 
                 _ = try process.spawnAndWait();
                 _ = process.kill() catch undefined;

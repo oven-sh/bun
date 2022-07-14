@@ -1,10 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 killall -9 $(basename $BUN_BIN) || echo ""
 
 rm -rf /tmp/react-app
 mkdir -p /tmp/react-app
 $BUN_BIN create react /tmp/react-app
+
 
 if (($?)); then
     echo "bun create failed"

@@ -15,8 +15,10 @@ npm install bun-framework-next
 bun bun --use next
 ```
 
-Launch bun:
+Launch the development server:
 
 ```bash
-bun
+bun dev
 ```
+
+Open http://localhost:3000 with your browser to see the result.

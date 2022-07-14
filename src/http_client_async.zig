@@ -42,9 +42,35 @@ pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
     default_allocator = default_arena.allocator();
     NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(default_allocator);
     AsyncIO.global = AsyncIO.init(1024, 0) catch |err| {
-        Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{s}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
-        Output.flush();
-        os.exit(1);
+        log: {
+            if (comptime Environment.isLinux) {
+                if (err == error.SystemOutdated) {
+                    Output.prettyErrorln(
+                        \\<red>error<r>: Linux kernel version doesn't support io_uring, which Bun depends on. 
+                        \\
+                        \\To fix this error: <b>please upgrade to a newer Linux kernel<r>.
+                        \\
+                        \\If you're using Windows Subsystem for Linux, here's how: 
+                        \\  1. Open PowerShell as an administrator
+                        \\  2. Run this:
+                        \\    <cyan>wsl --update<r>
+                        \\    <cyan>wsl --shutdown<r>
+                        \\
+                        \\If that doesn't work (and you're on a Windows machine), try this:
+                        \\  1. Open Windows Update
+                        \\  2. Download any updates to Windows Subsystem for Linux
+                        \\
+                        \\If you're still having trouble, ask for help in bun's discord https://bun.sh/discord
+                        \\
+                    , .{});
+                    break :log;
+                }
+            }
+
+            Output.prettyErrorln("<r><red>error<r>: Failed to initialize network thread: <red><b>{s}<r>.\nHTTP requests will not work. Please file an issue and run strace().", .{@errorName(err)});
+        }
+
+        Global.exit(1);
     };
 
     AsyncIO.global_loaded = true;

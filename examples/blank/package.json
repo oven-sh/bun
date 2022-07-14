@@ -3,6 +3,6 @@
     "name": "@bun-examples/blank",
     "main": "src/index.js",
     "devDependencies": {
-        "bun-types": "^0.0.83"
+        "bun-types": "latest"
     }
 }

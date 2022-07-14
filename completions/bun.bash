@@ -68,7 +68,7 @@ _read_scripts_in_package_json() {
 }
 
 
-subcommand_comp_reply() {
+_subcommand_comp_reply() {
     local cur_word="${1}"
     local sub_commands="${2}"
     local regexp_subcommand="^[dbcriauh]";

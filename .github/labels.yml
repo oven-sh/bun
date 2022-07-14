@@ -40,6 +40,8 @@
   color: 'FBCA04'
 - name: 'tests'
   color: 'FBCA04'
+- name: 'packages:bun'
+  color: 'FBCA04'
 - name: 'packages:bun-darwin-aarch64'
   color: 'FBCA04'
 - name: 'packages:bun-error'

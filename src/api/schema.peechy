@@ -348,6 +348,8 @@ message TransformOptions {
   uint16 port = 25;
   MessageLevel logLevel = 26;
   SourceMapMode source_map = 27;
+
+  bool disable_ts = 28;
 }
 
 smol SourceMapMode {

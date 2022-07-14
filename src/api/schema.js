@@ -1729,6 +1729,10 @@ function decodeTransformOptions(bb) {
       case 27:
         result["source_map"] = SourceMapMode[bb.readByte()];
         break;
+      
+      case 28:
+        result["disable_ts"] = !!bb.readByte();
+        break;
 
       default:
         throw new Error("Attempted to parse invalid message");
@@ -1948,6 +1952,13 @@ function encodeTransformOptions(message, bb) {
       );
     bb.writeByte(encoded);
   }
+
+  var value = message["disable_ts"];
+  if (value != null) {
+    bb.writeByte(28);
+    bb.writeByte(value);
+  }
+
   bb.writeByte(0);
 }
 const SourceMapMode = {

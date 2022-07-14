@@ -934,6 +934,14 @@ test-dev-no-hmr: copy-test-node-modules
 	-killall bun-debug -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(DEBUG_BUN) node test/scripts/browser.js
 
+test-disable-ts: kill-bun copy-test-node-modules
+	-killall bun -9;
+	DISABLE_TS="DISABLE_TS" BUN_BIN=$(RELEASE_BUN) node test/scripts/browser.js
+
+test-disable-ts: copy-test-node-modules
+	-killall bun-debug -9;
+	DISABLE_TS="DISABLE_TS" BUN_BIN=$(DEBUG_BUN) node test/scripts/browser.js
+
 test-dev-bun-run:
 	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
 

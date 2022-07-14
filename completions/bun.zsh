@@ -173,6 +173,7 @@ _bun() {
                 '--main-fields[Main fields to lookup in package.json. Defaults to --platform dependent]:main-fields' \
                 '--disable-react-fast-refresh[Disable React Fast Refresh]' \
                 '--disable-hmr[Disable Hot Module Reloading]' \
+                '--disable-ts[Disable Typescript processing]' \
                 '--jsx-factory[Changes the function called when compiling JSX elements using the classic JSX runtime]:jsx-factory' \
                 '--jsx-fragment[Changes the function called when compiling JSX fragments]:jsx-fragment' \
                 '--jsx-import-source[Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: "react"]:jsx-import-source' \

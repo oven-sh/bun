@@ -167,6 +167,7 @@ pub const Arguments = struct {
         clap.parseParam("-c, --config <PATH>?               Config file to load bun from (e.g. -c bunfig.toml") catch unreachable,
         clap.parseParam("--disable-react-fast-refresh      Disable React Fast Refresh") catch unreachable,
         clap.parseParam("--disable-hmr                     Disable Hot Module Reloading (disables fast refresh too)") catch unreachable,
+        clap.parseParam("--disable-ts                     Disable Typescript processing") catch unreachable,
         clap.parseParam("--extension-order <STR>...        defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
@@ -400,6 +401,7 @@ pub const Arguments = struct {
 
         opts.no_summary = args.flag("--no-summary");
         opts.disable_hmr = args.flag("--disable-hmr");
+        opts.disable_ts = args.flag("--disable-ts");
 
         ctx.debug.silent = args.flag("--silent");
         if (opts.port != null and opts.origin == null) {

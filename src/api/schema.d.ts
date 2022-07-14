@@ -535,6 +535,7 @@ export interface TransformOptions {
   router?: RouteConfig;
   no_summary?: boolean;
   disable_hmr?: boolean;
+  disable_ts?:boolean;
   port?: uint16;
   logLevel?: MessageLevel;
   source_map?: SourceMapMode;

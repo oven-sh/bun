@@ -1744,6 +1744,9 @@ pub const Api = struct {
         /// disable_hmr
         disable_hmr: ?bool = null,
 
+        ///disable_ts
+        disable_ts: ?bool = null,
+
         /// port
         port: ?u16 = null,
 
@@ -1842,6 +1845,9 @@ pub const Api = struct {
                     },
                     27 => {
                         this.source_map = try reader.readValue(SourceMapMode);
+                    },
+                    28 => {
+                        this.disable_ts = try reader.readValue(bool);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1959,6 +1965,10 @@ pub const Api = struct {
             if (this.source_map) |source_map| {
                 try writer.writeFieldID(27);
                 try writer.writeEnum(source_map);
+            }
+            if (this.disable_ts) |disable_ts| {
+                try writer.writeFieldID(28);
+                try writer.writeInt(@as(u8, @boolToInt(disable_ts)));
             }
             try writer.endMessage();
         }

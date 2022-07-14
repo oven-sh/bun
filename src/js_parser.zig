@@ -447,7 +447,7 @@ pub const ImportScanner = struct {
         var scanner = ImportScanner{};
         var stmts_end: usize = 0;
         const allocator = p.allocator;
-        const is_typescript_enabled: bool = comptime P.parser_features.typescript;
+        const is_typescript_enabled: bool = comptime if (P.options.disable_ts) false else P.parser_features.typescript;
 
         for (stmts) |_stmt| {
             // zls needs the hint, it seems.
@@ -3852,7 +3852,7 @@ fn NewParser_(
     // P is for Parser!
     return struct {
         const js_parser_jsx = if (FeatureFlags.force_macro) JSXTransformType.macro else js_parser_features.jsx;
-        const is_typescript_enabled = js_parser_features.typescript;
+        const is_typescript_enabled = if (options.disable_ts) false else js_parser_features.typescript;
         const is_jsx_enabled = js_parser_jsx != .none;
         const only_scan_imports_and_do_not_visit = js_parser_features.scan_only;
         const ImportRecordList = if (only_scan_imports_and_do_not_visit) *std.ArrayList(ImportRecord) else std.ArrayList(ImportRecord);

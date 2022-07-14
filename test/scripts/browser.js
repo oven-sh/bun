@@ -8,10 +8,12 @@ const snippetsDir = path.resolve(__dirname, "../snippets");
 const serverURL = process.env.TEST_SERVER_URL || "http://localhost:8080";
 const USE_EXISTING_PROCESS = process.env.USE_EXISTING_PROCESS || false;
 const DISABLE_HMR = !!process.env.DISABLE_HMR;
+const DISABLE_TS = !!process.env.DISABLE_TS;
 const bunFlags = [
   "dev",
   `--origin=${serverURL}`,
   DISABLE_HMR && "--disable-hmr",
+  DISABLE_TS && "--disable-ts",
 ].filter(Boolean);
 const bunExec = process.env.BUN_BIN || "bun";
 

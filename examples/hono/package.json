@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "@bun-examples/hono",
   "main": "src/index.js",
   "devDependencies": {

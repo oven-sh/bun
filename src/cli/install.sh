@@ -115,7 +115,7 @@ fi
 if test $(basename $SHELL) == "fish"; then
     # Install completions, but we don't care if it fails
     IS_BUN_AUTO_UPDATE="true" SHELL="fish" $exe completions >/dev/null 2>&1
-    if test -f $HOME/.config/fish/config.fish; then
+    if test -w $HOME/.config/fish/config.fish; then
         echo -e "\n# bun\nset -Ux BUN_INSTALL \"$bun_install\"" >>"$HOME/.config/fish/config.fish"
         echo -e "fish_add_path \"$bin_dir\"\n" >>"$HOME/.config/fish/config.fish"
         echo ""
@@ -140,7 +140,7 @@ then
     # Install completions, but we don't care if it fails
     IS_BUN_AUTO_UPDATE="true" SHELL="zsh" $exe completions >/dev/null 2>&1
 
-    if test -f $HOME/.zshrc; then
+    if test -w $HOME/.zshrc; then
         echo -e "\n# bun\nexport BUN_INSTALL=\"$bun_install\"" >>"$HOME/.zshrc"
         echo -e "export PATH=\"\$BUN_INSTALL/bin:\$PATH\"" >>"$HOME/.zshrc"
         echo ""
@@ -156,6 +156,32 @@ then
     else
         echo ""
         echo "Manually add the directory to your \$HOME/.zshrc (or similar)"
+        echo ""
+        echo -e "  $BWhite export BUN_INSTALL=\"$bun_install\"$Color_Off"
+        echo -e "  $BWhite export PATH=\"\$BUN_INSTALL/bin:\$PATH\"$Color_Off"
+    fi
+elif 
+    test $(basename $SHELL) == "bash"
+then 
+    # Install completions, but we don't care if it fails
+    IS_BUN_AUTO_UPDATE="true" SHELL="bash" $exe completions >/dev/null 2>&1
+
+    if test -w $HOME/.bashrc; then
+        echo -e "\n# bun\nexport BUN_INSTALL=\"$bun_install\"" >>"$HOME/.bashrc"
+        echo -e "export PATH=\"\$BUN_INSTALL/bin:\$PATH\"" >>"$HOME/.bashrc"
+        echo ""
+        echo -e "$Dim Added \"$bin_dir\" to \$PATH in \"~/.bashrc\"$Color_Off"
+
+        echo ""
+        echo -e "To get started, run"
+        echo -e "$BWhite"
+        echo -e "   exec $SHELL"
+        echo -e "   bun --help$Color_Off"
+        echo ""
+        exit 0
+    else
+        echo ""
+        echo "Manually add the directory to your \$HOME/.bashrc (or similar)"
         echo ""
         echo -e "  $BWhite export BUN_INSTALL=\"$bun_install\"$Color_Off"
         echo -e "  $BWhite export PATH=\"\$BUN_INSTALL/bin:\$PATH\"$Color_Off"

@@ -1,6 +1,6 @@
 chore:
   - any: ['*']
-    all: ['!packages/*', '!packages/**/*', '!src/*', '!src/**/*', '!types/*', '!types/**/*', '!test/*', '!test/**/*', '!bench/*', '!bench/**/*']
+    all: ['!packages/*', '!packages/**/*', '!src/*', '!src/**/*', '!types/*', '!types/**/*', '!test/*', '!test/**/*', '!bench/*', '!bench/**/*', '!examples/*', '!examples/**/*']
 
 'packages:bun-darwin-aarch64':
   - packages/bun-darwin-aarch64/*
@@ -39,6 +39,10 @@ chore:
   - test/*
   - test/**/*
 
-'packages:ws':
+'benchmarks':
   - bench/*
   - bench/**/*
+
+'templates':
+  - examples/*
+  - examples/**/*

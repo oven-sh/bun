@@ -3,7 +3,7 @@
   <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
 </p>
 
-bun is a new:
+bun is new:
 
 - JavaScript runtime with Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket), and several more built-in. bun embeds JavaScriptCore, which tends to be faster and more memory efficient than more popular engines like V8 (though harder to embed)
 - JavaScript/TypeScript/JSX transpiler
@@ -11,7 +11,7 @@ bun is a new:
 - Task runner for package.json scripts
 - npm-compatible package manager
 
-All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
+All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need a bun.
 
 **bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#not-implemented-yet).
 
@@ -154,7 +154,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 
 ## Using bun.js - a new JavaScript runtime environment
 
-bun.js focuses on performance, developer experience and compatibility with the JavaScript ecosystem.
+bun.js focuses on performance, developer experience, and compatibility with the JavaScript ecosystem.
 
 ```ts
 // http.ts
@@ -339,7 +339,7 @@ sudo apt install --install-recommends linux-generic-hwe-20.04
 
 ## Using bun as a task runner
 
-Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for bun.
+Instead of waiting 170ms for your npm client to start for each task, you wait 6ms for the bun.
 
 To use bun as a task runner, run `bun run` instead of `npm run`.
 
@@ -379,9 +379,9 @@ If you don't have a Discord bot/application yet, you can create one [here (https
 
 Invite bot to your server by visiting `https://discord.com/api/oauth2/authorize?client_id=<your_application_id>&scope=bot%20applications.commands`
 
-Afterwards you will need to get your bot's token, public key, and application id from the application page and put them into `.env.example` file
+Afterward, you will need to get your bot's token, public key, and application id from the application page and put them into `.env.example` file
 
-Then you can run the http server that will handle your interactions:
+Then you can run the HTTP server that will handle your interactions:
 
 ```bash
 bun install
@@ -390,7 +390,7 @@ mv .env.example .env
 bun run.js # listening on port 1337
 ```
 
-Discord does not accept an insecure HTTP server, so you will need to provide an SSL certificate or put the interactions server behind a secure reverse proxy. For development, you can use ngrok/cloudflare tunnel to expose local ports as secure URL.
+Discord does not accept an insecure HTTP server, so you will need to provide an SSL certificate or put the interactions server behind a secure reverse proxy. For development, you can use ngrok/cloudflare tunnel to expose local ports as a secure URL.
 
 ## Using bun with Next.js
 
@@ -559,7 +559,7 @@ Today, bun is mostly focused on bun.js: the JavaScript runtime.
 
 While you could use bun's bundler & transpiler separately to build for browsers or node, bun doesn't have a minifier or support tree-shaking yet. For production browser builds, you probably should use a tool like esbuild or swc.
 
-Longer-term, bun intends to replace Node.js, Webpack, Babel, yarn, and PostCSS (in production).
+Longer-term, bun intends to replace Node.js, Webpack, Babel, Yarn, and PostCSS (in production).
 
 ### Upcoming breaking changes
 
@@ -637,7 +637,7 @@ editor = "code"
 # It will recognize non-GUI editors, but I don't think it will work yet
 ```
 
-TODO: list each property name
+TODO: list each property's name
 
 ### Loaders
 
@@ -698,7 +698,7 @@ An event handler for turning that into a `<link>` is automatically registered wh
 //@import url("http://localhost:3000/styles/globals.css");
 ```
 
-Additionally, bun exposes an API for SSR/SSG that returns a flat list of URLs to css files imported. That function is `Bun.getImportedStyles()`.
+Additionally, bun exposes an API for SSR/SSG that returns a flat list of URLs to CSS files imported. That function is `Bun.getImportedStyles()`.
 
 ```ts
 // This specifically is for "framework" in package.json when loaded via `bun dev`
@@ -721,7 +721,7 @@ This is useful for preventing flash of unstyled content.
 
 ### CSS Loader
 
-bun bundles `.css` files imported via `@import` into a single file. It doesn’t autoprefix or minify CSS today. Multiple `.css` files imported in one JavaScript file will _not_ be bundled into one file. You’ll have to import those from a `.css` file.
+bun bundles `.css` files imported via `@import` into a single file. It doesn’t auto prefix or minifies CSS today. Multiple `.css` files imported in one JavaScript file will _not_ be bundled into one file. You’ll have to import those from a `.css` file.
 
 This input:
 
@@ -919,7 +919,7 @@ If you get this error while bun is initializing, You probably need to wrap the b
 # cp -r intel64 /usr/local/bin/
 # cp -r misc /usr/local/bin/
 ```
-  2. Add alias to bashrc
+  2. Add an alias to bashrc
 ```
 $ echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
 ```
@@ -1140,11 +1140,11 @@ Environment variables have a higher priority than `bunfig.toml`.
 | BUN_CONFIG_SKIP_LOAD_LOCKFILE    | Don’t load a lockfile                                         |
 | BUN_CONFIG_SKIP_INSTALL_PACKAGES | Don’t install any packages                                    |
 
-bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
+bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` falls back to a platform-specific implementation of copying files.
 
 bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce the chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk.
 
-When the `node_modules` folder exists, before installing, bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
+When the `node_modules` folder exists, before installing, bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether it should install. It uses a custom JSON parser that stops parsing as soon as it finds `"name"` and `"version"`.
 
 When a `bun.lockb` doesn’t exist or `package.json` has changed dependencies, tarballs are downloaded & extracted eagerly while resolving.
 
@@ -1176,7 +1176,7 @@ Packages, metadata for those packages, the hoisted install order, dependencies f
 
 #### Why is it fast?
 
-It uses linear arrays for all data. [Packages](https://github.com/oven-sh/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by an auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
+It uses linear arrays for all data. [Packages](https://github.com/oven-sh/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by an auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Before saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
 
 #### Cache
 
@@ -1191,7 +1191,7 @@ rm -rf ~/.bun/install/cache
 bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
 You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages.
 
-bun’s usage of `Cache-Control` ignores `Age`. This improves performance, but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
+bun’s usage of `Cache-Control` ignores `Age`. This improves performance but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
 
 ### `bun run`
 
@@ -1449,7 +1449,7 @@ ELSE IF local template
 2. Delete destination directory recursively
 3. Copy files recursively using the fastest system calls available (on macOS `fcopyfile` and Linux, `copy_file_range`). Do not copy or traverse into `node_modules` folder if exists (this alone makes it faster than `cp`)
 
-4. Parse the `package.json` (again!), update `name` to be `${basename(destination)}`, remove the `bun-create` section from the `package.json` and save the updated `package.json` to disk.
+4. Parse the `package.json` (again!), update `name` to be `${basename(destination)}`, and remove the `bun-create` section from the `package.json` and save the updated `package.json` to disk.
    - IF Next.js is detected, add `bun-framework-next` to the list of dependencies
    - IF Create React App is detected, add the entry point in /src/index.{js,jsx,ts,tsx} to `public/index.html`
    - IF Relay is detected, add `bun-macro-relay` so that Relay works
@@ -1543,7 +1543,7 @@ Note that `.bun` is a binary file format, so just opening it in VSCode or vim mi
 
 By default, `bun bun` only bundles external dependencies that are `import`ed or `require`d in either app code or another external dependency. An "external dependency" is defined as, "A JavaScript-like file that has `/node_modules/` in the resolved file path and a corresponding `package.json`".
 
-To force bun to bundle packages which are not located in a `node_modules` folder (i.e., the final, resolved path following all symlinks), add a `bun` section to the root project’s `package.json` with `alwaysBundle` set to an array of package names to always bundle. Here’s an example:
+To force bun to bundle packages that are not located in a `node_modules` folder (i.e., the final, resolved path following all symlinks), add a `bun` section to the root project’s `package.json` with `alwaysBundle` set to an array of package names to always bundle. Here’s an example:
 
 ```json
 {
@@ -2018,7 +2018,7 @@ Internally, this calls [`sqlite3_prepare_v3`](https://www.sqlite.org/c3ref/prepa
 
 #### Database.prototype.exec & Database.prototype.run
 
-`exec` is for one-off executing a query which does not need to return anything.
+`exec` is for one-off executing a query that does not need to return anything.
 `run` is an alias.
 
 ```ts
@@ -2058,7 +2058,7 @@ db.exec("INSERT INTO foo (greeting) VALUES ($greeting)", {
 });
 ```
 
-For queries which aren't intended to be run multiple times, it should be faster to use `exec()` than `prepare()` or `query()` because it doesn't create a `Statement` object.
+For queries that aren't intended to be run multiple times, it should be faster to use `exec()` than `prepare()` or `query()` because it doesn't create a `Statement` object.
 
 Internally, this function calls [`sqlite3_prepare`](https://www.sqlite.org/c3ref/prepare.html), [`sqlite3_step`](https://www.sqlite.org/c3ref/step.html), and [`sqlite3_finalize`](https://www.sqlite.org/c3ref/finalize.html).
 
@@ -2607,7 +2607,7 @@ C strings:
 
 </details>
 
-To help with that, `bun:ffi` exports `CString` which extends JavaScript's built-in `String` to support null-terminated strings and add a few extras:
+To help with that, `bun:ffi` exports `CString` which extends JavaScript's built-in `String` to support null-terminated strings and adds a few extras:
 
 ```ts
 class CString extends String {
@@ -3163,7 +3163,7 @@ bun also statically links these libraries:
 - `libicu` 66.1, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is MIT licensed
 
-For compatibiltiy reasons, these NPM packages are embedded into bun’s binary and injected if imported.
+For compatibility reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 
 - [`assert`](https://npmjs.com/package/assert) (MIT license)
 - [`browserify-zlib`](https://npmjs.com/package/browserify-zlib) (MIT license)
@@ -3210,7 +3210,7 @@ devcontainer build
 devcontainer open
 ```
 
-You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
+You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until bun's repository is public). Make sure to log in with a Personal Access Token rather than a web browser.
 
 Inside the container, run this:
 
@@ -3219,7 +3219,7 @@ Inside the container, run this:
 gh auth login
 gh repo clone oven-sh/bun . -- --depth=1 --progress -j8
 
-# update all submodules except webkit because webkit takes awhile and it's already compiled for you.
+# update all submodules except webkit because webkit takes a while and it's already compiled for you.
 git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 # Compile bun dependencies (zig is already compiled)
@@ -3277,7 +3277,7 @@ make vendor identifier-cache jsc dev
 
 #### Verify it worked (macOS)
 
-First ensure the node dependencies are installed
+First, ensure the node dependencies are installed
 
 ```bash
 (cd test/snippets && npm i)

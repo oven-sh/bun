@@ -25,6 +25,7 @@ jobs:
   e2e:
     runs-on: self-hosted
     name: "Integration tests"
+    if: github.repository_owner == 'oven-sh'
     steps:
       - name: Checkout
         uses: actions/checkout@v2

@@ -1,6 +1,6 @@
 type BinaryType = "arraybuffer" | "blob";
-type Transferable = ArrayBuffer | MessagePort | ImageBitmap;
-type MessageEventSource = MessagePort;
+type Transferable = ArrayBuffer | ImageBitmap;
+type MessageEventSource = unknown;
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
 type Platform = 'aix' | 'android' | 'darwin' | 'freebsd' | 'haiku' | 'linux' | 'openbsd' | 'sunos' | 'win32' | 'cygwin' | 'netbsd';
 type Architecture = 'arm' | 'arm64' | 'ia32' | 'mips' | 'mipsel' | 'ppc' | 'ppc64' | 's390' | 's390x' | 'x64';
@@ -1047,8 +1047,7 @@ interface MessageEventInit<T = any> extends EventInit {
   data?: T;
   lastEventId?: string;
   origin?: string;
-  ports?: MessagePort[];
-  source?: MessageEventSource | null;
+  source?: MessageEventSource;
 }
 
 interface EventInit {
@@ -1300,12 +1299,9 @@ interface MessageEvent<T = any> extends Event {
   readonly lastEventId: string;
   /** Returns the origin of the message, for server-sent events and cross-document messaging. */
   readonly origin: string;
-  /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
-  readonly ports: ReadonlyArray<MessagePort>;
-  /** Returns the WindowProxy of the source window, for cross-document messaging, and the MessagePort being attached, in the connect event fired at SharedWorkerGlobalScope objects. */
-  readonly source: MessageEventSource | null;
+  readonly source: MessageEventSource;
   /** @deprecated */
-  initMessageEvent(type: string, bubbles?: boolean, cancelable?: boolean, data?: any, origin?: string, lastEventId?: string, source?: MessageEventSource | null, ports?: MessagePort[]): void;
+  initMessageEvent(type: string, bubbles?: boolean, cancelable?: boolean, data?: any, origin?: string, lastEventId?: string, source?: null): void;
 }
 
 declare var MessageEvent: {
@@ -1316,32 +1312,6 @@ declare var MessageEvent: {
 /**
  * An implementation of the [WebSocket API](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket)
  */
-interface MessagePortEventMap {
-  "message": MessageEvent;
-  "messageerror": MessageEvent;
-}
-
-/** This Channel Messaging API interface represents one of the two ports of a MessageChannel, allowing messages to be sent from one port and listening out for them arriving at the other. */
-interface MessagePort extends EventTarget {
-  onmessage: ((this: MessagePort, ev: MessageEvent) => any) | null;
-  onmessageerror: ((this: MessagePort, ev: MessageEvent) => any) | null;
-  /** Disconnects the port, so that it is no longer active. */
-  close(): void;
-  /**
-   * Posts a message through the channel. Objects listed in transfer are transferred, not just cloned, meaning that they are no longer usable on the sending side.
-   *
-   * Throws a "DataCloneError" DOMException if transfer contains duplicate objects or port, or if message could not be cloned.
-   */
-  postMessage(message: any, transfer: Transferable[]): void;
-  postMessage(message: any, options?: StructuredSerializeOptions): void;
-  /** Begins dispatching messages received on the port. */
-  start(): void;
-  addEventListener<K extends keyof MessagePortEventMap>(type: K, listener: (this: MessagePort, ev: MessagePortEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
-  addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
-  removeEventListener<K extends keyof MessagePortEventMap>(type: K, listener: (this: MessagePort, ev: MessagePortEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
-  removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
-}
-
 interface WebSocketEventMap {
   "close": CloseEvent;
   "error": Event;

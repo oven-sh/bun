@@ -11,7 +11,7 @@ const {
 } = Deno.dlopen(path, {
   ffi_noop: { parameters: [], result: "void" },
   ffi_string: { parameters: [], result: "pointer" },
-  ffi_hash: { parameters: ["pointer", "usize"], result: "u32" },
+  ffi_hash: { parameters: ["pointer", "u32"], result: "u32" },
 });
 
 const bytes = new Uint8Array(64);

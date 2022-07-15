@@ -1,7 +1,7 @@
 // double src o.O
 
-#[cfg(feature="napi")] use napi_derive::napi;
-#[cfg(feature="napi")] use napi::bindgen_prelude::*;
+#[cfg(feature="enable-napi")] use napi_derive::napi;
+#[cfg(feature="enable-napi")] use napi::bindgen_prelude::*;
 
 static STRING: &'static str = "Hello, world!\0";
 
@@ -17,7 +17,7 @@ fn hash(buf: &[u8]) -> u32 {
 
 
 
-#[cfg(feature="napi")]
+#[cfg(feature="enable-napi")]
 #[napi] pub fn napi_noop() {
   // do nothing
 }
@@ -28,7 +28,7 @@ fn hash(buf: &[u8]) -> u32 {
 
 
 
-#[cfg(feature="napi")]
+#[cfg(feature="enable-napi")]
 #[napi] pub fn napi_string() -> &'static str {
   return &STRING[0..(STRING.len() - 1)];
 }
@@ -39,7 +39,7 @@ fn hash(buf: &[u8]) -> u32 {
 
 
 
-#[cfg(feature="napi")]
+#[cfg(feature="enable-napi")]
 #[napi] pub fn napi_hash(buffer: Buffer) -> u32 {
   return hash(&buffer);
 }

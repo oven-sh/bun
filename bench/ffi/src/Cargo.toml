@@ -7,8 +7,8 @@ name = "ffi_napi_bench"
 crate-type = ["cdylib"]
 
 [features]
-napi = []
 default = []
+enable-napi = []
 
 [dependencies]
 napi = "2"

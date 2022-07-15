@@ -903,28 +903,6 @@ If you’re interested in adding a framework integration, please reach out. Ther
 
 ## Troubleshooting
 
-### Illegal Instruction (Core Dumped)
-Bun currently only works on CPUs supporting the AVX2 instruction set. To run on older CPUs this can be emulated using Intel SDE, however bun won't be as fast as it would be when running on CPUs with AVX2 support.
-If you get this error while bun is initializing, You probably need to wrap the bun executable with intel-sde
-  1. Install intel-sde
-    - Arch Linux: `yay -S intel-sde`
-    - Other Distros:
-```
-# wget https://downloadmirror.intel.com/732268/sde-external-9.7.0-2022-05-09-lin.tar.xz -O /tmp/intel-sde.tar.xz
-# cd /tmp
-# tar -xf intel-sde.tar.xz
-# cd sde-external*
-# mkdir /usr/local/bin -p
-# cp sde64 /usr/local/bin/sde
-# cp -r intel64 /usr/local/bin/
-# cp -r misc /usr/local/bin/
-```
-  2. Add alias to bashrc
-```
-$ echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
-```
-You can replace `.bashrc` with `.zshrc` if you use zsh instead of bash
-
 ### bun not running on an M1 (or Apple Silicon)
 
 If you see a message like this
@@ -3163,7 +3141,7 @@ bun also statically links these libraries:
 - `libicu` 66.1, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is MIT licensed
 
-For compatibiltiy reasons, these NPM packages are embedded into bun’s binary and injected if imported.
+For compatibility reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 
 - [`assert`](https://npmjs.com/package/assert) (MIT license)
 - [`browserify-zlib`](https://npmjs.com/package/browserify-zlib) (MIT license)

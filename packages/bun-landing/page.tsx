@@ -556,7 +556,7 @@ export default ({ inlineCSS }) => (
             functions (native modules), fs, path, Buffer and more.
           </p>
           <p>
-            The goal of Bun is to run most of the worlds JavaScript outside of
+            The goal of Bun is to run most of the world's JavaScript outside of
             browsers, bringing performance and complexity enhancements to your
             future infrastructure, as well as developer productivity through
             better, simpler tooling.

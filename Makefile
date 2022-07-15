@@ -518,14 +518,14 @@ docker-push-base:
 
 	docker tag bun-base-with-args ghcr.io/jarred-sumner/bun-base-with-args:latest
 	docker push ghcr.io/jarred-sumner/bun-base-with-args:latest
+	
+ifeq ($(POSIX_PKG_MANAGER), brew)
+PKGNAME_NINJA := ninja
+else
+PKGNAME_NINJA := ninja-build
+endif
 
 require:
-	ifeq ($(POSIX_PKG_MANAGER), brew)
-		PKGNAME_NINJA = ninja
-	else
-		PKGNAME_NINJA = ninja-build
-	endif
-	
 	@echo "Checking if the required utilities are available..."
 	@if [ $(CLANG_VERSION) -lt "13" ]; then echo -e "ERROR: clang version >=13 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@13"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)

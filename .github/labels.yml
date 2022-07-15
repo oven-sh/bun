@@ -34,6 +34,8 @@
   color: 'BFDADC'
 - name: 'typescript'
   color: '87511b'
+- name: 'chore'
+  color: 'cfd3d7'
 - name: 'templates'
   color: 'FBCA04'
 - name: 'benchmarks'

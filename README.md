@@ -184,12 +184,12 @@ export default {
 
 bun.js prefers Web API compatibility instead of designing new APIs when possible. bun.js also implements some Node.js APIs.
 
-- TypeScript & JSX support is builtin, powered by Bun's JavaScript transpiler
+- TypeScript & JSX support is built-in, powered by Bun's JavaScript transpiler
 - ESM & CommonJS modules are supported (internally, bun.js uses ESM)
 - Many npm packages "just work" with bun.js (when they use few/no node APIs)
 - tsconfig.json `"paths"` is natively supported, along with `"exports"` in package.json
 - `fs`, `path`, and `process` from Node are partially implemented
-- Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are builtin
+- Web APIs like [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch), [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response), [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) and more are built-in
 - [`HTMLRewriter`](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter/) makes it easy to transform HTML in bun.js
 - Starts [4x faster than Node](https://twitter.com/jarredsumner/status/1499225725492076544) (try it yourself)
 - `.env` files automatically load into `process.env` and `Bun.env`
@@ -390,7 +390,7 @@ mv .env.example .env
 bun run.js # listening on port 1337
 ```
 
-Discord does not accept an insecure HTTP server, so you will need to provide an SSL certificate or put the interactions server behind a secure reverse proxy. For development you can use ngrok/cloudflare tunnel to expose local ports as secure URL.
+Discord does not accept an insecure HTTP server, so you will need to provide an SSL certificate or put the interactions server behind a secure reverse proxy. For development, you can use ngrok/cloudflare tunnel to expose local ports as secure URL.
 
 ## Using bun with Next.js
 
@@ -420,8 +420,8 @@ Here’s what doesn’t work yet:
 - locales, zones, `assetPrefix` (workaround: change `--origin \"http://localhost:3000/assetPrefixInhere\"`)
 - `next/image` is polyfilled to a regular `<img src>` tag.
 - `proxy` and anything else in `next.config.js`
-- API routes, middleware (middleware is easier to support though! similar SSR API)
-- styled-jsx (technically not Next.js but often used with it)
+- API routes, middleware (middleware is easier to support, though! Similar SSR API)
+- styled-jsx (technically not Next.js, but often used with it)
 - React Server Components
 
 When using Next.js, bun automatically reads configuration from `.env.local`, `.env.development` and `.env` (in that order). `process.env.NEXT_PUBLIC_` and `process.env.NEXT_` automatically are replaced via `--define`.
@@ -465,8 +465,8 @@ bun dev # start dev server
 To use an existing React app:
 
 ```bash
-# To enable React Fast Refresh, ensure "react-refresh" is installed
-npm install -D react-refresh
+# To enable React Fast Refresh, ensure it is installed
+bun add -d react-refresh
 
 # Generate a bundle for your entry point(s)
 bun bun ./src/index.js # jsx, tsx, ts also work. can be multiple files
@@ -899,31 +899,9 @@ Your framework’s `package.json` `name` should start with `bun-framework-`. Thi
 
 For developing frameworks, you can also do `bun bun --use ./relative-path-to-framework`.
 
-If you’re interested in adding a framework integration, please reach out. There’s a lot here and it’s not entirely documented yet.
+If you’re interested in adding a framework integration, please reach out. There’s a lot here, and it’s not entirely documented yet.
 
 ## Troubleshooting
-
-### Illegal Instruction (Core Dumped)
-Bun currently only works on CPUs supporting the AVX2 instruction set. To run on older CPUs this can be emulated using Intel SDE, however bun won't be as fast as it would be when running on CPUs with AVX2 support.
-If you get this error while bun is initializing, You probably need to wrap the bun executable with intel-sde
-  1. Install intel-sde
-    - Arch Linux: `yay -S intel-sde`
-    - Other Distros:
-```
-# wget https://downloadmirror.intel.com/732268/sde-external-9.7.0-2022-05-09-lin.tar.xz -O /tmp/intel-sde.tar.xz
-# cd /tmp
-# tar -xf intel-sde.tar.xz
-# cd sde-external*
-# mkdir /usr/local/bin -p
-# cp sde64 /usr/local/bin/sde
-# cp -r intel64 /usr/local/bin/
-# cp -r misc /usr/local/bin/
-```
-  2. Add alias to bashrc
-```
-$ echo "alias bun='sde -chip-check-disable -- bun'" >> ~/.bashrc
-```
-You can replace `.bashrc` with `.zshrc` if you use zsh instead of bash
 
 ### bun not running on an M1 (or Apple Silicon)
 
@@ -941,7 +919,7 @@ If you see an error like this:
 
 ![image](https://user-images.githubusercontent.com/709451/141210854-89434678-d21b-42f4-b65a-7df3b785f7b9.png)
 
-It usually means the max number of open file descriptors is being explicitly set to a low number. By default, bun requests the max number of file descriptors available (which on macOS, is something like 32,000). But, if you previously ran into ulimit issues with e.g. Chokidar, someone on The Internet may have advised you to run `ulimit -n 8096`.
+It usually means the max number of open file descriptors is being explicitly set to a low number. By default, bun requests the max number of file descriptors available (which on macOS, is something like 32,000). But, if you previously ran into ulimit issues with, e.g., Chokidar, someone on The Internet may have advised you to run `ulimit -n 8096`.
 
 That advice unfortunately **lowers** the hard limit to `8096`. This can be a problem in large repositories or projects with lots of dependencies. Chokidar (and other watchers) don’t seem to call `setrlimit`, which means they’re reliant on the (much lower) soft limit.
 
@@ -1142,9 +1120,9 @@ Environment variables have a higher priority than `bunfig.toml`.
 
 bun always tries to use the fastest available installation method for the target platform. On macOS, that’s `clonefile` and on Linux, that’s `hardlink`. You can change which installation method is used with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fallsback to a platform-specific implementation of copying files.
 
-bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce the chances of errors from long file paths but unfortunately complicates figuring out where a package was installed on disk.
+bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. Note that if the semver version has a `build` or a `pre` tag, it is replaced with a hash of that value instead. This is to reduce the chances of errors from long file paths, but unfortunately complicates figuring out where a package was installed on disk.
 
-When the `node_modules` folder exists, before installing, bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether or not it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
+When the `node_modules` folder exists, before installing, bun checks if the `"name"` and `"version"` in `package/package.json` in the expected node_modules folder matches the expected `name` and `version`. This is how it determines whether it should install. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
 
 When a `bun.lockb` doesn’t exist or `package.json` has changed dependencies, tarballs are downloaded & extracted eagerly while resolving.
 
@@ -1176,7 +1154,7 @@ Packages, metadata for those packages, the hoisted install order, dependencies f
 
 #### Why is it fast?
 
-It uses linear arrays for all data. [Packages](https://github.com/oven-sh/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
+It uses linear arrays for all data. [Packages](https://github.com/oven-sh/bun/blob/be03fc273a487ac402f19ad897778d74b6d72963/src/install/install.zig#L1825) are referenced by an auto-incrementing integer ID or a hash of the package name. Strings longer than 8 characters are de-duplicated. Prior to saving on disk, the lockfile is garbage-collected & made deterministic by walking the package tree and cloning the packages in dependency order.
 
 #### Cache
 
@@ -1191,7 +1169,7 @@ rm -rf ~/.bun/install/cache
 bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.
 You will see these files in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages.
 
-bun’s usage of `Cache-Control` ignores `Age`. This improves performance but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
+bun’s usage of `Cache-Control` ignores `Age`. This improves performance, but means bun may be about 5 minutes out of date to receive the latest package version metadata from npm.
 
 ### `bun run`
 
@@ -1246,9 +1224,9 @@ react-scripts eject
 
 If something is unexpected there, you can run `bun run env` to get a list of environment variables.
 
-The default shell it uses is `bash`, but if that’s not found, it tries `sh` and if still not found, it tries `zsh`. This is not configurable right now, but if you care file an issue.
+The default shell it uses is `bash`, but if that’s not found, it tries `sh` and if still not found, it tries `zsh`. This is not configurable right now, but if you care, file an issue.
 
-`bun run` automatically adds any parent `node_modules/.bin` to `$PATH` and if no scripts match, it will load that binary instead. That means you can run executables from packages too.
+`bun run` automatically adds any parent `node_modules/.bin` to `$PATH` and if no scripts match, it will load that binary instead. That means you can run executables from packages, too.
 
 ```bash
 # If you use Relay
@@ -1271,7 +1249,7 @@ bun run relay-compiler -- -–help
 bun run relay-compiler --schema foo.graphql
 ```
 
-`bun run` supports lifecycle hooks like `post${task}` and `pre{task}`. If they exist, they will run matching the behavior of npm clients. If the `pre${task}` fails, the next task will not be run. There is currently no flag to skip these lifecycle tasks if they exist, if you want that file an issue.
+`bun run` supports lifecycle hooks like `post${task}` and `pre{task}`. If they exist, they will run, matching the behavior of npm clients. If the `pre${task}` fails, the next task will not be run. There is currently no flag to skip these lifecycle tasks if they exist, if you want that file an issue.
 
 ### `bun create`
 
@@ -1436,7 +1414,7 @@ IF remote template
 
    - If there are files that would overwrite, warn and exit unless `--force` is passed
 
-IF github repo
+IF GitHub repo
 
 1. Download the tarball from GitHub’s API
 2. Decompress & extract into `${destination}`
@@ -1473,7 +1451,7 @@ Run `bun bun ./path-to.js` to generate a `node_modules.bun` file containing all 
 
 #### Why bundle?
 
-- For browsers, loading entire apps without bundling dependencies is typically slow. With a fast bundler & transpiler, the bottleneck eventually becomes the web browser’s ability to run many network requests concurrently. There are many workarounds for this. `<link rel="modulepreload">`, HTTP/3, etc but none are more effective than bundling. If you have reproducible evidence to the contrary, feel free to submit an issue. It would be better if bundling wasn’t necessary.
+- For browsers, loading entire apps without bundling dependencies is typically slow. With a fast bundler & transpiler, the bottleneck eventually becomes the web browser’s ability to run many network requests concurrently. There are many workarounds for this. `<link rel="modulepreload">`, HTTP/3, etc., but none are more effective than bundling. If you have reproducible evidence to the contrary, feel free to submit an issue. It would be better if bundling wasn’t necessary.
 - On the server, bundling reduces the number of filesystem lookups to load JavaScript. While filesystem lookups are faster than HTTP requests, there’s still overhead.
 
 #### What is `.bun`?
@@ -1490,7 +1468,7 @@ Here are some of the questions `.bun` files answer:
 
 - when I import `react/index.js`, where in the `.bun` is the code for that? (not resolving, just the code)
 - what modules of a package are used?
-- what framework is used? (e.g. Next.js)
+- what framework is used? (e.g., Next.js)
 - where is the routes directory?
 - how big is each imported dependency?
 - what is the hash of the bundle’s contents? (for etags)
@@ -1499,7 +1477,7 @@ Here are some of the questions `.bun` files answer:
 
 All in one file.
 
-It’s a little like a build cache but designed for reuse across builds.
+It’s a little like a build cache, but designed for reuse across builds.
 
 #### Position-independent code
 
@@ -1543,7 +1521,7 @@ Note that `.bun` is a binary file format, so just opening it in VSCode or vim mi
 
 By default, `bun bun` only bundles external dependencies that are `import`ed or `require`d in either app code or another external dependency. An "external dependency" is defined as, "A JavaScript-like file that has `/node_modules/` in the resolved file path and a corresponding `package.json`".
 
-To force bun to bundle packages which are not located in a `node_modules` folder (i.e. the final, resolved path following all symlinks), add a `bun` section to the root project’s `package.json` with `alwaysBundle` set to an array of package names to always bundle. Here’s an example:
+To force bun to bundle packages which are not located in a `node_modules` folder (i.e., the final, resolved path following all symlinks), add a `bun` section to the root project’s `package.json` with `alwaysBundle` set to an array of package names to always bundle. Here’s an example:
 
 ```json
 {
@@ -1570,7 +1548,7 @@ Is generated like this:
 2. Wyhash 64 of the `package.hash` + `package_path`. `package_path` means "relative to the root of the npm package, where is the module imported?". For example, if you imported `react/jsx-dev-runtime.js`, the `package_path` is `jsx-dev-runtime.js`. `react-dom/cjs/react-dom.development.js` would be `cjs/react-dom.development.js`
 3. Truncate the hash generated above to a `u32`
 
-The implementation details of this module ID hash will vary between versions of bun. The important part is the metadata contains the module IDs, the package paths, and the package hashes so it shouldn’t really matter in practice if other tooling wants to make use of any of this.
+The implementation details of this module ID hash will vary between versions of bun. The important part is the metadata contains the module IDs, the package paths, and the package hashes, so it shouldn’t really matter in practice if other tooling wants to make use of any of this.
 
 ### `bun upgrade`
 
@@ -1596,7 +1574,7 @@ bun is distributed as a single binary file, so you can also do this manually:
 
 ### `bun completions`
 
-This command installs completions for `zsh` and/or `fish`. It’s run automatically on every `bun upgrade` and on install. It reads from `$SHELL` to determine which shell to install for. It tries several common shell completion directories for your shell and OS.
+This command installs completions for `zsh` and/or `fish`. It runs automatically on every `bun upgrade` and on install. It reads from `$SHELL` to determine which shell to install for. It tries several common shell completion directories for your shell and OS.
 
 If you want to copy the completions manually, run `bun completions > path-to-file`. If you know the completions directory to install them to, run `bun completions /path/to/directory`.
 
@@ -1759,7 +1737,7 @@ await Bun.write("output.txt", Bun.file("input.txt"));
 
 ## bun:sqlite (SQLite3 module)
 
-`bun:sqlite` is a high-performance builtin [SQLite3](https://www.sqlite.org/) module for bun.js.
+`bun:sqlite` is a high-performance built-in [SQLite3](https://www.sqlite.org/) module for bun.js.
 
 - Simple, synchronous API (synchronous _is_ faster)
 - Transactions
@@ -1772,7 +1750,7 @@ Installation:
 
 ```sh
 # there's nothing to install
-# bun:sqlite is builtin to bun.js
+# bun:sqlite is built-in to bun.js
 ```
 
 Example:
@@ -2133,7 +2111,7 @@ bun:sqlite's transaction implementation is based on [better-sqlite3](https://git
 
 #### Database.prototype.serialize
 
-SQLite has a builtin way to [serialize](https://www.sqlite.org/c3ref/serialize.html) and [deserialize](https://www.sqlite.org/c3ref/deserialize.html) databases to and from memory.
+SQLite has a built-in way to [serialize](https://www.sqlite.org/c3ref/serialize.html) and [deserialize](https://www.sqlite.org/c3ref/deserialize.html) databases to and from memory.
 
 `bun:sqlite` fully supports it:
 
@@ -2607,7 +2585,7 @@ C strings:
 
 </details>
 
-To help with that, `bun:ffi` exports `CString` which extends JavaScript's builtin `String` to support null-terminated strings and add a few extras:
+To help with that, `bun:ffi` exports `CString` which extends JavaScript's built-in `String` to support null-terminated strings and add a few extras:
 
 ```ts
 class CString extends String {
@@ -2658,7 +2636,7 @@ When used in `returns`, `FFIType.cstring` coerces the pointer to a JavaScript `s
 
 To call a function pointer from JavaScript, use `CFunction`
 
-This is useful if using Node-API (napi) with Bun and you've already loaded some of the symbols.
+This is useful if using Node-API (napi) with Bun, and you've already loaded some symbols.
 
 ```ts
 import { CFunction } from "bun:ffi";
@@ -2884,7 +2862,7 @@ This implementation of Node-API is from scratch. It doesn't use any code from No
 
 **Some implementation details**
 
-When requiring a `*.node` module, Bun's JavaScript transpiler transforms the `require` expression into call to `import.meta.require`:
+When requiring a `*.node` module, Bun's JavaScript transpiler transforms the `require` expression into a call to `import.meta.require`:
 
 ```js
 // this is the input
@@ -2894,7 +2872,7 @@ require("./my-node-module.node");
 import.meta.require("./my-node-module.node");
 ```
 
-Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore builtin function](https://github.com/oven-sh/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/bun.js/bindings/builtins/js/JSZigGlobalObject.js#L26).
+Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore built-in function](https://github.com/oven-sh/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/bun.js/bindings/builtins/js/JSZigGlobalObject.js#L26).
 
 ### `Bun.Transpiler`
 
@@ -3010,7 +2988,7 @@ If a macro is used, it will be run in the same thread as the transpiler, but in 
 
 This lets you transpile JavaScript, TypeScript, TSX, and JSX using Bun's transpiler. It does not resolve modules.
 
-It is async and automatically runs in Bun's worker threadpool. That means if you run it 100 times, it will run it across `Math.floor($cpu_count * 0.8)` threads without blocking the main JavaScript thread.
+It is async and automatically runs in Bun's worker threadpool. That means, if you run it 100 times, it will run it across `Math.floor($cpu_count * 0.8)` threads without blocking the main JavaScript thread.
 
 If code uses a macro, it will potentially spawn a new copy of Bun.js' JavaScript runtime environment in that new thread.
 
@@ -3123,7 +3101,7 @@ export const loader = () => import('./loader');
 ## Environment variables
 
 - `GOMAXPROCS`: For `bun bun`, this sets the maximum number of threads to use. If you’re experiencing an issue with `bun bun`, try setting `GOMAXPROCS=1` to force bun to run single-threaded
-- `DISABLE_BUN_ANALYTICS=1` this disables bun’s analytics. bun records bundle timings (so we can answer with data, "is bun getting faster?") and feature usage (e.g. "are people actually using macros?"). The request body size is about 60 bytes, so it’s not a lot of data
+- `DISABLE_BUN_ANALYTICS=1` this disables bun’s analytics. bun records bundle timings (so we can answer with data, "is bun getting faster?") and feature usage (e.g., "are people actually using macros?"). The request body size is about 60 bytes, so it’s not a lot of data
 - `TMPDIR`: Before `bun bun` completes, it stores the new `.bun` in `$TMPDIR`. If unset, `TMPDIR` defaults to the platform-specific temporary directory (on Linux, `/tmp` and on macOS `/private/tmp`)
 
 ## Credits
@@ -3163,7 +3141,7 @@ bun also statically links these libraries:
 - `libicu` 66.1, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
 - A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is MIT licensed
 
-For compatibiltiy reasons, these NPM packages are embedded into bun’s binary and injected if imported.
+For compatibility reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 
 - [`assert`](https://npmjs.com/package/assert) (MIT license)
 - [`browserify-zlib`](https://npmjs.com/package/browserify-zlib) (MIT license)
@@ -3264,7 +3242,7 @@ You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expe
 
 #### Build bun (macOS)
 
-If you're building on a macOS device you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one.
+If you're building on a macOS device, you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one.
 
 
 In `bun`:

@@ -1,6 +1,6 @@
 # KingWorld with Bun runtime
 
-## Getting Start
+## Getting Started
 To get start with this template, simply paste the command in to your terminal:
 ```bash
 bun create kingworld ./kingworld-example

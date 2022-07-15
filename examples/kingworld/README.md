@@ -1,13 +1,13 @@
 # KingWorld with Bun runtime
 
 ## Getting Started
-To get start with this template, simply paste the command in to your terminal:
+To get started with this template, simply paste this command into your terminal:
 ```bash
 bun create kingworld ./kingworld-example
 ```
 
 ## Development
-KingWorld is set with `nodemon` for auto reload, simply run:
+KingWorld uses `nodemon` for auto reload. To start the development server run:
 ```bash
 bun run dev
 ```

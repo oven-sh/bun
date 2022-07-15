@@ -16,6 +16,7 @@ on:
 jobs:
   docker:
     runs-on: ubuntu-latest
+    if: github.repository_owner == 'oven-sh'
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3

@@ -9,6 +9,7 @@ jobs:
   build:
     name: website build
     runs-on: ubuntu-latest
+    if: github.repository_owner == 'oven-sh'
     strategy:
       fail-fast: false
       matrix:
@@ -42,3 +43,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v4
         with:
           commit_message: build:(landing) automated website build
+          token: ${{ secrets.GITHUB_TOKEN }}

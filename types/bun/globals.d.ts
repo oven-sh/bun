@@ -1,6 +1,6 @@
 type BinaryType = "arraybuffer" | "blob";
 type Transferable = ArrayBuffer | ImageBitmap;
-type MessageEventSource = unknown;
+type MessageEventSource = undefined;
 type Encoding = "utf-8" | "windows-1252" | "utf-16";
 type Platform = 'aix' | 'android' | 'darwin' | 'freebsd' | 'haiku' | 'linux' | 'openbsd' | 'sunos' | 'win32' | 'cygwin' | 'netbsd';
 type Architecture = 'arm' | 'arm64' | 'ia32' | 'mips' | 'mipsel' | 'ppc' | 'ppc64' | 's390' | 's390x' | 'x64';

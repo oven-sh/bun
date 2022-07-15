@@ -89,12 +89,11 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 template<typename PromiseType, bool isInternal>
 static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), void (*ArgFn4)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
 {
-    gcProtect(promise);
+
     auto globalThis = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
         globalObject->vm(), globalObject, 1, String(), [ctx, promise, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
             ArgFn3(ctx, globalObject, callFrame);
-            gcUnprotect(promise);
 
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
@@ -102,7 +101,6 @@ static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObjec
         globalObject->vm(), globalObject, 1, String(),
         [ctx, promise, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
             ArgFn4(ctx, globalObject, callFrame);
-            gcUnprotect(promise);
 
             return JSC::JSValue::encode(JSC::jsUndefined());
         });
@@ -1263,11 +1261,11 @@ JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg
     ZigString str
         = *arg0;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
             WTF::String(ExternalStringImpl::create(reinterpret_cast<const UChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
     } else {
-        return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(
+        return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),
             WTF::String(ExternalStringImpl::create(reinterpret_cast<const LChar*>(Zig::untag(str.ptr)), str.len, arg2, ArgFn3)))));
     }

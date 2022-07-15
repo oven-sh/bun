@@ -671,17 +671,14 @@ pub const Fetch = struct {
     );
 
     pub const FetchTasklet = struct {
-        promise: *JSInternalPromise = undefined,
+        promise: *JSPromise = undefined,
         http: HTTPClient.AsyncHTTP = undefined,
         status: Status = Status.pending,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
 
         empty_request_body: MutableString = undefined,
-        // pooled_body: *BodyPool.Node = undefined,
-        this_object: js.JSObjectRef = null,
-        resolve: js.JSObjectRef = null,
-        reject: js.JSObjectRef = null,
+
         context: FetchTaskletContext = undefined,
         response_buffer: MutableString = undefined,
 
@@ -706,32 +703,34 @@ pub const Fetch = struct {
         pub fn onDone(this: *FetchTasklet) void {
             if (comptime JSC.is_bindgen)
                 unreachable;
-            var args = [1]js.JSValueRef{undefined};
 
-            var callback_object = switch (this.http.state.load(.Monotonic)) {
-                .success => this.resolve,
-                .fail => this.reject,
+            const globalThis = this.global_this;
+            const promise = this.promise;
+            const state = this.http.state.load(.Monotonic);
+            const result = switch (state) {
+                .success => this.onResolve(),
+                .fail => this.onReject(),
                 else => unreachable,
             };
-
-            args[0] = switch (this.http.state.load(.Monotonic)) {
-                .success => this.onResolve().asObjectRef(),
-                .fail => this.onReject().asObjectRef(),
-                else => unreachable,
-            };
-
-            _ = js.JSObjectCallAsFunction(this.global_this.ref(), callback_object, null, 1, &args, null);
 
             this.release();
+            const promise_value = promise.asValue(globalThis);
+            promise_value.unprotect();
+
+            switch (state) {
+                .success => {
+                    promise.resolve(globalThis, result);
+                },
+                .fail => {
+                    promise.reject(globalThis, result);
+                },
+                else => unreachable,
+            }
         }
 
         pub fn reset(_: *FetchTasklet) void {}
 
         pub fn release(this: *FetchTasklet) void {
-            js.JSValueUnprotect(this.global_this.ref(), this.resolve);
-            js.JSValueUnprotect(this.global_this.ref(), this.reject);
-            js.JSValueUnprotect(this.global_this.ref(), this.this_object);
-
             this.global_this = undefined;
             this.javascript_vm = undefined;
             this.promise = undefined;
@@ -740,43 +739,13 @@ pub const Fetch = struct {
             // BodyPool.release(pooled);
             // this.pooled_body = undefined;
             this.http = undefined;
-            this.this_object = null;
-            this.resolve = null;
-            this.reject = null;
+
             Pool.release(@fieldParentPtr(Pool.Node, "data", this));
         }
 
-        pub const FetchResolver = struct {
-            pub fn call(
-                _: js.JSContextRef,
-                _: js.JSObjectRef,
-                _: js.JSObjectRef,
-                _: usize,
-                arguments: [*c]const js.JSValueRef,
-                _: js.ExceptionRef,
-            ) callconv(.C) js.JSObjectRef {
-                return JSPrivateDataPtr.from(js.JSObjectGetPrivate(arguments[0]))
-                    .get(FetchTaskletContext).?.tasklet.onResolve().asObjectRef();
-                //  return  js.JSObjectGetPrivate(arguments[0]).? .tasklet.onResolve().asObjectRef();
-            }
-        };
-
-        pub const FetchRejecter = struct {
-            pub fn call(
-                _: js.JSContextRef,
-                _: js.JSObjectRef,
-                _: js.JSObjectRef,
-                _: usize,
-                arguments: [*c]const js.JSValueRef,
-                _: js.ExceptionRef,
-            ) callconv(.C) js.JSObjectRef {
-                return JSPrivateDataPtr.from(js.JSObjectGetPrivate(arguments[0]))
-                    .get(FetchTaskletContext).?.tasklet.onReject().asObjectRef();
-            }
-        };
-
         pub fn onReject(this: *FetchTasklet) JSValue {
             if (this.blob_store) |store| {
+                this.blob_store = null;
                 store.deref();
             }
             const fetch_error = std.fmt.allocPrint(
@@ -795,6 +764,7 @@ pub const Fetch = struct {
             var http_response = this.http.response.?;
             var response = allocator.create(Response) catch unreachable;
             if (this.blob_store) |store| {
+                this.blob_store = null;
                 store.deref();
             }
             response.* = Response{
@@ -859,7 +829,6 @@ pub const Fetch = struct {
             request_body_store: ?*Blob.Store,
         ) !*FetchTasklet.Pool.Node {
             var node = try get(allocator, method, url, headers, headers_buf, request_body, timeout, request_body_store);
-            node.data.promise = JSInternalPromise.create(global);
 
             node.data.global_this = global;
             node.data.http.callback = callback;
@@ -883,7 +852,7 @@ pub const Fetch = struct {
         _: js.JSObjectRef,
         _: js.JSObjectRef,
         arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
+        _: js.ExceptionRef,
     ) js.JSObjectRef {
         var globalThis = ctx.ptr();
 
@@ -983,11 +952,6 @@ pub const Fetch = struct {
             header_entries = head.entries;
             header_buf = head.buf.items;
         }
-        var resolve = js.JSObjectMakeFunctionWithCallback(ctx, null, Fetch.FetchTasklet.FetchResolver.call);
-        var reject = js.JSObjectMakeFunctionWithCallback(ctx, null, Fetch.FetchTasklet.FetchRejecter.call);
-
-        js.JSValueProtect(ctx, resolve);
-        js.JSValueProtect(ctx, reject);
 
         var request_body: ?*MutableString = null;
         if (body.list.items.len > 0) {
@@ -1008,15 +972,12 @@ pub const Fetch = struct {
             std.time.ns_per_hour,
             blob_store,
         ) catch unreachable;
-        queued.data.this_object = js.JSObjectMake(ctx, null, JSPrivateDataPtr.from(&queued.data.context).ptr());
-        js.JSValueProtect(ctx, queued.data.this_object);
+        const promise = JSC.JSPromise.create(ctx);
+        queued.data.promise = promise;
+        const promise_value = promise.asValue(ctx);
+        promise_value.protect();
 
-        var promise = js.JSObjectMakeDeferredPromise(ctx, &resolve, &reject, exception);
-        queued.data.reject = reject;
-        queued.data.resolve = resolve;
-
-        return promise;
-        // queued.data.promise.create(globalThis: *JSGlobalObject)
+        return promise_value.asObjectRef();
     }
 };
 
@@ -3727,7 +3688,7 @@ pub const Body = struct {
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll("bodyUsed: ");
         formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
-        try formatter.printComma(Writer, writer, enable_ansi_colors);
+        formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
         try writer.writeAll("\n");
 
         // if (this.init.headers) |headers| {
@@ -4164,6 +4125,32 @@ pub const Request = struct {
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
 
+    pub fn writeFormat(this: *const Request, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        const Writer = @TypeOf(writer);
+        try formatter.writeIndent(Writer, writer);
+        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.slice().len)});
+        {
+            formatter.indent += 1;
+            defer formatter.indent -|= 1;
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll("method: \"");
+            try writer.writeAll(std.mem.span(@tagName(this.method)));
+            try writer.writeAll("\"");
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll("url: \"");
+            try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.url});
+            try writer.writeAll("\"");
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+        }
+        try writer.writeAll("\n");
+        try formatter.writeIndent(Writer, writer);
+        try writer.writeAll("}");
+    }
+
     pub fn fromRequestContext(ctx: *RequestContext, global: *JSGlobalObject) !Request {
         var req = Request{
             .url = ZigString.init(std.mem.span(ctx.getFullURL())),
@@ -4414,7 +4401,37 @@ pub const Request = struct {
         switch (arguments.len) {
             0 => {},
             1 => {
-                request.url = JSC.JSValue.fromRef(arguments[0]).getZigString(ctx.ptr());
+                const urlOrObject = JSC.JSValue.c(arguments[0]);
+                if (urlOrObject.isString()) {
+                    request.url = urlOrObject.getZigString(ctx.ptr());
+                } else {
+                    if (Body.Init.init(getAllocator(ctx), ctx, arguments[0]) catch null) |req_init| {
+                        request.headers = req_init.headers;
+                        request.method = req_init.method;
+                    }
+
+                    if (urlOrObject.get(ctx.ptr(), "url")) |url| {
+                        request.url = url.getZigString(ctx.ptr()).clone(bun.default_allocator) catch {
+                            return js.JSValueMakeUndefined(ctx.ptr());
+                        };
+                    }
+
+                    if (urlOrObject.get(ctx.ptr(), "body")) |body_| {
+                        if (Blob.fromJS(ctx.ptr(), body_, true, false)) |blob| {
+                            if (blob.size > 0) {
+                                request.body = Body.Value{ .Blob = blob };
+                            }
+                        } else |err| {
+                            if (err == error.InvalidArguments) {
+                                JSC.JSError(getAllocator(ctx), "Expected an Array", .{}, ctx, exception);
+                                return null;
+                            }
+
+                            JSC.JSError(getAllocator(ctx), "Invalid Body", .{}, ctx, exception);
+                            return null;
+                        }
+                    }
+                }
             },
             else => {
                 request.url = JSC.JSValue.fromRef(arguments[0]).getZigString(ctx.ptr());

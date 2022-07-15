@@ -195,7 +195,7 @@ interface Process {
   env: Record<string, string> & {
     NODE_ENV: string;
   };
-  
+
   /** Whether you are using Bun */
   isBun: 1; // FIXME: this should actually return a boolean
   // execPath: string;
@@ -211,19 +211,19 @@ interface Process {
 
 declare var process: Process;
 
-declare module 'process' {
+declare module "process" {
   var process: Process;
   export = process;
 }
-declare module 'node:process' {
-    import process = require('process');
-    export = process;
+declare module "node:process" {
+  import process = require("process");
+  export = process;
 }
 
 interface BlobInterface {
   text(): Promise<string>;
   arrayBuffer(): Promise<ArrayBuffer>;
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 }
 
 type BlobPart = string | Blob | ArrayBufferView | ArrayBuffer;
@@ -318,7 +318,7 @@ declare class Blob implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   type: string;
   size: number;
@@ -437,7 +437,7 @@ declare class Response implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   /**
    * Read the data from the Response as a Blob.
@@ -644,7 +644,7 @@ declare class Request implements BlobInterface {
    * This first decodes the data from UTF-8, then parses it as JSON.
    *
    */
-  json(): Promise<JSON>;
+  json<TJSONReturnType = unknown>(): Promise<TJSONReturnType>;
 
   /**
    * Consume the [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) body as a `Blob`.
@@ -1403,12 +1403,17 @@ interface URLSearchParams {
   /** Sets the value associated to a given search parameter to the given value. If there were several values, delete the others. */
   set(name: string, value: string): void;
   sort(): void;
-  /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
-  toString(): string;
+  entries(): IterableIterator<[string, string]>;
+  /** Returns an iterator allowing to go through all keys of the key/value pairs of this search parameter. */
+  keys(): IterableIterator<string>;
+  /** Returns an iterator allowing to go through all values of the key/value pairs of this search parameter. */
+  values(): IterableIterator<string>;
   forEach(
     callbackfn: (value: string, key: string, parent: URLSearchParams) => void,
     thisArg?: any
   ): void;
+  /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
+  toString(): string;
 }
 
 declare var URLSearchParams: {
@@ -1770,7 +1775,7 @@ declare var WritableStreamDefaultWriter: {
   new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
 };
 
-interface ReadWriteStream extends ReadableStream, WritableStream { }
+interface ReadWriteStream extends ReadableStream, WritableStream {}
 
 interface TransformerFlushCallback<O> {
   (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
@@ -1933,3 +1938,7 @@ interface ErrnoException extends Error {
   path?: string | undefined;
   syscall?: string | undefined;
 }
+
+declare function alert(message?: string): void;
+declare function confirm(message?: string): boolean;
+declare function prompt(message?: string, _default?: string): string | null;

@@ -1,6 +1,6 @@
 # bun-macro-relay
 
-This lets you use Faceook's [Relay](https://github.com/facebook/relay) framework (GraphQL) with bun.
+This lets you use Facebook's [Relay](https://github.com/facebook/relay) framework (GraphQL) with bun.
 
 Specifically, this implements the bun equivalent of [`babel-plugin-relay`](https://github.com/facebook/relay/tree/main/packages/babel-plugin-relay). It parses `graphql` queries, but does not compile/save them to your artifacts directory, you still need [`relay-compiler`](https://github.com/facebook/relay/tree/main/packages/relay-compiler) for that.
 

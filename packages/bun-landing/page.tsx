@@ -68,7 +68,9 @@ const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
     className={`BarGraphItem BarGraphItem--${type}`}
     style={{ "--amount": amount, "--max": max }}
   >
-    <div className="visually-hidden">{`${type}: ${fmt.format(amount)} ${label}`}</div>
+    <div className="visually-hidden">{`${type}: ${fmt.format(
+      amount
+    )} ${label}`}</div>
     <div
       style={{ "--amount": amount, "--max": max }}
       className="BarGraphBar"
@@ -85,7 +87,12 @@ const BarGraphItem = ({ type, amount = 0, label, max = 0 }) => (
 );
 
 const BarGraphLabel = ({ name, version, source }) => (
-  <a href={source} target="_blank" className="BarGraphKeyItem" aria-label={`${name} benchmark source`}>
+  <a
+    href={source}
+    target="_blank"
+    className="BarGraphKeyItem"
+    aria-label={`${name} benchmark source`}
+  >
     <div className="BarGraphKeyItem-label">{name}</div>
     <div className="BarGraphKeyItem-value">{version}</div>
     <div className="BarGraphKeyItem-viewSource">View source</div>
@@ -180,7 +187,7 @@ const InstallBox = ({ desktop = false }) => (
   >
     <div className="InstallBox-label">
       <div className="InstallBox-label-heading">
-        Install Bun CLI v{process.version} (beta)
+        Install Bun CLI {process.version} (beta)
       </div>
       <div className="InstallBox-label-subtitle">
         macOS x64 &amp; Silicon, Linux x64, Windows Subsystem for Linux
@@ -226,6 +233,8 @@ export default ({ inlineCSS }) => (
       />
       <meta name="og:locale" content="en_US" />
       <meta name="twitter:site" content="@jarredsumner" />
+      <meta name="twitter:card" content="summary_large_image" />
+      <meta property="og:image" content="https://bun.sh/share.png" />
       <meta
         name="description"
         content={`Bundle, transpile, install and run JavaScript & TypeScript
@@ -234,9 +243,25 @@ export default ({ inlineCSS }) => (
       />
       <meta name="theme-color" content="#fbf0df" />
       <link rel="manifest" href="manifest.json" />
-      <link rel="icon" type="image/png" sizes="256x256" href="/logo-square.png" />
-      <link rel="icon" type="image/png" sizes="32x32" href="/logo-square@32px.png" />
-      <link rel="icon" type="image/png" sizes="16x16" href="/logo-square@16px.png" />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes="256x256"
+        href="/logo-square.png"
+      />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes="32x32"
+        href="/logo-square@32px.png"
+      />
+      <link
+        rel="icon"
+        type="image/png"
+        sizes="16x16"
+        href="/logo-square@16px.png"
+      />
+
       <title>Bun is a fast all-in-one JavaScript runtime</title>
 
       {inlineCSS ? (
@@ -277,10 +302,7 @@ export default ({ inlineCSS }) => (
                 </a>
               </li>
               <li>
-                <a
-                  className="NavText"
-                  href="https://github.com/oven-sh/bun"
-                >
+                <a className="NavText" href="https://github.com/oven-sh/bun">
                   GitHub
                 </a>
               </li>
@@ -338,7 +360,13 @@ export default ({ inlineCSS }) => (
               </button>
             </div>
             <div id="active-tab" className="ActiveTab">
-              <div role="tabpanel" tabIndex={0} id="react-tab-content" aria-labelledby="tab-react" className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark">
+              <div
+                role="tabpanel"
+                tabIndex={0}
+                id="react-tab-content"
+                aria-labelledby="tab-react"
+                className="BarGraph BarGraph--react BarGraph--horizontal BarGraph--dark"
+              >
                 <h2 className="BarGraph-heading">
                   Server-side rendering React
                 </h2>
@@ -371,22 +399,28 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun"
                     version="v0.1.0"
-                    source="https://github.com/oven-sh/bun/bench/react-hello-world.jsx"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.jsx"
                   />
                   <BarGraphLabel
                     name="node"
                     version="v18.1.0"
-                    source="https://github.com/oven-sh/bun/bench/react-hello-world.node.jsx"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.node.jsx"
                   />
                   <BarGraphLabel
                     name="deno"
                     version="v1.23.2"
-                    source="https://github.com/oven-sh/bun/bench/react-hello-world.deno.jsx"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/react-hello-world/react-hello-world.deno.jsx"
                   />
                 </div>
               </div>
 
-              <div role="tabpanel" tabIndex={-1} id="sqlite-tab-content" aria-labelledby="tab-sqlite" className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark">
+              <div
+                role="tabpanel"
+                tabIndex={-1}
+                id="sqlite-tab-content"
+                aria-labelledby="tab-sqlite"
+                className="BarGraph--sqlite BarGraph BarGraph--horizontal BarGraph--dark"
+              >
                 <h2 className="BarGraph-heading">Load a huge table</h2>
                 <p className="BarGraph-subheading">
                   Average queries per second
@@ -423,67 +457,69 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun:sqlite"
                     version="v0.1.0"
-                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.js"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/bun.js"
                   />
                   <BarGraphLabel
                     name="better-sqlite3"
-                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.better-sqlite3.mjs"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/node.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (x/sqlite)"
                     version="v1.23.2"
-                    source="https://github.com/oven-sh/bun/blob/main/bench/sqlite/query.deno.js"
+                    source="https://github.com/oven-sh/bun/blob/e55d6eed2bf9a5db30250fdd8b9be063dc949054/bench/sqlite/deno.js"
                   />
                 </div>
               </div>
 
-              <div role="tabpanel" tabIndex={-1} id="ffi-tab-content" aria-labelledby="tab-ffi" className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark">
-                <h2 className="BarGraph-heading">How fast can it get?</h2>
+              <div
+                role="tabpanel"
+                tabIndex={-1}
+                id="ffi-tab-content"
+                aria-labelledby="tab-ffi"
+                className="BarGraph BarGraph--ffi BarGraph--horizontal BarGraph--dark"
+              >
+                <h2 className="BarGraph-heading">
+                  How fast can it get? (Hashing)
+                </h2>
                 <p className="BarGraph-subheading">Operations per second</p>
 
                 <ul style={{ "--count": 3 }} className="BarGraphList">
                   <BarGraphItem
                     type="bun"
-                    amount={(115473441).toFixed(2)}
+                    amount={(13080444).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(
-                      Math.max(115473441, 43478261, 2891761) * 1.25
-                    )}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
                   />
                   <BarGraphItem
                     type="Node-API"
-                    amount={(43478261).toFixed(2)}
+                    amount={(6870963).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(
-                      Math.max(115473441, 43478261, 2891761) * 1.25
-                    )}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
                   />
                   <BarGraphItem
                     type="deno"
-                    amount={(2891761).toFixed(2)}
+                    amount={(5239717).toFixed(2)}
                     label="operations per iteration"
-                    max={Math.ceil(
-                      Math.max(115473441, 43478261, 2891761) * 1.25
-                    )}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
                   />
                 </ul>
 
                 <div style={{ "--count": 3 }} className="BarGraphKey">
                   <BarGraphLabel
                     name="bun:ffi"
-                    version="v0.1.0"
-                    source="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.bun.js"
+                    version="v0.1.3"
+                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/bun.js"
                   />
                   <BarGraphLabel
                     name="node (napi)"
-                    source="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.napi.mjs"
+                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/node.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (ffi)"
                     version="v1.23.2"
-                    source="https://github.com/oven-sh/bun/blob/f5527c976e20cb60b977cc1b21df079f3e388cc9/bench/ffi/plus100/add3.deno.js"
+                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/deno.js"
                   />
                 </div>
               </div>
@@ -520,7 +556,7 @@ export default ({ inlineCSS }) => (
             functions (native modules), fs, path, Buffer and more.
           </p>
           <p>
-            The goal of Bun is to run most of the worlds JavaScript outside of
+            The goal of Bun is to run most of the world's JavaScript outside of
             browsers, bringing performance and complexity enhancements to your
             future infrastructure, as well as developer productivity through
             better, simpler tooling.
@@ -540,17 +576,17 @@ export default ({ inlineCSS }) => (
               <WebAPI href="https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream">
                 ReadableStream
               </WebAPI>{" "}
-              are builtin
+              are built-in
             </li>
             <li>
               <NodeJS>node_modules</NodeJS> bun implements Node.js' module
               resolution algorithm, so you can use npm packages in bun.js. ESM
-              and CommonJS are supported, but Bun internally uses ESM.
+              and CommonJS are supported, but Bun internally uses ESM
             </li>
             <li>
               In bun.js, every file is transpiled.{" "}
               <TypeScript>TypeScript</TypeScript> &amp; <React>JSX</React> just
-              work.
+              work
             </li>
             <li>
               bun supports <code className="">"paths"</code>,{" "}
@@ -563,7 +599,7 @@ export default ({ inlineCSS }) => (
             </li>
             <li>
               use the fastest system calls available with <Bun>Bun.write</Bun>{" "}
-              to write, copy, pipe, send and clone files.
+              to write, copy, pipe, send and clone files
             </li>
             <li>
               bun.js automatically loads environment variables from{" "}
@@ -571,7 +607,8 @@ export default ({ inlineCSS }) => (
               <code class="mono">require("dotenv").config()</code>
             </li>
             <li>
-              bun ships with a fast SQLite3 client builtin <Bun>bun:sqlite</Bun>
+              bun ships with a fast SQLite3 client built-in{" "}
+              <Bun>bun:sqlite</Bun>
             </li>
             <li>
               <NodeJS href="https://github.com/oven-sh/bun/issues/158">
@@ -584,7 +621,7 @@ export default ({ inlineCSS }) => (
               >
                 Node-API (N-API)
               </a>
-              . Many Node.js native modules just work.
+              . Many Node.js native modules just work
             </li>
             <li>
               <Bun>bun:ffi</Bun> call native code from JavaScript with bun's
@@ -593,7 +630,7 @@ export default ({ inlineCSS }) => (
             <li>
               <NodeJS>node:fs</NodeJS> <NodeJS>node:path</NodeJS> bun.js
               natively supports a growing list of Node.js core modules along
-              with globals like Buffer and process.
+              with globals like Buffer and process
             </li>
           </ul>
 
@@ -634,7 +671,7 @@ export default ({ inlineCSS }) => (
             makes it much simpler to write fast software.{" "}
             <a href="https://github.com/sponsors/ziglang">
               Sponsor the Zig Software Foundation
-            </a>
+            </a>.
           </p>
           <h2>Getting started</h2>
           <p>
@@ -680,7 +717,7 @@ export default {
             <a target="_blank" href="http://localhost:3000">
               http://localhost:3000
             </a>{" "}
-            in your browser
+            in your browser.
             <br />
             <br />
             See{" "}
@@ -689,7 +726,7 @@ export default {
             </a>{" "}
             and check out <a href={DOCS}>the docs</a>. If you have any questions
             or want help, join{" "}
-            <a href="https://bun.sh/discord">Bun's Discord</a>
+            <a href="https://bun.sh/discord">Bun's Discord</a>.
           </p>
 
           <h2>Bun CLI</h2>
@@ -733,13 +770,13 @@ export default {
             <Command>bun wiptest</Command>
             <p>
               A Jest-like test runner for JavaScript &amp; TypeScript projects
-              builtin to bun
+              built-in to bun.
             </p>
             <Label>
               <PerformanceClaim href="https://twitter.com/jarredsumner/status/1542824445810642946">
                 You've never seen a JavaScript test runner this fast
               </PerformanceClaim>{" "}
-              (or incomplete)
+              (or incomplete).
             </Label>
           </Group>
 
@@ -749,7 +786,7 @@ export default {
           </p>
           <h2>How do I see the source code?</h2>
           <p>
-            Bun is on <a href="https://github.com/oven-sh/bun">GitHub</a>
+            Bun is on <a href="https://github.com/oven-sh/bun">GitHub</a>.
           </p>
         </div>
       </section>

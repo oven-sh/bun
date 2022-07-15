@@ -1291,12 +1291,17 @@ interface URLSearchParams {
   /** Sets the value associated to a given search parameter to the given value. If there were several values, delete the others. */
   set(name: string, value: string): void;
   sort(): void;
-  /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
-  toString(): string;
+  entries(): IterableIterator<[string, string]>;
+  /** Returns an iterator allowing to go through all keys of the key/value pairs of this search parameter. */
+  keys(): IterableIterator<string>;
+  /** Returns an iterator allowing to go through all values of the key/value pairs of this search parameter. */
+  values(): IterableIterator<string>;
   forEach(
     callbackfn: (value: string, key: string, parent: URLSearchParams) => void,
     thisArg?: any
   ): void;
+  /** Returns a string containing a query string suitable for use in a URL. Does not include the question mark. */
+  toString(): string;
 }
 
 declare var URLSearchParams: {

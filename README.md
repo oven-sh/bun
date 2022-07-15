@@ -63,7 +63,6 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [CSS runtime](#css-runtime)
   - [Frameworks](#frameworks)
 - [Troubleshooting](#troubleshooting)
-  - [Illegal Instruction (Core Dumped)](#illegal-instruction-core-dumped)
   - [bun not running on an M1 (or Apple Silicon)](#bun-not-running-on-an-m1-or-apple-silicon)
   - [error: Unexpected](#error-unexpected)
   - [bun install is stuck](#bun-install-is-stuck)

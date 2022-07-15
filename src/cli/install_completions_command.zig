@@ -53,10 +53,6 @@ pub const InstallCompletionsCommand = struct {
         const fail_exit_code: u8 = if (std.os.getenvZ("IS_BUN_AUTO_UPDATE") == null) 1 else 0;
 
         switch (shell) {
-            .bash => {
-                Output.prettyErrorln("<r><red>error:<r> Bash completions aren't implemented yet, just zsh & fish. A PR is welcome!", .{});
-                Global.exit(fail_exit_code);
-            },
             .unknown => {
                 Output.prettyErrorln("<r><red>error:<r> Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash. To manually output completions, run this:\n      bun getcompletes", .{});
                 Global.exit(fail_exit_code);
@@ -224,7 +220,51 @@ pub const InstallCompletionsCommand = struct {
                         break :found std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
                     }
                 },
-                .bash => {},
+                .bash => {
+                    if (std.os.getenvZ("XDG_DATA_HOME")) |data_dir| {
+                        outer: {
+                            var paths = [_]string{ std.mem.span(data_dir), "./bash-completion/completions" };
+                            completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                                break :outer;
+                        }
+                    }
+
+                    if (std.os.getenvZ("XDG_CONFIG_HOME")) |config_dir| {
+                        outer: {
+                            var paths = [_]string{ std.mem.span(config_dir), "./bash-completion/completions" };
+                            completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+
+                            break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                                break :outer;
+                        }
+                    }
+
+                    if (std.os.getenvZ("HOME")) |home_dir| {
+                        outer: {
+                            var paths_to_try = [_]string{
+                                [_]string{ std.mem.span(home_dir), "./.oh-my-bash/custom/completions" },
+                                [_]string{ std.mem.span(home_dir), "./.bash_completion.d" },
+                            };
+
+                            for (paths_to_try) |paths| {
+                                completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                                    break :outer;
+                            }
+                        }
+                    }
+
+                    const dirs_to_try = [_]string{
+                        "/opt/homebrew/share/bash-completion/completions/",
+                        "/opt/local/share/bash-completion/completions/",
+                    };
+
+                    for (dirs_to_try) |dir| {
+                        completions_dir = dir;
+                        break :found std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
+                    }
+                },
                 else => unreachable,
             }
 

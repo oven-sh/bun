@@ -255,7 +255,7 @@ class FancyTypeError {
   constructor(exception: JSException) {
     this.runtimeType = exception.runtime_type || 0;
     this.runtimeTypeName = RuntimeType[this.runtimeType] || "undefined";
-    this.message = exception.message ?? '';
+    this.message = exception.message || '';
     this.explain = "";
 
     this.normalize(exception);
@@ -1387,12 +1387,7 @@ export function dismissError() {
       runtimeErrorController = null;
     }
 
-    while (pending.length > 0) {
-      const pendingFrame = pending.shift();
-      if (pendingFrame) {
-        pendingFrame.stopped = true;
-      }
-    }
+    while (pending.length > 0) pending.shift().stopped = true;
   }
 }
 

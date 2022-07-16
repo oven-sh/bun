@@ -1,4 +1,4 @@
-#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__)) && defined(__AVX2__)
 
 #ifndef EXPAVX_B64
 #define EXPAVX_B64

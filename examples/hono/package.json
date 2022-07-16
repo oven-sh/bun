@@ -1,12 +1,12 @@
 {
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": "@bun-examples/hono",
   "main": "src/index.js",
   "devDependencies": {
     "bun-types": "^0.0.83"
   },
   "dependencies": {
-    "hono": "^1.6.4"
+    "hono": "^2.0.0"
   },
   "scripts": {
     "start": "bun run src/index.ts"

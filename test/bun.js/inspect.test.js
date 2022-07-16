@@ -1,5 +1,22 @@
 import { it, expect } from "bun:test";
 
+it("utf16 property name", () => {
+  var { Database } = require("bun:sqlite");
+  const db = Database.open(":memory:");
+  expect(Bun.inspect(db.prepare("select '😀' as 笑").all())).toBe(
+    '[ { "笑": "😀" } ]'
+  );
+});
+
+it("latin1", () => {
+  expect(Bun.inspect("English")).toBe("English");
+  expect(Bun.inspect("Français")).toBe("Français");
+  expect(Bun.inspect("Ελληνική")).toBe("Ελληνική");
+  expect(Bun.inspect("日本語")).toBe("日本語");
+  expect(Bun.inspect("Emoji😎")).toBe("Emoji😎");
+  expect(Bun.inspect("Français / Ελληνική")).toBe("Français / Ελληνική");
+});
+
 it("Request object", () => {
   expect(Bun.inspect(new Request({ url: "https://example.com" })).trim()).toBe(
     `

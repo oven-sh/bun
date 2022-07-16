@@ -1393,6 +1393,7 @@ pub const ZigConsoleClient = struct {
             var slice = slice_;
             var i: u32 = 0;
             var len: u32 = @truncate(u32, slice.len);
+            var any_non_ascii = false;
             while (i < len) : (i += 1) {
                 switch (slice[i]) {
                     '%' => {
@@ -1411,7 +1412,11 @@ pub const ZigConsoleClient = struct {
 
                         // Flush everything up to the %
                         const end = slice[0 .. i - 1];
-                        writer.writeAll(end);
+                        if (!any_non_ascii)
+                            writer.writeAll(end)
+                        else
+                            writer.writeLatin1(end);
+                        any_non_ascii = false;
                         slice = slice[@minimum(slice.len, i + 1)..];
                         i = 0;
                         len = @truncate(u32, slice.len);
@@ -1436,11 +1441,14 @@ pub const ZigConsoleClient = struct {
                             break;
                         if (slice[i] == '%') i += 2;
                     },
+                    128...255 => {
+                        any_non_ascii = true;
+                    },
                     else => {},
                 }
             }
 
-            if (slice.len > 0) writer.writeAll(slice);
+            if (slice.len > 0) writer.writeLatin1(slice);
         }
 
         pub fn WrappedWriter(comptime Writer: type) type {
@@ -1451,8 +1459,31 @@ pub const ZigConsoleClient = struct {
                     self.ctx.print(fmt, args) catch unreachable;
                 }
 
+                pub fn writeLatin1(self: *@This(), buf: []const u8) void {
+                    var remain = buf;
+                    while (remain.len > 0) {
+                        if (strings.firstNonASCII(remain)) |i| {
+                            if (i > 0) self.ctx.writeAll(remain[0..i]) catch unreachable;
+                            self.ctx.writeAll(&strings.latin1ToCodepointBytesAssumeNotASCII(remain[i])) catch unreachable;
+                            remain = remain[i + 1 ..];
+                        } else {
+                            break;
+                        }
+                    }
+
+                    self.ctx.writeAll(remain) catch unreachable;
+                }
+
                 pub inline fn writeAll(self: *@This(), buf: []const u8) void {
                     self.ctx.writeAll(buf) catch unreachable;
+                }
+
+                pub inline fn writeString(self: *@This(), str: ZigString) void {
+                    self.print("{}", .{str});
+                }
+
+                pub inline fn write16Bit(self: *@This(), input: []const u16) void {
+                    strings.formatUTF16Type([]const u16, input, self.ctx) catch unreachable;
                 }
             };
         }
@@ -1594,18 +1625,18 @@ pub const ZigConsoleClient = struct {
                             return;
                         }
 
-                        JSPrinter.writeJSONString(str.slice(), Writer, writer_, false) catch unreachable;
+                        JSPrinter.writeJSONString(str.slice(), Writer, writer_, .latin1) catch unreachable;
 
                         return;
                     }
 
-                    if (jsType == .RegExpObject) {
+                    if (jsType == .RegExpObject and enable_ansi_colors) {
                         writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
                     }
 
                     writer.print("{}", .{str});
 
-                    if (jsType == .RegExpObject) {
+                    if (jsType == .RegExpObject and enable_ansi_colors) {
                         writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});
                     }
                 },
@@ -1629,11 +1660,7 @@ pub const ZigConsoleClient = struct {
                     var description = value.getDescription(this.globalThis);
 
                     if (description.len > 0) {
-                        var slice = description.toSlice(default_allocator);
-                        defer if (slice.allocated) slice.deinit();
-                        writer.print(comptime Output.prettyFmt("<r><cyan>Symbol<r><d>(<green>{}<r><d>)<r>", enable_ansi_colors), .{
-                            JSPrinter.formatJSONString(slice.slice()),
-                        });
+                        writer.print(comptime Output.prettyFmt("<r><cyan>Symbol<r><d>(<green>{}<r><d>)<r>", enable_ansi_colors), .{description});
                     } else {
                         writer.print(comptime Output.prettyFmt("<r><cyan>Symbol<r>", enable_ansi_colors), .{});
                     }
@@ -1976,20 +2003,19 @@ pub const ZigConsoleClient = struct {
                                     print_children: {
                                         switch (tag.tag) {
                                             .String => {
-                                                var children_slice = children.toSlice(this.globalThis, default_allocator);
-                                                defer if (children_slice.allocated) children_slice.deinit();
-                                                if (children_slice.len == 0) break :print_children;
+                                                var children_string = children.getZigString(this.globalThis);
+                                                if (children_string.len == 0) break :print_children;
                                                 if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
                                                 writer.writeAll(">");
-                                                if (children_slice.len < 128) {
-                                                    writer.writeAll(children_slice.slice());
+                                                if (children_string.len < 128) {
+                                                    writer.writeString(children_string);
                                                 } else {
                                                     this.indent += 1;
                                                     writer.writeAll("\n");
                                                     this.writeIndent(Writer, writer_) catch unreachable;
                                                     this.indent -|= 1;
-                                                    writer.writeAll(children_slice.slice());
+                                                    writer.writeString(children_string);
                                                     writer.writeAll("\n");
                                                     this.writeIndent(Writer, writer_) catch unreachable;
                                                 }
@@ -2093,25 +2119,43 @@ pub const ZigConsoleClient = struct {
                             defer CAPI.JSStringRelease(property_name_ref);
                             const len = CAPI.JSStringGetLength(property_name_ref);
                             if (len == 0) continue;
-                            var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..len];
+                            const encoding = CAPI.JSStringEncoding(property_name_ref);
 
                             var property_value = CAPI.JSObjectGetProperty(this.globalThis.ref(), object, property_name_ref, null);
                             const tag = Tag.get(JSValue.fromRef(property_value), this.globalThis);
 
                             if (tag.cell.isHidden()) continue;
 
-                            const key = prop[0..@minimum(prop.len, 128)];
+                            const key: ZigString = if (encoding == .char8)
+                                ZigString.init((JSC.C.JSStringGetCharacters8Ptr(property_name_ref))[0..@minimum(len, 128)])
+                            else
+                                ZigString.init16(JSC.C.JSStringGetCharactersPtr(property_name_ref)[0..@minimum(len, 128)]);
 
                             // TODO: make this one pass?
-                            if (JSLexer.isLatin1Identifier(@TypeOf(key), key)) {
+                            if (!key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice())) {
                                 writer.print(
-                                    comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
+                                    comptime Output.prettyFmt("{}<d>:<r> ", enable_ansi_colors),
                                     .{key},
+                                );
+                            } else if (key.is16Bit()) {
+                                var utf16Slice = key.utf16SliceAligned();
+                                writer.writeAll("\"");
+
+                                while (strings.indexOfAny16(utf16Slice, "\"")) |j| {
+                                    writer.write16Bit(utf16Slice[0..j]);
+                                    writer.writeAll("\\\"");
+                                    utf16Slice = utf16Slice[j + 1 ..];
+                                }
+
+                                writer.write16Bit(utf16Slice);
+                                writer.print(
+                                    comptime Output.prettyFmt("\"<d>:<r> ", enable_ansi_colors),
+                                    .{},
                                 );
                             } else {
                                 writer.print(
                                     comptime Output.prettyFmt("{s}<d>:<r> ", enable_ansi_colors),
-                                    .{JSPrinter.formatJSONString(key)},
+                                    .{JSPrinter.formatJSONString(key.slice())},
                                 );
                             }
 

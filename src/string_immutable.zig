@@ -7,6 +7,14 @@ const CodePoint = @import("string_types.zig").CodePoint;
 const bun = @import("global.zig");
 pub const joiner = @import("./string_joiner.zig");
 const assert = std.debug.assert;
+
+pub const Encoding = enum {
+    ascii,
+    utf8,
+    latin1,
+    utf16,
+};
+
 pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;
 }
@@ -2189,8 +2197,7 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
         const end = @minimum(i, remaining.len);
-        const to_copy = utf16_remaining[0..end];
-        copyU16IntoU8(remaining, Type, to_copy);
+        if (end > 0) copyU16IntoU8(remaining, Type, utf16_remaining[0..end]);
         remaining = remaining[end..];
         utf16_remaining = utf16_remaining[end..];
 
@@ -3133,35 +3140,43 @@ test "firstNonASCII16" {
     }
 }
 
-pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
+pub fn formatUTF16Type(comptime Slice: type, slice_: Slice, writer: anytype) !void {
     var slice = slice_;
-    var chunk: [512 + 4]u8 = undefined;
-    var chunk_i: u16 = 0;
+    const chunk_size = 2048;
+    var chunk: [chunk_size + 4]u8 = undefined;
 
     while (slice.len > 0) {
-        if (chunk_i >= chunk.len - 5) {
-            try writer.writeAll(chunk[0..chunk_i]);
-            chunk_i = 0;
-        }
+        const result = strings.copyUTF16IntoUTF8(&chunk, Slice, slice);
+        if (result.read == 0 or result.written == 0)
+            break;
+        try writer.writeAll(chunk[0..result.written]);
+        slice = slice[result.read..];
+    }
+}
 
-        var cp: u32 = slice[0];
-        slice = slice[1..];
-        if (cp & ~@as(u32, 0x03ff) == 0xd800 and slice.len > 0) {
-            cp = 0x10000 + (((cp & 0x03ff) << 10) | (slice[0] & 0x03ff));
-            slice = slice[1..];
-        }
+pub fn formatUTF16(slice_: []align(1) const u16, writer: anytype) !void {
+    return formatUTF16Type([]align(1) const u16, slice_, writer);
+}
 
-        chunk_i += @as(
-            u8,
-            @call(
-                .{ .modifier = .always_inline },
-                encodeWTF8RuneT,
-                .{ chunk[chunk_i..][0..4], u32, cp },
-            ),
-        );
+pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
+    var slice = slice_;
+    const chunk_size = 2048;
+    var chunk: [chunk_size + 4]u8 = undefined;
+
+    while (strings.firstNonASCII(slice)) |i| {
+        if (i > 0) {
+            try writer.writeAll(slice[0..i]);
+            slice = slice[i..];
+        }
+        const result = strings.copyLatin1IntoUTF8(&chunk, @TypeOf(slice), slice[0..@minimum(chunk.len, slice.len)]);
+        if (result.read == 0 or result.written == 0)
+            break;
+        try writer.writeAll(chunk[0..result.written]);
+        slice = slice[result.read..];
     }
 
-    try writer.writeAll(chunk[0..chunk_i]);
+    if (slice.len > 0)
+        try writer.writeAll(slice); // write the remaining bytes
 }
 
 test "print UTF16" {

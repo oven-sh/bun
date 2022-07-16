@@ -208,7 +208,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("statusText: ");
-            try JSPrinter.writeJSONString(this.status_text, Writer, writer, false);
+            try JSPrinter.writeJSONString(this.status_text, Writer, writer, .ascii);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 

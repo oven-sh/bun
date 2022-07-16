@@ -241,14 +241,20 @@ pub const InstallCompletionsCommand = struct {
                     }
 
                     if (std.os.getenvZ("HOME")) |home_dir| {
-                        outer: {
-                            var paths_to_try = [_]string{
-                                [_]string{ std.mem.span(home_dir), "./.oh-my-bash/custom/completions" },
-                                [_]string{ std.mem.span(home_dir), "./.bash_completion.d" },
-                            };
-
-                            for (paths_to_try) |paths| {
+                        {
+                            outer: {
+                                var paths = [_]string{ std.mem.span(home_dir), "./.oh-my-bash/custom/completions" };
                                 completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+
+                                break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
+                                    break :outer;
+                            }
+                        }
+                        {
+                            outer: {
+                                var paths = [_]string{ std.mem.span(home_dir), "./.bash_completion.d" };
+                                completions_dir = resolve_path.joinAbsString(cwd, &paths, .auto);
+
                                 break :found std.fs.openDirAbsolute(completions_dir, .{ .iterate = true }) catch
                                     break :outer;
                             }

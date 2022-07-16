@@ -3,7 +3,7 @@
   "name": "@bun-examples/hono",
   "main": "src/index.js",
   "devDependencies": {
-    "bun-types": "^0.0.83"
+    "bun-types": "latest"
   },
   "dependencies": {
     "hono": "^2.0.0"

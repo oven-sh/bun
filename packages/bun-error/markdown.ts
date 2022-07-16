@@ -5,15 +5,10 @@ import {
   StackFrameScope,
 } from "./index";
 import type {
-  FallbackMessageContainer,
   JSException,
   JSException as JSExceptionType,
-  Location,
   Message,
   Problems,
-  SourceLine,
-  StackFrame,
-  WebsocketMessageBuildFailure,
 } from "../../src/api/schema";
 
 export function problemsToMarkdown(problems: Problems) {
@@ -87,7 +82,7 @@ function exceptionToMarkdown(exception: JSException): string {
           column_start: -1,
           column_stop: -1,
         },
-        scope = 0,
+        scope = 0 as any,
       } = stack.frames[0];
       const file = normalizedFilename(_file, thisCwd);
 
@@ -156,7 +151,7 @@ function exceptionToMarkdown(exception: JSException): string {
             line: -1,
             column_start: -1,
           },
-          scope = 0,
+          scope = 0 as any,
         } = frame;
         padding = Math.max(
           padding,
@@ -178,7 +173,7 @@ function exceptionToMarkdown(exception: JSException): string {
             line: -1,
             column_start: -1,
           },
-          scope = 0,
+          scope = 0 as any,
         } = frame;
 
         markdown += `

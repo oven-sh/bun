@@ -1,5 +1,5 @@
 import React from "react";
-import { useContext, useState, useCallback, createContext } from "react";
+import { useContext, createContext } from "react";
 import { render, unmountComponentAtNode } from "react-dom";
 import type {
   FallbackMessageContainer,
@@ -7,7 +7,6 @@ import type {
   JSException as JSExceptionType,
   Location,
   Message,
-  Problems,
   SourceLine,
   StackFrame,
   WebsocketMessageBuildFailure,
@@ -19,7 +18,6 @@ import {
 } from "./markdown";
 import {
   fetchAllMappings,
-  fetchMappings,
   remapPosition,
   sourceMappings,
 } from "./sourcemap";
@@ -105,7 +103,7 @@ function getAssetPrefixPath() {
   return globalThis["__BUN_HMR"]?.assetPrefixPath || "";
 }
 
-export const normalizedFilename = (filename: string, cwd: string): string => {
+export const normalizedFilename = (filename: string, cwd?: string): string => {
   if (filename.startsWith("http://") || filename.startsWith("https://")) {
     const url = new URL(filename, globalThis.location.href);
     if (url.origin === globalThis.location.origin) {
@@ -189,8 +187,8 @@ const maybeBlobFileURL = (
   return srcFileURL(filename, line, column);
 };
 
-const openWithoutFlashOfNewTab = (event: MouseEvent) => {
-  const target = event.currentTarget as HTMLAnchorElement;
+const openWithoutFlashOfNewTab: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
+  const target = event.currentTarget;
   const href = target.getAttribute("href");
   if (!href || event.button !== 0) {
     return true;
@@ -209,7 +207,7 @@ const openWithoutFlashOfNewTab = (event: MouseEvent) => {
   }
 
   if (target.dataset.column) {
-    headers.set("Editor-Column", target.dataset.line);
+    headers.set("Editor-Column", target.dataset.column);
   }
 
   headers.set("Open-In-Editor", "1");
@@ -257,7 +255,7 @@ class FancyTypeError {
   constructor(exception: JSException) {
     this.runtimeType = exception.runtime_type || 0;
     this.runtimeTypeName = RuntimeType[this.runtimeType] || "undefined";
-    this.message = exception.message;
+    this.message = exception.message ?? '';
     this.explain = "";
 
     this.normalize(exception);
@@ -269,7 +267,8 @@ class FancyTypeError {
   message: string;
 
   normalize(exception: JSException) {
-    let i = exception.message.lastIndexOf(" is ");
+    if (!exception.message) return;
+    const i = exception.message.lastIndexOf(" is ");
     if (i === -1) return;
     const partial = exception.message.substring(i + " is ".length);
     const nextWord = /(["a-zA-Z0-9_\.]+)\)$/.exec(partial);
@@ -323,8 +322,6 @@ class FancyTypeError {
   }
 }
 
-var onClose = dismissError;
-
 export const clientURL = (filename) => {
   if (filename.includes(".bun")) {
     return `/${filename.replace(/^(\/)?/g, "")}`;
@@ -352,16 +349,18 @@ const AsyncSourceLines = ({
   sourceLines,
   setSourceLines,
 }: {
+  highlight: number;
   highlightColumnStart: number;
   highlightColumnEnd: number;
-  highlight: number;
+  children?: React.ReactNode;
   buildURL: (line?: number, column?: number) => string;
-  sourceLines: string[];
+  isClient: boolean
+  sourceLines: SourceLine[];
   setSourceLines: (lines: SourceLine[]) => void;
 }) => {
   const [loadState, setLoadState] = React.useState(LoadState.pending);
 
-  const controller = React.useRef<AbortController>(null);
+  const controller = React.useRef<AbortController | null>(null);
   const url = React.useRef<string>(buildURL(0, 0));
 
   React.useEffect(() => {
@@ -455,7 +454,6 @@ const AsyncSourceLines = ({
           highlightColumnEnd={highlightColumnEnd}
           buildURL={buildURL}
           sourceLines={sourceLines}
-          isClient={isClient}
         >
           {children}
         </SourceLines>
@@ -473,13 +471,13 @@ const SourceLines = ({
   highlightColumnStart = 0,
   highlightColumnEnd = Infinity,
   children,
-  isClient = false,
   buildURL,
 }: {
   sourceLines: SourceLine[];
+  highlight: number;
   highlightColumnStart: number;
   highlightColumnEnd: number;
-  highlight: number;
+  children?: React.ReactNode;
   buildURL: (line?: number, column?: number) => string;
 }) => {
   let start = sourceLines.length;
@@ -509,8 +507,7 @@ const SourceLines = ({
     maxLineNumber.toString(10).length - minLineNumber.toString(10).length;
 
   const _sourceLines = sourceLines.slice(start, end);
-  const childrenArray = children || [];
-  const lines = new Array(_sourceLines.length + childrenArray.length);
+  const lines = new Array(_sourceLines.length + React.Children.count(children));
 
   let highlightI = 0;
   for (let i = 0; i < _sourceLines.length; i++) {
@@ -623,36 +620,31 @@ export const StackFrameIdentifier = ({
       functionName =
         markdown && functionName ? "`" + functionName + "`" : functionName;
       return functionName ? `new ${functionName}` : "new (anonymous)";
-      break;
     }
 
     case StackFrameScope.Eval: {
       return "eval";
-      break;
     }
 
     case StackFrameScope.Module: {
       return "(esm)";
-      break;
     }
 
     case StackFrameScope.Global: {
       return "(global)";
-      break;
     }
 
     case StackFrameScope.Wasm: {
       return "(wasm)";
-      break;
     }
 
+    case StackFrameScope.Function:
     default: {
       return functionName
         ? markdown
           ? "`" + functionName + "`"
           : functionName
         : "λ()";
-      break;
     }
   }
 };
@@ -669,13 +661,12 @@ const getNativeStackFrameIdentifier = (frame) => {
 
 const NativeStackFrame = ({
   frame,
-  isTop,
   maxLength,
   urlBuilder,
 }: {
   frame: StackFrame;
-  isTop: boolean;
   maxLength: number;
+  urlBuilder: typeof maybeBlobFileURL
 }) => {
   const { cwd } = useContext(ErrorGroupContext);
   const {
@@ -694,6 +685,7 @@ const NativeStackFrame = ({
       <div
         title={StackFrameScope[scope]}
         className="BunError-StackFrame-identifier"
+        // @ts-expect-error Custom CSS variables are not known by TypeScript
         style={{ "--max-length": `${maxLength}ch` }}
       >
         {getNativeStackFrameIdentifier(frame)}
@@ -759,54 +751,20 @@ const NativeStackTrace = ({
 }: {
   frames: StackFrame[];
   sourceLines: SourceLine[];
-  isClient: boolean;
   setSourceLines: (sourceLines: SourceLine[]) => void;
+  children?: React.ReactNode;
+  isClient: boolean;
 }) => {
   const { file = "", position } = frames[0];
   const { cwd } = useContext(ErrorGroupContext);
   const filename = normalizedFilename(file, cwd);
   const urlBuilder = isClient ? clientURL : maybeBlobFileURL;
-  // const [isFocused, setFocused] = React.useState(false);
-  const ref = React.useRef<HTMLDivElement>();
+  const ref = React.useRef<HTMLDivElement>(null);
   const buildURL = React.useCallback(
     (line, column) => urlBuilder(file, line, column),
     [file, urlBuilder]
   );
-  // React.useLayoutEffect(() => {
-  //   var handler1, handler2;
 
-  //   handler1 = document.addEventListener(
-  //     "selectionchange",
-  //     (event) => {
-  //       if (event.target && ref.current && ref.current.contains(event.target)) {
-  //         setFocused(true);
-  //       }
-  //     },
-  //     { passive: true }
-  //   );
-  //   handler2 = document.addEventListener(
-  //     "selectstart",
-  //     (event) => {
-  //       console.log(event);
-  //       if (event.target && ref.current && ref.current.contains(event.target)) {
-  //         setFocused(true);
-  //       }
-  //     },
-  //     { passive: true }
-  //   );
-
-  //   return () => {
-  //     if (handler1) {
-  //       document.removeEventListener("selectionchange", handler1);
-  //       handler1 = null;
-  //     }
-
-  //     if (handler2) {
-  //       document.removeEventListener("selectstart", handler2);
-  //       handler2 = null;
-  //     }
-  //   };
-  // }, [setFocused, ref]);
   return (
     <div ref={ref} className={`BunError-NativeStackTrace`}>
       <a
@@ -827,7 +785,6 @@ const NativeStackTrace = ({
           highlightColumnStart={position.column_start}
           buildURL={buildURL}
           highlightColumnEnd={position.column_stop}
-          isClient={isClient}
         >
           {children}
         </SourceLines>
@@ -995,7 +952,7 @@ const Summary = ({
   onClose,
 }: {
   errorCount: number;
-  onClose: Function;
+  onClose: () => void;
 }) => {
   return (
     <div className="BunError-Summary">
@@ -1068,7 +1025,7 @@ const ResolveError = ({ message }: { message: Message }) => {
   const { cwd } = useContext(ErrorGroupContext);
   let title = (message.data.text || "").trim();
   const newline = title.indexOf("\n");
-  let subtitle = null;
+  let subtitle: string | null = null;
   if (newline > -1) {
     subtitle = title.slice(newline + 1).trim();
     title = title.slice(0, newline);
@@ -1098,26 +1055,20 @@ const ResolveError = ({ message }: { message: Message }) => {
 const OverlayMessageContainer = ({
   problems,
   reason,
-  router,
   isClient = false,
-}: FallbackMessageContainer) => {
+}: FallbackMessageContainer & { isClient: boolean }) => {
+  const errorCount = problems ? problems.exceptions.length + problems.build.errors : 0;
   return (
     <div id="BunErrorOverlay-container">
       <div className="BunError-content">
         <div className="BunError-header">
-          <Summary
-            errorCount={problems.exceptions.length + problems.build.errors}
-            onClose={onClose}
-            problems={problems}
-            isClient={isClient}
-            reason={reason}
-          />
+          <Summary errorCount={errorCount} onClose={dismissError} />
         </div>
         <div className={`BunError-list`}>
-          {problems.exceptions.map((problem, index) => (
+          {problems?.exceptions.map((problem, index) => (
             <JSException isClient={isClient} key={index} value={problem} />
           ))}
-          {problems.build.msgs.map((buildMessage, index) => {
+          {problems?.build.msgs.map((buildMessage, index) => {
             if (buildMessage.on.build) {
               return <BuildError key={index} message={buildMessage} />;
             } else if (buildMessage.on.resolve) {
@@ -1137,7 +1088,7 @@ const OverlayMessageContainer = ({
 function copyToClipboard(input: string | Promise<string>) {
   if (!input) return;
 
-  if (input && typeof input === "object" && "then" in input) {
+  if (typeof input === "object" && "then" in input) {
     return input.then((str) => copyToClipboard(str));
   }
 
@@ -1170,7 +1121,7 @@ const BuildFailureMessageContainer = ({
     <div id="BunErrorOverlay-container">
       <div className="BunError-content">
         <div className="BunError-header">
-          <Summary onClose={onClose} errorCount={messages.length} />
+          <Summary onClose={dismissError} errorCount={messages.length} />
         </div>
         <div className={`BunError-list`}>
           {messages.map((buildMessage, index) => {
@@ -1189,7 +1140,7 @@ const BuildFailureMessageContainer = ({
   );
 };
 export var thisCwd = "";
-const ErrorGroupContext = createContext<{ cwd: string }>(null);
+const ErrorGroupContext = createContext<{ cwd?: string }>({ cwd: undefined });
 var reactRoot;
 
 function renderWithFunc(func) {
@@ -1245,7 +1196,7 @@ export function renderFallbackError(fallback: FallbackMessageContainer) {
 
   return renderWithFunc(() => (
     <ErrorGroupContext.Provider value={fallback}>
-      <OverlayMessageContainer {...fallback} />
+      <OverlayMessageContainer isClient {...fallback} />
     </ErrorGroupContext.Provider>
   ));
 }
@@ -1253,8 +1204,8 @@ export function renderFallbackError(fallback: FallbackMessageContainer) {
 globalThis[Symbol.for("Bun__renderFallbackError")] = renderFallbackError;
 
 import { parse as getStackTrace } from "./stack-trace-parser";
-var runtimeErrorController: AbortController;
-var pending = [];
+var runtimeErrorController: AbortController | null = null;
+var pending: { stopped: boolean }[] = [];
 
 var onIdle = globalThis.requestIdleCallback || ((cb) => setTimeout(cb, 32));
 function clearSourceMappings() {
@@ -1269,7 +1220,7 @@ export function renderRuntimeError(error: Error) {
     };
   }
 
-  const exception: JSException = {
+  const exception = {
     name: String(error.name),
     message: String(error.message),
     runtime_type: 0,
@@ -1310,15 +1261,15 @@ export function renderRuntimeError(error: Error) {
   }
 
   if (Number.isFinite(error[lineNumberProperty])) {
-    if (exception.stack.frames.length == 0) {
+    if (exception.stack?.frames.length == 0) {
       exception.stack.frames.push({
         file: error[fileNameProperty] || "",
         position: {
           line: +error[lineNumberProperty] || 1,
           column_start: +error[columnNumberProperty] || 1,
         },
-      });
-    } else if (exception.stack.frames.length > 0) {
+      } as StackFrame);
+    } else if (exception.stack && exception.stack.frames.length > 0) {
       exception.stack.frames[0].position.line = error[lineNumberProperty];
 
       if (Number.isFinite(error[columnNumberProperty])) {
@@ -1439,7 +1390,12 @@ export function dismissError() {
       runtimeErrorController = null;
     }
 
-    while (pending.length > 0) pending.shift().stopThis = true;
+    while (pending.length > 0) {
+      const pendingFrame = pending.shift();
+      if (pendingFrame) {
+        pendingFrame.stopped = true;
+      }
+    }
   }
 }
 

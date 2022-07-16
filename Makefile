@@ -1103,10 +1103,11 @@ jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile jsc-build-mac-copy
 jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-mac-copy
 
 jsc-build-mac-copy:
-	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a $(BUN_DEPS_OUT_DIR)/libJavaScriptCore.a
-	cp $(WEBKIT_RELEASE_DIR)/lib/libLowLevelInterpreterLib.a $(BUN_DEPS_OUT_DIR)/libLowLevelInterpreterLib.a
-	cp $(WEBKIT_RELEASE_DIR)/lib/libWTF.a $(BUN_DEPS_OUT_DIR)/libWTF.a
-	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
+	mkdir -p $(JSC_LIB)
+	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a $(JSC_LIB)/libJavaScriptCore.a
+	cp $(WEBKIT_RELEASE_DIR)/lib/libLowLevelInterpreterLib.a $(JSC_LIB)/libLowLevelInterpreterLib.a
+	cp $(WEBKIT_RELEASE_DIR)/lib/libWTF.a $(JSC_LIB)/libWTF.a
+	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(JSC_LIB)/libbmalloc.a
 
 clean-jsc:
 	cd src/bun.js/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/bun.js/WebKit/WebKitBuild

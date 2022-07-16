@@ -726,18 +726,18 @@ interface Crypto {
 declare var crypto: Crypto;
 
 /**
- * [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/atob) converts ascii text into base64.
+ * [`atob`](https://developer.mozilla.org/en-US/docs/Web/API/atob) decodes base64 into ascii text.
  *
- * @param asciiText The ascii text to convert.
+ * @param asciiText The base64 string to decode.
  */
-declare function atob(asciiText: string): string;
+declare function atob(encodedData: string): string;
 
 /**
- * [`btoa`](https://developer.mozilla.org/en-US/docs/Web/API/btoa) decodes base64 into ascii text.
+ * [`btoa`](https://developer.mozilla.org/en-US/docs/Web/API/btoa) encodes ascii text into base64.
  *
- * @param base64Text The base64 text to convert.
+ * @param stringToEncode The ascii text to encode.
  */
-declare function btoa(base64Text: string): string;
+declare function btoa(stringToEncode: string): string;
 
 /**
  * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextEncoder` API. All

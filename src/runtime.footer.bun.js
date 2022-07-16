@@ -3,7 +3,6 @@ export var __markAsModule = BUN_RUNTIME.__markAsModule;
 export var $$lzy = BUN_RUNTIME.$$lzy;
 export var __toModule = BUN_RUNTIME.__toModule;
 export var __commonJS = BUN_RUNTIME.__commonJS;
-export var __require = BUN_RUNTIME.__require;
 export var __name = BUN_RUNTIME.__name;
 export var __export = BUN_RUNTIME.__export;
 export var __reExport = BUN_RUNTIME.__reExport;
@@ -16,12 +15,12 @@ export var $$bun_runtime_json_parse = JSON.parse;
 export var __internalIsCommonJSNamespace =
   BUN_RUNTIME.__internalIsCommonJSNamespace;
 
-globalThis.require ||= function (moduleId) {
+export var __require = (globalThis.require ||= function (moduleId) {
   if (typeof moduleId === "string") {
     return import.meta.require(moduleId);
   }
 
   return BUN_RUNTIME.__require(moduleId);
-};
+});
 globalThis.__internalIsCommonJSNamespace ||=
   BUN_RUNTIME.__internalIsCommonJSNamespace;

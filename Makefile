@@ -888,7 +888,18 @@ test-dev-bun-dev:
 	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-dev.sh
 	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-dev-index-html.sh
 
-test-all: test-install test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev
+test-bun-snapshot:
+	rm -rf test/bun.js/snapshots.js
+	touch test/bun.js/snapshots.js
+	$(foreach i,$(wildcard test/bun.js/*.snapshot.*),echo "" >> test/bun.js/snapshots.js; echo "// $i" >> test/bun.js/snapshots.js; $(RELEASE_BUN) build $i --platform=bun >> test/bun.js/snapshots.js;)
+
+test-dev-bun-snapshot:
+	rm -rf test/bun.js/snapshots.debug.js
+	touch test/bun.js/snapshots.debug.js
+	$(foreach i,$(wildcard test/bun.js/*.snapshot.*),echo "" >> test/bun.js/snapshots.debug.js; echo "// $i" >> test/bun.js/snapshots.debug.js; $(DEBUG_BUN) build $i --platform=bun >> test/bun.js/snapshots.debug.js;)
+
+
+test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev
 
 copy-test-node-modules:
 	rm -rf test/snippets/package-json-exports/node_modules || echo "";
@@ -943,7 +954,7 @@ test-dev-no-hmr: copy-test-node-modules
 test-dev-bun-run:
 	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
 
-test-dev-all: test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev
+test-dev-all: test-install test-dev-bun-snapshot test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev
 test-dev-bunjs:
 
 test-dev: test-dev-with-hmr
@@ -1212,7 +1223,7 @@ bun-link-lld-release-no-lto:
 ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym:
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
-	-$(STRIP) $(BUN_RELEASE_BIN)
+	-$(STRIP) $(BUN_RELEASE_BIN) --wildcard -K _napi\*
 	cp $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
 copy-to-bun-release-dir-dsym:

@@ -345,7 +345,6 @@ const AsyncSourceLines = ({
   highlightColumnEnd = Infinity,
   children,
   buildURL,
-  isClient,
   sourceLines,
   setSourceLines,
 }: {
@@ -354,7 +353,6 @@ const AsyncSourceLines = ({
   highlightColumnEnd: number;
   children?: React.ReactNode;
   buildURL: (line?: number, column?: number) => string;
-  isClient: boolean
   sourceLines: SourceLine[];
   setSourceLines: (lines: SourceLine[]) => void;
 }) => {
@@ -797,7 +795,6 @@ const NativeStackTrace = ({
           highlightColumnStart={position.column_start}
           buildURL={buildURL}
           highlightColumnEnd={position.column_stop}
-          isClient={isClient}
         >
           {children}
         </AsyncSourceLines>

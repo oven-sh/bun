@@ -632,10 +632,10 @@ const PackageInstall = struct {
                 else => return,
             }
 
-            const needs_install = ctx.skip_verify or !this.package_install.verify();
+            const needs_install = ctx.skip_verify_installed_version_number or !this.package_install.verify();
 
             if (needs_install) {
-                this.result = this.package_install.install(ctx.skip_verify);
+                this.result = this.package_install.install(ctx.skip_verify_installed_version_number);
             } else {
                 this.result = .{ .skip = .{} };
             }
@@ -1765,6 +1765,7 @@ pub const PackageManager = struct {
             .id = network_task.task_id,
             .data = undefined,
         };
+        task.request.extract.tarball.skip_verify = !this.options.do.verify_integrity;
         return &task.threadpool_task;
     }
 
@@ -2859,6 +2860,10 @@ pub const PackageManager = struct {
                 this.do.install_packages = strings.eqlComptime(check_bool, "0");
             }
 
+            if (env_loader.map.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
+                this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
+            }
+
             if (cli_) |cli| {
                 if (cli.no_save) {
                     this.do.save_lockfile = false;
@@ -2897,6 +2902,8 @@ pub const PackageManager = struct {
                     PackageManager.verbose_install = false;
                 }
 
+                if (cli.no_verify) {
+                    this.do.verify_integrity = false;
                 }
 
                 if (cli.yarn) {
@@ -2935,6 +2942,9 @@ pub const PackageManager = struct {
 
                 this.update.development = cli.development;
                 if (!this.update.development) this.update.optional = cli.optional;
+            } else {
+                this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
+                PackageManager.verbose_install = false;
             }
         }
 
@@ -2944,6 +2954,7 @@ pub const PackageManager = struct {
             install_packages: bool = true,
             save_yarn_lock: bool = false,
             print_meta_hash_string: bool = false,
+            verify_integrity: bool = true,
         };
 
         pub const Enable = struct {
@@ -3340,6 +3351,7 @@ pub const PackageManager = struct {
         clap.parseParam("--silent                          Don't log anything") catch unreachable,
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
         clap.parseParam("--no-progress                     Disable the progress bar") catch unreachable,
+        clap.parseParam("--no-verify                       Skip verifying integrity of newly downloaded packages") catch unreachable,
         clap.parseParam("-g, --global                      Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
@@ -3387,6 +3399,7 @@ pub const PackageManager = struct {
         silent: bool = false,
         verbose: bool = false,
         no_progress: bool = false,
+        no_verify: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -3444,6 +3457,7 @@ pub const PackageManager = struct {
             cli.dry_run = args.flag("--dry-run");
             cli.global = args.flag("--global");
             cli.force = args.flag("--force");
+            cli.no_verify = args.flag("--no-verify");
             // cli.no_dedupe = args.flag("--no-dedupe");
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");

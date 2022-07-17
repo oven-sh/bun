@@ -84,7 +84,53 @@ pub const Batch = struct {
     head: ?*Task = null,
     tail: ?*Task = null,
 
-    /// Create a batch from a single task. 
+    pub fn pop(this: *Batch) ?*Task {
+        if (this.len == 0) {
+            return null;
+        }
+        var task = this.head.?;
+        this.head = if (this.len > 1 and task.node.next != null) @fieldParentPtr(Task, "node", task.node.next.?) else null;
+        this.len -= 1;
+
+        return task;
+    }
+
+    pub fn firstN(this: *Batch, n: usize) Batch {
+        if (this.len == 0) {
+            return .{};
+        }
+        const remain: usize = @minimum(this.len, n);
+        assert(this.head != null);
+
+        if (remain == this.len) {
+            const _batch = this.*;
+            this.* = .{};
+            return _batch;
+        }
+
+        var i: usize = 1;
+        var batch = Batch{
+            .head = this.head,
+            .tail = this.head,
+            .len = 1,
+        };
+
+        while (i < remain and this.head != null) {
+            var task = this.head.?;
+            this.head = if (task.node.next) |next| @fieldParentPtr(Task, "node", next) else null;
+            this.len -|= 1;
+            batch.len += 1;
+            batch.tail = task;
+
+            i += 1;
+        } else {
+            this.* = .{};
+        }
+
+        return batch;
+    }
+
+    /// Create a batch from a single task.
     pub fn from(task: *Task) Batch {
         return Batch{
             .len = 1,
@@ -483,7 +529,7 @@ pub const Thread = struct {
 };
 
 /// An event which stores 1 semaphore token and is multi-threaded safe.
-/// The event can be shutdown(), waking up all wait()ing threads and 
+/// The event can be shutdown(), waking up all wait()ing threads and
 /// making subsequent wait()'s return immediately.
 const Event = struct {
     state: Atomic(u32) = Atomic(u32).init(EMPTY),

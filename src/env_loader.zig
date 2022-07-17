@@ -401,6 +401,13 @@ pub const Loader = struct {
 
     did_load_process: bool = false,
 
+    pub fn isCI(this: *const Loader) bool {
+        return (this.map.get("CI") orelse
+            this.map.get("TDDIUM") orelse
+            this.map.get("JENKINS_URL") orelse
+            this.map.get("bamboo.buildKey")) != null;
+    }
+
     const empty_string_value: string = "\"\"";
 
     pub fn getNodePath(this: *Loader, fs: *Fs.FileSystem, buf: *Fs.PathBuffer) ?[:0]const u8 {

@@ -177,7 +177,7 @@ pub fn IOTask(comptime Context: type) type {
 
         pub fn schedule(this: *This) void {
             NetworkThread.init() catch return;
-            NetworkThread.global.pool.schedule(NetworkThread.Batch.from(&this.task));
+            NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
         }
 
         pub fn onFinish(this: *This) void {

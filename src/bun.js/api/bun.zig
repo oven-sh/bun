@@ -2234,10 +2234,10 @@ pub const Timer = struct {
         cancelled: bool = false,
 
         pub const TimeoutTask = IOTask(Timeout);
-
+        const AsyncIO = @import("io");
         pub fn run(this: *Timeout, _task: *TimeoutTask) void {
             this.io_task = _task;
-            NetworkThread.global.pool.io.?.timeout(
+            AsyncIO.global.timeout(
                 *Timeout,
                 this,
                 onCallback,

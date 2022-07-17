@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("../global.zig");
 const os = struct {
     pub usingnamespace std.os;
     pub const EINTR = 4;
@@ -259,6 +260,8 @@ const fd_t = os.fd_t;
 const mem = std.mem;
 const assert = std.debug.assert;
 const c = std.c;
+const mach = bun.C.darwin;
+
 pub const darwin = struct {
     pub usingnamespace os.darwin;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
@@ -486,15 +489,62 @@ completed: FIFO(Completion) = .{},
 io_pending: FIFO(Completion) = .{},
 last_event_fd: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(32),
 pending_count: usize = 0,
-
+port: mach.mach_port = undefined,
+wakeup_buffer: []u64 = undefined,
 pub fn hasNoWork(this: *IO) bool {
     return this.pending_count == 0 and this.io_inflight == 0 and this.io_pending.peek() == null and this.completed.peek() == null and this.timeouts.peek() == null;
 }
-
-pub fn init(_: u12, _: u32) !IO {
+pub fn init(_: u12, _: u32, port: mach.mach_port) !IO {
     const kq = try os.kqueue();
     assert(kq > -1);
-    return IO{ .kq = kq };
+
+    var wakeup_buffer = try bun.default_allocator.alloc(u64, 32);
+    var wakeup_buffer_ = std.mem.sliceAsBytes(wakeup_buffer);
+    @memset(wakeup_buffer_.ptr, 0, wakeup_buffer_.len);
+
+    const mach_event: [1]kevent64 = .{
+        .{
+            .data = 0,
+            .udata = std.math.maxInt(usize),
+            .ident = port,
+            .filter = c.EVFILT_MACHPORT,
+            .flags = c.EV_ADD | c.EV_ENABLE,
+            .fflags = mach.MACH_RCV_MSG,
+            .ext = .{
+                @ptrToInt(wakeup_buffer.ptr),
+                @sizeOf([32]u64),
+            },
+        },
+    };
+    var mutable_events: []kevent64 = &[1]kevent64{std.mem.zeroes(kevent64)};
+    _ = std.os.darwin.kevent64(kq, &mach_event, 1, mutable_events.ptr, 0, 0, null);
+
+    return IO{
+        .kq = kq,
+        .port = port,
+        .wakeup_buffer = wakeup_buffer,
+    };
+}
+
+pub fn wait(this: *IO) void {
+    this.run_for_ns(std.time.ns_per_ms * 100) catch unreachable;
+}
+
+pub fn wake(this: *IO) void {
+    var message: mach.mach_msg_empty_send_t = std.mem.zeroes(mach.mach_msg_empty_send_t);
+    message.header.msgh_size = @sizeOf(mach.mach_msg_empty_send_t);
+    message.header.msgh_bits = @intCast(c_uint, mach.MACH_MSGH_BITS_REMOTE(mach.MACH_MSG_TYPE_MAKE_SEND_ONCE));
+    message.header.msgh_remote_port = this.port;
+
+    const kr = mach.mach_msg_send(&message.header);
+    if (darwin.getErrno(kr) != .SUCCESS) {
+        // If ScheduleWork() is being called by other threads faster than the pump
+        // can dispatch work, the kernel message queue for the wakeup port can fill
+        // up (this happens under base_perftests, for example). The kernel does
+        // return a SEND_ONCE right in the case of failure, which must be destroyed
+        // to avoid leaking.
+        mach.mach_msg_destroy(&message.header);
+    }
 }
 
 pub fn deinit(self: *IO) void {
@@ -505,7 +555,7 @@ pub fn deinit(self: *IO) void {
 
 /// Pass all queued submissions to the kernel and peek for completions.
 pub fn tick(self: *IO) !void {
-    return self.flush(false);
+    _ = try self.flush(false);
 }
 
 /// Pass all queued submissions to the kernel and run for `nanoseconds`.
@@ -536,15 +586,15 @@ pub fn run_for_ns(self: *IO, nanoseconds: u63) !void {
     // Loop until our timeout completion is processed above, which sets timed_out to true.
     // LLVM shouldn't be able to cache timed_out's value here since its address escapes above.
     while (!timed_out) {
-        try self.flush(true);
+        if (try self.flush(true)) break;
     }
 }
 
 const default_timespec = std.mem.zeroInit(os.timespec, .{});
-
-fn flush(self: *IO, wait_for_completions: bool) !void {
+const kevent64 = std.os.darwin.kevent64_s;
+fn flush(self: *IO, wait_for_completions: bool) !bool {
     var io_pending = self.io_pending.peek();
-    var events: [512]os.Kevent = undefined;
+    var events: [512]kevent64 = undefined;
 
     // Check timeouts and fill events with completions in io_pending
     // (they will be submitted through kevent).
@@ -556,52 +606,70 @@ fn flush(self: *IO, wait_for_completions: bool) !void {
     if (change_events > 0 or self.completed.peek() == null) {
         // Zero timeouts for kevent() implies a non-blocking poll
         var ts = default_timespec;
+        var ts_ptr: *os.timespec = &ts;
 
         // We need to wait (not poll) on kevent if there's nothing to submit or complete.
-        // We should never wait indefinitely (timeout_ptr = null for kevent) given:
-        // - tick() is non-blocking (wait_for_completions = false)
-        // - run_for_ns() always submits a timeout
         if (change_events == 0 and self.completed.peek() == null) {
             if (wait_for_completions) {
-                const timeout_ns = next_timeout orelse @panic("kevent() blocking forever");
-                ts.tv_nsec = @intCast(@TypeOf(ts.tv_nsec), timeout_ns % std.time.ns_per_s);
-                ts.tv_sec = @intCast(@TypeOf(ts.tv_sec), timeout_ns / std.time.ns_per_s);
+                if (next_timeout) |timeout_ns| {
+                    ts.tv_nsec = @intCast(@TypeOf(ts.tv_nsec), timeout_ns % std.time.ns_per_s);
+                    ts.tv_sec = @intCast(@TypeOf(ts.tv_sec), timeout_ns / std.time.ns_per_s);
+                }
             } else if (self.io_inflight == 0) {
-                return;
+                return false;
             }
         }
 
-        const new_events = try os.kevent(
+        const total_new_events = std.os.system.kevent64(
             self.kq,
-            events[0..change_events],
-            events[0..events.len],
-            &ts,
+            &events,
+            @intCast(c_int, change_events),
+            &events,
+            @intCast(c_int, events.len),
+            0,
+            if (wait_for_completions and next_timeout == null)
+                null
+            else
+                ts_ptr,
         );
+        const new_events = total_new_events;
 
-        // Mark the io events submitted only after kevent() successfully processed them
-        self.io_pending.out = io_pending;
-        if (io_pending == null) {
-            self.io_pending.in = null;
+        if (new_events > 0) {
+
+            // Mark the io events submitted only after kevent() successfully processed them
+            self.io_pending.out = io_pending;
+            if (io_pending == null) {
+                self.io_pending.in = null;
+            }
         }
 
-        self.io_inflight += change_events;
-        self.io_inflight -= new_events;
+        var decrement = false;
 
-        for (events[0..new_events]) |kevent| {
+        for (events[0..@intCast(usize, new_events)]) |kevent| {
+            if (kevent.udata == std.math.maxInt(usize)) {
+                decrement = true;
+                continue;
+            }
             const completion = @intToPtr(*Completion, kevent.udata);
             completion.next = null;
             self.completed.push(completion);
         }
+
+        self.io_inflight += change_events;
+        self.io_inflight -= @intCast(usize, new_events) - @as(usize, @boolToInt(decrement));
     }
 
     var completed = self.completed;
     self.completed = .{};
+    const any = completed.out != null;
     while (completed.pop()) |completion| {
         (completion.callback)(self, completion);
     }
+
+    return any;
 }
 
-fn flush_io(_: *IO, events: []os.Kevent, io_pending_top: *?*Completion) usize {
+fn flush_io(_: *IO, events: []kevent64, io_pending_top: *?*Completion) usize {
     for (events) |*kevent, flushed| {
         const completion = io_pending_top.* orelse return flushed;
         io_pending_top.* = completion.next;
@@ -651,6 +719,7 @@ fn flush_io(_: *IO, events: []os.Kevent, io_pending_top: *?*Completion) usize {
             .fflags = 0,
             .data = 0,
             .udata = @ptrToInt(completion),
+            .ext = .{ 0, 0 },
         };
     }
 
@@ -819,6 +888,15 @@ fn submitWithIncrementPending(
         .callback = onCompleteFn,
         .operation = @unionInit(Operation, @tagName(operation_tag), operation_data),
     };
+
+    if (comptime increment_pending) {
+        self.pending_count += 1;
+        const pending = self.pending_count;
+        onCompleteFn(self, completion);
+        if (pending != self.pending_count) {
+            return;
+        }
+    }
 
     switch (operation_tag) {
         .timeout => self.timeouts.push(completion),

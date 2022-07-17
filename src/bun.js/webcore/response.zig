@@ -834,7 +834,7 @@ pub const Fetch = struct {
             node.data.http.callback = callback;
             var batch = NetworkThread.Batch{};
             node.data.http.schedule(allocator, &batch);
-            NetworkThread.global.pool.schedule(batch);
+            NetworkThread.global.schedule(batch);
             VirtualMachine.vm.active_tasks +|= 1;
             return node;
         }

@@ -1192,6 +1192,7 @@ pub const PackageManager = struct {
     network_channel: NetworkChannel = NetworkChannel.init(),
     network_tarball_batch: ThreadPool.Batch = ThreadPool.Batch{},
     network_resolve_batch: ThreadPool.Batch = ThreadPool.Batch{},
+    network_queue: ThreadPool.Batch = ThreadPool.Batch{},
     network_task_fifo: NetworkQueue = undefined,
     preallocated_network_tasks: PreallocatedNetworkTasks = PreallocatedNetworkTasks{ .buffer = undefined, .len = 0 },
     pending_tasks: u32 = 0,
@@ -2026,16 +2027,25 @@ pub const PackageManager = struct {
         this.flushNetworkQueue();
     }
 
-    pub fn scheduleNetworkTasks(manager: *PackageManager) usize {
+    pub fn scheduleNetworkTasks(manager: *PackageManager) void {
         const count = manager.network_resolve_batch.len + manager.network_tarball_batch.len;
-
+        const active_network_requests = @as(usize, AsyncHTTP.active_requests_count.load(.Monotonic));
         manager.pending_tasks += @truncate(u32, count);
         manager.total_tasks += @truncate(u32, count);
-        manager.network_resolve_batch.push(manager.network_tarball_batch);
-        NetworkThread.global.pool.schedule(manager.network_resolve_batch);
+        manager.network_queue.push(manager.network_resolve_batch);
+        manager.network_queue.push(manager.network_tarball_batch);
         manager.network_tarball_batch = .{};
         manager.network_resolve_batch = .{};
-        return count;
+
+        const max_to_queue = @as(usize, AsyncHTTP.max_simultaneous_requests) -|
+            active_network_requests;
+
+        if (max_to_queue >= manager.network_queue.len) {
+            NetworkThread.global.schedule(manager.network_queue);
+            manager.network_queue = .{};
+        } else if (max_to_queue > 0) {
+            NetworkThread.global.schedule(manager.network_queue.firstN(max_to_queue));
+        }
     }
 
     pub fn enqueueDependencyList(
@@ -2071,7 +2081,7 @@ pub const PackageManager = struct {
         this.pending_tasks += @truncate(u32, count);
         this.total_tasks += @truncate(u32, count);
         this.network_resolve_batch.push(this.network_tarball_batch);
-        NetworkThread.global.pool.schedule(this.network_resolve_batch);
+        NetworkThread.global.schedule(this.network_resolve_batch);
         this.network_tarball_batch = .{};
         this.network_resolve_batch = .{};
     }
@@ -2431,13 +2441,15 @@ pub const PackageManager = struct {
 
         {
             const count = batch.len + manager.network_resolve_batch.len + manager.network_tarball_batch.len;
-            manager.pending_tasks += @truncate(u32, count);
-            manager.total_tasks += @truncate(u32, count);
-            manager.thread_pool.schedule(batch);
-            manager.network_resolve_batch.push(manager.network_tarball_batch);
-            NetworkThread.global.pool.schedule(manager.network_resolve_batch);
-            manager.network_tarball_batch = .{};
-            manager.network_resolve_batch = .{};
+            if (count > 0) {
+                manager.pending_tasks += @truncate(u32, count);
+                manager.total_tasks += @truncate(u32, count);
+                manager.thread_pool.schedule(batch);
+                manager.network_resolve_batch.push(manager.network_tarball_batch);
+                NetworkThread.global.schedule(manager.network_resolve_batch);
+                manager.network_tarball_batch = .{};
+                manager.network_resolve_batch = .{};
+            }
 
             if (comptime log_level.showProgress()) {
                 if (comptime ExtractCompletionContext == void) {
@@ -4258,7 +4270,7 @@ pub const PackageManager = struct {
                             if (this.manager.generateNetworkTaskForTarball(task_id, this.lockfile.packages.get(package_id)) catch unreachable) |task| {
                                 task.schedule(&this.manager.network_tarball_batch);
                                 if (this.manager.network_tarball_batch.len > 0) {
-                                    _ = this.manager.scheduleNetworkTasks();
+                                    this.manager.scheduleNetworkTasks();
                                 }
                             }
                         } else {
@@ -4398,7 +4410,6 @@ pub const PackageManager = struct {
             const cwd = std.fs.cwd();
 
             // sleep goes off, only need to set it once because it will have an impact on the next network request
-            NetworkThread.global.pool.sleep_on_idle_network_thread = false;
 
             while (iterator.nextNodeModulesFolder()) |node_modules| {
                 try cwd.makePath(std.mem.span(node_modules.relative_path));
@@ -4566,7 +4577,6 @@ pub const PackageManager = struct {
         comptime log_level: Options.LogLevel,
     ) !void {
         // sleep off for maximum network throughput
-        NetworkThread.global.pool.sleep_on_idle_network_thread = false;
 
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
@@ -4849,7 +4859,6 @@ pub const PackageManager = struct {
         }
 
         // sleep on since we might not need it anymore
-        NetworkThread.global.pool.sleep_on_idle_network_thread = true;
 
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;

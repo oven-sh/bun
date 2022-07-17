@@ -37,11 +37,11 @@ pub var default_arena: Arena = undefined;
 
 const log = Output.scoped(.fetch, true);
 
-pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
+pub fn onThreadStart(port_or_eventfd: anytype) void {
     default_arena = Arena.init() catch unreachable;
     default_allocator = default_arena.allocator();
     NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(default_allocator);
-    AsyncIO.global = AsyncIO.init(1024, 0) catch |err| {
+    AsyncIO.global = AsyncIO.init(1024, 0, port_or_eventfd) catch |err| {
         log: {
             if (comptime Environment.isLinux) {
                 if (err == error.SystemOutdated) {
@@ -74,10 +74,8 @@ pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
     };
 
     AsyncIO.global_loaded = true;
-    NetworkThread.global.pool.io = &AsyncIO.global;
     Global.setThreadName("HTTP");
     AsyncBIO.initBoringSSL();
-    return null;
 }
 
 pub inline fn getAllocator() std.mem.Allocator {
@@ -440,7 +438,7 @@ pub const AsyncHTTP = struct {
 
         var batch = NetworkThread.Batch{};
         this.schedule(bun.default_allocator, &batch);
-        NetworkThread.global.pool.schedule(batch);
+        NetworkThread.global.schedule(batch);
         while (true) {
             var data = @ptrCast(*SingleHTTPChannel, @alignCast(@alignOf(*SingleHTTPChannel), this.callback_ctx.?));
             var async_http: *AsyncHTTP = data.channel.readItem() catch unreachable;
@@ -478,7 +476,7 @@ pub const AsyncHTTP = struct {
 
     pub fn do(sender: *HTTPSender, this: *AsyncHTTP) void {
         defer {
-            NetworkThread.global.pool.schedule(.{ .head = &sender.finisher, .tail = &sender.finisher, .len = 1 });
+            NetworkThread.global.scheduleLocal(.{ .head = &sender.finisher, .tail = &sender.finisher, .len = 1 });
         }
 
         outer: {
@@ -496,7 +494,7 @@ pub const AsyncHTTP = struct {
                     this.retries_count += 1;
                     this.response_buffer.reset();
 
-                    NetworkThread.global.pool.schedule(ThreadPool.Batch.from(&this.task));
+                    NetworkThread.global.scheduleLocal(ThreadPool.Batch.from(&this.task));
                     return;
                 }
                 break :outer;

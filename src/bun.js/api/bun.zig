@@ -345,6 +345,27 @@ pub fn enableANSIColors(
 ) js.JSValueRef {
     return js.JSValueMakeBoolean(ctx, Output.enable_ansi_colors);
 }
+
+pub fn enableANSIColorsStdout(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    return js.JSValueMakeBoolean(ctx, Output.enable_ansi_colors_stdout);
+}
+
+pub fn enableANSIColorsStderr(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSValueRef,
+    _: js.JSStringRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    return js.JSValueMakeBoolean(ctx, Output.enable_ansi_colors_stderr);
+}
+
 pub fn getMain(
     _: void,
     ctx: js.JSContextRef,
@@ -1195,6 +1216,12 @@ pub const Class = NewClass(
 
         .enableANSIColors = .{
             .get = enableANSIColors,
+        },
+        .enableANSIColorsStdout = .{
+            .get = enableANSIColorsStdout,
+        },
+        .enableANSIColorsStderr = .{
+            .get = enableANSIColorsStderr,
         },
         .Transpiler = .{
             .get = getTranspilerConstructor,

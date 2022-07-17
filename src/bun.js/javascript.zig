@@ -2086,9 +2086,11 @@ pub const VirtualMachine = struct {
                 message,
             });
         } else if (name.len > 0) {
-            try writer.print(comptime Output.prettyFmt("<r><red>{s}<r><d><r>\n", allow_ansi_color), .{name});
+            try writer.print(comptime Output.prettyFmt("<r><red>{s}<r>\n", allow_ansi_color), .{name});
         } else if (message.len > 0) {
             try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{message});
+        } else {
+            try writer.print(comptime Output.prettyFmt("<r><red>error<r>\n", allow_ansi_color), .{});
         }
     }
 };

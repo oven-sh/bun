@@ -296,7 +296,7 @@ pub const InstallCompletionsCommand = struct {
         const filename = switch (shell) {
             .fish => "bun.fish",
             .zsh => "_bun",
-            .bash => "_bun.bash",
+            .bash => "bun.completion.bash",
             else => unreachable,
         };
 
@@ -314,7 +314,7 @@ pub const InstallCompletionsCommand = struct {
 
         output_file.writeAll(shell.completions()) catch |err| {
             Output.prettyErrorln("<r><red>error:<r> Could not write to {s}: {s}", .{
-                filename,
+                "bun.completion.bash",
                 @errorName(err),
             });
             Global.exit(fail_exit_code);

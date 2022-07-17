@@ -1,4 +1,4 @@
-FROM ubuntu:20.04 as bun-base-with-args
+FROM ubuntu:18.10 as bun-base-with-args
 
 FROM bun-base-with-args as bun-base
 

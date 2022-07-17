@@ -518,7 +518,7 @@ docker-push-base:
 
 	docker tag bun-base-with-args ghcr.io/jarred-sumner/bun-base-with-args:latest
 	docker push ghcr.io/jarred-sumner/bun-base-with-args:latest
-	
+
 ifeq ($(POSIX_PKG_MANAGER), brew)
 PKGNAME_NINJA := ninja
 else
@@ -862,6 +862,12 @@ release-bin-without-push: test-all release-bin-check generate-release-bin-as-zip
 release-bin: release-bin-without-push release-bin-push
 
 
+test/wiptest/run.o: test/wiptest/run.cpp
+	$(CXX) -Wall -g -c -std=c++17 -o test/wiptest/run.o test/wiptest/run.cpp
+
+test/wiptest/run: test/wiptest/run.o
+	$(CXX) -Wall -g -o test/wiptest/run test/wiptest/run.o
+
 
 release-bin-dir:
 	echo $(PACKAGE_DIR)
@@ -898,8 +904,10 @@ test-dev-bun-snapshot:
 	touch test/bun.js/snapshots.debug.js
 	$(foreach i,$(wildcard test/bun.js/*.snapshot.*),echo "" >> test/bun.js/snapshots.debug.js; echo "// $i" >> test/bun.js/snapshots.debug.js; $(DEBUG_BUN) build $i --platform=bun >> test/bun.js/snapshots.debug.js;)
 
+test-bun-wiptest: test/wiptest/run
+	cd test/wiptest && BUN_BIN=$(DEBUG_BUN) ./run ./fixtures
 
-test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev
+test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev test-bun-wiptest
 
 copy-test-node-modules:
 	rm -rf test/snippets/package-json-exports/node_modules || echo "";

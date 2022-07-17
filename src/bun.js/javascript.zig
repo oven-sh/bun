@@ -1969,9 +1969,6 @@ pub const VirtualMachine = struct {
         }
 
         var name = exception.name;
-        if (strings.eqlComptime(exception.name.slice(), "Error")) {
-            name = ZigString.init("error");
-        }
 
         const message = exception.message;
         var did_print_name = false;
@@ -2084,14 +2081,14 @@ pub const VirtualMachine = struct {
 
     fn printErrorNameAndMessage(_: *VirtualMachine, name: ZigString, message: ZigString, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
         if (name.len > 0 and message.len > 0) {
-            try writer.print(comptime Output.prettyFmt(" <r><red>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
+            try writer.print(comptime Output.prettyFmt("<r><red>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
                 name,
                 message,
             });
         } else if (name.len > 0) {
-            try writer.print(comptime Output.prettyFmt(" <r><red>{s}<r>\n", allow_ansi_color), .{name});
+            try writer.print(comptime Output.prettyFmt("<r><red>{s}<r><d><r>\n", allow_ansi_color), .{name});
         } else if (message.len > 0) {
-            try writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", allow_ansi_color), .{message});
+            try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{message});
         }
     }
 };

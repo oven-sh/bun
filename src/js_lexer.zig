@@ -1,10 +1,10 @@
 const std = @import("std");
-const logger = @import("logger.zig");
-const tables = @import("js_lexer_tables.zig");
+const logger = @import("logger");
+const tables = @import("./js_lexer_tables.zig");
 const build_options = @import("build_options");
-const js_ast = @import("js_ast.zig");
+const js_ast = @import("js_ast");
 
-const bun = @import("global.zig");
+const bun = @import("global");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -37,7 +37,6 @@ fn notimpl() noreturn {
 pub var emptyJavaScriptString = ([_]u16{0});
 
 pub const JSONOptions = struct {
-
     /// Enable JSON-specific warnings/errors
     is_json: bool = false,
 
@@ -46,7 +45,7 @@ pub const JSONOptions = struct {
     allow_trailing_commas: bool = false,
 
     /// Loading JSON-in-JSON may start like \\""\\"
-    /// This is technically invalid, since we parse from the first value of the string 
+    /// This is technically invalid, since we parse from the first value of the string
     ignore_leading_escape_sequences: bool = false,
     ignore_trailing_escape_sequences: bool = false,
 

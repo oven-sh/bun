@@ -87,49 +87,11 @@ const Dependency = @import("./dependency.zig");
 const Behavior = @import("./dependency.zig").Behavior;
 const FolderResolution = @import("./resolvers/folder_resolver.zig").FolderResolution;
 
+pub const ExternalSlice = @import("./external_slice.zig").ExternalSlice;
+pub const ExternalSliceAligned = @import("./external_slice.zig").ExternalSliceAligned;
+
 pub const ExternalStringBuilder = StructBuilder.Builder(ExternalString);
 pub const SmallExternalStringList = ExternalSlice(String);
-
-pub fn ExternalSlice(comptime Type: type) type {
-    return ExternalSliceAligned(Type, null);
-}
-
-pub fn ExternalSliceAligned(comptime Type: type, comptime alignment_: ?u29) type {
-    return extern struct {
-        const alignment = alignment_ orelse @alignOf(*Type);
-        const Slice = @This();
-
-        pub const Child: type = Type;
-
-        off: u32 = 0,
-        len: u32 = 0,
-
-        pub inline fn contains(this: Slice, id: u32) bool {
-            return id >= this.off and id < (this.len + this.off);
-        }
-
-        pub inline fn get(this: Slice, in: []const Type) []const Type {
-            // it should be impossible to address this out of bounds due to the minimum here
-            return in.ptr[this.off..@minimum(in.len, this.off + this.len)];
-        }
-
-        pub inline fn mut(this: Slice, in: []Type) []Type {
-            return in.ptr[this.off..@minimum(in.len, this.off + this.len)];
-        }
-
-        pub fn init(buf: []const Type, in: []const Type) Slice {
-            // if (comptime isDebug or isTest) {
-            //     std.debug.assert(@ptrToInt(buf.ptr) <= @ptrToInt(in.ptr));
-            //     std.debug.assert((@ptrToInt(in.ptr) + in.len) <= (@ptrToInt(buf.ptr) + buf.len));
-            // }
-
-            return Slice{
-                .off = @truncate(u32, (@ptrToInt(in.ptr) - @ptrToInt(buf.ptr)) / @sizeOf(Type)),
-                .len = @truncate(u32, in.len),
-            };
-        }
-    };
-}
 
 pub const PackageID = u32;
 pub const DependencyID = u32;
@@ -419,53 +381,7 @@ pub const Origin = enum(u8) {
     tarball = 2,
 };
 
-pub const Features = struct {
-    optional_dependencies: bool = false,
-    dev_dependencies: bool = false,
-    scripts: bool = false,
-    peer_dependencies: bool = true,
-    is_main: bool = false,
-    dependencies: bool = true,
-
-    check_for_duplicate_dependencies: bool = false,
-
-    pub fn behavior(this: Features) Behavior {
-        var out: u8 = 0;
-        out |= @as(u8, @boolToInt(this.dependencies)) << 1;
-        out |= @as(u8, @boolToInt(this.optional_dependencies)) << 2;
-        out |= @as(u8, @boolToInt(this.dev_dependencies)) << 3;
-        out |= @as(u8, @boolToInt(this.peer_dependencies)) << 4;
-        return @intToEnum(Behavior, out);
-    }
-
-    pub const folder = Features{
-        .optional_dependencies = true,
-        .dev_dependencies = true,
-        .scripts = false,
-        .peer_dependencies = true,
-        .is_main = false,
-        .dependencies = true,
-    };
-
-    pub const link = Features{
-        .optional_dependencies = false,
-        .dev_dependencies = false,
-        .scripts = false,
-        .peer_dependencies = false,
-        .is_main = false,
-        .dependencies = false,
-    };
-
-    pub const npm = Features{
-        .optional_dependencies = true,
-    };
-
-    pub const tarball = npm;
-
-    pub const npm_manifest = Features{
-        .optional_dependencies = true,
-    };
-};
+pub const Features = @import("./dependency.zig").Features;
 
 pub const PreinstallState = enum(u2) {
     unknown = 0,
@@ -4120,6 +4036,7 @@ pub const PackageManager = struct {
     };
     const latest: string = "latest";
 
+<<<<<<< HEAD
     pub const UpdateRequest = struct {
         name: string = "",
         name_hash: PackageNameHash = 0,
@@ -4224,6 +4141,9 @@ pub const PackageManager = struct {
             return update_requests.slice();
         }
     };
+=======
+    pub const UpdateRequest = @import("./update_request.zig").UpdateRequest;
+>>>>>>> 598514ae (compile quick unit tests)
 
     fn updatePackageJSONAndInstall(
         ctx: Command.Context,
@@ -4371,7 +4291,7 @@ pub const PackageManager = struct {
             }
         }
 
-        var updates = UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, op);
+        var updates = UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, @tagName(op));
 
         if (ctx.log.errors > 0) {
             if (comptime log_level != .silent) {
@@ -5806,29 +5726,3 @@ pub const PackageManager = struct {
 };
 
 const Package = Lockfile.Package;
-
-test "UpdateRequests.parse" {
-    var log = logger.Log.init(default_allocator);
-    var array = PackageManager.UpdateRequest.Array.init(0) catch unreachable;
-
-    const updates: []const []const u8 = &.{
-        "@bacon/name",
-        "foo",
-        "bar",
-        "baz",
-        "boo@1.0.0",
-        "bing@latest",
-    };
-    var reqs = PackageManager.UpdateRequest.parse(default_allocator, &log, updates, &array, .add);
-
-    try std.testing.expectEqualStrings(reqs[0].name, "@bacon/name");
-    try std.testing.expectEqualStrings(reqs[1].name, "foo");
-    try std.testing.expectEqualStrings(reqs[2].name, "bar");
-    try std.testing.expectEqualStrings(reqs[3].name, "baz");
-    try std.testing.expectEqualStrings(reqs[4].name, "boo");
-    try std.testing.expectEqual(reqs[4].version.tag, Dependency.Version.Tag.npm);
-    try std.testing.expectEqualStrings(reqs[4].version.literal.slice("boo@1.0.0"), "1.0.0");
-    try std.testing.expectEqual(reqs[5].version.tag, Dependency.Version.Tag.dist_tag);
-    try std.testing.expectEqualStrings(reqs[5].version.literal.slice("bing@1.0.0"), "latest");
-    try std.testing.expectEqual(updates.len, 6);
-}

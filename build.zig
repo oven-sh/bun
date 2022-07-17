@@ -113,12 +113,27 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
 
     var javascript_core_stub: std.build.Pkg = .{
         .name = "javascript_core",
-        .source = pkgPath("src/jsc_stub.zig"),
+        .source = pkgPath("src/__jsc_stub.zig"),
     };
 
     var uws: std.build.Pkg = .{
         .name = "uws",
         .source = pkgPath("src/deps/uws.zig"),
+    };
+
+    var global: std.build.Pkg = .{
+        .name = "global",
+        .source = pkgPath("src/global.zig"),
+    };
+
+    var logger: std.build.Pkg = .{
+        .name = "logger",
+        .source = pkgPath("src/logger.zig"),
+    };
+
+    var js_ast: std.build.Pkg = .{
+        .name = "js_ast",
+        .source = pkgPath("src/js_ast.zig"),
     };
 
     var javascript_core = if (target.getOsTag() == .freestanding)
@@ -168,6 +183,9 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
     step.addPackage(datetime);
     step.addPackage(lol_html);
     step.addPackage(uws);
+    step.addPackage(global);
+    step.addPackage(logger);
+    step.addPackage(js_ast);
 }
 var output_dir: []const u8 = "";
 fn panicIfNotFound(comptime filepath: []const u8) []const u8 {

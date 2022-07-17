@@ -1,11 +1,12 @@
 const std = @import("std");
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
-const logger = @import("logger.zig");
+const logger = @import("logger");
 const unicode = std.unicode;
-const default_allocator = @import("./global.zig").default_allocator;
-const string = @import("string_types.zig").string;
-const CodePoint = @import("string_types.zig").CodePoint;
+const bun = @import("global");
+const default_allocator = bun.default_allocator;
+const string = bun.string;
+const CodePoint = bun.CodePoint;
 const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
 pub const T = enum(u8) {

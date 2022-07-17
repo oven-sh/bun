@@ -32,7 +32,7 @@ pub const FirstLetter = enum(u8) {
 };
 
 pub const Index = std.EnumArray(FirstLetter, []const []const u8);
-pub const index: Index = if (Environment.isDebug) Index.initFill(&.{"OOMWorkAround"}) else brk: {
+pub const index: Index = if (Environment.isDebug and !Environment.isTest) Index.initFill(&.{"OOMWorkAround"}) else brk: {
     var array: Index = Index.initFill(&[_][]const u8{});
 
     var i: u8 = 'a';

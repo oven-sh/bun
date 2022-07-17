@@ -1,4 +1,4 @@
-const bun = @import("../global.zig");
+const bun = @import("global");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

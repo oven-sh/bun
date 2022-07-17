@@ -1,14 +1,11 @@
 /// Rope-like data structure for joining many small strings into one big string.
 const Joiner = @This();
 
-const string = @import("string_types.zig").string;
-const Allocator = @import("std").mem.Allocator;
-const assert = @import("std").debug.assert;
-const copy = @import("std").mem.copy;
+const std = @import("std");
+const string = @import("global").string;
 const Env = @import("./env.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
-
-const default_allocator = @import("./global.zig").default_allocator;
+const default_allocator = @import("global").default_allocator;
 
 const Joinable = struct {
     offset: u31 = 0,
@@ -91,5 +88,3 @@ pub fn append(this: *Joiner, slice: string, offset: u32, allocator: ?std.mem.All
     tail.next = new_tail;
     this.tail = new_tail;
 }
-
-const std = @import("std");

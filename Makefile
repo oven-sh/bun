@@ -72,7 +72,12 @@ CXX = $(shell which clang++-13 || which clang++)
 ifeq ($(OS_NAME),darwin)
 # Find LLVM
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
-		LLVM_PREFIX = $(shell brew --prefix llvm@13)
+		# "brew --prefix <FORMULA>" is super slow (while "brew --prefix" is not); trying default llvm path first
+		# @see https://github.com/Homebrew/brew/issues/8189
+		LLVM_PREFIX = $(shell brew --prefix)/opt/llvm
+		if [ ! -d $(LLVM_PREFIX) ]; then \
+			LLVM_PREFIX = $(shell brew --prefix llvm@13); \
+		fi
 	endif
 	ifeq ($(wildcard $(LLVM_PREFIX)),)
 		LLVM_PREFIX = $(shell brew --prefix llvm)
@@ -81,7 +86,6 @@ ifeq ($(OS_NAME),darwin)
 #   This is kinda ugly, but I can't find a better way to error :(
 		LLVM_PREFIX = $(shell echo -e "error: Unable to find llvm. Please run 'brew install llvm@13' or set LLVM_PREFIX=/path/to/llvm")
 	endif
-
 	LDFLAGS += -L$(LLVM_PREFIX)/lib
 	CPPFLAGS += -I$(LLVM_PREFIX)/include
 	CC = $(LLVM_PREFIX)/bin/clang
@@ -172,7 +176,6 @@ ZLIB_LIB_DIR ?= $(BUN_DEPS_DIR)/zlib
 
 JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
 JSC_FILES_DEBUG := $(JSC_LIB_DEBUG)/libJavaScriptCore.a $(JSC_LIB_DEBUG)/libWTF.a  $(JSC_LIB_DEBUG)/libbmalloc.a
-
 
 ENABLE_MIMALLOC ?= 1
 
@@ -419,8 +422,6 @@ BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(DEBUG_BI
 BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_DEBUG)
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
-
-
 
 bun:
 
@@ -1620,7 +1621,7 @@ build-unit: ## to build your unit tests
 	-lc -lc++ \
 	--cache-dir /tmp/zig-cache-bun-$(testname)-$(basename $(lastword $(testfilter))) \
 	-fallow-shlib-undefined \
-	 && \
+	&& \
 	cp zig-out/bin/$(testname) $(testbinpath)
 
 .PHONY: run-all-unit-tests
@@ -1648,6 +1649,30 @@ run-unit:
 help: ## to print this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
+QUICK_TEST_PKG = \
+	--pkg-begin javascript_core $(BUN_DIR)/src/__jsc_stub.zig --pkg-end \
+	--pkg-begin js_ast $(BUN_DIR)/src/__js_ast_stub.zig --pkg-end \
+	--pkg-begin global $(BUN_DIR)/src/__global_stub.zig \
+		--pkg-begin global $(BUN_DIR)/src/__global_stub.zig --pkg-end \
+	--pkg-end \
+	--pkg-begin logger $(BUN_DIR)/src/__logger_stub.zig \
+		--pkg-begin global $(BUN_DIR)/src/__global_stub.zig --pkg-end \
+	--pkg-end \
+	--main-pkg-path $(BUN_DIR)/src
+
+.PHONY: quick-test
+quick-test:
+	zig test $(realpath $(firstword $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS)))) $(QUICK_TEST_PKG)
+
+.PHONY: quick-tests
+quick-tests:
+	zig test $(BUN_DIR)/src/__quick_tests.zig $(QUICK_TEST_PKG)
+
+.PHONY: all-quick-tests
+all-quick-tests:
+	zig test $(BUN_DIR)/src/__all_quick_tests.zig $(QUICK_TEST_PKG)
+
+
 .PHONY: test
 test: build-unit run-unit
 
@@ -1664,7 +1689,38 @@ copy-to-bun-release-dir-bin:
 	cp -r $(PACKAGE_DIR)/bun $(BUN_RELEASE_DIR)/bun
 	cp -r $(PACKAGE_DIR)/bun-profile $(BUN_RELEASE_DIR)/bun-profile
 
-PACKAGE_MAP = --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_$(OS_NAME).zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin clap $(BUN_DIR)/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-end
+PACKAGE_MAP_CORE = \
+--pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end \
+--pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end \
+--pkg-begin uws $(BUN_DIR)/src/deps/uws.zig --pkg-end \
+--pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end \
+--pkg-begin lolhtml $(BUN_DIR)/src/deps/lol-html.zig --pkg-end \
+--pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end \
+--pkg-begin crash_reporter $(BUN_DIR)/src/deps/backtrace.zig --pkg-end
+
+PACKAGE_MAP_THREAD_POOL = \
+--pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig \
+	--pkg-begin io $(BUN_DIR)/src/io/io_$(OS_NAME).zig --pkg-end \
+	--pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-end \
+--pkg-end
+
+PACKAGE_MAP_HTML = \
+--pkg-begin http $(BUN_DIR)/src/http_client_async.zig \
+	$(PACKAGE_MAP_CORE) \
+	$(PACKAGE_MAP_THREAD_POOL) \
+--pkg-end \
+$(PACKAGE_MAP_THREAD_POOL)
+
+PACKAGE_MAP = \
+--pkg-begin clap $(BUN_DIR)/src/deps/zig-clap/clap.zig --pkg-end \
+--pkg-begin datetime $(BUN_DIR)/src/deps/zig-datetime/src/datetime.zig --pkg-end \
+$(PACKAGE_MAP_CORE) \
+$(PACKAGE_MAP_HTML) \
+--pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig \
+	$(PACKAGE_MAP_CORE) \
+	$(PACKAGE_MAP_HTML) \
+	--pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-end \
+--pkg-end
 
 .PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local

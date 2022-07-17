@@ -1,11 +1,11 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const Environment = @import("./env.zig");
-const string = @import("string_types.zig").string;
-const stringZ = @import("string_types.zig").stringZ;
-const CodePoint = @import("string_types.zig").CodePoint;
-const bun = @import("global.zig");
 pub const joiner = @import("./string_joiner.zig");
+const bun = @import("global");
+const string = bun.string;
+const stringZ = bun.stringZ;
+const CodePoint = bun.CodePoint;
 const assert = std.debug.assert;
 
 pub const Encoding = enum {
@@ -2824,7 +2824,7 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = @splat(ascii_vector_size, char) != vec;
-            if (@reduce(.Min, @bitCast(AsciiVectorU1, cmp)) > 0) {
+            if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
                 const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
                 const first = @ctz(AsciiVectorInt, bitmask);
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len);

@@ -1,5 +1,6 @@
 const std = @import("std");
-const bun = @import("./global.zig");
+const bun = @import("global");
+
 fn isValid(buf: *[bun.MAX_PATH_BYTES]u8, segment: []const u8, bin: []const u8) ?u16 {
     std.mem.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;

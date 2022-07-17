@@ -3660,7 +3660,7 @@ pub const WTF = struct {
     /// This uses SSE2 instructions and/or ARM NEON to copy 16-bit characters efficiently
     /// See wtf/Text/ASCIIFastPath.h for details
     pub fn copyLCharsFromUCharSource(destination: [*]u8, comptime Source: type, source: Source) void {
-        if (comptime JSC.is_bindgen) unreachable;
+        if (comptime is_bindgen) unreachable;
 
         // This is any alignment
         WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
@@ -3669,7 +3669,7 @@ pub const WTF = struct {
     /// Encode a byte array to a URL-safe base64 string for use with JS
     /// Memory is managed by JavaScriptCore instead of us
     pub fn toBase64URLStringValue(bytes: []const u8, globalObject: *JSGlobalObject) JSValue {
-        if (comptime JSC.is_bindgen) unreachable;
+        if (comptime is_bindgen) unreachable;
 
         return WTF__toBase64URLStringValue(bytes.ptr, bytes.len, globalObject);
     }

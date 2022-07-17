@@ -1,12 +1,12 @@
-const ExternalStringList = @import("./install.zig").ExternalStringList;
 const Semver = @import("./semver.zig");
+const ExternalSlice = @import("./external_slice.zig").ExternalSlice;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
+const ExternalStringList = ExternalSlice(ExternalString);
 const std = @import("std");
 const SlicedString = Semver.SlicedString;
-const PackageNameHash = @import("./install.zig").PackageNameHash;
-const Features = @import("./install.zig").Features;
-const logger = @import("../logger.zig");
+const PackageNameHash = u64;
+const logger = @import("logger");
 const Dependency = @This();
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
@@ -694,4 +694,52 @@ pub const Behavior = enum(u8) {
             (features.peer_dependencies and this.isPeer()) or
             (features.optional_dependencies and this.isOptional());
     }
+};
+
+pub const Features = struct {
+    optional_dependencies: bool = false,
+    dev_dependencies: bool = false,
+    scripts: bool = false,
+    peer_dependencies: bool = true,
+    is_main: bool = false,
+    dependencies: bool = true,
+
+    check_for_duplicate_dependencies: bool = false,
+
+    pub fn behavior(this: Features) Behavior {
+        var out: u8 = 0;
+        out |= @as(u8, @boolToInt(this.dependencies)) << 1;
+        out |= @as(u8, @boolToInt(this.optional_dependencies)) << 2;
+        out |= @as(u8, @boolToInt(this.dev_dependencies)) << 3;
+        out |= @as(u8, @boolToInt(this.peer_dependencies)) << 4;
+        return @intToEnum(Behavior, out);
+    }
+
+    pub const folder = Features{
+        .optional_dependencies = true,
+        .dev_dependencies = true,
+        .scripts = false,
+        .peer_dependencies = true,
+        .is_main = false,
+        .dependencies = true,
+    };
+
+    pub const link = Features{
+        .optional_dependencies = false,
+        .dev_dependencies = false,
+        .scripts = false,
+        .peer_dependencies = false,
+        .is_main = false,
+        .dependencies = false,
+    };
+
+    pub const npm = Features{
+        .optional_dependencies = true,
+    };
+
+    pub const tarball = npm;
+
+    pub const npm_manifest = Features{
+        .optional_dependencies = true,
+    };
 };

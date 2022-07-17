@@ -3533,17 +3533,23 @@ pub const PackageManager = struct {
                 var unscoped_name = positional;
                 request.name = unscoped_name;
 
+                // request.name = "@package..." => unscoped_name = "package..."
                 if (unscoped_name.len > 0 and unscoped_name[0] == '@') {
                     unscoped_name = unscoped_name[1..];
                 }
+
+                // if there is a semver in package name...
                 if (std.mem.indexOfScalar(u8, unscoped_name, '@')) |i| {
+                    // unscoped_name = "package@1.0.0" => request.name = "package"
                     request.name = unscoped_name[0..i];
 
+                    // if package was scoped, put "@" back in request.name
                     if (unscoped_name.ptr != positional.ptr) {
-                        request.name = request.name[0 .. i + 1];
+                        request.name = positional[0 .. i + 1];
                     }
 
-                    if (positional.len > i + 1) request.version_buf = positional[i + 1 ..];
+                    // unscoped_name = "package@1.0.0" => request.version_buf = "1.0.0"
+                    if (unscoped_name.len > i + 1) request.version_buf = unscoped_name[i + 1 ..];
                 }
 
                 if (strings.hasPrefix("http://", request.name) or

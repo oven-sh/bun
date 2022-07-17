@@ -4053,7 +4053,7 @@ pub const PackageManager = struct {
         lockfile: *Lockfile,
         progress: *std.Progress,
         node_modules_folder: std.fs.Dir,
-        skip_verify: bool,
+        skip_verify_installed_version_number: bool,
         skip_delete: bool,
         force_install: bool,
         root_node_modules_folder: std.fs.Dir,
@@ -4150,7 +4150,7 @@ pub const PackageManager = struct {
                 },
                 else => return,
             }
-            const needs_install = this.force_install or this.skip_verify or !installer.verify();
+            const needs_install = this.force_install or this.skip_verify_installed_version_number or !installer.verify();
             this.summary.skipped += @as(u32, @boolToInt(!needs_install));
 
             if (needs_install) {
@@ -4322,10 +4322,9 @@ pub const PackageManager = struct {
         // or if you just cloned a repo
         // we want to check lazily though
         // no need to download packages you've already installed!!
-
-        var skip_verify = false;
+        var skip_verify_installed_version_number = false;
         var node_modules_folder = std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch brk: {
-            skip_verify = true;
+            skip_verify_installed_version_number = true;
             std.fs.cwd().makeDirZ("node_modules") catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
@@ -4335,10 +4334,11 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
-        var skip_delete = skip_verify;
+        var skip_delete = skip_verify_installed_version_number;
+
         const force_install = options.enable.force_install;
         if (options.enable.force_install) {
-            skip_verify = true;
+            skip_verify_installed_version_number = true;
             skip_delete = false;
         }
         var summary = PackageInstall.Summary{};
@@ -4372,7 +4372,7 @@ pub const PackageManager = struct {
                 .node = &install_node,
                 .node_modules_folder = node_modules_folder,
                 .progress = progress,
-                .skip_verify = skip_verify,
+                .skip_verify_installed_version_number = skip_verify_installed_version_number,
                 .skip_delete = skip_delete,
                 .summary = &summary,
                 .global_bin_dir = this.options.global_bin_dir,

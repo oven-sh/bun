@@ -314,7 +314,7 @@ pub const InstallCompletionsCommand = struct {
 
         output_file.writeAll(shell.completions()) catch |err| {
             Output.prettyErrorln("<r><red>error:<r> Could not write to {s}: {s}", .{
-                "bun.completion.bash",
+                filename,
                 @errorName(err),
             });
             Global.exit(fail_exit_code);

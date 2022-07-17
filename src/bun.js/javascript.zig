@@ -965,7 +965,7 @@ pub const VirtualMachine = struct {
                         .specifier = ZigString.init("node:http"),
                         .source_url = ZigString.init("node:http"),
                         .hash = 0,
-                   };
+                    };
                 },
                 .@"depd" => {
                     return ResolvedSource{
@@ -1958,20 +1958,17 @@ pub const VirtualMachine = struct {
             const int_size = std.fmt.count("{d}", .{source.line});
             const pad = max_line_number_pad - int_size;
             last_pad = pad;
-            writer.writeByteNTimes(' ', pad) catch unreachable;
-            writer.print(
+            try writer.writeByteNTimes(' ', pad);
+            try writer.print(
                 comptime Output.prettyFmt("<r><d>{d} | <r>{s}\n", allow_ansi_color),
                 .{
                     source.line,
                     std.mem.trim(u8, source.text, "\n"),
                 },
-            ) catch unreachable;
+            );
         }
 
         var name = exception.name;
-        if (strings.eqlComptime(exception.name.slice(), "Error")) {
-            name = ZigString.init("error");
-        }
 
         const message = exception.message;
         var did_print_name = false;
@@ -1980,7 +1977,7 @@ pub const VirtualMachine = struct {
                 defer did_print_name = true;
                 var text = std.mem.trim(u8, source.text, "\n");
 
-                writer.print(
+                try writer.print(
                     comptime Output.prettyFmt(
                         "<r><d>- |<r> {s}\n",
                         allow_ansi_color,
@@ -1988,33 +1985,24 @@ pub const VirtualMachine = struct {
                     .{
                         text,
                     },
-                ) catch unreachable;
+                );
 
-                if (name.len > 0 and message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><red>{}<r><d>:<r> <b>{}<r>\n", allow_ansi_color), .{
-                        name,
-                        message,
-                    }) catch unreachable;
-                } else if (name.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><b>{}<r>\n", allow_ansi_color), .{name}) catch unreachable;
-                } else if (message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><b>{}<r>\n", allow_ansi_color), .{message}) catch unreachable;
-                }
+                try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
             } else if (source.text.len > 0) {
                 defer did_print_name = true;
                 const int_size = std.fmt.count("{d}", .{source.line});
                 const pad = max_line_number_pad - int_size;
-                writer.writeByteNTimes(' ', pad) catch unreachable;
+                try writer.writeByteNTimes(' ', pad);
                 const top = exception.stack.frames()[0];
                 var remainder = std.mem.trim(u8, source.text, "\n");
 
-                writer.print(
+                try writer.print(
                     comptime Output.prettyFmt(
                         "<r><d>{d} |<r> {s}\n",
                         allow_ansi_color,
                     ),
                     .{ source.line, remainder },
-                ) catch unreachable;
+                );
 
                 if (!top.position.isInvalid()) {
                     var first_non_whitespace = @intCast(u32, top.position.column_start);
@@ -2023,37 +2011,19 @@ pub const VirtualMachine = struct {
                     }
                     const indent = @intCast(usize, pad) + " | ".len + first_non_whitespace;
 
-                    writer.writeByteNTimes(' ', indent) catch unreachable;
-                    writer.print(comptime Output.prettyFmt(
+                    try writer.writeByteNTimes(' ', indent);
+                    try writer.print(comptime Output.prettyFmt(
                         "<red><b>^<r>\n",
                         allow_ansi_color,
-                    ), .{}) catch unreachable;
+                    ), .{});
                 }
 
-                if (name.len > 0 and message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><red>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
-                        name,
-                        message,
-                    }) catch unreachable;
-                } else if (name.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", allow_ansi_color), .{name}) catch unreachable;
-                } else if (message.len > 0) {
-                    writer.print(comptime Output.prettyFmt(" <r><b>{s}<r>\n", allow_ansi_color), .{message}) catch unreachable;
-                }
+                try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
             }
         }
 
         if (!did_print_name) {
-            if (name.len > 0 and message.len > 0) {
-                writer.print(comptime Output.prettyFmt("<r><red>{s}<r><d>:<r> <b>{s}<r>\n", true), .{
-                    name,
-                    message,
-                }) catch unreachable;
-            } else if (name.len > 0) {
-                writer.print(comptime Output.prettyFmt("<r>{s}<r>\n", true), .{name}) catch unreachable;
-            } else if (message.len > 0) {
-                writer.print(comptime Output.prettyFmt("<r>{s}<r>\n", true), .{name}) catch unreachable;
-            }
+            try this.printErrorNameAndMessage(name, message, Writer, writer, allow_ansi_color);
         }
 
         var add_extra_line = false;
@@ -2074,39 +2044,54 @@ pub const VirtualMachine = struct {
 
         if (show.path) {
             if (show.syscall) {
-                writer.writeAll("  ") catch unreachable;
+                try writer.writeAll("  ");
             } else if (show.errno) {
-                writer.writeAll(" ") catch unreachable;
+                try writer.writeAll(" ");
             }
-            writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.path}) catch unreachable;
+            try writer.print(comptime Output.prettyFmt(" path<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.path});
         }
 
         if (show.system_code) {
             if (show.syscall) {
-                writer.writeAll("  ") catch unreachable;
+                try writer.writeAll("  ");
             } else if (show.errno) {
-                writer.writeAll(" ") catch unreachable;
+                try writer.writeAll(" ");
             }
-            writer.print(comptime Output.prettyFmt(" code<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.system_code}) catch unreachable;
+            try writer.print(comptime Output.prettyFmt(" code<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.system_code});
             add_extra_line = true;
         }
 
         if (show.syscall) {
-            writer.print(comptime Output.prettyFmt("syscall<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.syscall}) catch unreachable;
+            try writer.print(comptime Output.prettyFmt("syscall<d>: <r><cyan>\"{s}\"<r>\n", allow_ansi_color), .{exception.syscall});
             add_extra_line = true;
         }
 
         if (show.errno) {
             if (show.syscall) {
-                writer.writeAll("  ") catch unreachable;
+                try writer.writeAll("  ");
             }
-            writer.print(comptime Output.prettyFmt("errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno}) catch unreachable;
+            try writer.print(comptime Output.prettyFmt("errno<d>: <r><yellow>{d}<r>\n", allow_ansi_color), .{exception.errno});
             add_extra_line = true;
         }
 
-        if (add_extra_line) writer.writeAll("\n") catch unreachable;
+        if (add_extra_line) try writer.writeAll("\n");
 
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
+    }
+
+    fn printErrorNameAndMessage(_: *VirtualMachine, name: ZigString, message: ZigString, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool) !void {
+        if (name.len > 0 and message.len > 0) {
+            try writer.print(comptime Output.prettyFmt("<r><red>{s}<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{
+                name,
+                message,
+            });
+        } else if (name.len > 0) {
+            try writer.print(comptime Output.prettyFmt("<r><red>{s}<r>\n", allow_ansi_color), .{name});
+        } else if (message.len > 0) {
+            try writer.print(comptime Output.prettyFmt("<r><red>error<r><d>:<r> <b>{s}<r>\n", allow_ansi_color), .{message});
+        } else {
+            try writer.print(comptime Output.prettyFmt("<r><red>error<r>\n", allow_ansi_color), .{});
+        }
     }
 };
 

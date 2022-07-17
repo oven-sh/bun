@@ -19,7 +19,7 @@ RUN apt-get update && \
     wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
     chmod +x llvm.sh && \
     ./llvm.sh 13 && \
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
     apt-get update && \
     apt-get install --no-install-recommends -y \
     ca-certificates \

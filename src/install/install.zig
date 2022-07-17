@@ -632,10 +632,10 @@ const PackageInstall = struct {
                 else => return,
             }
 
-            const needs_install = ctx.skip_verify or !this.package_install.verify();
+            const needs_install = ctx.skip_verify_installed_version_number or !this.package_install.verify();
 
             if (needs_install) {
-                this.result = this.package_install.install(ctx.skip_verify);
+                this.result = this.package_install.install(ctx.skip_verify_installed_version_number);
             } else {
                 this.result = .{ .skip = .{} };
             }
@@ -1765,6 +1765,7 @@ pub const PackageManager = struct {
             .id = network_task.task_id,
             .data = undefined,
         };
+        task.request.extract.tarball.skip_verify = !this.options.do.verify_integrity;
         return &task.threadpool_task;
     }
 
@@ -2706,6 +2707,18 @@ pub const PackageManager = struct {
                 }
             }
 
+            const default_disable_progress_bar: bool = brk: {
+                if (env_loader.get("BUN_INSTALL_PROGRESS")) |prog| {
+                    break :brk strings.eqlComptime(prog, "0");
+                }
+
+                if (env_loader.isCI()) {
+                    break :brk true;
+                }
+
+                break :brk Output.stderr_descriptor_type != .terminal;
+            };
+
             // technically, npm_config is case in-sensitive
             // load_registry:
             {
@@ -2847,6 +2860,10 @@ pub const PackageManager = struct {
                 this.do.install_packages = strings.eqlComptime(check_bool, "0");
             }
 
+            if (env_loader.map.get("BUN_CONFIG_NO_VERIFY")) |check_bool| {
+                this.do.verify_integrity = !strings.eqlComptime(check_bool, "0");
+            }
+
             if (cli_) |cli| {
                 if (cli.no_save) {
                     this.do.save_lockfile = false;
@@ -2872,12 +2889,21 @@ pub const PackageManager = struct {
 
                 this.local_package_features.optional_dependencies = !cli.omit.optional;
 
+                const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
+
                 if (cli.verbose) {
-                    this.log_level = .verbose;
+                    this.log_level = if (disable_progress_bar) LogLevel.verbose_no_progress else LogLevel.verbose;
                     PackageManager.verbose_install = true;
                 } else if (cli.silent) {
                     this.log_level = .silent;
                     PackageManager.verbose_install = false;
+                } else {
+                    this.log_level = if (disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
+                    PackageManager.verbose_install = false;
+                }
+
+                if (cli.no_verify) {
+                    this.do.verify_integrity = false;
                 }
 
                 if (cli.yarn) {
@@ -2916,6 +2942,9 @@ pub const PackageManager = struct {
 
                 this.update.development = cli.development;
                 if (!this.update.development) this.update.optional = cli.optional;
+            } else {
+                this.log_level = if (default_disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
+                PackageManager.verbose_install = false;
             }
         }
 
@@ -2925,6 +2954,7 @@ pub const PackageManager = struct {
             install_packages: bool = true,
             save_yarn_lock: bool = false,
             print_meta_hash_string: bool = false,
+            verify_integrity: bool = true,
         };
 
         pub const Enable = struct {
@@ -3320,6 +3350,8 @@ pub const PackageManager = struct {
         clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
         clap.parseParam("--silent                          Don't log anything") catch unreachable,
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
+        clap.parseParam("--no-progress                     Disable the progress bar") catch unreachable,
+        clap.parseParam("--no-verify                       Skip verifying integrity of newly downloaded packages") catch unreachable,
         clap.parseParam("-g, --global                      Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
@@ -3366,6 +3398,8 @@ pub const PackageManager = struct {
         no_cache: bool = false,
         silent: bool = false,
         verbose: bool = false,
+        no_progress: bool = false,
+        no_verify: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -3419,9 +3453,11 @@ pub const PackageManager = struct {
             cli.yarn = args.flag("--yarn");
             cli.production = args.flag("--production");
             cli.no_save = args.flag("--no-save");
+            cli.no_progress = args.flag("--no-progress");
             cli.dry_run = args.flag("--dry-run");
             cli.global = args.flag("--global");
             cli.force = args.flag("--force");
+            cli.no_verify = args.flag("--no-verify");
             // cli.no_dedupe = args.flag("--no-dedupe");
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");
@@ -3533,17 +3569,23 @@ pub const PackageManager = struct {
                 var unscoped_name = positional;
                 request.name = unscoped_name;
 
+                // request.name = "@package..." => unscoped_name = "package..."
                 if (unscoped_name.len > 0 and unscoped_name[0] == '@') {
                     unscoped_name = unscoped_name[1..];
                 }
+
+                // if there is a semver in package name...
                 if (std.mem.indexOfScalar(u8, unscoped_name, '@')) |i| {
+                    // unscoped_name = "package@1.0.0" => request.name = "package"
                     request.name = unscoped_name[0..i];
 
+                    // if package was scoped, put "@" back in request.name
                     if (unscoped_name.ptr != positional.ptr) {
-                        request.name = request.name[0 .. i + 1];
+                        request.name = positional[0 .. i + 1];
                     }
 
-                    if (positional.len > i + 1) request.version_buf = positional[i + 1 ..];
+                    // unscoped_name = "package@1.0.0" => request.version_buf = "1.0.0"
+                    if (unscoped_name.len > i + 1) request.version_buf = unscoped_name[i + 1 ..];
                 }
 
                 if (strings.hasPrefix("http://", request.name) or
@@ -4025,7 +4067,7 @@ pub const PackageManager = struct {
         lockfile: *Lockfile,
         progress: *std.Progress,
         node_modules_folder: std.fs.Dir,
-        skip_verify: bool,
+        skip_verify_installed_version_number: bool,
         skip_delete: bool,
         force_install: bool,
         root_node_modules_folder: std.fs.Dir,
@@ -4122,7 +4164,7 @@ pub const PackageManager = struct {
                 },
                 else => return,
             }
-            const needs_install = this.force_install or this.skip_verify or !installer.verify();
+            const needs_install = this.force_install or this.skip_verify_installed_version_number or !installer.verify();
             this.summary.skipped += @as(u32, @boolToInt(!needs_install));
 
             if (needs_install) {
@@ -4294,10 +4336,9 @@ pub const PackageManager = struct {
         // or if you just cloned a repo
         // we want to check lazily though
         // no need to download packages you've already installed!!
-
-        var skip_verify = false;
+        var skip_verify_installed_version_number = false;
         var node_modules_folder = std.fs.cwd().openDirZ("node_modules", .{ .iterate = true }) catch brk: {
-            skip_verify = true;
+            skip_verify_installed_version_number = true;
             std.fs.cwd().makeDirZ("node_modules") catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> creating <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
@@ -4307,10 +4348,11 @@ pub const PackageManager = struct {
                 Global.crash();
             };
         };
-        var skip_delete = skip_verify;
+        var skip_delete = skip_verify_installed_version_number;
+
         const force_install = options.enable.force_install;
         if (options.enable.force_install) {
-            skip_verify = true;
+            skip_verify_installed_version_number = true;
             skip_delete = false;
         }
         var summary = PackageInstall.Summary{};
@@ -4344,7 +4386,7 @@ pub const PackageManager = struct {
                 .node = &install_node,
                 .node_modules_folder = node_modules_folder,
                 .progress = progress,
-                .skip_verify = skip_verify,
+                .skip_verify_installed_version_number = skip_verify_installed_version_number,
                 .skip_delete = skip_delete,
                 .summary = &summary,
                 .global_bin_dir = this.options.global_bin_dir,
@@ -4774,6 +4816,9 @@ pub const PackageManager = struct {
                 manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
                 manager.downloads_node.?.activate();
                 manager.progress.refresh();
+            } else if (comptime log_level != .silent) {
+                Output.prettyErrorln(" Resolving dependencies", .{});
+                Output.flush();
             }
 
             while (manager.pending_tasks > 0) {
@@ -4787,6 +4832,9 @@ pub const PackageManager = struct {
                 manager.progress.root.end();
                 manager.progress = .{};
                 manager.downloads_node = null;
+            } else if (comptime log_level != .silent) {
+                Output.prettyErrorln(" Resolved, downloaded and extracted [{d}]", .{manager.total_tasks});
+                Output.flush();
             }
         }
 
@@ -4876,6 +4924,9 @@ pub const PackageManager = struct {
                     manager.progress.refresh();
                     manager.progress.root.end();
                     manager.progress = .{};
+                } else if (comptime log_level != .silent) {
+                    Output.prettyErrorln(" Saved lockfile", .{});
+                    Output.flush();
                 }
             }
         }
@@ -4898,6 +4949,9 @@ pub const PackageManager = struct {
                 node = manager.progress.start("Saving yarn.lock", 0);
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 manager.progress.refresh();
+            } else if (comptime log_level != .silent) {
+                Output.prettyErrorln(" Saved yarn.lock", .{});
+                Output.flush();
             }
 
             try manager.writeYarnLock();

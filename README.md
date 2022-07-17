@@ -3131,14 +3131,14 @@ bun also statically links these libraries:
 - [`boringssl`](https://boringssl.googlesource.com/boringssl/), which has [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE)
 - [`libarchive`](https://github.com/libarchive/libarchive), which has [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING)
 - [`libiconv`](https://www.gnu.org/software/libiconv/), which is LGPL2. It’s a dependency of libarchive.
-- [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api), which is MIT licensed
+- [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api), which is BSD 3-Clause licensed
 - [`mimalloc`](https://github.com/microsoft/mimalloc), which is MIT licensed
 - [`picohttp`](https://github.com/h2o/picohttpparser), which is dual-licensed under the Perl License or the MIT License
 - [`tinycc`](https://github.com/tinycc/tinycc), which is LGPL v2.1 licensed
-- [`uSockets`](https://github.com/uNetworking/uSockets), which is MIT licensed
+- [`uSockets`](https://github.com/uNetworking/uSockets), which is Apache 2.0 licensed
 - [`zlib-cloudflare`](https://github.com/cloudflare/zlib), which is zlib licensed
 - `libicu` 66.1, which can be found here: <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE>
-- A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is MIT licensed
+- A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets), which is Apache 2.0 licensed
 
 For compatibility reasons, these NPM packages are embedded into bun’s binary and injected if imported.
 

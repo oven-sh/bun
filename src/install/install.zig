@@ -2706,6 +2706,18 @@ pub const PackageManager = struct {
                 }
             }
 
+            const default_disable_progress_bar: bool = brk: {
+                if (env_loader.get("BUN_INSTALL_PROGRESS")) |prog| {
+                    break :brk strings.eqlComptime(prog, "0");
+                }
+
+                if (env_loader.isCI()) {
+                    break :brk true;
+                }
+
+                break :brk Output.stderr_descriptor_type != .terminal;
+            };
+
             // technically, npm_config is case in-sensitive
             // load_registry:
             {
@@ -2872,12 +2884,19 @@ pub const PackageManager = struct {
 
                 this.local_package_features.optional_dependencies = !cli.omit.optional;
 
+                const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
+
                 if (cli.verbose) {
-                    this.log_level = .verbose;
+                    this.log_level = if (disable_progress_bar) LogLevel.verbose_no_progress else LogLevel.verbose;
                     PackageManager.verbose_install = true;
                 } else if (cli.silent) {
                     this.log_level = .silent;
                     PackageManager.verbose_install = false;
+                } else {
+                    this.log_level = if (disable_progress_bar) LogLevel.default_no_progress else LogLevel.default;
+                    PackageManager.verbose_install = false;
+                }
+
                 }
 
                 if (cli.yarn) {
@@ -3320,6 +3339,7 @@ pub const PackageManager = struct {
         clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
         clap.parseParam("--silent                          Don't log anything") catch unreachable,
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
+        clap.parseParam("--no-progress                     Disable the progress bar") catch unreachable,
         clap.parseParam("-g, --global                      Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
@@ -3366,6 +3386,7 @@ pub const PackageManager = struct {
         no_cache: bool = false,
         silent: bool = false,
         verbose: bool = false,
+        no_progress: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -3419,6 +3440,7 @@ pub const PackageManager = struct {
             cli.yarn = args.flag("--yarn");
             cli.production = args.flag("--production");
             cli.no_save = args.flag("--no-save");
+            cli.no_progress = args.flag("--no-progress");
             cli.dry_run = args.flag("--dry-run");
             cli.global = args.flag("--global");
             cli.force = args.flag("--force");
@@ -4780,6 +4802,9 @@ pub const PackageManager = struct {
                 manager.downloads_node.?.setCompletedItems(manager.total_tasks - manager.pending_tasks);
                 manager.downloads_node.?.activate();
                 manager.progress.refresh();
+            } else if (comptime log_level != .silent) {
+                Output.prettyErrorln(" Resolving dependencies", .{});
+                Output.flush();
             }
 
             while (manager.pending_tasks > 0) {
@@ -4793,6 +4818,9 @@ pub const PackageManager = struct {
                 manager.progress.root.end();
                 manager.progress = .{};
                 manager.downloads_node = null;
+            } else if (comptime log_level != .silent) {
+                Output.prettyErrorln(" Resolved, downloaded and extracted [{d}]", .{manager.total_tasks});
+                Output.flush();
             }
         }
 
@@ -4882,6 +4910,9 @@ pub const PackageManager = struct {
                     manager.progress.refresh();
                     manager.progress.root.end();
                     manager.progress = .{};
+                } else if (comptime log_level != .silent) {
+                    Output.prettyErrorln(" Saved lockfile", .{});
+                    Output.flush();
                 }
             }
         }
@@ -4904,6 +4935,9 @@ pub const PackageManager = struct {
                 node = manager.progress.start("Saving yarn.lock", 0);
                 manager.progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
                 manager.progress.refresh();
+            } else if (comptime log_level != .silent) {
+                Output.prettyErrorln(" Saved yarn.lock", .{});
+                Output.flush();
             }
 
             try manager.writeYarnLock();

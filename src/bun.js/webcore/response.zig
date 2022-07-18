@@ -750,7 +750,7 @@ pub const Fetch = struct {
             }
             const fetch_error = std.fmt.allocPrint(
                 default_allocator,
-                "fetch() failed – {s}\nurl: \"{s}\"",
+                "fetch() failed {s}\nurl: \"{s}\"",
                 .{
                     @errorName(this.http.err orelse error.HTTPFail),
                     this.http.url.href,

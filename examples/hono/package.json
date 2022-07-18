@@ -1,7 +1,6 @@
 {
-  "version": "1.0.2",
+  "version": "1.0.4",
   "name": "@bun-examples/hono",
-  "main": "src/index.js",
   "devDependencies": {
     "bun-types": "latest"
   },
@@ -10,5 +9,6 @@
   },
   "scripts": {
     "start": "bun run src/index.ts"
-  }
+  },
+  "module": "src/index.js"
 }

@@ -1,7 +1,6 @@
 {
   "name": "@bun-examples/next",
-  "version": "0.0.53",
-  "main": "index.js",
+  "version": "0.0.57",
   "dependencies": {
     "next": "^12.1.0",
     "react": "^18",
@@ -17,5 +16,6 @@
     "postinstall": [
       "bun bun --use next"
     ]
-  }
+  },
+  "module": "index.js"
 }

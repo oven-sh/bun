@@ -51,6 +51,7 @@ const RunCommand = @import("./cli/run_command.zig").RunCommand;
 const ShellCompletions = @import("./cli/shell_completions.zig");
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
 const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+const InitCommand = @import("./cli/init_command.zig").InitCommand;
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 
@@ -644,9 +645,6 @@ const AutoCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
-};
-const InitCommand = struct {
-    pub fn exec(_: std.mem.Allocator) !void {}
 };
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {

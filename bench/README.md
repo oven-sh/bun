@@ -2,6 +2,7 @@
 npm install
 
 bun run ffi
+bun run log
 bun run gzip
 bun run async
 bun run sqlite

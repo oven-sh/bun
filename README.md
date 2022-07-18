@@ -976,7 +976,7 @@ Configuring with `bunfig.toml` is optional. bun tries to be zero configuration i
 
 ```toml
 # Using scoped packages with bun install
-[install.scopes]
+[install.scoped]
 
 # Scope name      The value can be a URL string or an object
 "@mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" }

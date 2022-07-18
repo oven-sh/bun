@@ -6,9 +6,10 @@
     "bun-types": "latest"
   },
   "dependencies": {
-    "hono": "^2.0.0"
+    "hono": "^2.0.2"
   },
   "scripts": {
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "test": "bun wiptest src/*.test.ts"
   }
 }

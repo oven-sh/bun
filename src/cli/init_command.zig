@@ -72,7 +72,6 @@ pub const InitCommand = struct {
         // json object to string
         var string = std.ArrayList(u8).init(alloc);
         try std.json.stringify(content, .{ .whitespace = .{ .indent = .{ .Space = 4 } } }, string.writer());
-        defer string.deinit();
 
         // write json object to file
         try package_json.writeAll(string.items);

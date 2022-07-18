@@ -141,7 +141,7 @@ function urlParse(url, parseQueryString, slashesDenoteHost) {
 }
 
 Url.prototype.parse = function (url, parseQueryString, slashesDenoteHost) {
-  if (!isString(url)) {
+  if (!util_isString(url)) {
     throw new TypeError("Parameter 'url' must be a string, not " + typeof url);
   }
 
@@ -401,7 +401,7 @@ function urlFormat(obj) {
   // If it's an obj, this is a no-op.
   // this way, you can call url_format() on strings
   // to clean up potentially wonky urls.
-  if (isString(obj)) obj = urlParse(obj);
+  if (util_isString(obj)) obj = urlParse(obj);
   if (!(obj instanceof Url)) return Url.prototype.format.call(obj);
   return obj.format();
 }
@@ -482,7 +482,7 @@ function urlResolveObject(source, relative) {
 }
 
 Url.prototype.resolveObject = function (relative) {
-  if (isString(relative)) {
+  if (util_isString(relative)) {
     var rel = new Url();
     rel.parse(relative, false, true);
     relative = rel;

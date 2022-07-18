@@ -103,15 +103,17 @@ rm -r "$bin_dir/bun-$target" "$exe.zip"
 
 tildify() {
     if [[ ${2:-} = safe ]]; then
-        local escaped=${1//"'"/"\\'"}
+        local escaped=${1//\'/\\\'}
 
         if [[ $1 = $HOME/* ]]; then
-            echo "${escaped/"$HOME/"/"~/'"}'"
+            local replacement=\~/\'
+
+            echo "${escaped/$HOME\//$replacement}'"
         else
             echo "'$escaped'"
         fi
     else
-        echo "${1/"$HOME/"/'~/'}"
+        echo "${1/$HOME\//~/}"
     fi
 }
 

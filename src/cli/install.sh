@@ -46,23 +46,23 @@ fi
 
 case $(uname -ms) in
 'Darwin x86_64')
-    target='darwin-x64'
+    target=darwin-x64
     ;;
 'Darwin arm64')
-    target='darwin-aarch64'
+    target=darwin-aarch64
     ;;
 'Linux aarch64' | 'Linux arm64')
-    target='linux-aarch64'
+    target=linux-aarch64
     ;;
 'Linux x86_64' | *)
-    target='linux-x64'
+    target=linux-x64
     ;;
 esac
 
 if [[ $target = darwin-x64 ]]; then
     # Is this process running in Rosetta?
     if [[ $(sysctl -n sysctl.proc_translated) = 1 ]]; then
-        target='darwin-aarch64'
+        target=darwin-aarch64
         echo -e "${Dim}Your shell is running in Rosetta 2. Downloading bun for $target instead$Color_Off"
     fi
 fi
@@ -70,9 +70,9 @@ fi
 github_repo=https://github.com/Jarred-Sumner/bun-releases-for-updater
 
 if [[ $# = 0 ]]; then
-    bun_uri="$github_repo/releases/latest/download/bun-$target.zip"
+    bun_uri=$github_repo/releases/latest/download/bun-$target.zip
 else
-    bun_uri="$github_repo/releases/download/$1/bun-$target.zip"
+    bun_uri=$github_repo/releases/download/$1/bun-$target.zip
 fi
 
 install_env=BUN_INSTALL
@@ -111,7 +111,7 @@ tildify() {
             echo "'$escaped'"
         fi
     else
-        echo "${1//"$HOME/"/'~/'}"
+        echo "${1/"$HOME/"/'~/'}"
     fi
 }
 

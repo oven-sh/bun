@@ -40,7 +40,7 @@ pub const InitCommand = struct {
         const fs = std.fs;
         const cwd = fs.cwd();
 
-        const package_json = cwd.createFile("package.json", .{ .exclusive = true }) catch |err| {
+        const package_json = try cwd.createFile("package.json", .{ .exclusive = true });
             std.debug.print("{any}", .{err});
             return;
         };

@@ -866,7 +866,7 @@ pub const Encoder = struct {
         const allocator = VirtualMachine.vm.allocator;
 
         switch (comptime encoding) {
-            .latin1, .ascii => {
+            .ascii => {
                 var to = allocator.alloc(u8, len) catch return ZigString.init("Out of memory").toErrorInstance(global);
 
                 @memcpy(to.ptr, input_ptr, to.len);
@@ -875,6 +875,13 @@ pub const Encoder = struct {
                 for (to[0..to.len]) |c, i| {
                     to[i] = @as(u8, @truncate(u7, c));
                 }
+
+                return ZigString.init(to).toExternalValue(global);
+            },
+            .latin1 => {
+                var to = allocator.alloc(u8, len) catch return ZigString.init("Out of memory").toErrorInstance(global);
+
+                @memcpy(to.ptr, input_ptr, to.len);
 
                 return ZigString.init(to).toExternalValue(global);
             },
@@ -1113,7 +1120,7 @@ pub const Encoder = struct {
 
                 // Hoping this gets auto vectorized
                 for (to[0..len]) |c, i| {
-                    to[i] = @as(u8, @truncate(u7, c));
+                    to[i] = @truncate(u8, c);
                 }
 
                 return to;

@@ -1094,9 +1094,13 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         break;
     }
 
-    case WebCore::BufferEncodingType::latin1:
     case WebCore::BufferEncodingType::ascii: {
         ret = Bun__encoding__toStringASCII(castedThis->typedVector() + offset, length, lexicalGlobalObject);
+        break;
+    }
+
+    case WebCore::BufferEncodingType::latin1: {
+        ret = Bun__encoding__toStringLatin1(castedThis->typedVector() + offset, length, lexicalGlobalObject);
         break;
     }
 

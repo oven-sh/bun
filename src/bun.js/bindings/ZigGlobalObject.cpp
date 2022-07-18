@@ -1911,6 +1911,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirect(vm, JSC::Identifier::fromString(vm, "performance"_s), this->performanceObject(),
         0);
 
+    putDirect(vm, JSC::Identifier::fromString(vm, "self"_s), this->globalThis(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+    putDirect(vm, JSC::Identifier::fromString(vm, "global"_s), this->globalThis(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | 0);
+
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"_s), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | 0);
 

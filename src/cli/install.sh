@@ -109,6 +109,7 @@ if command -v bun --version >/dev/null; then
     IS_BUN_AUTO_UPDATE="true" $exe completions >/dev/null 2>&1
 
     echo "Run 'bun --help' to get started"
+    echo "Here is the list of our examples: https://github.com/oven-sh/bun/tree/main/examples"
     exit 0
 fi
 
@@ -149,8 +150,12 @@ then
         echo ""
         echo -e "To get started, run"
         echo -e "$BWhite"
-        echo -e "   exec $SHELL"
-        echo -e "   bun --help$Color_Off"
+        echo -e "   'exec $SHELL' to restart the shell"
+        echo -e "   'bun --help' to get started"
+        echo -e "   -----"
+        echo -e "$Color_Off"
+        echo -e ""
+        echo "Here is the list of our examples: https://github.com/oven-sh/bun/tree/main/examples"
         echo ""
         exit 0
     else

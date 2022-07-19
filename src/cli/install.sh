@@ -102,18 +102,12 @@ chmod +x "$exe" ||
 rm -r "$bin_dir/bun-$target" "$exe.zip"
 
 tildify() {
-    if [[ ${2:-} = safe ]]; then
-        local escaped=${1//\'/\\\'}
+    if [[ $1 = $HOME/* ]]; then
+        local replacement=\~/
 
-        if [[ $1 = $HOME/* ]]; then
-            local replacement=\~/\'
-
-            echo "${escaped/$HOME\//$replacement}'"
-        else
-            echo "'$escaped'"
-        fi
+        echo "${1/$HOME\//$replacement}"
     else
-        echo "${1/$HOME\//~/}"
+        echo "$1"
     fi
 }
 
@@ -130,7 +124,11 @@ fi
 refresh_command=''
 
 tilde_bin_dir=$(tildify "$bin_dir")
-safe_tilde_install_dir=$(tildify "$install_dir" safe)
+quoted_install_dir=\"${install_dir//\"/\\\"}\"
+
+if [[ $quoted_install_dir = \"$HOME/* ]]; then
+    quoted_install_dir=${quoted_install_dir/$HOME\//\$HOME/}
+fi
 
 echo
 
@@ -140,7 +138,7 @@ fish)
     IS_BUN_AUTO_UPDATE=true SHELL=fish $exe completions &>/dev/null || :
 
     commands=(
-        "set --export $install_env $safe_tilde_install_dir"
+        "set --export $install_env $quoted_install_dir"
         "set --export PATH $bin_env \$PATH"
     )
 
@@ -161,7 +159,6 @@ fish)
         refresh_command="source $tilde_fish_config"
     else
         echo "Manually add the directory to $tilde_fish_config (or similar):"
-        echo
 
         for command in "${commands[@]}"; do
             echo -e "  $Bold_White $command$Color_Off"
@@ -173,7 +170,7 @@ zsh)
     IS_BUN_AUTO_UPDATE=true SHELL=zsh $exe completions &>/dev/null || :
 
     commands=(
-        "export $install_env=$safe_tilde_install_dir"
+        "export $install_env=$quoted_install_dir"
         "export PATH=\"$bin_env:\$PATH\""
     )
 
@@ -194,7 +191,6 @@ zsh)
         refresh_command="exec $SHELL"
     else
         echo "Manually add the directory to $tilde_zsh_config (or similar):"
-        echo
 
         for command in "${commands[@]}"; do
             echo -e "  $Bold_White $command$Color_Off"
@@ -202,9 +198,8 @@ zsh)
     fi
     ;;
 *)
-    echo "Manually add the directory to ~/.bashrc (or similar):"
-    echo
-    echo -e "  $Bold_White export $install_env=$safe_tilde_install_dir$Color_Off"
+    echo 'Manually add the directory to ~/.bashrc (or similar):'
+    echo -e "  $Bold_White export $install_env=$quoted_install_dir$Color_Off"
     echo -e "  $Bold_White export PATH=\"$bin_env:\$PATH\"$Color_Off"
     ;;
 esac

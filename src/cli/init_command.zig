@@ -1,4 +1,8 @@
 const Command = @import("../cli.zig").Command;
+const JSON = @import("../json_parser.zig");
+const JSAst = @import("../js_ast.zig");
+const JSPrinter = @import("../js_printer.zig");
+const logger = @import("../logger.zig");
 const std = @import("std");
 
 pub const InitCommand = struct {
@@ -37,24 +41,14 @@ pub const InitCommand = struct {
         try stdout.print("license: (ISC)", .{});
         const license = getUserInput(alloc, "ISC");
 
-        const fs = std.fs;
-        const cwd = fs.cwd();
-
-        const package_json = try cwd.createFile("package.json", .{ .exclusive = true });
-            std.debug.print("{any}", .{err});
-            return;
-        };
-        defer package_json.close();
-
-        // build json object
+        // build package object
         const Scripts = struct {
-            tests: []const u8
         };
 
         const Package = struct {
             name: []const u8,
             description: []const u8,
-            main: []const u8,
+            module: []const u8,
             scripts: Scripts,
             author: []const u8,
             license: []const u8
@@ -63,17 +57,18 @@ pub const InitCommand = struct {
         const content = Package {
             .name = project_name,
             .description = desc,
-            .main = entry_point,
-            .scripts = Scripts { .tests = "echo \"Error: no test specified\" && exit 1" },
+            .module = entry_point,
+            .scripts = Scripts {},
             .author = author,
             .license = license
         };
 
-        // json object to string
-        var string = std.ArrayList(u8).init(alloc);
-        try std.json.stringify(content, .{ .whitespace = .{ .indent = .{ .Space = 4 } } }, string.writer());
+        // create & write to package.json file
+        var buffer_writer = try JSPrinter.BufferWriter.init(alloc);
+        var writer = JSPrinter.BufferPrinter.init(buffer_writer);
+        var source = logger.Source.initEmptyFile("package.json");
 
-        // write json object to file
-        try package_json.writeAll(string.items);
+        const json = try JSON.toAST(alloc, Package, content);
+        try JSPrinter.printJSON(*JSPrinter.BufferPrinter, &writer, json, &source);
     }
 }

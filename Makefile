@@ -4,6 +4,9 @@ OS_NAME := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 ARCH_NAME_RAW := $(shell uname -m)
 BUN_AUTO_UPDATER_REPO = Jarred-Sumner/bun-releases-for-updater
 
+# 'make' command will trigger the help target
+.DEFAULT_GOAL := help
+
 # On Linux ARM64, uname -m reports aarch64
 ifeq ($(ARCH_NAME_RAW),aarch64)
 ARCH_NAME_RAW = arm64
@@ -417,7 +420,7 @@ tinycc:
 		make -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 
-generate-builtins:
+generate-builtins: ## to generate builtins
 	rm -f src/bun.js/bindings/*Builtin*.cpp src/bun.js/bindings/*Builtin*.h src/bun.js/bindings/*Builtin*.cpp
 	rm -rf src/bun.js/builtins/cpp
 	mkdir -p src/bun.js/builtins/cpp
@@ -444,7 +447,7 @@ release-types:
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
 	cd packages/bun-types && npm publish
 
-format:
+format: ## to format the code
 	$(PRETTIER) --write test/bun.js/*.js
 	$(PRETTIER) --write test/bun.js/solid-dom-fixtures/**/*.js
 
@@ -1408,7 +1411,7 @@ endif
 
 endif
 
-build-unit:
+build-unit: ## to build your unit tests
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
 	zig test  $(realpath $(testpath)) \
@@ -1425,7 +1428,7 @@ build-unit:
 	 && \
 	cp zig-out/bin/$(testname) $(testbinpath)
 
-run-all-unit-tests:
+run-all-unit-tests: ## to run your unit tests
 	@rm -rf zig-out/bin/__main_test
 	@mkdir -p zig-out/bin
 	zig test src/main.zig \
@@ -1444,11 +1447,12 @@ run-all-unit-tests:
 run-unit:
 	@zig-out/bin/$(testname) $(ZIG)
 
-
+help: ## to print this help
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 test: build-unit run-unit
 
-integration-test-dev:
+integration-test-dev: ## to run integration tests
 	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node test/scripts/browser.js
 
 copy-install:

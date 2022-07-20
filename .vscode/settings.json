@@ -8,6 +8,8 @@
   "search.useIgnoreFiles": true,
   "zig.buildOnSave": false,
   "[zig]": {
+	  "editor.tabSize": 4,
+	  "editor.useTabStops": false,
     "editor.defaultFormatter": "AugusteRame.zls-vscode",
     "editor.formatOnSave": true
   },
@@ -164,6 +166,5 @@
     "__memory": "cpp",
     "memory_resource": "cpp"
   },
-  "go.logging.level": "off",
   "cmake.configureOnOpen": false
 }

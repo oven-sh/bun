@@ -374,11 +374,11 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
 
             var i: usize = 0;
             while (i < count) : (i += 1) {
+                // no need to free because we free the name array at once
                 var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(
                     array,
                     i,
                 );
-                defer JSC.C.JSStringRelease(property_name_ref);
                 const prop: []const u8 = JSC.C.JSStringGetCharacters8Ptr(property_name_ref)[0..JSC.C.JSStringGetLength(property_name_ref)];
                 const property_value: JSC.JSValue = JSC.JSValue.fromRef(
                     JSC.C.JSObjectGetProperty(
@@ -675,13 +675,14 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                 }
 
                 while (iter.next()) |item| {
+                    // no need to free key because we free the name array at once
+
                     const start = total_name_buf.items.len;
                     total_name_buf.items.len += @maximum(
                         // this returns a null terminated string
                         JSC.C.JSStringGetUTF8CString(item, total_name_buf.items.ptr + start, total_name_buf.capacity - start),
                         1,
                     ) - 1;
-                    JSC.C.JSStringRelease(item);
                     const key = total_name_buf.items[start..total_name_buf.items.len];
                     // if somehow the string is empty, skip it
                     if (key.len == 0)

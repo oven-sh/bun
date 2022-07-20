@@ -1934,16 +1934,14 @@ pub const ZigConsoleClient = struct {
                                 const count_without_children = count_ - @as(usize, @boolToInt(children_prop != null));
 
                                 while (i < count_) : (i += 1) {
+                                    // no need to free because we free the name array at once
                                     var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
+
                                     const prop_len = CAPI.JSStringGetLength(property_name_ref);
                                     if (prop_len == 0) continue;
                                     var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..prop_len];
-                                    if (strings.eqlComptime(prop, "children")) {
-                                        CAPI.JSStringRelease(property_name_ref);
+                                    if (strings.eqlComptime(prop, "children"))
                                         continue;
-                                    }
-
-                                    defer CAPI.JSStringRelease(property_name_ref);
 
                                     var property_value = CAPI.JSObjectGetProperty(this.globalThis.ref(), props.asObjectRef(), property_name_ref, null);
                                     const tag = Tag.get(JSValue.fromRef(property_value), this.globalThis);
@@ -2116,7 +2114,6 @@ pub const ZigConsoleClient = struct {
 
                         while (i < count_) : (i += 1) {
                             var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
-                            defer CAPI.JSStringRelease(property_name_ref);
                             const len = CAPI.JSStringGetLength(property_name_ref);
                             if (len == 0) continue;
                             const encoding = CAPI.JSStringEncoding(property_name_ref);

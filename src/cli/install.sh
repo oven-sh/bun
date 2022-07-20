@@ -8,7 +8,7 @@ Red=''
 Green=''
 
 # Bold
-BWhite=''
+Bold=''
 BGreen=''
 
 Dim='' # White
@@ -20,13 +20,12 @@ if test -t 1; then
     # Regular Colors
     Red='\033[0;31m'   # Red
     Green='\033[0;32m' # Green
-    White='\033[0;37m' # White
 
     Dim='\033[0;2m' # White
 
     # Bold
     BGreen='\033[1;32m' # Green
-    BWhite='\033[1;37m' # White
+    Bold='\033[1m' # White
 fi
 
 if ! command -v unzip >/dev/null; then
@@ -122,16 +121,16 @@ if test $(basename $SHELL) == "fish"; then
         echo -e "$Dim Added \"$bin_dir\" to \$PATH in \"\~/.config/fish/config.fish\"$Color_Off"
         echo ""
         echo -e "To get started, run"
-        echo -e "$BWhite"
-        echo -e "   source ~/.config/fish/config.fish"
-        echo -e "   bun --help$Color_Off"
+        echo -e ""
+        echo -e "$Bold   source ~/.config/fish/config.fish$Color_Off"
+        echo -e "$Bold   bun --help$Color_Off"
         exit 0
     else
         echo ""
         echo "Manually add the directory to your \$HOME/.config/fish/config.fish (or similar)"
         echo ""
-        echo -e "  $BWhite set -Ux BUN_INSTALL \"$bun_install\"$Color_Off"
-        echo -e "  $BWhite fish_add_path \"$bin_dir\"$Color_Off"
+        echo -e "$Bold   set -Ux BUN_INSTALL \"$bun_install\"$Color_Off"
+        echo -e "$Bold   fish_add_path \"$bin_dir\"$Color_Off"
         echo ""
     fi
 elif
@@ -148,27 +147,27 @@ then
 
         echo ""
         echo -e "To get started, run"
-        echo -e "$BWhite"
-        echo -e "   exec $SHELL"
-        echo -e "   bun --help$Color_Off"
+        echo ""
+        echo -e "$Bold   exec $SHELL$Color_Off"
+        echo -e "$Bold   bun --help$Color_Off"
         echo ""
         exit 0
     else
         echo ""
         echo "Manually add the directory to your \$HOME/.zshrc (or similar)"
         echo ""
-        echo -e "  $BWhite export BUN_INSTALL=\"$bun_install\"$Color_Off"
-        echo -e "  $BWhite export PATH=\"\$BUN_INSTALL/bin:\$PATH\"$Color_Off"
+        echo -e "$Bold   export BUN_INSTALL=\"$bun_install\"$Color_Off"
+        echo -e "$Bold   export PATH=\"\$BUN_INSTALL/bin:\$PATH\"$Color_Off"
     fi
 
 else
     echo ""
     echo "Manually add the directory to your \$HOME/.bashrc (or similar)"
     echo ""
-    echo -e "  $BWhiteexport export BUN_INSTALL=\"$bun_install\"$Color_Off"
-    echo -e "  $BWhiteexport export PATH=\"\$BUN_INSTALL/bin:\$PATH\"$Color_Off"
+    echo -e "$Bold  export export BUN_INSTALL=\"$bun_install\"$Color_Off"
+    echo -e "$Bold  export export PATH=\"\$BUN_INSTALL/bin:\$PATH\"$Color_Off"
 fi
 echo ""
 echo -e "To get started, run"
-echo -e "$BWhite"
-echo -e "   bun --help$Color_Off"
+echo ""
+echo -e "$Bold   bun --help$Color_Off"

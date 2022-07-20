@@ -1,6 +1,4 @@
-
-FROM bunbunbunbun/bun-base:latest as lolhtml
-
+# Global args
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
@@ -9,6 +7,17 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+
+FROM bunbunbunbun/bun-base:latest as lolhtml
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/lol-html ${BUN_DIR}/src/deps/lol-html
@@ -18,14 +27,13 @@ RUN cd ${BUN_DIR} && \
 
 FROM bunbunbunbun/bun-base:latest as mimalloc
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
@@ -35,14 +43,13 @@ RUN cd ${BUN_DIR} && \
 
 FROM bunbunbunbun/bun-base:latest as zlib
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
@@ -54,14 +61,13 @@ RUN cd $BUN_DIR && \
 
 FROM bunbunbunbun/bun-base:latest as libarchive
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
@@ -73,14 +79,13 @@ RUN cd $BUN_DIR && \
 
 FROM bunbunbunbun/bun-base:latest as tinycc
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/tinycc ${BUN_DIR}/src/deps/tinycc
@@ -93,14 +98,13 @@ RUN cd $BUN_DIR && \
 
 FROM bunbunbunbun/bun-base:latest as libbacktrace
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libbacktrace ${BUN_DIR}/src/deps/libbacktrace
@@ -112,14 +116,13 @@ RUN cd $BUN_DIR && \
 
 FROM bunbunbunbun/bun-base:latest as boringssl
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
@@ -130,14 +133,13 @@ RUN make boringssl && rm -rf src/deps/boringssl Makefile
 
 FROM bunbunbunbun/bun-base:latest as base64
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/base64 ${BUN_DIR}/src/base64
@@ -148,14 +150,13 @@ RUN make base64 && rm -rf src/base64 Makefile
 
 FROM bunbunbunbun/bun-base:latest as uws
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/uws ${BUN_DIR}/src/deps/uws
@@ -171,14 +172,13 @@ RUN cd $BUN_DIR && \
 
 FROM bunbunbunbun/bun-base:latest as picohttp
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/picohttpparser ${BUN_DIR}/src/deps/picohttpparser
@@ -193,14 +193,13 @@ RUN cd $BUN_DIR && \
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as identifier_cache
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 WORKDIR $BUN_DIR
 
@@ -213,14 +212,13 @@ RUN cd $BUN_DIR && \
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as node_fallbacks
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 WORKDIR $BUN_DIR
 
@@ -232,14 +230,13 @@ RUN cd $BUN_DIR && \
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as prepare_release
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 
 WORKDIR $BUN_DIR
@@ -272,14 +269,13 @@ WORKDIR ${BUN_DIR}
 
 FROM prepare_release as build_release
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY Makefile ${BUN_DIR}/Makefile
 
@@ -297,14 +293,13 @@ RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-
 
 FROM prepare_release as build_unit
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 WORKDIR $BUN_DIR
 
@@ -321,14 +316,13 @@ CMD make jsc-bindings-headers \
 
 FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as bun.devcontainer
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
 ENV PATH "$ZIG_PATH:$PATH"
@@ -357,14 +351,13 @@ COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
 
 FROM ubuntu:20.04 as release_with_debug_info
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY .devcontainer/limits.conf /etc/security/limits.conf
 
@@ -382,14 +375,13 @@ ENTRYPOINT [ "/opt/bun/bin/bun" ]
 
 FROM ubuntu:20.04 as release 
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 COPY .devcontainer/limits.conf /etc/security/limits.conf
 
@@ -406,14 +398,13 @@ ENTRYPOINT [ "/opt/bun/bin/bun" ]
 
 FROM bunbunbunbun/bun-test-base as test_base
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
 
 ARG BUILDARCH=amd64
 RUN groupadd -r chromium && useradd   -d  ${BUN_DIR} -M -r -g chromium -G audio,video chromium \

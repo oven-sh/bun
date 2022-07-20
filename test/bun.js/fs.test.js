@@ -13,7 +13,6 @@ import {
   writeSync,
   statSync,
   lstatSync,
-  symlinkSync,
 } from "node:fs";
 
 const Buffer = globalThis.Buffer || Uint8Array;

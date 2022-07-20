@@ -11,6 +11,9 @@ import {
   readSync,
   writeFileSync,
   writeSync,
+  statSync,
+  lstatSync,
+  symlinkSync,
 } from "node:fs";
 
 const Buffer = globalThis.Buffer || Uint8Array;
@@ -240,5 +243,64 @@ describe("writeFileSync", () => {
     for (let i = 0; i < buffer.length; i++) {
       expect(buffer[i]).toBe(out[i]);
     }
+  });
+});
+
+describe("lstat", () => {
+  it("file metadata is correct", () => {
+    const fileStats = lstatSync(
+      new URL("./fs-stream.js", import.meta.url)
+        .toString()
+        .slice("file://".length - 1)
+    );
+    expect(fileStats.isSymbolicLink()).toBe(false);
+    expect(fileStats.isFile()).toBe(true);
+    expect(fileStats.isDirectory()).toBe(false);
+  });
+
+  it("folder metadata is correct", () => {
+    const fileStats = lstatSync(
+      new URL("../../test", import.meta.url)
+        .toString()
+        .slice("file://".length - 1)
+    );
+    expect(fileStats.isSymbolicLink()).toBe(false);
+    expect(fileStats.isFile()).toBe(false);
+    expect(fileStats.isDirectory()).toBe(true);
+  });
+
+  it("symlink metadata is correct", () => {
+    const linkStats = lstatSync(
+      new URL("./fs-stream.link.js", import.meta.url)
+        .toString()
+        .slice("file://".length - 1)
+    );
+    expect(linkStats.isSymbolicLink()).toBe(true);
+    expect(linkStats.isFile()).toBe(false);
+    expect(linkStats.isDirectory()).toBe(false);
+  });
+});
+
+describe("stat", () => {
+  it("file metadata is correct", () => {
+    const fileStats = statSync(
+      new URL("./fs-stream.js", import.meta.url)
+        .toString()
+        .slice("file://".length - 1)
+    );
+    expect(fileStats.isSymbolicLink()).toBe(false);
+    expect(fileStats.isFile()).toBe(true);
+    expect(fileStats.isDirectory()).toBe(false);
+  });
+
+  it("folder metadata is correct", () => {
+    const fileStats = statSync(
+      new URL("../../test", import.meta.url)
+        .toString()
+        .slice("file://".length - 1)
+    );
+    expect(fileStats.isSymbolicLink()).toBe(false);
+    expect(fileStats.isFile()).toBe(false);
+    expect(fileStats.isDirectory()).toBe(true);
   });
 });

@@ -797,7 +797,7 @@ pub const FileSystemFlags = enum(Mode) {
     }
 };
 
-/// Milliseconds precision 
+/// Milliseconds precision
 pub const Date = enum(u64) {
     _,
 
@@ -818,11 +818,26 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
             This,
             .{ .name = name },
             .{
-                .isFile = .{
-                    .rfn = JSC.wrap(This, "isFile", false),
+                .isBlockDevice = .{
+                    .rfn = JSC.wrap(This, "isBlockDevice", false),
+                },
+                .isCharacterDevice = .{
+                    .rfn = JSC.wrap(This, "isCharacterDevice", false),
                 },
                 .isDirectory = .{
                     .rfn = JSC.wrap(This, "isDirectory", false),
+                },
+                .isFIFO = .{
+                    .rfn = JSC.wrap(This, "isFIFO", false),
+                },
+                .isFile = .{
+                    .rfn = JSC.wrap(This, "isFile", false),
+                },
+                .isSocket = .{
+                    .rfn = JSC.wrap(This, "isSocket", false),
+                },
+                .isSymbolicLink = .{
+                    .rfn = JSC.wrap(This, "isSymbolicLink", false),
                 },
                 .finalize = finalize,
             },
@@ -957,11 +972,37 @@ fn StatsLike(comptime name: [:0]const u8, comptime T: type) type {
             };
         }
 
+        pub fn isBlockDevice(this: *Stats) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISBLK(@intCast(Mode, this.mode)));
+        }
+
+        pub fn isCharacterDevice(this: *Stats) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISCHR(@intCast(Mode, this.mode)));
+        }
+
+        pub fn isDirectory(this: *Stats) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.mode)));
+        }
+
+        pub fn isFIFO(this: *Stats) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISFIFO(@intCast(Mode, this.mode)));
+        }
+
         pub fn isFile(this: *Stats) JSC.JSValue {
             return JSC.JSValue.jsBoolean(os.S.ISREG(@intCast(Mode, this.mode)));
         }
-        pub fn isDirectory(this: *Stats) JSC.JSValue {
-            return JSC.JSValue.jsBoolean(os.S.ISDIR(@intCast(Mode, this.mode)));
+
+        pub fn isSocket(this: *Stats) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISSOCK(@intCast(Mode, this.mode)));
+        }
+
+        // Node.js says this method is only valid on the result of lstat()
+        // so it's fine if we just include it on stat() because it would
+        // still just return false.
+        //
+        // See https://nodejs.org/api/fs.html#statsissymboliclink
+        pub fn isSymbolicLink(this: *Stats) JSC.JSValue {
+            return JSC.JSValue.jsBoolean(os.S.ISLNK(@intCast(Mode, this.mode)));
         }
 
         pub fn toJS(this: Stats, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {

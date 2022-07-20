@@ -5,7 +5,7 @@
     "bun-types": "latest"
   },
   "dependencies": {
-    "hono": "^2.0.2"
+    "hono": "^2.0.0"
   },
   "scripts": {
     "start": "bun run src/index.ts",

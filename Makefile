@@ -9,7 +9,8 @@ ifeq ($(ARCH_NAME_RAW),aarch64)
 ARCH_NAME_RAW = arm64
 endif
 
-MARCH_NATIVE = -mtune=native
+CPU_TARGET ?= native
+MARCH_NATIVE = -mtune=$(CPU_TARGET)
 
 ARCH_NAME :=
 DOCKER_BUILDARCH =
@@ -18,13 +19,13 @@ ifeq ($(ARCH_NAME_RAW),arm64)
 	DOCKER_BUILDARCH = arm64
 	BREW_PREFIX_PATH = /opt/homebrew
 	MIN_MACOS_VERSION ?= 11.0
-	MARCH_NATIVE = -mtune=native
+	MARCH_NATIVE = -mtune=$(CPU_TARGET)
 else
 	ARCH_NAME = x64
 	DOCKER_BUILDARCH = amd64
 	BREW_PREFIX_PATH = /usr/local
 	MIN_MACOS_VERSION ?= 10.14
-	MARCH_NATIVE = -march=native -mtune=native
+	MARCH_NATIVE = -march=$(CPU_TARGET) -mtune=$(CPU_TARGET)
 endif
 
 AR=
@@ -118,7 +119,7 @@ endif
 
 ifeq ($(OS_NAME),linux)
 LIBICONV_PATH =
-AR=llvm-ar-13
+AR = $(shell which llvm-ar-13 || which llvm-ar || which ar)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
@@ -541,7 +542,7 @@ init-submodules:
 	git submodule update --init --recursive --progress --depth=1
 
 build-obj:
-	$(ZIG) build obj -Drelease-fast
+	$(ZIG) build obj -Drelease-fast -Dcpu="$(CPU_TARGET)"
 
 dev-build-obj-wasm:
 	$(ZIG) build bun-wasm -Dtarget=wasm32-freestanding --prominent-compile-errors
@@ -614,8 +615,6 @@ sign-macos-aarch64:
 cls:
 	@echo "\n\n---\n\n"
 
-release: all-js jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
-release-safe: all-js jsc-bindings-mac build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 
 jsc-check:
 	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/bun.js/WebKit -f $(shell pwd)/src/bun.js/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)
@@ -623,6 +622,12 @@ jsc-check:
 	@ls $(JSC_LIB)  >/dev/null 2>&1 || (echo "Failed to access WebKit lib directory at $(JSC_LIB)." && exit 1)
 
 all-js: runtime_js fallback_decoder bun_error node-fallbacks
+
+prerelease: api analytics all-js
+release-only: jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
+release-safe-only: all-js jsc-bindings-mac build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
+release: prerelease release-only
+release-safe: prerelease release-safe-only
 
 fmt-cpp:
 	cd src/bun.js/bindings && clang-format *.cpp *.h -i
@@ -1218,6 +1223,10 @@ bun-link-lld-release:
 	rm -rf $(BUN_RELEASE_BIN).dSYM
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
 
+bun-release-copy-obj:
+	cp $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+	cp $(BUN_RELEASE_BIN).o /tmp/bun-current.o
+
 bun-link-lld-release-no-lto:
 	$(CXX) $(BUN_LLD_FLAGS_FAST) $(SYMBOLS) \
 		$(BUN_RELEASE_BIN).o \
@@ -1229,22 +1238,20 @@ bun-link-lld-release-no-lto:
 
 
 ifeq ($(OS_NAME),darwin)
-bun-link-lld-release-dsym:
+bun-link-lld-release-dsym: bun-release-copy-obj
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
 	-$(STRIP) $(BUN_RELEASE_BIN) --wildcard -K _napi\*
-	cp $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 
 copy-to-bun-release-dir-dsym:
 	gzip --keep -c $(PACKAGE_DIR)/bun.dSYM > $(BUN_RELEASE_DIR)/bun.dSYM.gz
 endif
 
 ifeq ($(OS_NAME),linux)
-bun-link-lld-release-dsym:
+bun-link-lld-release-dsym: bun-release-copy-obj
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
 copy-to-bun-release-dir-dsym:
 
 endif
-
 
 bun-relink: bun-relink-copy bun-link-lld-release bun-link-lld-release-dsym
 bun-relink-fast: bun-relink-copy bun-link-lld-release-no-lto

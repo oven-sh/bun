@@ -1,6 +1,8 @@
 
 FROM bunbunbunbun/bun-base:latest as lolhtml
 
+RUN install_packages build-essential && curl https://sh.rustup.rs -sSf | sh -s -- -y
+
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
@@ -13,7 +15,7 @@ ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/lol-html ${BUN_DIR}/src/deps/lol-html
 
-RUN cd ${BUN_DIR} && \
+RUN export PATH=$PATH:$HOME/.cargo/bin && export CC=$(which clang-13) && cd ${BUN_DIR} && \
     make lolhtml && rm -rf src/deps/lol-html Makefile
 
 FROM bunbunbunbun/bun-base:latest as mimalloc
@@ -68,7 +70,7 @@ COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
 WORKDIR $BUN_DIR
 
-RUN cd $BUN_DIR && \
+RUN cd $BUN_DIR && install_packages autoconf automake libtool pkg-config  && \ 
     make libarchive && rm -rf src/deps/libarchive Makefile
 
 FROM bunbunbunbun/bun-base:latest as tinycc
@@ -87,9 +89,7 @@ COPY src/deps/tinycc ${BUN_DIR}/src/deps/tinycc
 
 WORKDIR $BUN_DIR
 
-RUN cd $BUN_DIR && \
-    make tinycc && rm -rf src/deps/tinycc Makefile
-
+RUN install_packages libtcc-dev && cp /usr/lib/$(uname -m)-linux-gnu/libtcc.a ${BUN_DEPS_OUT_DIR}
 
 FROM bunbunbunbun/bun-base:latest as libbacktrace
 
@@ -126,7 +126,7 @@ COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 
 WORKDIR $BUN_DIR
 
-RUN make boringssl && rm -rf src/deps/boringssl Makefile
+RUN install_packages golang && make boringssl && rm -rf src/deps/boringssl Makefile
 
 FROM bunbunbunbun/bun-base:latest as base64
 
@@ -253,6 +253,56 @@ COPY ./package.json ${BUN_DIR}/package.json
 COPY ./misctools ${BUN_DIR}/misctools
 COPY Makefile ${BUN_DIR}/Makefile
 
+
+FROM prepare_release as compile_release_obj
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+COPY Makefile ${BUN_DIR}/Makefile
+
+WORKDIR $BUN_DIR
+
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+ARG TRIPLET=x86_64-linux-gnu
+
+COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
+COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
+
+RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
+    mkdir -p $BUN_RELEASE_DIR && \
+    $ZIG_PATH/zig build obj -Drelease-fast -Dtarget=${TRIPLET} && \
+    make bun-release-copy-obj
+
+FROM scratch as build_release_obj
+
+COPY --from=compile_release_obj /tmp/*.o /
+
+FROM prepare_release as compile_cpp
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+COPY Makefile ${BUN_DIR}/Makefile
+
+WORKDIR $BUN_DIR
+
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
@@ -264,11 +314,33 @@ COPY --from=libbacktrace ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
-COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
-COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
 
-WORKDIR ${BUN_DIR}
+RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && \
+    make jsc-bindings-mac -j10 && mv src/bun.js/bindings-obj/* /tmp
 
+FROM prepare_release as sqlite
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+COPY Makefile ${BUN_DIR}/Makefile
+
+WORKDIR $BUN_DIR
+
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+
+RUN cd $BUN_DIR && make sqlite
+
+FROM scratch as build_release_cpp
+
+COPY --from=compile_cpp /tmp/*.o /
 
 FROM prepare_release as build_release
 
@@ -285,14 +357,25 @@ COPY Makefile ${BUN_DIR}/Makefile
 
 WORKDIR $BUN_DIR
 
-RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make \
-    sqlite api \
-    analytics \
-    bun_error \
-    fallback_decoder && rm -rf $HOME/.cache zig-cache && \
-    mkdir -p $BUN_RELEASE_DIR && \
-    make jsc-bindings-mac -j10 && \
-    make release copy-to-bun-release-dir && \
+ENV JSC_BASE_DIR=${WEBKIT_DIR}
+ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
+
+COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=mimalloc ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
+COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=picohttp ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
+COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=uws ${BUN_DEPS_OUT_DIR}/*.o ${BUN_DEPS_OUT_DIR}/
+COPY --from=libbacktrace ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=zlib ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
+COPY --from=sqlite ${BUN_DEPS_OUT_DIR}/*.o  ${BUN_DEPS_OUT_DIR}/
+COPY --from=build_release_obj /*.o /tmp
+COPY --from=build_release_cpp /*.o ${BUN_DIR}/src/bun.js/bindings-obj/
+
+RUN cd $BUN_DIR && mkdir -p ${BUN_RELEASE_DIR} && make bun-relink copy-to-bun-release-dir && \
     rm -rf $HOME/.cache zig-cache misctools package.json build-id completions build.zig $(BUN_DIR)/packages
 
 FROM prepare_release as build_unit
@@ -309,6 +392,7 @@ ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 WORKDIR $BUN_DIR
 
 ENV PATH "$ZIG_PATH:$PATH"
+ENV LIB_ICU_PATH "${WEBKIT_DIR}/lib"
 
 CMD make jsc-bindings-headers \
     api \
@@ -319,48 +403,11 @@ CMD make jsc-bindings-headers \
     make \
     run-all-unit-tests
 
-FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as bun.devcontainer
+FROM alpine:latest as release_with_debug_info
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-
-ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
-ENV PATH "$ZIG_PATH:$PATH"
-ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
-ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}/icu/source/lib
-ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
-ENV PATH "${GITHUB_WORKSPACE}/packages/bun-linux-x64:${GITHUB_WORKSPACE}/packages/bun-linux-aarch64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-x64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-aarch64:$PATH"
-ENV PATH "/home/ubuntu/zls/zig-out/bin:$PATH"
-
-ENV BUN_INSTALL /home/ubuntu/.bun
-ENV XDG_CONFIG_HOME /home/ubuntu/.config
-
-RUN apt-get -y update && update-alternatives --install /usr/bin/lldb lldb /usr/bin/lldb-13 90
-
-COPY .devcontainer/workspace.code-workspace $GITHUB_WORKSPACE/workspace.code-workspace
-COPY .devcontainer/zls.json $GITHUB_WORKSPACE/workspace.code-workspace
-COPY .devcontainer/limits.conf /etc/security/limits.conf
-COPY ".devcontainer/scripts/" /scripts/
-COPY ".devcontainer/scripts/getting-started.sh" $GITHUB_WORKSPACE/getting-started.sh
-RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config $GITHUB_WORKSPACE/bun && \
-    bash /scripts/common-debian.sh && \
-    bash /scripts/github.sh && \
-    bash /scripts/nice.sh && \
-    bash /scripts/zig-env.sh
-COPY .devcontainer/zls.json /home/ubuntu/.config/zls.json
-
-FROM ubuntu:20.04 as release_with_debug_info
-
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
@@ -380,7 +427,7 @@ WORKDIR /opt/bun
 
 ENTRYPOINT [ "/opt/bun/bin/bun" ]
 
-FROM ubuntu:20.04 as release 
+FROM alpine:latest as release 
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -398,49 +445,49 @@ ENV PATH "/opt/bun/bin:$PATH"
 ARG BUILDARCH=amd64
 LABEL org.opencontainers.image.title="bun ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
-COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
+COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun
 WORKDIR /opt/bun
 
 ENTRYPOINT [ "/opt/bun/bin/bun" ]
 
 
-FROM bunbunbunbun/bun-test-base as test_base
+# FROM bunbunbunbun/bun-test-base as test_base
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+# ARG DEBIAN_FRONTEND=noninteractive
+# ARG GITHUB_WORKSPACE=/build
+# ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# # Directory extracts to "bun-webkit"
+# ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+# ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+# ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+# ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
-ARG BUILDARCH=amd64
-RUN groupadd -r chromium && useradd   -d  ${BUN_DIR} -M -r -g chromium -G audio,video chromium \
-    && mkdir -p /home/chromium/Downloads && chown -R chromium:chromium /home/chromium
+# ARG BUILDARCH=amd64
+# RUN groupadd -r chromium && useradd   -d  ${BUN_DIR} -M -r -g chromium -G audio,video chromium \
+#     && mkdir -p /home/chromium/Downloads && chown -R chromium:chromium /home/chromium
 
-USER chromium
-WORKDIR $BUN_DIR
+# USER chromium
+# WORKDIR $BUN_DIR
 
-ENV NPM_CLIENT bun
-ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"
-ENV CI 1
-ENV BROWSER_EXECUTABLE /usr/bin/chromium
+# ENV NPM_CLIENT bun
+# ENV PATH "${BUN_DIR}/packages/bun-linux-x64:${BUN_DIR}/packages/bun-linux-aarch64:$PATH"
+# ENV CI 1
+# ENV BROWSER_EXECUTABLE /usr/bin/chromium
 
-COPY ./test ${BUN_DIR}/test
-COPY Makefile ${BUN_DIR}/Makefile
-COPY package.json ${BUN_DIR}/package.json
-COPY .docker/run-test.sh ${BUN_DIR}/run-test.sh
-COPY ./bun.lockb ${BUN_DIR}/bun.lockb   
+# COPY ./test ${BUN_DIR}/test
+# COPY Makefile ${BUN_DIR}/Makefile
+# COPY package.json ${BUN_DIR}/package.json
+# COPY .docker/run-test.sh ${BUN_DIR}/run-test.sh
+# COPY ./bun.lockb ${BUN_DIR}/bun.lockb   
 
-# # We don't want to worry about architecture differences in this image
-COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
-COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
+# # # We don't want to worry about architecture differences in this image
+# COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-aarch64/bun
+# COPY --from=release /opt/bun/bin/bun ${BUN_DIR}/packages/bun-linux-x64/bun
 
-USER root
-RUN chgrp -R chromium ${BUN_DIR} && chmod g+rwx ${BUN_DIR} && chown -R chromium:chromium ${BUN_DIR}
-USER chromium
+# USER root
+# RUN chgrp -R chromium ${BUN_DIR} && chmod g+rwx ${BUN_DIR} && chown -R chromium:chromium ${BUN_DIR}
+# USER chromium
 
-CMD [ "bash", "run-test.sh" ]
+# CMD [ "bash", "run-test.sh" ]
 
-FROM release
+# FROM release

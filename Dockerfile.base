@@ -1,147 +1,74 @@
-FROM ubuntu:18.04 as bun-base-with-args
+FROM bitnami/minideb:bullseye as bun-base
 
-FROM bun-base-with-args as bun-base
+RUN install_packages ca-certificates curl wget lsb-release software-properties-common gnupg gnupg1 gnupg2
+
+RUN wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+     ./llvm.sh 13
+
+RUN install_packages \
+    cmake \
+    curl \
+    file \
+    git \
+    gnupg \
+    libc-dev \
+    libxml2 \
+    libxml2-dev \
+    make \
+    ninja-build \
+    perl \
+    python3 \
+    rsync \
+    ruby \
+    unzip \
+    bash tar gzip
+
+ENV CXX=clang++-13
+ENV CC=clang-13
+
+RUN  curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
+    install_packages nodejs && \
+    npm install -g esbuild
+
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+
 # Directory extracts to "bun-webkit"
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-
-WORKDIR ${GITHUB_WORKSPACE}
-
-RUN apt-get update && \
-    apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common && \
-    add-apt-repository ppa:longsleep/golang-backports && \
-    wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
-    chmod +x llvm.sh && \
-    ./llvm.sh 13 && \
-    curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
-    apt-get update && \
-    apt-get install --no-install-recommends -y \
-    ca-certificates \
-    curl \
-    gnupg2 \
-    software-properties-common \
-    cmake \
-    build-essential \
-    git \
-    libssl-dev \
-    ruby \
-    liblld-13-dev \
-    libclang-13-dev \
-    nodejs \
-    gcc \
-    g++ \
-    clang-13 \
-    clang-format-13 \
-    libc++-13-dev \
-    libc++abi-13-dev \
-    lld-13 \
-    libicu-dev \
-    wget \
-    rustc \
-    cargo \
-    unzip \
-    tar \
-    golang-go ninja-build pkg-config automake autoconf libtool curl && \
-    update-alternatives --install /usr/bin/cc cc /usr/bin/clang-13 90 && \
-    update-alternatives --install /usr/bin/cpp cpp /usr/bin/clang++-13 90 && \
-    update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-13 90 && \
-    npm install -g esbuild
-
-ENV CC=clang-13 
-ENV CXX=clang++-13
-
-
 ARG BUILDARCH=amd64
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
 
+ENV WEBKIT_OUT_DIR=${WEBKIT_DIR}
+ENV BUILDARCH=${BUILDARCH}
+ENV AR=/usr/bin/llvm-ar-13
+ENV ZIG "${ZIG_PATH}/zig"
+ENV PATH="$ZIG/bin:$PATH"
+ENV LD=lld-13
 
-WORKDIR $GITHUB_WORKSPACE
-
-ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
-
-ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
-ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}/icu/source/lib
-ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
-ENV BUN_DEPS_OUT_DIR ${BUN_DEPS_OUT_DIR}
-
-RUN cd / && mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
-
-LABEL org.opencontainers.image.title="bun base image ${BUILDARCH} (glibc)"
-LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
-
+RUN mkdir -p $BUN_DIR $BUN_DEPS_OUT_DIR 
 
 FROM bun-base as bun-base-with-zig-and-webkit
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-ARG BUILDARCH=amd64
-
 WORKDIR $GITHUB_WORKSPACE
 
-RUN cd $GITHUB_WORKSPACE && \
-    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
-    unzip -q zig-linux-$BUILDARCH.zip && \
+RUN  curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
+    unzip  zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
+    
 
-RUN cd $GITHUB_WORKSPACE && \
-    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/Jarred-Sumner/WebKit/releases/download/jul4/bun-webkit-linux-$BUILDARCH.tar.gz && \
-    tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz && \
+RUN mkdir -p $WEBKIT_OUT_DIR && cd $WEBKIT_OUT_DIR && cd ../ && \
+    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/jul4-2/bun-webkit-linux-$BUILDARCH.tar.gz && \
+    tar -xvzf bun-webkit-linux-$BUILDARCH.tar.gz && \
+    ls && \
+    echo $(pwd) && \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && \
     cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 
-RUN  cd $GITHUB_WORKSPACE && \
-    curl -o icu4c-66_1-src.tgz -L https://github.com/unicode-org/icu/releases/download/release-66-1/icu4c-66_1-src.tgz  && \
-    tar -xzf icu4c-66_1-src.tgz && \
-    rm icu4c-66_1-src.tgz && \
-    cd icu/source && \
-    ./configure --enable-static --disable-shared && \
-    make -j$(nproc)
-
-ENV ZIG "${ZIG_PATH}/zig"
-
 LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
-
-
-FROM debian:bullseye-slim as bun-test-base
-# Original creator:
-# LABEL maintainer "Jessie Frazelle <jess@linux.com>"
-
-# Install Chromium
-# Yes, including the Google API Keys sucks but even debian does the same: https://packages.debian.org/stretch/amd64/chromium/filelist
-RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-l10n \
-    fonts-liberation \
-    fonts-roboto \
-    hicolor-icon-theme \
-    libcanberra-gtk-module \
-    libexif-dev \
-    libgl1-mesa-dri \
-    libgl1-mesa-glx \
-    libpangox-1.0-0 \
-    libv4l-0 \
-    fonts-symbola \
-    bash \
-    make \
-    psmisc \
-    curl \
-    --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /etc/chromium.d/ \
-    && /bin/echo -e 'export GOOGLE_API_KEY="AIzaSyCkfPOPZXDKNn8hhgu3JrA62wIgC93d44k"\nexport GOOGLE_DEFAULT_CLIENT_ID="811574891467.apps.googleusercontent.com"\nexport GOOGLE_DEFAULT_CLIENT_SECRET="kdloedMFGdGla2P1zacGjAQh"' > /etc/chromium.d/googleapikeys  && \
-    curl -L https://deb.nodesource.com/setup_16.x | bash - && \
-    apt-get update && \
-    apt-get install -y nodejs npm
 

@@ -8,8 +8,7 @@
     "hono": "^2.0.0"
   },
   "scripts": {
-    "start": "bun run src/index.ts",
-    "test": "bun wiptest src/*.test.ts"
+    "start": "bun run src/index.ts"
   },
   "module": "src/index.js"
 }

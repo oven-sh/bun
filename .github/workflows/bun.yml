@@ -43,10 +43,10 @@ jobs:
           rm -rf ${{runner.temp}}/bun 
           docker buildx build \
             -f Dockerfile \
-            --build-arg ARCH=$(uname -m) \
+            --build-arg ARCH=x86_64 \
             --build-arg CPU_TARGET=${{matrix.cpu}} \
             --progress=plain \
-            --platform=linux/$BUILDKIT_ARCH \
+            --platform=linux/amd64 \
             --target=artifact \
             --output type=local,dest=${{runner.temp}}/release .
       - uses: actions/upload-artifact@v3
@@ -104,10 +104,10 @@ jobs:
           rm -rf ${{runner.temp}}/bun 
           docker buildx build \
             -f Dockerfile \
-            --build-arg ARCH=$(uname -m) \
+            --build-arg ARCH=aarch64 \
             --build-arg CPU_TARGET=native \
             --progress=plain \
-            --platform=linux/$BUILDKIT_ARCH \
+            --platform=linux/arm64 \
             --target=artifact \
             --output type=local,dest=${{runner.temp}}/release .
       - uses: actions/upload-artifact@v3

@@ -1,4 +1,5 @@
 # bun
+
 <p align="center">
   <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
 </p>
@@ -540,7 +541,7 @@ You can see [Bun's Roadmap](https://github.com/oven-sh/bun/issues/159), but here
 | `@jsxPragma` comments                                                                 | JS Transpiler  |
 | Sharing `.bun` files                                                                  | bun            |
 | Dates & timestamps                                                                    | TOML parser    |
-| [Hash components for Fast Refresh](https://github.com/oven-sh/bun/issues/18)    | JSX Transpiler |
+| [Hash components for Fast Refresh](https://github.com/oven-sh/bun/issues/18)          | JSX Transpiler |
 
 <small>
 JS Transpiler == JavaScript Transpiler
@@ -929,24 +930,29 @@ To fix this issue:
 3. Try again, and if that still doesn’t fix it, open an issue
 
 ### Unzip is required
+
 Unzip is required to install bun on Linux. You can use one of the following commands to install `unzip`:
 
 #### Debian / Ubuntu / Mint
+
 ```sh
 sudo apt install unzip
 ```
 
 #### RedHat / CentOS / Fedora
+
 ```sh
 sudo dnf install unzip
 ```
 
 #### Arch / Manjaro
+
 ```sh
 sudo pacman -S unzip
 ```
 
 #### OpenSUSE
+
 ```sh
 sudo zypper install unzip
 ```
@@ -1570,6 +1576,26 @@ bun is distributed as a single binary file, so you can also do this manually:
 - Download the latest version of bun for your platform in [bun-releases-for-updater](https://github.com/Jarred-Sumner/bun-releases-for-updater/releases/latest) (`darwin` == macOS)
 - Unzip the folder
 - Move the `bun` binary to `~/.bun/bin` (or anywhere)
+
+### Canary builds
+
+[Canary](https://github.com/oven-sh/bun/releases/tag/canary) builds are generated on every commit. At the time of writing, only Linux x64 &amp; Linux arm64 are generated.
+
+To install a [canary](https://github.com/oven-sh/bun/releases/tag/canary) build of bun, run:
+
+```bash
+bun upgrade --canary
+```
+
+This flag is not persistent (though that might change in the future). If you want to always run the canary build of bun, set the `BUN_CANARY` environment variable to `1` in your shell's startup script.
+
+This will download the release zip from https://github.com/oven-sh/bun/releases/tag/canary.
+
+To revert to the latest stable version of bun, run:
+
+```bash
+bun upgrade
+```
 
 ### `bun completions`
 
@@ -3242,7 +3268,6 @@ You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expe
 #### Build bun (macOS)
 
 If you're building on a macOS device, you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one.
-
 
 In `bun`:
 

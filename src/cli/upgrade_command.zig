@@ -353,12 +353,14 @@ pub const UpgradeCommand = struct {
 
             break :brk DotEnv.Loader.init(map, ctx.allocator);
         };
-
         env_loader.loadProcess();
 
         var version: Version = undefined;
+        const use_canary = strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
+            // TODO: add separate args just for "bun upgrade"?
+            strings.containsAny(bun.span(std.os.argv), "--canary");
 
-        {
+        if (!use_canary) {
             var refresher = std.Progress{};
             var progress = refresher.start("Fetching version tags", 0);
 
@@ -384,12 +386,19 @@ pub const UpgradeCommand = struct {
                 );
                 Global.exit(1);
             }
+
+            Output.prettyErrorln("<r><b>bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
+            Output.flush();
+        } else {
+            version = Version{
+                .tag = "canary",
+                .zip_url = "https://github.com/oven-sh/bun/releases/download/canary/" ++ Version.zip_filename,
+                .size = 0,
+                .buf = MutableString.initEmpty(bun.default_allocator),
+            };
         }
 
         {
-            Output.prettyErrorln("<r><b>bun <cyan>v{s}<r> is out<r>! You're on <blue>{s}<r>\n", .{ version.name().?, Global.package_json_version });
-            Output.flush();
-
             var refresher = std.Progress{};
             var progress = refresher.start("Downloading", version.size);
             refresher.refresh();
@@ -413,7 +422,22 @@ pub const UpgradeCommand = struct {
             const response = try async_http.sendSync(true);
 
             switch (response.status_code) {
-                404 => return error.HTTP404,
+                404 => {
+                    if (use_canary) {
+                        Output.prettyErrorln(
+                            \\<r><red>error:<r> Canary builds are not available for this platform yet
+                            \\
+                            \\   Release: <cyan>https://github.com/oven-sh/bun/releases/tag/canary<r>
+                            \\  Filename: <b>{s}<r>
+                            \\
+                        , .{
+                            Version.zip_filename,
+                        });
+                        Global.exit(1);
+                    }
+
+                    return error.HTTP404;
+                },
                 403 => return error.HTTPForbidden,
                 429 => return error.HTTPTooManyRequests,
                 499...599 => return error.GitHubIsDown,
@@ -503,7 +527,6 @@ pub const UpgradeCommand = struct {
                     Global.exit(1);
                 }
             }
-
             {
                 var verify_argv = [_]string{
                     exe_subpath,
@@ -527,17 +550,21 @@ pub const UpgradeCommand = struct {
                     Global.exit(1);
                 }
 
-                if (!strings.eql(std.mem.trim(u8, result.stdout, " \n\r\t"), version_name)) {
-                    save_dir_.deleteTree(version_name) catch {};
+                // It should run successfully
+                // but we don't care about the version number if we're doing a canary build
+                if (!use_canary) {
+                    if (!strings.eql(std.mem.trim(u8, result.stdout, " \n\r\t"), version_name)) {
+                        save_dir_.deleteTree(version_name) catch {};
 
-                    Output.prettyErrorln(
-                        "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
-                        .{
-                            result.stdout[0..@minimum(result.stdout.len, 128)],
-                            version_name,
-                        },
-                    );
-                    Global.exit(1);
+                        Output.prettyErrorln(
+                            "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
+                            .{
+                                result.stdout[0..@minimum(result.stdout.len, 128)],
+                                version_name,
+                            },
+                        );
+                        Global.exit(1);
+                    }
                 }
             }
 
@@ -555,6 +582,47 @@ pub const UpgradeCommand = struct {
                 Output.prettyErrorln("<r><red>error:<r> Failed to open bun's install directory {s}", .{@errorName(err)});
                 Global.exit(1);
             };
+
+            if (use_canary) {
+
+                // Check if the versions are the same
+                const target_stat = target_dir.statFile(target_filename) catch |err| {
+                    save_dir_.deleteTree(version_name) catch {};
+                    Output.prettyErrorln("<r><red>error:<r> Failed to stat target bun {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+
+                const dest_stat = save_dir.statFile(exe_subpath) catch |err| {
+                    save_dir_.deleteTree(version_name) catch {};
+                    Output.prettyErrorln("<r><red>error:<r> Failed to stat source bun {s}", .{@errorName(err)});
+                    Global.exit(1);
+                };
+
+                if (target_stat.size == dest_stat.size and target_stat.size > 0) {
+                    var input_buf = try ctx.allocator.alloc(u8, target_stat.size);
+
+                    const target_hash = std.hash.Wyhash.hash(0, target_dir.readFile(target_filename, input_buf) catch |err| {
+                        save_dir_.deleteTree(version_name) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to read target bun {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    });
+
+                    const source_hash = std.hash.Wyhash.hash(0, save_dir.readFile(exe_subpath, input_buf) catch |err| {
+                        save_dir_.deleteTree(version_name) catch {};
+                        Output.prettyErrorln("<r><red>error:<r> Failed to read source bun {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    });
+
+                    if (target_hash == source_hash) {
+                        save_dir_.deleteTree(version_name) catch {};
+                        Output.prettyErrorln(
+                            "<r><green>Congrats!<r> You're already on the latest canary build of bun",
+                            .{},
+                        );
+                        Global.exit(0);
+                    }
+                }
+            }
 
             if (env_loader.map.get("BUN_DRY_RUN") == null) {
                 C.moveFileZ(save_dir.fd, exe_subpath, target_dir.fd, target_filename) catch |err| {

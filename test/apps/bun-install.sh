@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-dir=$(mktemp -d --suffix=bun-install-test-1)
+dir=$(mktemp -d)
 
 cd $dir
 ${NPM_CLIENT:-$(which bun)} add react react-dom @types/react @babel/parser esbuild

@@ -56,11 +56,28 @@ pub const Version = struct {
     size: u32 = 0,
 
     pub fn name(this: Version) ?string {
-        if (this.tag.len > "bun-v".len and strings.eqlComptime(this.tag[0.."bun-v".len], "bun-v")) {
-            return this.tag[("bun-v".len)..];
-        } else {
-            return null;
+        if (this.tag.len <= "bun-v".len or !strings.hasPrefixComptime(this.tag, "bun-v")) {
+            if (strings.eqlComptime(this.tag, "canary")) {
+                const Cli = @import("../cli.zig");
+
+                return std.fmt.allocPrint(
+                    bun.default_allocator,
+                    "bun-canary-timestamp-{any}",
+                    .{
+                        std.fmt.fmtSliceHexLower(
+                            std.mem.asBytes(
+                                &bun.hash(
+                                    std.mem.asBytes(&Cli.start_time),
+                                ),
+                            ),
+                        ),
+                    },
+                ) catch unreachable;
+            }
+            return this.tag;
         }
+
+        return this.tag["bun-v".len..];
     }
 
     pub const platform_label = if (Environment.isMac) "darwin" else "linux";
@@ -80,7 +97,10 @@ pub const Version = struct {
 pub const UpgradeCheckerThread = struct {
     var update_checker_thread: std.Thread = undefined;
     pub fn spawn(env_loader: *DotEnv.Loader) void {
-        if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or env_loader.map.get("CI") != null) return;
+        if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or
+            env_loader.map.get("CI") != null or
+            strings.eqlComptime(env_loader.get("BUN_CANARY") orelse "0", "1"))
+            return;
         update_checker_thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
         update_checker_thread.detach();
     }

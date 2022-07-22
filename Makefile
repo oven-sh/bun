@@ -873,7 +873,7 @@ release-bin: release-bin-without-push release-bin-push
 
 
 test/wiptest/run.o: test/wiptest/run.cpp
-	$(CXX) -Wall -g -c -std=c++17 -o test/wiptest/run.o test/wiptest/run.cpp
+	$(CXX) -Wall -g -c -std=c++2a -lc -o test/wiptest/run.o test/wiptest/run.cpp
 
 test/wiptest/run: test/wiptest/run.o
 	$(CXX) -Wall -g -o test/wiptest/run test/wiptest/run.o
@@ -917,7 +917,7 @@ test-dev-bun-snapshot:
 test-bun-wiptest: test/wiptest/run
 	cd test/wiptest && BUN_BIN=$(DEBUG_BUN) ./run ./fixtures
 
-test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev test-bun-wiptest
+test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev
 
 copy-test-node-modules:
 	rm -rf test/snippets/package-json-exports/node_modules || echo "";

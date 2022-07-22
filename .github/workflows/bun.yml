@@ -2,19 +2,14 @@ name: bun
 on:
   push:
     branches: [main, bun-actions]
-    paths-ignore:
-      - "examples/**"
-      - "bench/**"
-      - "README.*"
-      - "LICENSE"
-      - ".vscode"
-      - ".devcontainer"
+    paths:
+      - "src"
+      - "test"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "examples/**"
-      - "bench/**"
-      - README.*
+    paths:
+      - "src"
+      - "test"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -159,6 +154,13 @@ jobs:
           cd ${{runner.temp}}/release
           mv bun-linux-amd64-generic bun-linux-amd64-baseline
           mv bun-linux-amd64-generic-profile bun-linux-amd64-baseline-profile
+
+          chmod +x bun-linux-amd64/*
+          chmod +x bun-linux-amd64-baseline/*
+          chmod +x bun-linux-amd64-profile/*
+          chmod +x bun-linux-amd64-baseline-profile/*
+          chmod +x bun-linux-aarch64/*
+          chmod +x bun-linux-aarch64-profile/*
 
           zip -r bun-linux-amd64.zip bun-linux-amd64
           zip -r bun-linux-amd64-baseline.zip bun-linux-amd64-baseline

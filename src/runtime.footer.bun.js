@@ -22,5 +22,6 @@ export var __require = (globalThis.require ||= function (moduleId) {
 
   return BUN_RUNTIME.__require(moduleId);
 });
+__require.d ||= BUN_RUNTIME.__require.d;
 globalThis.__internalIsCommonJSNamespace ||=
   BUN_RUNTIME.__internalIsCommonJSNamespace;

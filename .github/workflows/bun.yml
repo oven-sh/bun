@@ -28,6 +28,8 @@ jobs:
         cpu: [native, sandybridge]
 
     steps:
+      - name: Cleanup submodules
+        run: git rm --cached -r bench/ffi/plus100/plus100-napi || echo ""
       - uses: actions/checkout@v3
       - name: Checkout submodules
         run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
@@ -97,6 +99,8 @@ jobs:
     runs-on: linux-arm64
     timeout-minutes: 90
     steps:
+      - name: Cleanup submodules
+        run: git rm --cached -r bench/ffi/plus100/plus100-napi || echo ""
       - uses: actions/checkout@v3
       - name: Checkout submodules
         run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)

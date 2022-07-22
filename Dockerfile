@@ -23,7 +23,7 @@ RUN install_packages \
     rsync \
     ruby \
     unzip \
-    bash tar gzip gunzip
+    bash tar gzip
 
 ENV CXX=clang++-13
 ENV CC=clang-13

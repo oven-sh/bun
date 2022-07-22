@@ -1246,7 +1246,7 @@ bun-link-lld-release-no-lto:
 ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym: bun-release-copy-obj
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
-	-$(STRIP) -s $(BUN_RELEASE_BIN) --wildcard -K _napi\*
+	-$(STRIP) -s $(BUN_RELEASE_BIN)  --strip-all-gnu --wildcard -K _napi\*
 
 copy-to-bun-release-dir-dsym:
 	gzip --keep -c $(PACKAGE_DIR)/bun.dSYM > $(BUN_RELEASE_DIR)/bun.dSYM.gz

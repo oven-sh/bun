@@ -1,5 +1,79 @@
 
-FROM bunbunbunbun/bun-base:latest as lolhtml
+FROM bitnami/minideb:bullseye as bun-base
+
+RUN install_packages ca-certificates curl wget lsb-release software-properties-common gnupg gnupg1 gnupg2
+
+RUN wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh 13
+
+RUN install_packages \
+    cmake \
+    curl \
+    file \
+    git \
+    gnupg \
+    libc-dev \
+    libxml2 \
+    libxml2-dev \
+    make \
+    ninja-build \
+    perl \
+    python3 \
+    rsync \
+    ruby \
+    unzip \
+    bash tar gzip
+
+ENV CXX=clang++-13
+ENV CC=clang-13
+
+RUN  curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
+    install_packages nodejs && \
+    npm install -g esbuild
+
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG BUILDARCH=amd64
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+
+ENV WEBKIT_OUT_DIR=${WEBKIT_DIR}
+ENV BUILDARCH=${BUILDARCH}
+ENV AR=/usr/bin/llvm-ar-13
+ENV ZIG "${ZIG_PATH}/zig"
+ENV PATH="$ZIG/bin:$PATH"
+ENV LD=lld-13
+
+RUN mkdir -p $BUN_DIR $BUN_DEPS_OUT_DIR 
+
+FROM bun-base as bun-base-with-zig-and-webkit
+
+WORKDIR $GITHUB_WORKSPACE
+
+RUN  curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
+    unzip  zig-linux-$BUILDARCH.zip && \
+    rm zig-linux-$BUILDARCH.zip;
+
+RUN mkdir -p $WEBKIT_OUT_DIR && cd $WEBKIT_OUT_DIR && cd ../ && \
+    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/jul4-2/bun-webkit-linux-$BUILDARCH.tar.gz && \
+    tar -xvzf bun-webkit-linux-$BUILDARCH.tar.gz && \
+    ls && \
+    echo $(pwd) && \
+    rm bun-webkit-linux-$BUILDARCH.tar.gz && \
+    cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
+
+LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
+LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
+
+
+FROM bun-base as lolhtml
 
 RUN install_packages build-essential && curl https://sh.rustup.rs -sSf | sh -s -- -y
 
@@ -18,7 +92,7 @@ COPY src/deps/lol-html ${BUN_DIR}/src/deps/lol-html
 RUN export PATH=$PATH:$HOME/.cargo/bin && export CC=$(which clang-13) && cd ${BUN_DIR} && \
     make lolhtml && rm -rf src/deps/lol-html Makefile
 
-FROM bunbunbunbun/bun-base:latest as mimalloc
+FROM bun-base as mimalloc
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -37,7 +111,7 @@ ENV CPU_TARGET=${CPU_TARGET}
 RUN cd ${BUN_DIR} && \
     make mimalloc && rm -rf src/deps/mimalloc Makefile
 
-FROM bunbunbunbun/bun-base:latest as zlib
+FROM bun-base as zlib
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -58,7 +132,7 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make zlib && rm -rf src/deps/zlib Makefile
 
-FROM bunbunbunbun/bun-base:latest as libarchive
+FROM bun-base as libarchive
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -79,7 +153,7 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && install_packages autoconf automake libtool pkg-config  && \ 
     make libarchive && rm -rf src/deps/libarchive Makefile
 
-FROM bunbunbunbun/bun-base:latest as tinycc
+FROM bun-base as tinycc
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -99,7 +173,7 @@ WORKDIR $BUN_DIR
 
 RUN install_packages libtcc-dev && cp /usr/lib/$(uname -m)-linux-gnu/libtcc.a ${BUN_DEPS_OUT_DIR}
 
-FROM bunbunbunbun/bun-base:latest as libbacktrace
+FROM bun-base as libbacktrace
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -120,7 +194,7 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make libbacktrace && rm -rf src/deps/libbacktrace Makefile
 
-FROM bunbunbunbun/bun-base:latest as boringssl
+FROM bun-base as boringssl
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -140,7 +214,7 @@ WORKDIR $BUN_DIR
 
 RUN install_packages golang && make boringssl && rm -rf src/deps/boringssl Makefile
 
-FROM bunbunbunbun/bun-base:latest as base64
+FROM bun-base as base64
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -160,7 +234,7 @@ WORKDIR $BUN_DIR
 
 RUN make base64 && rm -rf src/base64 Makefile
 
-FROM bunbunbunbun/bun-base:latest as uws
+FROM bun-base as uws
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -185,7 +259,7 @@ WORKDIR $BUN_DIR
 RUN cd $BUN_DIR && \
     make uws && rm -rf src/deps/uws Makefile
 
-FROM bunbunbunbun/bun-base:latest as picohttp
+FROM bun-base as picohttp
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -209,7 +283,7 @@ RUN cd $BUN_DIR && \
     make picohttp
 
 
-FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as identifier_cache
+FROM bun-base-with-zig-and-webkit as identifier_cache
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -231,7 +305,7 @@ COPY src/js_lexer/identifier_cache.zig ${BUN_DIR}/src/js_lexer/identifier_cache.
 RUN cd $BUN_DIR && \
     make identifier-cache && rm -rf zig-cache Makefile
 
-FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as node_fallbacks
+FROM bun-base-with-zig-and-webkit as node_fallbacks
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -252,7 +326,7 @@ COPY src/node-fallbacks ${BUN_DIR}/src/node-fallbacks
 RUN cd $BUN_DIR && \
     make node-fallbacks && rm -rf src/node-fallbacks/node_modules Makefile
 
-FROM bunbunbunbun/bun-base-with-zig-and-webkit:latest as prepare_release
+FROM bun-base-with-zig-and-webkit as prepare_release
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
@@ -456,7 +530,7 @@ CMD make jsc-bindings-headers \
 
 
 
-# FROM bunbunbunbun/bun-test-base as test_base
+# FROM bun-test-base as test_base
 
 # ARG DEBIAN_FRONTEND=noninteractive
 # ARG GITHUB_WORKSPACE=/build

@@ -313,7 +313,8 @@ pub fn build(b: *std.build.Builder) !void {
         opts.addOption(
             bool,
             "baseline",
-            obj.target.cpu_model == .baseline,
+            arch.isX86() and (obj.target.cpu_model == .baseline or
+                !std.Target.x86.featureSetHas(obj.target.getCpuFeatures(), .avx2)),
         );
         obj.addOptions("build_options", opts);
 

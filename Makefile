@@ -1215,6 +1215,7 @@ bun-link-lld-release-no-jsc:
 		-o $(BUN_RELEASE_BIN) -Wl,-undefined,dynamic_lookup -Wl,-why_load
 
 bun-relink-copy:
+	mkdir -p $(PACKAGE_DIR)
 	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BUN_RELEASE_BIN).o
 
 

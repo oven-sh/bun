@@ -146,13 +146,13 @@ ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 ARG CPU_TARGET=native
 ENV CPU_TARGET=${CPU_TARGET}
 
+RUN install_packages autoconf automake libtool pkg-config 
+
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
 WORKDIR $BUN_DIR
-
-RUN cd $BUN_DIR && install_packages autoconf automake libtool pkg-config  && \ 
-    make libarchive && rm -rf src/deps/libarchive Makefile
+RUN make libarchive && rm -rf src/deps/libarchive Makefile
 
 FROM bun-base as tinycc
 
@@ -166,11 +166,6 @@ ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 ARG CPU_TARGET=native
 ENV CPU_TARGET=${CPU_TARGET}
-
-COPY Makefile ${BUN_DIR}/Makefile
-COPY src/deps/tinycc ${BUN_DIR}/src/deps/tinycc
-
-WORKDIR $BUN_DIR
 
 RUN install_packages libtcc-dev && cp /usr/lib/$(uname -m)-linux-gnu/libtcc.a ${BUN_DEPS_OUT_DIR}
 
@@ -197,6 +192,8 @@ RUN cd $BUN_DIR && \
 
 FROM bun-base as boringssl
 
+RUN install_packages golang
+
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
@@ -213,7 +210,7 @@ COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 
 WORKDIR $BUN_DIR
 
-RUN install_packages golang && make boringssl && rm -rf src/deps/boringssl Makefile
+RUN make boringssl && rm -rf src/deps/boringssl Makefile
 
 FROM bun-base as base64
 
@@ -382,12 +379,23 @@ COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node
 
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
     mkdir -p $BUN_RELEASE_DIR && \
-    $ZIG_PATH/zig build obj -Drelease-fast -Dtarget=${TRIPLET} -Dcpu=$(echo "${CPU_TARGET}" | tr '-' '_') && \
-    make bun-release-copy-obj
+    $ZIG_PATH/zig build obj -Drelease-fast -Dtarget=${TRIPLET} -Dcpu=$(echo "${CPU_TARGET}" | tr '-' '_')
 
 FROM scratch as build_release_obj
 
-COPY --from=compile_release_obj /tmp/*.o /
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+# Directory extracts to "bun-webkit"
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
+
+
+COPY --from=compile_release_obj ${BUN_RELEASE_DIR}/*.o /
 
 FROM prepare_release as compile_cpp
 

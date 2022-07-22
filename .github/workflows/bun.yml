@@ -46,6 +46,7 @@ jobs:
           docker buildx build \
             -f Dockerfile \
             --build-arg ARCH=x86_64 \
+            --build-arg BUILDARCH=amd64 \
             --build-arg CPU_TARGET=${{matrix.cpu}} \
             --progress=plain \
             --platform=linux/amd64 \
@@ -110,6 +111,7 @@ jobs:
             -f Dockerfile \
             --build-arg ARCH=aarch64 \
             --build-arg CPU_TARGET=native \
+            --build-arg BUILDARCH=arm64 \
             --progress=plain \
             --platform=linux/arm64 \
             --target=artifact \

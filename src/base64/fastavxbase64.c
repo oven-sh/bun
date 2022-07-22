@@ -1,4 +1,4 @@
-#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#if defined(__GNUC__) && defined(__x86_64__) && defined(__AVX2__)
 #include "fastavxbase64.h"
 
 #include <stdbool.h>

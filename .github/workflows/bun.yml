@@ -50,50 +50,42 @@ jobs:
             --target=artifact \
             --output type=local,dest=${{runner.temp}}/release .
       - uses: actions/upload-artifact@v3
-        if:
-          - matrix.cpu == native
+        if: ${{ matrix.cpu == 'native' }}
         with:
           name: bun-linux-amd64
           path: ${{runner.temp}}/release/bun
       - uses: actions/upload-artifact@v3
-        if:
-          - matrix.cpu == baseline
+        if: ${{ matrix.cpu == 'baseline' }}
         with:
           name: bun-linux-amd64-baseline
           path: ${{runner.temp}}/release/bun
       - uses: actions/upload-artifact@v3
-        if:
-          - matrix.cpu == native
+        if: ${{ matrix.cpu == 'native' }}
         with:
           name: bun-dependencies-linux-amd64
           path: ${{runner.temp}}/release/bun-dependencies
       - uses: actions/upload-artifact@v3
-        if:
-          - matrix.cpu == baseline
+        if: ${{ matrix.cpu == 'baseline' }}
         with:
           name: bun-dependencies-linux-amd64-baseline
           path: ${{runner.temp}}/release/bun-dependencies
       - uses: actions/upload-artifact@v3
-        if:
-          - matrix.cpu == native
+        if: ${{ matrix.cpu == 'native' }}
         with:
           name: bun-linux-amd64-profile
           path: ${{runner.temp}}/release/bun-profile
       - uses: actions/upload-artifact@v3
-        if:
-          - matrix.cpu == baseline
+        if: ${{ matrix.cpu == 'baseline' }}
         with:
           name: bun-linux-amd64-baseline-profile
           path: ${{runner.temp}}/release/bun-profile
       - uses: actions/upload-artifact@v3
-        if:
-          - matrix.cpu == native
+        if: ${{ matrix.cpu == 'native' }}
         with:
           name: bun-obj-linux-amd64
           path: ${{runner.temp}}/release/bun-obj
       - uses: actions/upload-artifact@v3
-        if:
-          - matrix.cpu == baseline
+        if: ${{ matrix.cpu == 'baseline' }}
         with:
           name: bun-obj-linux-amd64-baseline
           path: ${{runner.temp}}/release/bun-obj

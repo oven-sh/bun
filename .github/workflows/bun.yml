@@ -30,7 +30,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
-        cpu: [native, core-avx-i]
+        cpu: [native, sandybridge]
 
     steps:
       - uses: actions/checkout@v3
@@ -50,7 +50,10 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: ARCH=x86_64,BUILDARCH=amd64,CPU_TARGET=${{matrix.cpu}}
+          build-args: |
+            ARCH=x86_64
+            BUILDARCH=amd64
+            CPU_TARGET=${{matrix.cpu}}
           platforms: linux/amd64
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release
@@ -116,7 +119,10 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: ARCH=aarch64,BUILDARCH=arm64,CPU_TARGET=native
+          build-args: |
+            ARCH=aarch64
+            BUILDARCH=arm64
+            CPU_TARGET=native
           platforms: linux/arm64
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release

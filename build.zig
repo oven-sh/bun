@@ -239,7 +239,6 @@ pub fn build(b: *std.build.Builder) !void {
     } else if (target.isLinux()) {
         target.setGnuLibCVersion(2, 27, 0);
     }
-
     std.mem.copy(
         u8,
         &triplet_buf,
@@ -310,6 +309,12 @@ pub fn build(b: *std.build.Builder) !void {
             bool,
             "bindgen",
             false,
+        );
+        opts.addOption(
+            bool,
+            "baseline",
+            arch.isX86() and (obj.target.cpu_model == .baseline or
+                !std.Target.x86.featureSetHas(obj.target.getCpuFeatures(), .avx2)),
         );
         obj.addOptions("build_options", opts);
 

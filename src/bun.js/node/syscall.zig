@@ -16,27 +16,29 @@ const C = @import("../../global.zig").C;
 const linux = os.linux;
 const Maybe = JSC.Maybe;
 
+// On Linux AARCh64, zig is missing stat & lstat syscalls
+const use_libc = (Environment.isLinux and Environment.isAarch64) or Environment.isMac;
 pub const system = if (Environment.isLinux) linux else @import("io").darwin;
 pub const S = struct {
     pub usingnamespace if (Environment.isLinux) linux.S else std.os.S;
 };
 const sys = std.os.system;
 
-const statSym = if (Environment.isMac)
+const statSym = if (use_libc)
     C.stat
 else if (Environment.isLinux)
     linux.stat
 else
     @compileError("STAT");
 
-const fstatSym = if (Environment.isMac)
+const fstatSym = if (use_libc)
     C.fstat
 else if (Environment.isLinux)
     linux.fstat
 else
     @compileError("STAT");
 
-const lstat64 = if (Environment.isMac)
+const lstat64 = if (use_libc)
     C.lstat
 else if (Environment.isLinux)
     linux.lstat

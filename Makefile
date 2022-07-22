@@ -277,10 +277,11 @@ ICU_FLAGS ?=
 
 # TODO: find a way to make this more resilient
 # Ideally, we could just look up the linker search paths
-LIB_ICU_PATH ?= $(BUN_DEPS_DIR)
-
 ifeq ($(OS_NAME),linux)
+LIB_ICU_PATH ?= $(JSC_LIB)
 	ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
+else
+LIB_ICU_PATH ?= $(BUN_DEPS_DIR)
 endif
 
 ifeq ($(OS_NAME),darwin)
@@ -602,7 +603,8 @@ usockets:
 	rm -rf $(BUN_DEPS_DIR)/uws/uSockets/*.o $(BUN_DEPS_DIR)/uws/uSockets/**/*.o $(BUN_DEPS_DIR)/uws/uSockets/*.a $(BUN_DEPS_DIR)/uws/uSockets/*.bc
 	cd $(USOCKETS_DIR) && $(CC) -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE)  $(MACOS_MIN_FLAG) -fPIC $(CFLAGS) $(UWS_CC_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c $(wildcard $(USOCKETS_SRC_DIR)/*.c) $(wildcard $(USOCKETS_SRC_DIR)/**/*.c)
 	cd $(USOCKETS_DIR) && $(CXX) -fno-builtin-malloc -fno-builtin-free -fno-builtin-realloc $(EMIT_LLVM_FOR_RELEASE) $(MACOS_MIN_FLAG)  -fPIC $(CXXFLAGS) $(UWS_CXX_FLAGS) -save-temps -I$(BUN_DEPS_DIR)/uws/uSockets/src $(UWS_LDFLAGS) -g $(DEFAULT_LINKER_FLAGS) $(PLATFORM_LINKER_FLAGS) $(OPTIMIZATION_LEVEL) -g -c $(wildcard $(USOCKETS_SRC_DIR)/*.cpp) $(wildcard $(USOCKETS_SRC_DIR)/**/*.cpp)
-	cd $(USOCKETS_DIR) && $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a *.bc
+	cd $(USOCKETS_DIR) && $(AR) rcvs $(BUN_DEPS_OUT_DIR)/libusockets.a $(USOCKETS_DIR)/*.{o,bc}
+
 uws: usockets
 	$(CXX) $(BITCODE_OR_SECTIONS) $(EMIT_LLVM_FOR_RELEASE) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
@@ -623,7 +625,10 @@ jsc-check:
 
 all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
-prerelease: api analytics all-js
+ensure-package-dir:
+	mkdir -p $(PACKAGE_DIR)
+
+prerelease: api analytics all-js ensure-package-dir
 release-only: jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 release-safe-only: all-js jsc-bindings-mac build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 release: prerelease release-only
@@ -1210,6 +1215,7 @@ bun-link-lld-release-no-jsc:
 		-o $(BUN_RELEASE_BIN) -Wl,-undefined,dynamic_lookup -Wl,-why_load
 
 bun-relink-copy:
+	mkdir -p $(PACKAGE_DIR)
 	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BUN_RELEASE_BIN).o
 
 
@@ -1240,7 +1246,7 @@ bun-link-lld-release-no-lto:
 ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym: bun-release-copy-obj
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
-	-$(STRIP) $(BUN_RELEASE_BIN) --wildcard -K _napi\*
+	-$(STRIP) -s $(BUN_RELEASE_BIN) --wildcard -K _napi\*
 
 copy-to-bun-release-dir-dsym:
 	gzip --keep -c $(PACKAGE_DIR)/bun.dSYM > $(BUN_RELEASE_DIR)/bun.dSYM.gz
@@ -1249,6 +1255,7 @@ endif
 ifeq ($(OS_NAME),linux)
 bun-link-lld-release-dsym: bun-release-copy-obj
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+	-$(STRIP) -s $(BUN_RELEASE_BIN) --wildcard -K _napi\*
 copy-to-bun-release-dir-dsym:
 
 endif

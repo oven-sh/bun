@@ -66,7 +66,8 @@ pub const Version = struct {
     pub const platform_label = if (Environment.isMac) "darwin" else "linux";
     pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
     pub const triplet = platform_label ++ "-" ++ arch_label;
-    pub const folder_name = "bun-" ++ triplet;
+    const suffix = if (Environment.baseline) "-baseline" else "";
+    pub const folder_name = "bun-" ++ triplet ++ suffix;
     pub const zip_filename = folder_name ++ ".zip";
 
     const current_version: string = "bun-v" ++ Global.package_json_version;

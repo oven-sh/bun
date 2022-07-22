@@ -15,6 +15,8 @@ on:
       - "examples/**"
       - "bench/**"
       - README.*
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -22,147 +24,155 @@ env:
   TEST_TAG: bun-test'
 
 jobs:
-  e2e:
-    runs-on: self-hosted
-    name: "Integration tests"
-    if: github.repository_owner == 'oven-sh'
+  linux-x64:
+    name: Linux x64 (${{ matrix.cpu }})
+    runs-on: linux-amd64
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        cpu: [native, sandybridge]
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Checkout submodules
-        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-      - name: Login to Dockerhub
-        uses: docker/login-action@v1
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
-      - name: Pull Base Image
-        run: bash .docker/pull.sh
-      - name: Build tests
-        uses: docker/build-push-action@v2
-        with:
-          context: .
-          target: test_base
-          tags: bun-test:latest
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          builder: ${{ steps.buildx.outputs.name }}
-      - name: Run test-with-hmr
-        env:
-          BUN_TEST_NAME: test-with-hmr
-          GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-          RUNNER_TEMP: ${RUNNER_TEMP}
-        run: bash .docker/runner.sh
-      - name: Run test-no-hmr
-        env:
-          BUN_TEST_NAME: test-no-hmr
-          GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-          RUNNER_TEMP: ${RUNNER_TEMP}
-        run: bash .docker/runner.sh
-      - name: Run test-bun-create-next
-        env:
-          RUNNER_TEMP: ${RUNNER_TEMP}
-          BUN_TEST_NAME: test-create-next
-          GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: bash .docker/runner.sh
-      - name: Run test-bun-create-react
-        env:
-          RUNNER_TEMP: ${RUNNER_TEMP}
-          BUN_TEST_NAME: test-create-react
-          GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: bash .docker/runner.sh
-      - name: Run test-bun-run
-        env:
-          RUNNER_TEMP: ${RUNNER_TEMP}
-          BUN_TEST_NAME: test-bun-run
-          GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: bash .docker/runner.sh
-      - name: Run test-bun-install
-        env:
-          RUNNER_TEMP: ${RUNNER_TEMP}
-          BUN_TEST_NAME: test-bun-install
-          GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-        run: bash .docker/runner.sh
-  # This is commented out because zig test does not work on the CI
-  # Which sucks
-  # zig-unit-tests:
-  #   runs-on: self-hosted
-  #   name: "Unit tests (Zig)"
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v2
-  #     - name: Checkout submodules
-  #       run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
-  #     - name: Set up Docker Buildx
-  #       uses: docker/setup-buildx-action@v1
-  #     - name: Login to Dockerhub
-  #       uses: docker/login-action@v1
-  #       with:
-  #         username: ${{ secrets.DOCKERHUB_USERNAME }}
-  #         password: ${{ secrets.DOCKERHUB_PASSWORD }}
-  #     - name: Pull Base Image
-  #       run: bash .docker/pull.sh
-  #     - name: Build tests
-  #       uses: docker/build-push-action@v2
-  #       with:
-  #         context: .
-  #         target: build_unit
-  #         tags: bun-unit-tests:latest
-  #         load: true
-  #         cache-from: type=gha
-  #         cache-to: type=gha,mode=max
-  #         builder: ${{ steps.buildx.outputs.name }}
-  #     - name: Run tests
-  #       env:
-  #         GITHUB_WORKSPACE: $GITHUB_WORKSPACE
-  #         RUNNER_TEMP: ${RUNNER_TEMP}
-  #       run: bash .docker/unit-tests.sh
-  release:
-    runs-on: self-hosted
-    needs: ["e2e"]
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Checkout submodules
-        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j 8
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v1
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Login to DockerHub
-        uses: docker/login-action@v1
-        with:
-          username: jarredsumner
-          password: ${{ secrets.DOCKERHUB_ALT }}
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
+      - uses: docker/setup-buildx-action@v2
+        id: buildx
         with:
           install: true
-      - name: Pull Base Image
-        run: bash .docker/pull.sh
-      - name: Build release image
-        uses: docker/build-push-action@v2
+      - name: Run
+        run: |
+          rm -rf ${{runner.temp}}/release
+      - name: Build and push
+        uses: docker/build-push-action@v3
         with:
           context: .
-          target: release
-          tags: |
-            ghcr.io/jarred-sumner/bun:${{github.sha}}
-            ghcr.io/jarred-sumner/bun:edge
-            jarredsumner/bun:${{github.sha}}
-            jarredsumner/bun:edge
-          platforms: |
-            linux/amd64
-          labels: |
-            org.opencontainers.image.title=bun
-            org.opencontainers.image.description=bun is a fast bundler, transpiler, JavaScript Runtime environment and package manager for web software. The image is an Ubuntu 20.04 image with bun preinstalled into /opt/bun.
-            org.opencontainers.image.vendor=bun
-            org.opencontainers.image.source=https://github.com/oven-sh/bun
-            org.opencontainers.image.url=https://bun.sh
-          builder: ${{ steps.buildx.outputs.name }}
-          push: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            ARCH=x86_64
+            BUILDARCH=amd64
+            CPU_TARGET=${{matrix.cpu}}
+          platforms: linux/amd64
+          target: artifact
+          outputs: type=local,dest=${{runner.temp}}/release
+      - uses: actions/upload-artifact@v3
+        if: ${{ matrix.cpu == 'native' }}
+        with:
+          name: bun-linux-amd64
+          path: ${{runner.temp}}/release/bun
+      - uses: actions/upload-artifact@v3
+        if: ${{ matrix.cpu == 'sandybridge' }}
+        with:
+          name: bun-linux-amd64-generic
+          path: ${{runner.temp}}/release/bun
+      - uses: actions/upload-artifact@v3
+        if: ${{ matrix.cpu == 'native' }}
+        with:
+          name: bun-dependencies-linux-amd64
+          path: ${{runner.temp}}/release/bun-dependencies
+      - uses: actions/upload-artifact@v3
+        if: ${{ matrix.cpu == 'sandybridge' }}
+        with:
+          name: bun-dependencies-linux-amd64-generic
+          path: ${{runner.temp}}/release/bun-dependencies
+      - uses: actions/upload-artifact@v3
+        if: ${{ matrix.cpu == 'native' }}
+        with:
+          name: bun-linux-amd64-profile
+          path: ${{runner.temp}}/release/bun-profile
+      - uses: actions/upload-artifact@v3
+        if: ${{ matrix.cpu == 'sandybridge' }}
+        with:
+          name: bun-linux-amd64-generic-profile
+          path: ${{runner.temp}}/release/bun-profile
+      - uses: actions/upload-artifact@v3
+        if: ${{ matrix.cpu == 'native' }}
+        with:
+          name: bun-obj-linux-amd64
+          path: ${{runner.temp}}/release/bun-obj
+      - uses: actions/upload-artifact@v3
+        if: ${{ matrix.cpu == 'sandybridge' }}
+        with:
+          name: bun-obj-linux-amd64-generic
+          path: ${{runner.temp}}/release/bun-obj
+  linux-aarch64:
+    name: Linux aarch64
+    runs-on: linux-arm64
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v3
+      - name: Checkout submodules
+        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
+      - uses: docker/setup-buildx-action@v2
+        id: buildx
+        with:
+          install: true
+      - name: Run
+        run: |
+          rm -rf ${{runner.temp}}/release
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            ARCH=aarch64
+            BUILDARCH=arm64
+            CPU_TARGET=native
+          platforms: linux/arm64
+          target: artifact
+          outputs: type=local,dest=${{runner.temp}}/release
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-linux-aarch64
+          path: ${{runner.temp}}/release/bun
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-dependencies-linux-aarch64
+          path: ${{runner.temp}}/release/bun-dependencies
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-linux-aarch64-profile
+          path: ${{runner.temp}}/release/bun-profile
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-obj-linux-aarch64
+          path: ${{runner.temp}}/release/bun-obj
+
+  release:
+    name: release
+    runs-on: ubuntu-18.04
+    timeout-minutes: 90
+    needs:
+      - linux-x64
+      - linux-aarch64
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          path: ${{runner.temp}}/release
+      - name: Rename files
+        run: |
+          cd ${{runner.temp}}/release
+          mv bun-linux-amd64-generic bun-linux-amd64-baseline
+          mv bun-linux-amd64-generic-profile bun-linux-amd64-baseline-profile
+
+          zip -r bun-linux-amd64.zip bun-linux-amd64
+          zip -r bun-linux-amd64-baseline.zip bun-linux-amd64-baseline
+          zip -r bun-linux-amd64-profile.zip bun-linux-amd64-profile
+          zip -r bun-linux-amd64-baseline-profile.zip bun-linux-amd64-baseline-profile
+          zip -r bun-linux-aarch64.zip bun-linux-aarch64
+          zip -r bun-linux-aarch64-profile.zip bun-linux-aarch64-profile
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: true
+          generate_release_notes: true
+          tag_name: "canary"
+          name: Canary
+          files: |
+            ${{runner.temp}}/release/*.zip

@@ -4,7 +4,7 @@ RUN install_packages ca-certificates curl wget lsb-release software-properties-c
 
 RUN wget https://apt.llvm.org/llvm.sh && \
     chmod +x llvm.sh && \
-     ./llvm.sh 13
+    ./llvm.sh 13
 
 RUN install_packages \
     cmake \
@@ -59,7 +59,6 @@ WORKDIR $GITHUB_WORKSPACE
 RUN  curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
     unzip  zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
-    
 
 RUN mkdir -p $WEBKIT_OUT_DIR && cd $WEBKIT_OUT_DIR && cd ../ && \
     curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/jul4-2/bun-webkit-linux-$BUILDARCH.tar.gz && \

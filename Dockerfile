@@ -67,7 +67,7 @@ RUN mkdir -p $WEBKIT_OUT_DIR && cd $WEBKIT_OUT_DIR && cd ../ && \
     tar -xf bun-webkit-linux-$BUILDARCH.tar && \
     ls && \
     echo $(pwd) && \
-    rm bun-webkit-linux-$BUILDARCH.tar.gz && \
+    rm bun-webkit-linux-$BUILDARCH.tar && \
     cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 
 LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"

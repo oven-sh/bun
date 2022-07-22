@@ -42,16 +42,21 @@ jobs:
           install: true
       - name: Run
         run: |
-          rm -rf ${{runner.temp}}/bun 
-          docker buildx build \
-            -f Dockerfile \
-            --build-arg ARCH=x86_64 \
-            --build-arg BUILDARCH=amd64 \
-            --build-arg CPU_TARGET=${{matrix.cpu}} \
-            --progress=plain \
-            --platform=linux/amd64 \
-            --target=artifact \
-            --output type=local,dest=${{runner.temp}}/release .
+          rm -rf ${{runner.temp}}/bun
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args:
+            ARCH: x86_64
+            BUILDARCH: amd64
+            CPU_TARGET: ${{matrix.cpu}}
+          platforms: linux/amd64
+          target: artifact
+          outputs: type=local,dest=${{runner.temp}}/release
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'native' }}
         with:
@@ -106,16 +111,21 @@ jobs:
           install: true
       - name: Run
         run: |
-          rm -rf ${{runner.temp}}/bun 
-          docker buildx build \
-            -f Dockerfile \
-            --build-arg ARCH=aarch64 \
-            --build-arg CPU_TARGET=native \
-            --build-arg BUILDARCH=arm64 \
-            --progress=plain \
-            --platform=linux/arm64 \
-            --target=artifact \
-            --output type=local,dest=${{runner.temp}}/release .
+          rm -rf ${{runner.temp}}/bun
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args:
+            ARCH: aarch64
+            BUILDARCH: arm64
+            CPU_TARGET: native
+          platforms: linux/arm64
+          target: artifact
+          outputs: type=local,dest=${{runner.temp}}/release
       - uses: actions/upload-artifact@v3
         with:
           name: bun-linux-aarch64

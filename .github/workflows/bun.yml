@@ -91,7 +91,7 @@ jobs:
           path: ${{runner.temp}}/release/bun-obj
   linux-aarch64:
     name: Linux aarch64
-    runs-on: linux-aarch64
+    runs-on: linux-arm64
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v3

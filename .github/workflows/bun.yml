@@ -34,6 +34,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: true
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:
@@ -95,6 +97,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v3
+        with:
+          submodules: true
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:

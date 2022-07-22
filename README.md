@@ -1591,7 +1591,7 @@ This flag is not persistent (though that might change in the future). If you wan
 
 This will download the release zip from https://github.com/oven-sh/bun/releases/tag/canary.
 
-To revert to the latest stable version of bun, run:
+To revert to the latest published version of bun, run:
 
 ```bash
 bun upgrade

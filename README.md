@@ -28,6 +28,13 @@ or
 ```sh
 wget https://bun.sh/install
 ```
+```sh
+chmod a+x ./install
+```
+```sh
+./install 
+```
+
 
 Docker: (Linux x64)
 

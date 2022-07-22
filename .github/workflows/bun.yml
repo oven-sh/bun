@@ -38,13 +38,20 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/release
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         uses: docker/build-push-action@v3
         with:
           context: .
-          push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          push: true
+          tags: oven-sh/bun:canary,oven-sh/bun:${{github.sha}}
+          cache-from: type=registry,ref=oven-sh/bun:buildcache-${{matrix.cpu}}-amd64
+          cache-to: type=registry,ref=oven-sh/bun:buildcache-${{matrix.cpu}}-amd64,mode=max
           build-args: |
             ARCH=x86_64
             BUILDARCH=amd64
@@ -107,13 +114,20 @@ jobs:
       - name: Run
         run: |
           rm -rf ${{runner.temp}}/release
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
         uses: docker/build-push-action@v3
         with:
           context: .
-          push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          push: true
+          tags: oven-sh/bun:canary,oven-sh/bun:${{github.sha}}
+          cache-from: type=registry,ref=oven-sh/bun:buildcache-aarch64
+          cache-to: type=registry,ref=oven-sh/bun:buildcache-aarch64,mode=max
           build-args: |
             ARCH=aarch64
             BUILDARCH=arm64
@@ -142,7 +156,7 @@ jobs:
     name: release
     runs-on: ubuntu-18.04
     timeout-minutes: 90
-    if: github.ref == 'main'
+    if: contains('main', github.ref)
     needs:
       - linux-x64
       - linux-aarch64

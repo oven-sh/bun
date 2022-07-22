@@ -34,8 +34,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: "recursive"
+      - name: Checkout submodules
+        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(ncpus)
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:
@@ -98,8 +98,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v3
-        with:
-          submodules: "recursive"
+      - name: Checkout submodules
+        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(ncpus)
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:

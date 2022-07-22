@@ -676,14 +676,15 @@ pub const UpgradeCommand = struct {
                 Output.prettyErrorln(
                     \\<r> Upgraded.
                     \\
-                    \\
                     \\<b><green>Welcome to bun's latest canary build!<r>
                     \\
                     \\Report any bugs:
+                    \\
                     \\    https://github.com/oven-sh/bun/issues
                     \\
                     \\What's new:
-                    \\    https://github.com/oven-sh/bun/releases/tag/{s}<r>
+                    \\
+                    \\    <cyan>https://github.com/oven-sh/bun/releases/tag/{s}<r>
                     \\
                 ,
                     .{version.tag},
@@ -692,14 +693,15 @@ pub const UpgradeCommand = struct {
                 Output.prettyErrorln(
                     \\<r> Upgraded.
                     \\
-                    \\
                     \\<b><green>Welcome to bun v{s}!<r>
                     \\
                     \\Report any bugs:
+                    \\
                     \\    https://github.com/oven-sh/bun/issues
                     \\
                     \\What's new:
-                    \\    https://github.com/oven-sh/bun/releases/tag/{s}<r>
+                    \\
+                    \\    <cyan>https://github.com/oven-sh/bun/releases/tag/{s}<r>
                     \\
                 ,
                     .{ version_name, version.tag },

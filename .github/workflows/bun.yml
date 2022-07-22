@@ -49,9 +49,9 @@ jobs:
         with:
           context: .
           push: false
-          tags: oven-sh/bun:canary,oven-sh/bun:${{github.sha}}
-          cache-from: type=registry,ref=oven-sh/bun:buildcache-${{matrix.cpu}}-amd64
-          cache-to: type=registry,ref=oven-sh/bun:buildcache-${{matrix.cpu}}-amd64,mode=max
+          tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{github.sha}}
+          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-amd64
+          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-amd64,mode=max
           build-args: |
             ARCH=x86_64
             BUILDARCH=amd64
@@ -124,10 +124,10 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           context: .
-          tags: oven-sh/bun:canary,oven-sh/bun:${{github.sha}}
+          tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{github.sha}}
           push: false
-          cache-from: type=registry,ref=oven-sh/bun:buildcache-aarch64
-          cache-to: type=registry,ref=oven-sh/bun:buildcache-aarch64,mode=max
+          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-aarch64
+          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-aarch64,mode=max
           build-args: |
             ARCH=aarch64
             BUILDARCH=arm64
@@ -156,7 +156,7 @@ jobs:
     name: release
     runs-on: ubuntu-18.04
     timeout-minutes: 90
-    if: contains('main', github.ref)
+    if: github.event_name == 'push'
     needs:
       - linux-x64
       - linux-aarch64

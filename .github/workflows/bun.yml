@@ -15,6 +15,8 @@ on:
       - "examples/**"
       - "bench/**"
       - README.*
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io

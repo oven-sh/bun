@@ -63,7 +63,7 @@ jobs:
           name: bun-linux-amd64
           path: ${{runner.temp}}/release/bun
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'core-avx-i' }}
+        if: ${{ matrix.cpu == 'sandybridge' }}
         with:
           name: bun-linux-amd64-generic
           path: ${{runner.temp}}/release/bun
@@ -73,7 +73,7 @@ jobs:
           name: bun-dependencies-linux-amd64
           path: ${{runner.temp}}/release/bun-dependencies
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'core-avx-i' }}
+        if: ${{ matrix.cpu == 'sandybridge' }}
         with:
           name: bun-dependencies-linux-amd64-generic
           path: ${{runner.temp}}/release/bun-dependencies
@@ -83,7 +83,7 @@ jobs:
           name: bun-linux-amd64-profile
           path: ${{runner.temp}}/release/bun-profile
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'core-avx-i' }}
+        if: ${{ matrix.cpu == 'sandybridge' }}
         with:
           name: bun-linux-amd64-generic-profile
           path: ${{runner.temp}}/release/bun-profile
@@ -93,7 +93,7 @@ jobs:
           name: bun-obj-linux-amd64
           path: ${{runner.temp}}/release/bun-obj
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'core-avx-i' }}
+        if: ${{ matrix.cpu == 'sandybridge' }}
         with:
           name: bun-obj-linux-amd64-generic
           path: ${{runner.temp}}/release/bun-obj

@@ -30,12 +30,12 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
-        cpu: [native, baseline]
+        cpu: [native, generic]
 
     steps:
       - uses: actions/checkout@v3
         with:
-          submodules: true
+          submodules: "recursive"
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:
@@ -57,9 +57,9 @@ jobs:
           name: bun-linux-amd64
           path: ${{runner.temp}}/release/bun
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'baseline' }}
+        if: ${{ matrix.cpu == 'generic' }}
         with:
-          name: bun-linux-amd64-baseline
+          name: bun-linux-amd64-generic
           path: ${{runner.temp}}/release/bun
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'native' }}
@@ -67,9 +67,9 @@ jobs:
           name: bun-dependencies-linux-amd64
           path: ${{runner.temp}}/release/bun-dependencies
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'baseline' }}
+        if: ${{ matrix.cpu == 'generic' }}
         with:
-          name: bun-dependencies-linux-amd64-baseline
+          name: bun-dependencies-linux-amd64-generic
           path: ${{runner.temp}}/release/bun-dependencies
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'native' }}
@@ -77,9 +77,9 @@ jobs:
           name: bun-linux-amd64-profile
           path: ${{runner.temp}}/release/bun-profile
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'baseline' }}
+        if: ${{ matrix.cpu == 'generic' }}
         with:
-          name: bun-linux-amd64-baseline-profile
+          name: bun-linux-amd64-generic-profile
           path: ${{runner.temp}}/release/bun-profile
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'native' }}
@@ -87,9 +87,9 @@ jobs:
           name: bun-obj-linux-amd64
           path: ${{runner.temp}}/release/bun-obj
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'baseline' }}
+        if: ${{ matrix.cpu == 'generic' }}
         with:
-          name: bun-obj-linux-amd64-baseline
+          name: bun-obj-linux-amd64-generic
           path: ${{runner.temp}}/release/bun-obj
   linux-aarch64:
     name: Linux aarch64
@@ -98,7 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
         with:
-          submodules: true
+          submodules: "recursive"
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:

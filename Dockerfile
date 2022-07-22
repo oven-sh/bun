@@ -58,12 +58,12 @@ FROM bun-base as bun-base-with-zig-and-webkit
 WORKDIR $GITHUB_WORKSPACE
 
 RUN  curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
-    unzip  zig-linux-$BUILDARCH.zip && \
+    unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 
 RUN mkdir -p $WEBKIT_OUT_DIR && cd $WEBKIT_OUT_DIR && cd ../ && \
     curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/jul4-2/bun-webkit-linux-$BUILDARCH.tar.gz && \
-    tar -xvzf bun-webkit-linux-$BUILDARCH.tar.gz && \
+    tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz && \
     ls && \
     echo $(pwd) && \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && \

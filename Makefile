@@ -625,7 +625,10 @@ jsc-check:
 
 all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
-prerelease: api analytics all-js
+ensure-package-dir:
+	mkdir -p $(PACKAGE_DIR)
+
+prerelease: api analytics all-js ensure-package-dir
 release-only: jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 release-safe-only: all-js jsc-bindings-mac build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 release: prerelease release-only

@@ -379,7 +379,8 @@ COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node
 
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
     mkdir -p $BUN_RELEASE_DIR && \
-    $ZIG_PATH/zig build obj -Drelease-fast -Dtarget=${TRIPLET} -Dcpu=$(echo "${CPU_TARGET}" | tr '-' '_')
+    $ZIG_PATH/zig build obj -Drelease-fast -Dtarget=${TRIPLET} -Dcpu=$(echo "${CPU_TARGET}" | tr '-' '_') && \
+    make bun-release-copy-obj
 
 FROM scratch as build_release_obj
 
@@ -395,7 +396,7 @@ ARG CPU_TARGET=native
 ENV CPU_TARGET=${CPU_TARGET}
 
 
-COPY --from=compile_release_obj ${BUN_RELEASE_DIR}/*.o /
+COPY --from=compile_release_obj /tmp/*.o /
 
 FROM prepare_release as compile_cpp
 

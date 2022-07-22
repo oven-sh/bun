@@ -48,7 +48,7 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           context: .
-          push: true
+          push: false
           tags: oven-sh/bun:canary,oven-sh/bun:${{github.sha}}
           cache-from: type=registry,ref=oven-sh/bun:buildcache-${{matrix.cpu}}-amd64
           cache-to: type=registry,ref=oven-sh/bun:buildcache-${{matrix.cpu}}-amd64,mode=max
@@ -124,8 +124,8 @@ jobs:
         uses: docker/build-push-action@v3
         with:
           context: .
-          push: true
           tags: oven-sh/bun:canary,oven-sh/bun:${{github.sha}}
+          push: false
           cache-from: type=registry,ref=oven-sh/bun:buildcache-aarch64
           cache-to: type=registry,ref=oven-sh/bun:buildcache-aarch64,mode=max
           build-args: |

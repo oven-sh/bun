@@ -31,6 +31,8 @@ ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 RUN cd ${BUN_DIR} && \
     make mimalloc && rm -rf src/deps/mimalloc Makefile
@@ -45,6 +47,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
@@ -64,6 +68,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
@@ -83,6 +89,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/tinycc ${BUN_DIR}/src/deps/tinycc
@@ -101,6 +109,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/libbacktrace ${BUN_DIR}/src/deps/libbacktrace
@@ -120,6 +130,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
@@ -138,6 +150,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/base64 ${BUN_DIR}/src/base64
@@ -156,6 +170,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/uws ${BUN_DIR}/src/deps/uws
@@ -179,6 +195,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/picohttpparser ${BUN_DIR}/src/deps/picohttpparser
@@ -201,6 +219,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 WORKDIR $BUN_DIR
 
@@ -221,6 +241,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 WORKDIR $BUN_DIR
 
@@ -240,7 +262,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 WORKDIR $BUN_DIR
 
@@ -254,6 +277,7 @@ COPY ./misctools ${BUN_DIR}/misctools
 COPY Makefile ${BUN_DIR}/Makefile
 
 
+
 FROM prepare_release as compile_release_obj
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -264,6 +288,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 
@@ -271,14 +297,17 @@ WORKDIR $BUN_DIR
 
 ENV JSC_BASE_DIR=${WEBKIT_DIR}
 ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
-ARG TRIPLET=x86_64-linux-gnu
+ARG ARCH=x86_64
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
+ARG TRIPLET=${ARCH}-linux-gnu
 
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
 
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
     mkdir -p $BUN_RELEASE_DIR && \
-    $ZIG_PATH/zig build obj -Drelease-fast -Dtarget=${TRIPLET} && \
+    $ZIG_PATH/zig build obj -Drelease-fast -Dtarget=${TRIPLET} -Dcpu=${CPU_TARGET} && \
     make bun-release-copy-obj
 
 FROM scratch as build_release_obj
@@ -295,6 +324,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 
@@ -352,6 +383,8 @@ ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+ARG CPU_TARGET=native
+ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 
@@ -378,6 +411,24 @@ COPY --from=build_release_cpp /*.o ${BUN_DIR}/src/bun.js/bindings-obj/
 RUN cd $BUN_DIR && mkdir -p ${BUN_RELEASE_DIR} && make bun-relink copy-to-bun-release-dir && \
     rm -rf $HOME/.cache zig-cache misctools package.json build-id completions build.zig $(BUN_DIR)/packages
 
+
+
+FROM scratch as artifact
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG GITHUB_WORKSPACE=/build
+ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
+ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
+ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
+ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
+ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+COPY --from=build_release ${BUN_RELEASE_DIR}/bun /bun
+COPY --from=build_release ${BUN_RELEASE_DIR}/bun-profile /bun-profile
+COPY --from=build_release ${BUN_DEPS_OUT_DIR}/* /bun-dependencies
+COPY --from=build_release_obj /*.o /bun-obj
+
+
 FROM prepare_release as build_unit
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -403,52 +454,6 @@ CMD make jsc-bindings-headers \
     make \
     run-all-unit-tests
 
-FROM alpine:latest as release_with_debug_info
-
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-
-COPY .devcontainer/limits.conf /etc/security/limits.conf
-
-ENV BUN_INSTALL /opt/bun
-ENV PATH "/opt/bun/bin:$PATH"
-ARG BUILDARCH=amd64
-LABEL org.opencontainers.image.title="bun ${BUILDARCH} (glibc)"
-LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
-COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun/bin/bun
-COPY --from=build_release ${BUN_RELEASE_DIR}/bun-profile /opt/bun/bin/bun-profile
-
-WORKDIR /opt/bun
-
-ENTRYPOINT [ "/opt/bun/bin/bun" ]
-
-FROM alpine:latest as release 
-
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
-ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
-ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
-ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
-ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
-ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
-
-COPY .devcontainer/limits.conf /etc/security/limits.conf
-
-ENV BUN_INSTALL /opt/bun
-ENV PATH "/opt/bun/bin:$PATH"
-ARG BUILDARCH=amd64
-LABEL org.opencontainers.image.title="bun ${BUILDARCH} (glibc)"
-LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
-COPY --from=build_release ${BUN_RELEASE_DIR}/bun /opt/bun
-WORKDIR /opt/bun
-
-ENTRYPOINT [ "/opt/bun/bin/bun" ]
 
 
 # FROM bunbunbunbun/bun-test-base as test_base

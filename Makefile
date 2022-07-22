@@ -277,10 +277,11 @@ ICU_FLAGS ?=
 
 # TODO: find a way to make this more resilient
 # Ideally, we could just look up the linker search paths
-LIB_ICU_PATH ?= $(BUN_DEPS_DIR)
-
 ifeq ($(OS_NAME),linux)
+LIB_ICU_PATH ?= $(JSC_LIB)
 	ICU_FLAGS += $(LIB_ICU_PATH)/libicuuc.a $(LIB_ICU_PATH)/libicudata.a $(LIB_ICU_PATH)/libicui18n.a
+else
+LIB_ICU_PATH ?= $(BUN_DEPS_DIR)
 endif
 
 ifeq ($(OS_NAME),darwin)
@@ -1249,6 +1250,7 @@ endif
 ifeq ($(OS_NAME),linux)
 bun-link-lld-release-dsym: bun-release-copy-obj
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+	-$(STRIP) $(BUN_RELEASE_BIN) --wildcard -K _napi\*
 copy-to-bun-release-dir-dsym:
 
 endif

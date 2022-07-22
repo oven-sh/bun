@@ -42,7 +42,7 @@ jobs:
           install: true
       - name: Run
         run: |
-          rm -rf ${{runner.temp}}/bun
+          rm -rf ${{runner.temp}}/release
       - name: Build and push
         uses: docker/build-push-action@v3
         with:
@@ -111,7 +111,7 @@ jobs:
           install: true
       - name: Run
         run: |
-          rm -rf ${{runner.temp}}/bun
+          rm -rf ${{runner.temp}}/release
       - name: Build and push
         uses: docker/build-push-action@v3
         with:
@@ -142,3 +142,37 @@ jobs:
         with:
           name: bun-obj-linux-aarch64
           path: ${{runner.temp}}/release/bun-obj
+
+  release:
+    name: release
+    runs-on: ubuntu-18.04
+    timeout-minutes: 90
+    needs:
+      - linux-x64
+      - linux-aarch64
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          path: ${{runner.temp}}/release
+      - name: Rename files
+        run: |
+          cd ${{runner.temp}}/release
+          mv bun-linux-amd64-generic bun-linux-amd64-baseline
+          mv bun-linux-amd64-generic-profile bun-linux-amd64-baseline-profile
+
+          zip -r bun-linux-amd64.zip bun-linux-amd64
+          zip -r bun-linux-amd64-baseline.zip bun-linux-amd64-baseline
+          zip -r bun-linux-amd64-profile.zip bun-linux-amd64-profile
+          zip -r bun-linux-amd64-baseline-profile.zip bun-linux-amd64-baseline-profile
+          zip -r bun-linux-aarch64.zip bun-linux-aarch64
+          zip -r bun-linux-aarch64-profile.zip bun-linux-aarch64-profile
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: true
+          generate_release_notes: true
+          tag_name: "canary"
+          name: Canary
+          files: |
+            ${{runner.temp}}/release/*.zip

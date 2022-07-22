@@ -56,6 +56,8 @@ pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
                         \\    <cyan>wsl --update<r>
                         \\    <cyan>wsl --shutdown<r>
                         \\
+                        \\  Please make sure you're using WSL version 2 (not WSL 1).
+                        \\
                         \\If that doesn't work (and you're on a Windows machine), try this:
                         \\  1. Open Windows Update
                         \\  2. Download any updates to Windows Subsystem for Linux

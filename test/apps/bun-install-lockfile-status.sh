@@ -4,7 +4,7 @@ set -euo pipefail
 
 killall -9 $(basename $BUN_BIN) || echo ""
 
-dir=$(mktemp -d --suffix=bun-lockfile)
+dir=$(mktemp -d)
 
 cd $dir
 

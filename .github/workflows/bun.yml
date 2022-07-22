@@ -142,7 +142,7 @@ jobs:
     name: release
     runs-on: ubuntu-18.04
     timeout-minutes: 90
-    if: github.ref_name == 'main'
+    if: github.ref == 'main'
     needs:
       - linux-x64
       - linux-aarch64

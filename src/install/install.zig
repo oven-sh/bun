@@ -199,7 +199,7 @@ const NetworkTask = struct {
         scope: *const Npm.Registry.Scope,
         loaded_manifest: ?Npm.PackageManifest,
     ) !void {
-        this.url_buf = try std.fmt.allocPrint(allocator, "{s}://{s}/{s}/{s}", .{ scope.url.displayProtocol(), scope.url.displayHostname(), strings.trim(scope.url.path, "/"), name });
+        this.url_buf = try std.fmt.allocPrint(allocator, "{s}://{s}:{d}/{s}/{s}", .{ scope.url.displayProtocol(), scope.url.displayHostname(), scope.url.getPortAuto(), strings.trim(scope.url.path, "/"), name });
         var last_modified: string = "";
         var etag: string = "";
         if (loaded_manifest) |manifest| {

@@ -29,7 +29,7 @@ if [[ -t 1 ]]; then
 
     # Bold
     Bold_Green='\033[1;32m' # Bold Green
-    Bold_White='\033[1;37m' # Bold White
+    Bold_White='\033[1m' # Bold White
 fi
 
 error() {
@@ -205,10 +205,12 @@ zsh)
 esac
 
 echo
-echo -e "To get started, run:$Bold_White"
+echo -e "To get started, run:"
+echo
 
 if [[ $refresh_command ]]; then
-    echo -e "   $refresh_command"
+    echo -e "$Bold_White   $refresh_command$Color_Off"
 fi
 
-echo -e "   bun --help$Color_Off"
+echo -e "  $Bold_White bun --help$Color_Off"
+

@@ -22,9 +22,16 @@ Today, bun's primary focus is bun.js: bun's JavaScript runtime.
 
 Native: (macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux)
 
+Install the latest stable version of bun
 ```sh
 curl -fsSL https://bun.sh/install | bash
 ```
+
+Install a specific version of bun
+```sh
+curl -fsSL https://bun.sh/install | bash -s -- v0.1.5
+```
+
 
 Docker: (Linux x64)
 

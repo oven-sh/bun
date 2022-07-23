@@ -559,7 +559,7 @@ Today, bun is mostly focused on bun.js: the JavaScript runtime.
 
 While you could use bun's bundler & transpiler separately to build for browsers or node, bun doesn't have a minifier or support tree-shaking yet. For production browser builds, you probably should use a tool like esbuild or swc.
 
-Longer-term, bun intends to replace Node.js, Webpack, Babel, yarn, and PostCSS (in production).
+Long-term, bun intends to replace Node.js, Webpack, Babel, yarn, and PostCSS (in production).
 
 ### Upcoming breaking changes
 
@@ -1537,7 +1537,7 @@ To force bun to bundle packages which are not located in a `node_modules` folder
 }
 ```
 
-Bundled dependencies are not eligible for Hot Module Reloading. The code is served to browsers & bun.js verbatim. But, in the future, it may be sectioned off into only parts of the bundle being used. That’s possible in the current version of the `.bun` file (so long as you know which files are necessary), but it’s not implemented yet. Longer-term, it will include all `import` and `export` of each module inside.
+Bundled dependencies are not eligible for Hot Module Reloading. The code is served to browsers & bun.js verbatim. But, in the future, it may be sectioned off into only parts of the bundle being used. That’s possible in the current version of the `.bun` file (so long as you know which files are necessary), but it’s not implemented yet. Long-term, it will include all `import` and `export` of each module inside.
 
 #### What is the module ID hash?
 

@@ -199,7 +199,61 @@ const NetworkTask = struct {
         scope: *const Npm.Registry.Scope,
         loaded_manifest: ?Npm.PackageManifest,
     ) !void {
-        this.url_buf = try std.fmt.allocPrint(allocator, "{s}://{s}:{d}/{s}/{s}", .{ scope.url.displayProtocol(), scope.url.displayHostname(), scope.url.getPortAuto(), strings.trim(scope.url.path, "/"), name });
+        const pathname: string = if (!strings.eqlComptime(scope.url.pathname, "/"))
+            scope.url.pathname
+        else
+            @as(string, "");
+
+        if (pathname.len > 0) {
+            if (scope.url.getPort()) |port_number| {
+                this.url_buf = try std.fmt.allocPrint(
+                    allocator,
+                    "{s}://{s}:{d}/{s}/{s}",
+                    .{
+                        scope.url.displayProtocol(),
+                        scope.url.displayHostname(),
+                        port_number,
+                        pathname,
+                        name,
+                    },
+                );
+            } else {
+                this.url_buf = try std.fmt.allocPrint(
+                    allocator,
+                    "{s}://{s}/{s}/{s}",
+                    .{
+                        scope.url.displayProtocol(),
+                        scope.url.displayHostname(),
+                        pathname,
+                        name,
+                    },
+                );
+            }
+        } else {
+            if (scope.url.getPort()) |port_number| {
+                this.url_buf = try std.fmt.allocPrint(
+                    allocator,
+                    "{s}://{s}:{d}/{s}",
+                    .{
+                        scope.url.displayProtocol(),
+                        scope.url.displayHostname(),
+                        port_number,
+                        name,
+                    },
+                );
+            } else {
+                this.url_buf = try std.fmt.allocPrint(
+                    allocator,
+                    "{s}://{s}/{s}",
+                    .{
+                        scope.url.displayProtocol(),
+                        scope.url.displayHostname(),
+                        name,
+                    },
+                );
+            }
+        }
+
         var last_modified: string = "";
         var etag: string = "";
         if (loaded_manifest) |manifest| {

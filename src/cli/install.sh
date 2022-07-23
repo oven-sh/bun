@@ -37,6 +37,18 @@ error() {
     exit 1
 }
 
+info() {
+    echo -e "${Dim}$@ ${Color_Off}"
+}
+
+info_bold() {
+    echo -e "${Bold_White}$@ ${Color_Off}"
+}
+
+success() {
+    echo -e "${Green}$@ ${Color_Off}"
+}
+
 command -v unzip >/dev/null ||
     error 'unzip is required to install bun (see: https://github.com/oven-sh/bun#unzip-is-required)'
 
@@ -63,7 +75,7 @@ if [[ $target = darwin-x64 ]]; then
     # Is this process running in Rosetta?
     if [[ $(sysctl -n sysctl.proc_translated) = 1 ]]; then
         target=darwin-aarch64
-        echo -e "${Dim}Your shell is running in Rosetta 2. Downloading bun for $target instead$Color_Off"
+        info "Your shell is running in Rosetta 2. Downloading bun for $target instead"
     fi
 fi
 
@@ -111,7 +123,7 @@ tildify() {
     fi
 }
 
-echo -e "${Green}bun was installed successfully to $Bold_Green$(tildify "$exe")$Color_Off"
+success "bun was installed successfully to $Bold_Green$(tildify "$exe")"
 
 if command -v bun >/dev/null; then
     # Install completions, but we don't care if it fails
@@ -154,14 +166,14 @@ fish)
             done
         } >>"$fish_config"
 
-        echo -e "${Dim}Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_fish_config\"$Color_Off"
+        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_fish_config\""
 
         refresh_command="source $tilde_fish_config"
     else
         echo "Manually add the directory to $tilde_fish_config (or similar):"
 
         for command in "${commands[@]}"; do
-            echo -e "  $Bold_White $command$Color_Off"
+            info_bold "  $command"
         done
     fi
     ;;
@@ -186,31 +198,30 @@ zsh)
             done
         } >>"$zsh_config"
 
-        echo -e "${Dim}Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_zsh_config\"$Color_Off"
+        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_zsh_config\""
 
         refresh_command="exec $SHELL"
     else
         echo "Manually add the directory to $tilde_zsh_config (or similar):"
 
         for command in "${commands[@]}"; do
-            echo -e "  $Bold_White $command$Color_Off"
+            info_bold "  $command"
         done
     fi
     ;;
 *)
     echo 'Manually add the directory to ~/.bashrc (or similar):'
-    echo -e "  $Bold_White export $install_env=$quoted_install_dir$Color_Off"
-    echo -e "  $Bold_White export PATH=\"$bin_env:\$PATH\"$Color_Off"
+    info_bold "  export $install_env=$quoted_install_dir"
+    info_bold "  export PATH=\"$bin_env:\$PATH\""
     ;;
 esac
 
 echo
-echo -e "To get started, run:"
+info "To get started, run:"
 echo
 
 if [[ $refresh_command ]]; then
-    echo -e "$Bold_White   $refresh_command$Color_Off"
+    info_bold " $refresh_command"
 fi
 
-echo -e "  $Bold_White bun --help$Color_Off"
-
+info_bold "  bun --help"

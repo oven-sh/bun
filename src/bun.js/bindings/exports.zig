@@ -1753,6 +1753,11 @@ pub const ZigConsoleClient = struct {
                                 request.writeFormat(this, writer_, enable_ansi_colors) catch {};
                                 return;
                             },
+                            .Blob => {
+                                var request = priv_data.as(JSC.WebCore.Blob);
+                                request.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                                return;
+                            },
                             else => {},
                         }
                     }

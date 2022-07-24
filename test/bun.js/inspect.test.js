@@ -1,5 +1,35 @@
 import { it, expect } from "bun:test";
 
+it("Blob inspect", () => {
+  expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
+  expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (3 KB)`);
+  expect(Bun.inspect(Bun.file("/tmp/file.txt")))
+    .toBe(`FileRef ("/tmp/file.txt") {
+  type: "text/plain;charset=utf-8"
+}`);
+  expect(Bun.inspect(Bun.file(123))).toBe(`FileRef (fd: 123) {
+  type: "application/octet-stream"
+}`);
+  expect(Bun.inspect(new Response(""))).toBe(`Response (0 KB) {
+  ok: true,
+  url: "",
+  statusText: "",
+  redirected: false,
+  bodyUsed: false,
+  status: 200,
+  [Blob detached]
+}`);
+  expect(Bun.inspect(new Response("Hello"))).toBe(`Response (5 bytes) {
+  ok: true,
+  url: "",
+  statusText: "",
+  redirected: false,
+  bodyUsed: false,
+  status: 200,
+  Blob (5 bytes)
+}`);
+});
+
 it("utf16 property name", () => {
   var { Database } = require("bun:sqlite");
   const db = Database.open(":memory:");
@@ -22,7 +52,7 @@ it("Request object", () => {
     `
 Request (0 KB) {
   method: "GET",
-  url: "https://example.com",
+  url: "https://example.com"
 }`.trim()
   );
 });

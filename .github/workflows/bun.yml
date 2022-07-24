@@ -161,7 +161,7 @@ jobs:
     name: release
     runs-on: ubuntu-18.04
     timeout-minutes: 90
-    if: ${{ (github.event_name == 'push') || (github.event_name == 'pull_request' && github.event.pull_request.merged) }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged) || github.event_name == 'workflow_dispatch' }}
     needs:
       - linux-x64
       - linux-aarch64

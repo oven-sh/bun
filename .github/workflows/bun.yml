@@ -13,6 +13,11 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -156,7 +161,7 @@ jobs:
     name: release
     runs-on: ubuntu-18.04
     timeout-minutes: 90
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.merged) }}
+    if: ${{ (github.event_name == 'push') || (github.event_name == 'pull_request' && github.event.pull_request.merged) }}
     needs:
       - linux-x64
       - linux-aarch64

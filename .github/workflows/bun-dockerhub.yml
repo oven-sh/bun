@@ -1,4 +1,5 @@
 name: bun-dockerhub
+
 on:
   push:
     paths:
@@ -13,6 +14,12 @@ on:
   release:
     types:
       - published
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
 jobs:
   docker:
     runs-on: ubuntu-latest
@@ -20,24 +27,39 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v1
+
       - name: Collect metadata
         id: meta
         uses: docker/metadata-action@v4
         with:
           images: |
             ${{ secrets.DOCKERHUB_USERNAME }}/bun
+            ghcr.io/oven-sh/bun
           tags: |
             type=match,pattern=bun-v(\d.\d.\d),group=1
             type=match,pattern=bun-v(\d.\d),group=1
             type=match,pattern=bun-v(\d),group=1
             type=ref,event=branch
             type=ref,event=pr
+
       - name: Login to DockerHub
         if: github.event_name == 'release'
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'release'
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build image
         uses: docker/build-push-action@v3
         with:

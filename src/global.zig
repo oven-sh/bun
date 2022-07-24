@@ -33,11 +33,16 @@ pub const fmt = struct {
 
     pub const SizeFormatter = struct {
         value: usize = 0,
-        pub fn format(self: SizeFormatter, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
             const math = std.math;
             const value = self.value;
             if (value == 0) {
                 return writer.writeAll("0 KB");
+            }
+
+            if (value < 512) {
+                try fmt.formatInt(self.value, 10, .lower, opts, writer);
+                return writer.writeAll(" bytes");
             }
 
             const mags_si = " KMGTPEZY";

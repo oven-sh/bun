@@ -69,3 +69,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Docker Hub Description
+        uses: peter-evans/dockerhub-description@v3
+        if: github.event_name == 'release'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: jarredsumner/bun
+          short-description: ${{ github.event.repository.description }}

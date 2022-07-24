@@ -13,11 +13,6 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-permissions:
-  contents: read
-  packages: write
-  id-token: write
-
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -194,7 +189,8 @@ jobs:
         with:
           prerelease: true
           generate_release_notes: true
+          body: "This is the canary release of Bun that corresponds to the commit [{{ github.sha }}]"
+          name: "Canary ({{github.sha}})"
           tag_name: "canary"
-          name: Canary
           files: |
             ${{runner.temp}}/release/*.zip

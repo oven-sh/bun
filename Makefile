@@ -405,6 +405,7 @@ CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){i
 
 bun:
 
+.PHONY: base64
 base64:
 	cd src/base64 && \
 		rm -rf src/base64/*.{o,ll,bc} && \
@@ -415,6 +416,7 @@ base64:
 # Prevent dependency on libtcc1 so it doesn't do filesystem lookups
 TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"
 
+.PHONY: tinycc
 tinycc:
 	cd $(TINYCC_DIR) && \
 		make clean && \
@@ -422,6 +424,7 @@ tinycc:
 		make -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 
+.PHONY: generate-builtins
 generate-builtins: ## to generate builtins
 	rm -f src/bun.js/bindings/*Builtin*.cpp src/bun.js/bindings/*Builtin*.h src/bun.js/bindings/*Builtin*.cpp
 	rm -rf src/bun.js/builtins/cpp
@@ -436,8 +439,10 @@ generate-builtins: ## to generate builtins
 	# this is the one we actually build
 	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
 
+.PHONY: tinycc
 vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
+.PHONY: prepare-types
 prepare-types:
 	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) types/bun/bundle.ts packages/bun-types
 	echo "Generated types for $(PACKAGE_JSON_VERSION) in packages/bun-types"
@@ -449,16 +454,20 @@ release-types:
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
 	cd packages/bun-types && npm publish
 
+.PHONY: format
 format: ## to format the code
 	$(PRETTIER) --write test/bun.js/*.js
 	$(PRETTIER) --write test/bun.js/solid-dom-fixtures/**/*.js
 
+.PHONY: lolhtml
 lolhtml:
 	cd $(BUN_DEPS_DIR)/lol-html/ && cd $(BUN_DEPS_DIR)/lol-html/c-api && cargo build --release && cp target/release/liblolhtml.a $(BUN_DEPS_OUT_DIR)
 
+.PHONY: boringssl-build
 boringssl-build:
 	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -GNinja .. && ninja
 
+.PHONY: boringssl-build-debug
 boringssl-build-debug:
 	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS_WITHOUT_RELEASE) -GNinja .. && ninja
 
@@ -466,12 +475,16 @@ boringssl-copy:
 	cp $(BUN_DEPS_DIR)/boringssl/build/ssl/libssl.a $(BUN_DEPS_OUT_DIR)/libssl.a
 	cp $(BUN_DEPS_DIR)/boringssl/build/crypto/libcrypto.a $(BUN_DEPS_OUT_DIR)/libcrypto.a
 
+.PHONY: boringssl
 boringssl: boringssl-build boringssl-copy
+.PHONY: boringssl-debug
 boringssl-debug: boringssl-build-debug boringssl-copy
 
+.PHONY: compile-ffi-test
 compile-ffi-test:
 	clang $(OPTIMIZATION_LEVEL) -shared -undefined dynamic_lookup -o /tmp/bun-ffi-test.dylib -fPIC ./test/bun.js/ffi-test.c
 
+.PHONY: libbacktrace
 libbacktrace:
 	cd $(BUN_DEPS_DIR)/libbacktrace && \
 	CFLAGS="$(CFLAGS)" CC=$(CC) ./configure --disable-shared --enable-static  --with-pic && \
@@ -482,6 +495,7 @@ libbacktrace:
 sqlite:
 
 
+.PHONY: libarchive
 libarchive:
 	cd $(BUN_DEPS_DIR)/libarchive; \
 	(make clean || echo ""); \
@@ -491,11 +505,13 @@ libarchive:
 	make -j${CPUS}; \
 	cp ./.libs/libarchive.a $(BUN_DEPS_OUT_DIR)/libarchive.a;
 
+.PHONY: tgz
 tgz:
 	$(ZIG) build tgz-obj -Drelease-fast
 	$(CXX) $(PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc  $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/tgz.o
 
+.PHONY: tgz-debug
 tgz-debug:
 	$(ZIG) build tgz-obj
 	$(CXX) $(DEBUG_PACKAGE_DIR)/tgz.o -g -o ./misctools/tgz $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
@@ -530,6 +546,7 @@ else
 PKGNAME_NINJA := ninja-build
 endif
 
+.PHONY: require
 require:
 	@echo "Checking if the required utilities are available..."
 	@if [ $(CLANG_VERSION) -lt "13" ]; then echo -e "ERROR: clang version >=13 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@13"; exit 1; fi
@@ -545,12 +562,15 @@ require:
 init-submodules:
 	git submodule update --init --recursive --progress --depth=1
 
+.PHONY: build-obj
 build-obj:
 	$(ZIG) build obj -Drelease-fast -Dcpu="$(CPU_TARGET)"
 
+.PHONY: dev-build-obj-wasm
 dev-build-obj-wasm:
 	$(ZIG) build bun-wasm -Dtarget=wasm32-freestanding --prominent-compile-errors
 
+.PHONY: dev-wasm
 dev-wasm: dev-build-obj-wasm
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
 		-g -s ERROR_ON_UNDEFINED_SYMBOLS=0  -DNDEBUG  \
@@ -559,6 +579,7 @@ dev-wasm: dev-build-obj-wasm
 		-o packages/debug-bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/debug-bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
 
+.PHONY: build-obj-wasm
 build-obj-wasm:
 	$(ZIG) build bun-wasm -Drelease-fast -Dtarget=wasm32-freestanding --prominent-compile-errors
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
@@ -568,6 +589,7 @@ build-obj-wasm:
 		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
 
+.PHONY: build-obj-wasm-small
 build-obj-wasm-small:
 	$(ZIG) build bun-wasm -Drelease-small -Dtarget=wasm32-freestanding --prominent-compile-errors
 	emcc -sEXPORTED_FUNCTIONS="['_bun_free', '_cycleStart', '_cycleEnd', '_bun_malloc', '_scan', '_transform', '_init']" \
@@ -577,6 +599,7 @@ build-obj-wasm-small:
 		-o packages/bun-freestanding-wasm32/bun-wasm.wasm
 	cp packages/bun-freestanding-wasm32/bun-wasm.wasm src/api/demo/public/bun-wasm.wasm
 
+.PHONY: wasm
 wasm: api build-obj-wasm-small
 	@rm -rf packages/bun-wasm/*.{d.ts,js,wasm,cjs,mjs,tsbuildinfo}
 	@cp packages/bun-freestanding-wasm32/bun-wasm.wasm packages/bun-wasm/bun.wasm
@@ -593,6 +616,7 @@ wasm: api build-obj-wasm-small
 	@wasm-opt -O4 --enable-mutable-globals  packages/bun-wasm/bun.wasm -o /tmp/bun.wasm
 	@mv /tmp/bun.wasm packages/bun-wasm/bun.wasm
 
+.PHONY: build-obj-safe
 build-obj-safe:
 	$(ZIG) build obj -Drelease-safe
 
@@ -611,40 +635,51 @@ usockets:
 uws: usockets
 	$(CXX) $(BITCODE_OR_SECTIONS) $(EMIT_LLVM_FOR_RELEASE) -fPIC -I$(BUN_DEPS_DIR)/uws/uSockets/src $(CLANG_FLAGS) $(CFLAGS) $(UWS_CXX_FLAGS) $(UWS_LDFLAGS) $(PLATFORM_LINKER_FLAGS) -c -I$(BUN_DEPS_DIR) $(BUN_DEPS_OUT_DIR)/libusockets.a $(BUN_DEPS_DIR)/libuwsockets.cpp -o $(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
+.PHONY: sign-macos-x64
 sign-macos-x64:
 	gon sign.macos-x64.json
 
+.PHONY: sign-macos-aarch64
 sign-macos-aarch64:
 	gon sign.macos-aarch64.json
 
 cls:
 	@echo "\n\n---\n\n"
 
-
 jsc-check:
 	@ls $(JSC_BASE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit build. Please compile the WebKit submodule using the Dockerfile at $(shell pwd)/src/javascript/WebKit/Dockerfile and then copy from /output in the Docker container to $(JSC_BASE_DIR). You can override the directory via JSC_BASE_DIR. \n\n 	DOCKER_BUILDKIT=1 docker build -t bun-webkit $(shell pwd)/src/bun.js/WebKit -f $(shell pwd)/src/bun.js/WebKit/Dockerfile --progress=plain\n\n 	docker container create bun-webkit\n\n 	# Get the container ID\n	docker container ls\n\n 	docker cp DOCKER_CONTAINER_ID_YOU_JUST_FOUND:/output $(JSC_BASE_DIR)" && exit 1)
 	@ls $(JSC_INCLUDE_DIR)  >/dev/null 2>&1 || (echo "Failed to access WebKit include directory at $(JSC_INCLUDE_DIR)." && exit 1)
 	@ls $(JSC_LIB)  >/dev/null 2>&1 || (echo "Failed to access WebKit lib directory at $(JSC_LIB)." && exit 1)
 
+.PHONY: all-js
 all-js: runtime_js fallback_decoder bun_error node-fallbacks
 
 ensure-package-dir:
 	mkdir -p $(PACKAGE_DIR)
 
+.PHONY: prerelease
 prerelease: api analytics all-js ensure-package-dir
+.PHONY: release-only
 release-only: jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
+.PHONY: release-safe-only
 release-safe-only: all-js jsc-bindings-mac build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
+.PHONY: release
 release: prerelease release-only
+.PHONY: release-safe
 release-safe: prerelease release-safe-only
 
+.PHONY: fmt-cpp
 fmt-cpp:
 	cd src/bun.js/bindings && clang-format *.cpp *.h -i
 
+.PHONY: fmt-zig
 fmt-zig:
 	cd src && zig fmt **/*.zig
 
+.PHONY: fmt
 fmt: fmt-cpp fmt-zig
 
+.PHONY: api
 api:
 	$(NPM_CLIENT) install
 	./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
@@ -652,59 +687,66 @@ api:
 	$(PRETTIER) --write src/api/schema.js
 	$(PRETTIER) --write src/api/schema.d.ts
 
+.PHONY: node-fallbacks
 node-fallbacks:
 	@cd src/node-fallbacks; $(NPM_CLIENT) install; $(NPM_CLIENT) run --silent build
 
+.PHONY: fallback_decoder
 fallback_decoder:
 	@esbuild --target=esnext  --bundle src/fallback.ts --format=iife --platform=browser --minify > src/fallback.out.js
 
+.PHONY: runtime_js
 runtime_js:
 	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
 	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
 	@NODE_ENV=production esbuild --define:process.env.NODE_ENV="production" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --minify --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
 
+.PHONY: runtime_js_dev
 runtime_js_dev:
 	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.js; cat src/runtime.footer.js >> src/runtime.out.js
 	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-with-refresh.ts --format=iife --platform=browser --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.out.refresh.js; cat src/runtime.footer.with-refresh.js >> src/runtime.out.refresh.js
 	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.node.pre.out.js; cat src/runtime.node.pre.out.js src/runtime.footer.node.js > src/runtime.node.out.js
 	@NODE_ENV=development esbuild --define:process.env.NODE_ENV="development" --target=esnext  --bundle src/runtime/index-without-hmr.ts --format=iife --platform=node --global-name=BUN_RUNTIME --external:/bun:* > src/runtime.bun.pre.out.js; cat src/runtime.bun.pre.out.js src/runtime.footer.bun.js > src/runtime.bun.out.js
 
+.PHONY: bun_error
 bun_error:
 	@cd packages/bun-error; $(NPM_CLIENT) install; $(NPM_CLIENT) run --silent build
 
+.PHONY: generate-install-script
 generate-install-script:
 	@rm -f $(PACKAGES_REALPATH)/bun/install.js
 	@esbuild --log-level=error --define:BUN_VERSION="\"$(PACKAGE_JSON_VERSION)\"" --define:process.env.NODE_ENV="\"production\"" --platform=node  --format=cjs $(PACKAGES_REALPATH)/bun/install.ts > $(PACKAGES_REALPATH)/bun/install.js
 
+.PHONY: fetch
 fetch:
 	$(ZIG) build -Drelease-fast fetch-obj
 	$(CXX) $(PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/fetch.o
 
+.PHONY: sha
 sha:
 	$(ZIG) build -Drelease-fast sha-bench-obj
 	$(CXX) $(PACKAGE_DIR)/sha.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/sha.o
 
+.PHONY: fetch-debug
 fetch-debug:
 	$(ZIG) build fetch-obj
 	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 
-
+.PHONY: httpbench-debug
 httpbench-debug:
 	$(ZIG) build httpbench-obj
 	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 
-
+.PHONY: httpbench-release
 httpbench-release:
 	$(ZIG) build -Drelease-fast httpbench-obj
 	$(CXX) $(PACKAGE_DIR)/httpbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/httpbench.o
 
-
-
-
+.PHONY: check-glibc-version-dependency
 check-glibc-version-dependency:
 	@objdump -T $(RELEASE_BUN) | ((grep -qe "GLIBC_2.3[0-9]") && { echo "Glibc 2.3X detected, this will break the binary"; exit 1; }) || true
 
@@ -733,18 +775,23 @@ bun-codesign-release-local-debug:
 
 
 
+.PHONY: jsc
 jsc: jsc-build jsc-copy-headers jsc-bindings
+.PHONY: jsc-build
 jsc-build: $(JSC_BUILD_STEPS)
+.PHONY: jsc-bindings
 jsc-bindings: jsc-bindings-headers jsc-bindings-mac
 
+.PHONY: clone-submodules
 clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
+.PHONY: devcontainer
 devcontainer: clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev runtime_js_dev libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 
-
+.PHONY: jsc-bindings-headers
 jsc-bindings-headers:
 	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
 	touch src/bun.js/bindings/headers.zig
@@ -763,7 +810,7 @@ MIMALLOC_OVERRIDE_FLAG ?=
 bump:
 	expr 0.1.0 + 1 > build-id
 
-
+.PHONY: identifier-cache
 identifier-cache:
 	$(ZIG) run src/js_lexer/identifier_data.zig
 
@@ -772,10 +819,12 @@ tag:
 	git push --tags
 	cd ../bun-releases-for-updater && echo $(BUN_BUILD_TAG) > bumper && git add bumper && git commit -m "Update latest release" && git tag $(BUN_BUILD_TAG) && git push
 
+.PHONY: prepare-release
 prepare-release: tag release-create
 
 release-create-auto-updater:
 
+.PHONY: release-create
 release-create:
 	gh release create --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)"
 	gh release create --repo=$(BUN_AUTO_UPDATER_REPO) --title "bun v$(PACKAGE_JSON_VERSION)" "$(BUN_BUILD_TAG)" -n "See https://github.com/oven-sh/bun/releases/tag/$(BUN_BUILD_TAG) for release notes. Using the install script or bun upgrade is the recommended way to install bun. Join bun's Discord to get access https://bun.sh/discord"
@@ -796,20 +845,22 @@ release-bin-entitlements:
 
 # macOS expects a specific directory structure for the zip file
 # ditto lets us generate it similarly to right clicking "Compress" in Finder
+.PHONY: release-bin-generate-zip
 release-bin-generate-zip:
 	dot_clean -vnm  /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET)
 	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) && \
 		codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict bun
 	ditto -ck --rsrc --sequesterRsrc --keepParent /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) $(BUN_DEPLOY_ZIP)
 
+.PHONY: release-bin-codesign
 release-bin-codesign:
 	xcrun notarytool submit --wait $(BUN_DEPLOY_ZIP) --keychain-profile "bun"
 
 else
 
+.PHONY: release-bin-generate-zip
 release-bin-generate-zip:
 	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/ && zip -r bun-$(TRIPLET).zip bun-$(TRIPLET)
-
 
 endif
 
@@ -820,6 +871,7 @@ BUN_DEPLOY_DSYM = /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET).dSYM.tar.gz
 
 ifeq ($(OS_NAME),darwin)
 
+.PHONY: release-bin-generate-copy-dsym
 release-bin-generate-copy-dsym:
 	cd $(shell dirname $(BUN_RELEASE_BIN)) && tar -czvf $(shell basename $(BUN_DEPLOY_DSYM)) $(shell basename $(BUN_RELEASE_BIN)).dSYM && \
 	mv $(shell basename $(BUN_DEPLOY_DSYM)) $(BUN_DEPLOY_DSYM)
@@ -830,33 +882,38 @@ ifeq ($(OS_NAME),linux)
 release-bin-generate-copy-dsym:
 endif
 
+.PHONY: release-bin-generate-copy
 release-bin-generate-copy:
 	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) $(BUN_DEPLOY_ZIP)
 	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET)
 	cp $(BUN_RELEASE_BIN) /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET)/bun
 
+.PHONY: release-bin-generate
 release-bin-generate: release-bin-generate-copy release-bin-generate-zip release-bin-generate-copy-dsym
 
-
+.PHONY: release-bin-check-version
 release-bin-check-version:
 	test $(shell eval $(BUN_RELEASE_BIN) --version) = $(PACKAGE_JSON_VERSION)
 
+.PHONY: release-bin-check
 release-bin-check: release-bin-check-version
 
 ifeq ($(OS_NAME),linux)
 
+.PHONY: release-bin-check
 release-bin-check: release-bin-check-version
 # force it to run
 	@make -B check-glibc-version-dependency
 endif
 
-
+.PHONY: release-bin-push-bin
 release-bin-push-bin:
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP)
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_ZIP) --repo $(BUN_AUTO_UPDATER_REPO)
 
 
 ifeq ($(OS_NAME),darwin)
+.PHONY: release-bin-push-dsym
 release-bin-push-dsym:
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_DSYM)
 	gh release upload $(BUN_BUILD_TAG) --clobber $(BUN_DEPLOY_DSYM) --repo $(BUN_AUTO_UPDATER_REPO)
@@ -868,12 +925,15 @@ endif
 
 TINYCC_DIR ?= $(realpath $(BUN_DEPS_DIR)/tinycc)
 
+.PHONY: release-bin-push
 release-bin-push: release-bin-push-bin release-bin-push-dsym
+.PHONY: generate-release-bin-as-zip
 generate-release-bin-as-zip: release-bin-generate release-bin-codesign
+.PHONY: release-bin-without-push
 release-bin-without-push: test-all release-bin-check generate-release-bin-as-zip
 
+.PHONY: release-bin
 release-bin: release-bin-without-push release-bin-push
-
 
 test/wiptest/run.o: test/wiptest/run.cpp
 	$(CXX) -Wall -g -c -std=c++2a -lc -o test/wiptest/run.o test/wiptest/run.cpp
@@ -881,16 +941,18 @@ test/wiptest/run.o: test/wiptest/run.cpp
 test/wiptest/run: test/wiptest/run.o
 	$(CXX) -Wall -g -o test/wiptest/run test/wiptest/run.o
 
-
 release-bin-dir:
 	echo $(PACKAGE_DIR)
 
+.PHONY: dev-obj
 dev-obj:
 	$(ZIG) build obj --prominent-compile-errors
 
+.PHONY: dev-obj-linux
 dev-obj-linux:
 	$(ZIG) build obj -Dtarget=x86_64-linux-gnu
 
+.PHONY: dev
 dev: mkdir-dev dev-obj bun-link-lld-debug bun-codesign-debug
 
 mkdir-dev:
@@ -899,82 +961,106 @@ mkdir-dev:
 test-install:
 	cd test/scripts && $(NPM_CLIENT) install
 
+.PHONY: test-bun-dev
 test-bun-dev:
 	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-dev.sh
 	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-dev-index-html.sh
 
+.PHONY: test-dev-bun-dev
 test-dev-bun-dev:
 	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-dev.sh
 	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-dev-index-html.sh
 
+.PHONY: test-bun-snapshot
 test-bun-snapshot:
 	rm -rf test/bun.js/snapshots.js
 	touch test/bun.js/snapshots.js
 	$(foreach i,$(wildcard test/bun.js/*.snapshot.*),echo "" >> test/bun.js/snapshots.js; echo "// $i" >> test/bun.js/snapshots.js; $(RELEASE_BUN) build $i --platform=bun >> test/bun.js/snapshots.js;)
 
+.PHONY: test-dev-bun-snapshot
 test-dev-bun-snapshot:
 	rm -rf test/bun.js/snapshots.debug.js
 	touch test/bun.js/snapshots.debug.js
 	$(foreach i,$(wildcard test/bun.js/*.snapshot.*),echo "" >> test/bun.js/snapshots.debug.js; echo "// $i" >> test/bun.js/snapshots.debug.js; $(DEBUG_BUN) build $i --platform=bun >> test/bun.js/snapshots.debug.js;)
 
+.PHONY: test-bun-wiptest
 test-bun-wiptest: test/wiptest/run
 	cd test/wiptest && BUN_BIN=$(DEBUG_BUN) ./run ./fixtures
 
+.PHONY: test-all
 test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev
 
+.PHONY: copy-test-node-modules
 copy-test-node-modules:
 	rm -rf test/snippets/package-json-exports/node_modules || echo "";
 	cp -r test/snippets/package-json-exports/_node_modules_copy test/snippets/package-json-exports/node_modules || echo "";
+
+.PHONY: kill-bun
 kill-bun:
 	-killall -9 bun bun-debug
 
+.PHONY: test-dev-create-next
 test-dev-create-next:
 	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-create-next.sh
 
+.PHONY: test-dev-create-react
 test-dev-create-react:
 	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-create-react.sh
 
+.PHONY: test-create-next
 test-create-next:
 	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-create-next.sh
 
+.PHONY: test-bun-run
 test-bun-run:
 	cd test/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-run-check.sh
 
+.PHONY: test-bun-install
 test-bun-install: test-bun-install-git-status
 	cd test/apps && JS_RUNTIME=$(RELEASE_BUN) NPM_CLIENT=$(RELEASE_BUN) bash ./bun-install.sh
 	cd test/apps && BUN_BIN=$(RELEASE_BUN) bash ./bun-install-utf8.sh
 
+.PHONY: test-bun-install-git-status
 test-bun-install-git-status:
 	cd test/apps && JS_RUNTIME=$(RELEASE_BUN) BUN_BIN=$(RELEASE_BUN) bash ./bun-install-lockfile-status.sh
 
+.PHONY: test-dev-bun-install
 test-dev-bun-install: test-dev-bun-install-git-status
 	cd test/apps && JS_RUNTIME=$(DEBUG_BUN) NPM_CLIENT=$(DEBUG_BUN) bash ./bun-install.sh
 	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-utf8.sh
 
+.PHONY: test-dev-bun-install-git-status
 test-dev-bun-install-git-status:
 	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash ./bun-install-lockfile-status.sh
 
+.PHONY: test-create-react
 test-create-react:
 	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-create-react.sh
 
+.PHONY: test-with-hmr
 test-with-hmr: kill-bun copy-test-node-modules
 	BUN_BIN=$(RELEASE_BUN) node test/scripts/browser.js
 
+.PHONY: test-no-hmr
 test-no-hmr: kill-bun copy-test-node-modules
 	-killall bun -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(RELEASE_BUN) node test/scripts/browser.js
 
+.PHONY: test-dev-with-hmr
 test-dev-with-hmr: copy-test-node-modules
 	-killall bun-debug -9;
 	BUN_BIN=$(DEBUG_BUN) node test/scripts/browser.js
 
+.PHONY: test-dev-no-hmr
 test-dev-no-hmr: copy-test-node-modules
 	-killall bun-debug -9;
 	DISABLE_HMR="DISABLE_HMR" BUN_BIN=$(DEBUG_BUN) node test/scripts/browser.js
 
+.PHONY: test-dev-bun-hmr
 test-dev-bun-run:
 	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
 
+.PHONY: test-dev-all
 test-dev-all: test-install test-dev-bun-snapshot test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev
 test-dev-bunjs:
 
@@ -1020,11 +1106,13 @@ jsc-copy-headers:
 
 # This is a workaround for a JSC bug that impacts aarch64
 # on macOS, it never requests JIT permissions
+.PHONY: jsc-force-fastjit
 jsc-force-fastjit:
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.h
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/assembler/FastJITPermissions.h
 	$(SED) -i "s/USE(PTHREAD_JIT_PERMISSIONS_API)/CPU(ARM64)/g" $(WEBKIT_DIR)/Source/JavaScriptCore/jit/ExecutableAllocator.cpp
 
+.PHONY: jsc-build-mac-compile
 jsc-build-mac-compile:
 	mkdir -p $(WEBKIT_RELEASE_DIR) $(WEBKIT_DIR);
 	cd $(WEBKIT_RELEASE_DIR) && \
@@ -1046,6 +1134,7 @@ jsc-build-mac-compile:
 	CFLAGS="$(CFLAGS) $(BITCODE_OR_SECTIONS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) $(BITCODE_OR_SECTIONS)  -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config Release --target jsc
 
+.PHONY: jsc-build-mac-compile-lto
 jsc-build-mac-compile-lto:
 	mkdir -p $(WEBKIT_RELEASE_DIR_LTO) $(WEBKIT_DIR);
 	cd $(WEBKIT_RELEASE_DIR_LTO) && \
@@ -1069,6 +1158,7 @@ jsc-build-mac-compile-lto:
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
 		cmake --build $(WEBKIT_RELEASE_DIR_LTO) --config Release --target jsc
 
+.PHONY: jsc-build-mac-compile-debug
 jsc-build-mac-compile-debug:
 	mkdir -p $(WEBKIT_DEBUG_DIR) $(WEBKIT_DIR);
 	cd $(WEBKIT_DEBUG_DIR) && \
@@ -1091,6 +1181,7 @@ jsc-build-mac-compile-debug:
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
 		cmake --build $(WEBKIT_DEBUG_DIR) --config Debug --target jsc
 
+.PHONY: jsc-build-linux-compile-config
 jsc-build-linux-compile-config:
 	mkdir -p $(WEBKIT_RELEASE_DIR)
 	cd $(WEBKIT_RELEASE_DIR) && \
@@ -1112,6 +1203,7 @@ jsc-build-linux-compile-config:
 
 # If you get "Error: could not load cache"
 # run  rm -rf src/bun.js/WebKit/CMakeCache.txt
+.PHONY: jsc-build-linux-compile-build
 jsc-build-linux-compile-build:
 		mkdir -p $(WEBKIT_RELEASE_DIR)  && \
 		cd $(WEBKIT_RELEASE_DIR)  && \
@@ -1136,6 +1228,7 @@ clean-bindings:
 	rm -rf $(OBJ_DIR)/webcore/*.o
 	rm -rf $(BINDINGS_OBJ)
 
+.PHONY: clean
 clean: clean-bindings
 	rm $(BUN_DEPS_DIR)/*.a $(BUN_DEPS_DIR)/*.o
 	(cd $(BUN_DEPS_DIR)/mimalloc && make clean) || echo "";
@@ -1220,8 +1313,6 @@ bun-link-lld-release-no-jsc:
 bun-relink-copy:
 	mkdir -p $(PACKAGE_DIR)
 	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BUN_RELEASE_BIN).o
-
-
 
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) $(SYMBOLS) \
@@ -1425,6 +1516,7 @@ endif
 
 endif
 
+.PHONY: build-unit
 build-unit: ## to build your unit tests
 	@rm -rf zig-out/bin/$(testname)
 	@mkdir -p zig-out/bin
@@ -1442,6 +1534,7 @@ build-unit: ## to build your unit tests
 	 && \
 	cp zig-out/bin/$(testname) $(testbinpath)
 
+.PHONY: run-all-unit-tests
 run-all-unit-tests: ## to run your unit tests
 	@rm -rf zig-out/bin/__main_test
 	@mkdir -p zig-out/bin
@@ -1458,21 +1551,23 @@ run-all-unit-tests: ## to run your unit tests
 	$(ARCHIVE_FILES) $(ICU_FLAGS) $(JSC_FILES) $(JSC_BINDINGS) && \
 	zig-out/bin/__main_test $(ZIG)
 
+.PHONY: run-unit
 run-unit:
 	@zig-out/bin/$(testname) $(ZIG)
 
+.PHONY: help
 help: ## to print this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
+.PHONY: test
 test: build-unit run-unit
 
+.PHONY: integration-test-dev
 integration-test-dev: ## to run integration tests
 	USE_EXISTING_PROCESS=true TEST_SERVER_URL=http://localhost:3000 node test/scripts/browser.js
 
 copy-install:
 	cp src/cli/install.sh ../bun.sh/docs/install.html
-
-
 
 copy-to-bun-release-dir: copy-to-bun-release-dir-bin copy-to-bun-release-dir-dsym
 
@@ -1480,8 +1575,7 @@ copy-to-bun-release-dir-bin:
 	cp -r $(PACKAGE_DIR)/bun $(BUN_RELEASE_DIR)/bun
 	cp -r $(PACKAGE_DIR)/bun-profile $(BUN_RELEASE_DIR)/bun-profile
 
-
 PACKAGE_MAP = --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_$(OS_NAME).zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin clap $(BUN_DIR)/src/deps/zig-clap/clap.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-begin io $(BUN_DIR)/src/io/io_darwin.zig --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin thread_pool $(BUN_DIR)/src/thread_pool.zig --pkg-end --pkg-end --pkg-end --pkg-end --pkg-begin boringssl $(BUN_DIR)/src/boringssl.zig --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin http $(BUN_DIR)/src/http_client_async.zig --pkg-end --pkg-begin strings $(BUN_DIR)/src/string_immutable.zig --pkg-end --pkg-begin picohttp $(BUN_DIR)/src/deps/picohttp.zig --pkg-end --pkg-end
 
-
+.PHONY: bun
 bun: vendor identifier-cache build-obj bun-link-lld-release bun-codesign-release-local

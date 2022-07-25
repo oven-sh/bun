@@ -3,13 +3,19 @@ on:
   push:
     branches: [main, bun-actions]
     paths:
-      - "src"
-      - "test"
+      - "src/**/*"
+      - "test/**/*"
+      - "build.zig"
+      - "Makefile"
+      - "Dockerfile"
   pull_request:
     branches: [main]
     paths:
-      - "src"
-      - "test"
+      - "src/**/*"
+      - "test/**/*"
+      - "build.zig"
+      - "Makefile"
+      - "Dockerfile"
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -100,27 +106,42 @@ jobs:
             artifact: bun-obj-darwin-aarch64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-arm64-lto.tar.gz"
             runner: macos-arm64
-    env:
-      CPU_TARGET: ${{ matrix.cpu }}
-      JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
-      JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
-      BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
         run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
       - name: Install dependencies
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
           brew install llvm@13 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild go
           echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
           brew link --overwrite llvm@13
       - name: Download WebKit
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
           curl -L ${{ matrix.webkit_url }} | tar -xz -C ${{ runner.temp }}/bun-webkit --strip-components=1
       - name: Compile dependencies
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
           make vendor-without-check
       - name: Compile C++
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
           make -j $(nproc) jsc-bindings-mac
       # - name: Download Artifact
@@ -129,11 +150,26 @@ jobs:
       #     name: ${{ matrix.artifact }}
       #     path: ${{ runner.temp }}/release
       - name: Link
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: make bun-link-lld-release
       - name: dSYM
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
           make bun-link-lld-release-dsym
       - name: Copy release
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
           mkdir -p $BUN_DEPLOY_DIR
           make release-bin-generate-copy
@@ -141,7 +177,7 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.label }}
-          path: $BUN_DEPLOY_DIR
+          path: ${{ runner.temp }}/release/bun
 
   linux-x64:
     name: Linux x64 (${{ matrix.cpu }})

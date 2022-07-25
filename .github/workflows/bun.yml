@@ -189,8 +189,8 @@ jobs:
         with:
           prerelease: true
           generate_release_notes: true
-          body: "This is the canary release of Bun that corresponds to the commit [{{ github.sha }}]"
-          name: "Canary ({{github.sha}})"
+          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
+          name: "Canary (${{github.sha}})"
           tag_name: "canary"
           files: |
             ${{runner.temp}}/release/*.zip

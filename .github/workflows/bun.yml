@@ -148,6 +148,7 @@ jobs:
           JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
+          mkdir -p src/bun.js/bindings-obj
           make -j $(sysctl -n hw.ncpu) jsc-bindings-mac
       # - name: Download Artifact
       #   uses: actions/download-artifact@v3

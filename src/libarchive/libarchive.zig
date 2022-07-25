@@ -512,8 +512,18 @@ pub const Archive = struct {
 
                     switch (kind) {
                         Kind.Directory => {
-                            const perm = @intCast(u32, lib.archive_entry_perm(entry));
-                            std.os.mkdiratZ(dir.fd, pathname, perm) catch |err| {
+                            var mode = @intCast(i32, lib.archive_entry_perm(entry));
+
+                            // if dirs are readable, then they should be listable
+                            // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
+                            if ((mode & 0o400) != 0)
+                                mode |= 0o100;
+                            if ((mode & 0o40) != 0)
+                                mode |= 0o10;
+                            if ((mode & 0o4) != 0)
+                                mode |= 0o1;
+
+                            std.os.mkdiratZ(dir.fd, pathname, @intCast(u32, mode)) catch |err| {
                                 if (err == error.PathAlreadyExists or err == error.NotDir) break;
                                 try dir.makePath(std.fs.path.dirname(slice) orelse return err);
                                 try std.os.mkdiratZ(dir.fd, pathname, 0o777);

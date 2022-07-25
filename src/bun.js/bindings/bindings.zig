@@ -206,6 +206,12 @@ pub const ZigString = extern struct {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
+    pub fn init16(slice_: []const u16) ZigString {
+        var out = ZigString{ .ptr = std.mem.sliceAsBytes(slice_).ptr, .len = slice_.len };
+        out.markUTF16();
+        return out;
+    }
+
     pub fn from(slice_: JSC.C.JSValueRef, ctx: JSC.C.JSContextRef) ZigString {
         return JSC.JSValue.fromRef(slice_).getZigString(ctx.ptr());
     }
@@ -242,7 +248,7 @@ pub const ZigString = extern struct {
         return shim.cppFn("toExternalU16", .{ ptr, len, global });
     }
 
-    pub fn isUTF8(this: *ZigString) bool {
+    pub fn isUTF8(this: ZigString) bool {
         return (@ptrToInt(this.ptr) & (1 << 61)) != 0;
     }
 
@@ -272,12 +278,17 @@ pub const ZigString = extern struct {
     }
 
     pub fn format(self: ZigString, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (self.isUTF8()) {
+            try writer.writeAll(self.slice());
+            return;
+        }
+
         if (self.is16Bit()) {
             try strings.formatUTF16(self.utf16Slice(), writer);
             return;
         }
 
-        try writer.writeAll(self.slice());
+        try strings.formatLatin1(self.slice(), writer);
     }
 
     pub inline fn toRef(slice_: []const u8, global: *JSGlobalObject) C_API.JSValueRef {

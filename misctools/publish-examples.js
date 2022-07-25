@@ -77,20 +77,32 @@ for (let folder of examplesFolderEntries) {
   } catch (exception) {}
 
   restart: while (retryCount-- > 0) {
-    packageJSON.version = version;
+    packageJSON.version = require("semver").inc(packageJSON.version, "patch");
     if ("private" in packageJSON) delete packageJSON.private;
     if ("license" in packageJSON) delete packageJSON.license;
+    if ("main" in packageJSON && !("module" in packageJSON)) {
+      packageJSON.module = packageJSON.main;
+      delete packageJSON.main;
+    }
 
     fs.writeFileSync(
       path.join(absolute, "package.json"),
       JSON.stringify(packageJSON, null, 2)
     );
-    exec(`npm version patch --force`, { cwd: absolute });
+    try {
+      exec(`npm version patch --force --no-commit-hooks --no-git-tag-version`, {
+        cwd: absolute,
+      });
 
-    packageJSON = JSON.parse(
-      fs.readFileSync(path.join(absolute, "package.json"), "utf8")
-    );
-    version = packageJSON.version;
+      packageJSON = JSON.parse(
+        fs.readFileSync(path.join(absolute, "package.json"), "utf8")
+      );
+      version = packageJSON.version;
+    } catch (e) {
+      if (e.code !== "E404") {
+        throw e;
+      }
+    }
 
     try {
       exec(

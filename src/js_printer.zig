@@ -226,30 +226,45 @@ const JSONFormatter = struct {
     input: []const u8,
 
     pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try writeJSONString(self.input, @TypeOf(writer), writer, false);
+        try writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
     }
 };
 
+/// Expects latin1
 pub fn formatJSONString(text: []const u8) JSONFormatter {
     return JSONFormatter{ .input = text };
 }
 
-pub fn writeJSONString(text: []const u8, comptime Writer: type, writer: Writer, comptime ascii_only: bool) !void {
+pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
     try writer.writeAll("\"");
-    var i: usize = 0;
-    var n: usize = text.len;
-    while (i < n) {
-        const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
-        const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
-        if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            const remain = text[i + @as(usize, width) ..];
+    var text = input;
+    const end = text.ptr + text.len;
+    if (comptime encoding == .utf16) {
+        @compileError("not implemented yet");
+    }
+
+    while (text.ptr != end) {
+        const width = if (comptime encoding == .latin1 or encoding == .ascii)
+            1
+        else
+            strings.wtf8ByteSequenceLengthWithInvalid(text[0]);
+
+        const c: i32 = if (comptime encoding == .utf8)
+            strings.decodeWTF8RuneT(text.ptr[0..4], width, i32, 0)
+        else brk: {
+            const char = text[0];
+            if (char <= 0x7F) {
+                break :brk char;
+            } else break :brk strings.latin1ToCodepointAssumeNotASCII(char, i32);
+        };
+        if (canPrintWithoutEscape(i32, c, false)) {
+            const remain = text[@as(usize, width)..];
             if (strings.indexOfNeedsEscape(remain)) |j| {
-                try writer.writeAll(text[i .. i + j + @as(usize, width)]);
-                i += j + @as(usize, width);
+                try writer.writeAll(text[0 .. j + @as(usize, width)]);
+                text = text[j + @as(usize, width) ..];
                 continue;
             } else {
-                try writer.writeAll(text[i..]);
-                i = n;
+                try writer.writeAll(text);
                 break;
             }
         }
@@ -260,46 +275,46 @@ pub fn writeJSONString(text: []const u8, comptime Writer: type, writer: Writer, 
             // allowed in strict mode (or in template strings).
             0x07 => {
                 try writer.writeAll("\\x07");
-                i += 1;
+                text = text[1..];
             },
             0x08 => {
                 try writer.writeAll("\\b");
-                i += 1;
+                text = text[1..];
             },
             0x0C => {
                 try writer.writeAll("\\f");
-                i += 1;
+                text = text[1..];
             },
             '\n' => {
                 try writer.writeAll("\\n");
-                i += 1;
+                text = text[1..];
             },
             std.ascii.control_code.CR => {
                 try writer.writeAll("\\r");
-                i += 1;
+                text = text[1..];
             },
             // \v
             std.ascii.control_code.VT => {
                 try writer.writeAll("\\v");
-                i += 1;
+                text = text[1..];
             },
             // "\\"
             '\\' => {
                 try writer.writeAll("\\\\");
-                i += 1;
+                text = text[1..];
             },
             '"' => {
                 try writer.writeAll("\\\"");
-                i += 1;
+                text = text[1..];
             },
 
             '\t' => {
                 try writer.writeAll("\\t");
-                i += 1;
+                text = text[1..];
             },
 
             else => {
-                i += @as(usize, width);
+                text = text[@as(usize, width)..];
 
                 if (c < 0xFFFF) {
                     const k = @intCast(usize, c);

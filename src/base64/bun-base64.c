@@ -22,7 +22,7 @@ size_t bun_base64_encode(char *dest, const char *src, size_t len) {
   return chromium_base64_encode(dest, src, len);
 }
 
-#elif defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
+#elif defined(__GNUC__) && (defined(__x86_64__) && defined(__AVX2__))
 
 size_t bun_base64_decode(char *dest, const char *src, size_t len,
                          size_t *outlen) {

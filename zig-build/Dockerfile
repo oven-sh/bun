@@ -1,7 +1,7 @@
 
 # This builds the specifc version of Zig used by bun
 # It outputs a zig.zip file
-FROM ubuntu:20.04
+FROM ubuntu:18.04
 
 RUN apt-get update && apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common
 RUN curl -s https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add -
@@ -41,7 +41,7 @@ ENV CXX=clang++-13
 
 RUN mkdir /output;
 WORKDIR /output
-ARG TAG "jan1"
+ARG TAG "jul7"
 
 # Compile zig
 RUN --mount=type=tmpfs,target=/zig-build \

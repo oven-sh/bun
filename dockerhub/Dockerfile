@@ -10,8 +10,8 @@ WORKDIR /tmp
 RUN apk --no-cache add unzip
 
 # get bun
-RUN wget https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip && \
-    unzip bun-linux-x64.zip
+ADD https://github.com/oven-sh/bun/releases/latest/download/bun-linux-x64.zip
+RUN unzip bun-linux-x64.zip
 
 # get glibc
 ARG GLIBC_RELEASE

@@ -4,7 +4,7 @@ set -euo pipefail
 
 killall -9 $(basename $BUN_BIN) || echo ""
 
-dir=$(mktemp -d --suffix=bun-dev-check)
+dir=$(mktemp -d)
 
 index_content="<html><body>index.html</body></html>"
 bacon_content="<html><body>bacon.html</body></html>"

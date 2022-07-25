@@ -78,7 +78,7 @@ const invalid_package_id = @import("./install.zig").invalid_package_id;
 const JSAst = @import("../js_ast.zig");
 const Origin = @import("./install.zig").Origin;
 const PackageIDMultiple = @import("./install.zig").PackageIDMultiple;
-
+const Crypto = @import("../sha.zig").Hashers;
 pub const MetaHash = [std.crypto.hash.sha2.Sha512256.digest_length]u8;
 const zero_hash = std.mem.zeroes(MetaHash);
 
@@ -452,7 +452,7 @@ pub const Tree = struct {
     }
 };
 
-/// This conditonally clones the lockfile with root packages marked as non-resolved that do not satisfy `Features`. The package may still end up installed even if it was e.g. in "devDependencies" and its a production install. In that case, it would be installed because another dependency or transient dependency needed it 
+/// This conditonally clones the lockfile with root packages marked as non-resolved that do not satisfy `Features`. The package may still end up installed even if it was e.g. in "devDependencies" and its a production install. In that case, it would be installed because another dependency or transient dependency needed it
 ///
 /// Warning: This potentially modifies the existing lockfile in-place. That is safe to do because at this stage, the lockfile has already been saved to disk. Our in-memory representation is all that's left.
 pub fn maybeCloneFilteringRootPackages(
@@ -3013,7 +3013,7 @@ pub fn generateMetaHash(this: *Lockfile, print_name_version_string: bool) !MetaH
     }
 
     var digest = zero_hash;
-    std.crypto.hash.sha2.Sha512256.hash(alphabetized_name_version_string, &digest, .{});
+    Crypto.SHA512_256.hash(alphabetized_name_version_string, &digest);
 
     return digest;
 }

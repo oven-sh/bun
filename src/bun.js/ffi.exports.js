@@ -160,6 +160,13 @@ ffiWrappers[FFIType.bool] = function bool(val) {
   return !!val;
 };
 
+// This prevents an extra property getter in potentially hot code
+Object.defineProperty(globalThis, "__GlobalBunFFIPtrFunctionForWrapper", {
+  value: ptr,
+  enumerable: false,
+  configurable: true,
+});
+
 ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(
   val
 ) {
@@ -169,7 +176,7 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(
   }
 
   if (ArrayBuffer.isView(val) || val instanceof ArrayBuffer) {
-    return ptr(val);
+    return __GlobalBunFFIPtrFunctionForWrapper(val);
   }
 
   if (typeof val === "string") {

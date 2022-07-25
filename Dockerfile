@@ -1,12 +1,14 @@
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
-# Directory extracts to "bun-webkit"
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
 ARG CPU_TARGET=native
+ARG ARCH=x86_64
+ARG TRIPLET=${ARCH}-linux-gnu
+ARG BUILDARCH=amd64
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -42,15 +44,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     npm install -g esbuild
 
 
-ARG DEBIAN_FRONTEND=noninteractive
-ARG GITHUB_WORKSPACE=/build
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
 
 # Directory extracts to "bun-webkit"
 ARG WEBKIT_DIR
 ARG BUN_RELEASE_DIR
 ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
-ARG BUILDARCH=amd64
+ARG BUILDARCH
 ARG ZIG_PATH
 
 ENV WEBKIT_OUT_DIR=${WEBKIT_DIR}
@@ -377,10 +379,10 @@ WORKDIR $BUN_DIR
 
 ENV JSC_BASE_DIR=${WEBKIT_DIR}
 ENV LIB_ICU_PATH=${WEBKIT_DIR}/lib
-ARG ARCH=x86_64
+ARG ARCH
+ARG TRIPLET
 ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
-ARG TRIPLET=${ARCH}-linux-gnu
 
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out

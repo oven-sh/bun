@@ -19,6 +19,58 @@ env:
   TEST_TAG: bun-test'
 
 jobs:
+  macos-object-files:
+    name: macOS Object
+    runs-on: linux-amd64
+    strategy:
+      matrix:
+        include:
+          - cpu: sandybridge
+            arch: x86_64
+            label: bun-obj-darwin-x64-baseline
+          - cpu: skylake
+            arch: x86_64
+            label: bun-obj-darwin-x64
+          - cpu: native
+            arch: aarch64
+            label: bun-obj-darwin-aarch64
+    steps:
+      - uses: actions/checkout@v3
+      - name: Checkout submodules
+        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
+      - uses: docker/setup-buildx-action@v2
+        id: buildx
+        with:
+          install: true
+      - name: Run
+        run: |
+          rm -rf ${{runner.temp}}/release
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          push: false
+          tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{github.sha}}
+          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-${{matrix.arch}}-macos
+          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-${{matrix.arch}}-macos,mode=max
+          build-args: |
+            ARCH=${{ matrix.arch }}
+            BUILDARCH=amd64
+            CPU_TARGET=${{ matrix.cpu }}
+            TRIPLET=${{matrix.arch}}-macos-none
+          platforms: linux/amd64
+          target: build_release_obj
+          outputs: type=local,dest=${{runner.temp}}/release
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.label }}
+          path: ${{runner.temp}}/release/bun.o
   linux-x64:
     name: Linux x64 (${{ matrix.cpu }})
     runs-on: linux-amd64
@@ -67,7 +119,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'sandybridge' }}
         with:
-          name: bun-linux-x64-generic
+          name: bun-linux-x64-baseline
           path: ${{runner.temp}}/release/bun
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'native' }}
@@ -77,7 +129,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'sandybridge' }}
         with:
-          name: bun-dependencies-linux-x64-generic
+          name: bun-dependencies-linux-x64-baseline
           path: ${{runner.temp}}/release/bun-dependencies
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'native' }}
@@ -87,7 +139,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'sandybridge' }}
         with:
-          name: bun-linux-x64-generic-profile
+          name: bun-linux-x64-baseline-profile
           path: ${{runner.temp}}/release/bun-profile
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'native' }}
@@ -97,7 +149,7 @@ jobs:
       - uses: actions/upload-artifact@v3
         if: ${{ matrix.cpu == 'sandybridge' }}
         with:
-          name: bun-obj-linux-x64-generic
+          name: bun-obj-linux-x64-baseline
           path: ${{runner.temp}}/release/bun-obj
   linux-aarch64:
     name: Linux aarch64
@@ -167,8 +219,6 @@ jobs:
       - name: Rename files
         run: |
           cd ${{runner.temp}}/release
-          mv bun-linux-x64-generic bun-linux-x64-baseline
-          mv bun-linux-x64-generic-profile bun-linux-x64-baseline-profile
 
           chmod +x bun-linux-x64/*
           chmod +x bun-linux-x64-baseline/*

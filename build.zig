@@ -257,8 +257,13 @@ pub fn build(b: *std.build.Builder) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
-    output_dir = b.pathFromRoot(output_dir_base);
+    if (std.os.getenv("OUTPUT_DIR")) |output_dir_| {
+        output_dir = output_dir_;
+    } else {
+        const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
+        output_dir = b.pathFromRoot(output_dir_base);
+    }
+
     std.fs.cwd().makePath(output_dir) catch {};
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
     exe = b.addExecutable(bun_executable_name, if (target.getOsTag() == std.Target.Os.Tag.freestanding)

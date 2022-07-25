@@ -387,10 +387,13 @@ ENV CPU_TARGET=${CPU_TARGET}
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
 
+COPY ./build-id ${BUN_DIR}/build-id
+ARG BUN_BASE_VERSION=0.1
+
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
     mkdir -p $BUN_RELEASE_DIR && \
-    $ZIG_PATH/zig build obj -Drelease-fast -Dtarget=${TRIPLET} -Dcpu=$(echo "${CPU_TARGET}" | tr '-' '_') && \
-    make bun-release-copy-obj
+    OUTPUT_DIR=/tmp $ZIG_PATH/zig build obj -Drelease-fast -Dtarget=${TRIPLET} -Dcpu=$(echo "${CPU_TARGET}" | tr '-' '_') && \
+    cp /tmp/bun.o /tmp/bun.${BUN_BASE_VERSION}.$(cat ${BUN_DIR}/build-id).o
 
 FROM scratch as build_release_obj
 

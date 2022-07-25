@@ -1349,7 +1349,7 @@ endif
 ifeq ($(OS_NAME),linux)
 bun-link-lld-release-dsym: bun-release-copy-obj
 	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
-	-$(STRIP) $(BUN_RELEASE_BIN) --wildcard -K _napi\*
+	-$(STRIP) -s $(BUN_RELEASE_BIN) --wildcard -K _napi\*
 copy-to-bun-release-dir-dsym:
 
 endif

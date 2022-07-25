@@ -259,6 +259,7 @@ pub fn build(b: *std.build.Builder) !void {
 
     const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
     output_dir = b.pathFromRoot(output_dir_base);
+    std.fs.cwd().makePath(output_dir) catch {};
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
     exe = b.addExecutable(bun_executable_name, if (target.getOsTag() == std.Target.Os.Tag.freestanding)
         "src/main_wasm.zig"
@@ -547,7 +548,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     });
 
     for (dirs_to_search.slice()) |deps_path| {
-        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch @panic("Failed to open dependencies directory");
+        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch continue;
         var iterator = deps_dir.iterate();
         obj.addIncludeDir(deps_path);
         obj.addLibPath(deps_path);

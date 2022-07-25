@@ -128,7 +128,9 @@ jobs:
           JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
-          curl -L ${{ matrix.webkit_url }} | tar -xz -C ${{ runner.temp }}/bun-webkit --strip-components=1
+          rm -rf $JSC_BASE_DIR
+          mkdir -p $JSC_BASE_DIR
+          curl -L ${{ matrix.webkit_url }} | tar -xz -C $JSC_BASE_DIR --strip-components=1
       - name: Compile dependencies
         env:
           CPU_TARGET: ${{ matrix.cpu }}

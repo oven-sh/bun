@@ -8,10 +8,17 @@ pub const fmt = struct {
     pub const SizeFormatter = struct {
         value: usize = 0,
         pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+            const radix = 1000;
+
             const math = std.math;
             const value = self.value;
             if (value == 0) {
-                return writer.writeAll("0 KB");
+                const buf = switch (radix) {
+                    1000 => "0 KB",
+                    1024 => "0 KiB",
+                    else => unreachable,
+                };
+                return writer.writeAll(buf);
             }
 
             if (value < 512) {
@@ -19,26 +26,29 @@ pub const fmt = struct {
                 return writer.writeAll(" bytes");
             }
 
-            const mags_si = " KMGTPEZY";
-            const mags_iec = " KMGTPEZY";
+            const mags_si = " KMGTPE";
+            const mags_iec = " KMGTPE";
 
             const log2 = math.log2(value);
-            const magnitude = math.min(log2 / comptime math.log2(1000), mags_si.len - 1);
-            const new_value = math.lossyCast(f64, value) / math.pow(f64, 1000, math.lossyCast(f64, magnitude));
-            const suffix = switch (1000) {
+            const magnitude = switch (radix) {
+                1000 => math.min(log2 / comptime math.log2(1000), mags_si.len - 1),
+                1024 => math.min(log2 / 10, mags_iec.len - 1),
+                else => unreachable,
+            };
+            const new_value = math.lossyCast(f64, value) / math.pow(f64, comptime math.lossyCast(f64, radix), math.lossyCast(f64, magnitude));
+            const suffix = switch (radix) {
                 1000 => mags_si[magnitude],
                 1024 => mags_iec[magnitude],
                 else => unreachable,
             };
 
-            if (suffix == ' ') {
-                try fmt.formatFloatDecimal(new_value / 1000.0, .{ .precision = 2 }, writer);
-                return writer.writeAll(" KB");
-            } else {
-                try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 0) else @as(usize, 2) }, writer);
-            }
+            var precision = if (std.math.approxEqAbs(f64, new_value, @round(new_value), 0.010))
+                @as(usize, 0)
+            else
+                @as(usize, 2);
+            try fmt.formatFloatDecimal(new_value, .{ .precision = precision }, writer);
 
-            const buf = switch (1000) {
+            const buf = switch (radix) {
                 1000 => &[_]u8{ ' ', suffix, 'B' },
                 1024 => &[_]u8{ ' ', suffix, 'i', 'B' },
                 else => unreachable,
@@ -56,6 +66,27 @@ pub const fmt = struct {
         };
     }
 };
+
+test "SizeFormatter" {
+    var buf: [24]u8 = undefined;
+    try std.testing.expectEqualStrings("0 KB", try fmt.bufPrint(&buf, "{}", .{fmt.size(0)}));
+    try std.testing.expectEqualStrings("10 bytes", try fmt.bufPrint(&buf, "{}", .{fmt.size(10)}));
+    try std.testing.expectEqualStrings("0.51 KB", try fmt.bufPrint(&buf, "{}", .{fmt.size(513)}));
+    try std.testing.expectEqualStrings("0.99 KB", try fmt.bufPrint(&buf, "{}", .{fmt.size(990)}));
+    try std.testing.expectEqualStrings("1 KB", try fmt.bufPrint(&buf, "{}", .{fmt.size(999)}));
+    try std.testing.expectEqualStrings("1 KB", try fmt.bufPrint(&buf, "{}", .{fmt.size(1000)}));
+    try std.testing.expectEqualStrings("1.11 KB", try fmt.bufPrint(&buf, "{}", .{fmt.size(1111)}));
+    try std.testing.expectEqualStrings("1 MB", try fmt.bufPrint(&buf, "{}", .{fmt.size(999999)}));
+    try std.testing.expectEqualStrings("1 MB", try fmt.bufPrint(&buf, "{}", .{fmt.size(1000000)}));
+    try std.testing.expectEqualStrings("1 GB", try fmt.bufPrint(&buf, "{}", .{fmt.size(999999999)}));
+    try std.testing.expectEqualStrings("1 GB", try fmt.bufPrint(&buf, "{}", .{fmt.size(1000000000)}));
+    try std.testing.expectEqualStrings("1 TB", try fmt.bufPrint(&buf, "{}", .{fmt.size(999999999999)}));
+    try std.testing.expectEqualStrings("1 TB", try fmt.bufPrint(&buf, "{}", .{fmt.size(1000000000000)}));
+    try std.testing.expectEqualStrings("1 PB", try fmt.bufPrint(&buf, "{}", .{fmt.size(999999999999999)}));
+    try std.testing.expectEqualStrings("1 PB", try fmt.bufPrint(&buf, "{}", .{fmt.size(1000000000000000)}));
+    try std.testing.expectEqualStrings("1 EB", try fmt.bufPrint(&buf, "{}", .{fmt.size(999999999999999999)}));
+    try std.testing.expectEqualStrings("1 EB", try fmt.bufPrint(&buf, "{}", .{fmt.size(1000000000000000000)}));
+}
 
 pub inline fn cast(comptime To: type, value: anytype) To {
     if (comptime std.meta.trait.isIntegral(@TypeOf(value))) {
@@ -138,6 +169,12 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
     };
 }
 
+test "range" {
+    try std.testing.expectEqualSlices(usize, &[_]usize{}, &range(0, 0));
+    try std.testing.expectEqualSlices(usize, &[_]usize{0}, &range(0, 1));
+    try std.testing.expectEqualSlices(usize, &[_]usize{ 10, 11, 12 }, &range(10, 13));
+}
+
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     std.debug.assert(dest.len >= src.len);
     var input = std.mem.sliceAsBytes(src);
@@ -171,6 +208,13 @@ pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
     } else {
         @memcpy(output.ptr, input.ptr, input.len);
     }
+}
+
+test "copy" {
+    var src = [_]u8{ 1, 2, 3, 4, 5 };
+    var dst: [3]u8 = undefined;
+    copy(u8, &dst, src[0..3]);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 1, 2, 3 }, &dst);
 }
 
 pub const hasCloneFn = std.meta.trait.multiTrait(.{ std.meta.trait.isContainer, std.meta.trait.hasFn("clone") });
@@ -239,4 +283,9 @@ pub inline fn assertDefined(val: anytype) void {
             assertDefined(@field(val, name));
         }
     }
+}
+
+/// hash a string
+pub fn hash(content: []const u8) u64 {
+    return std.hash.Wyhash.hash(0, content);
 }

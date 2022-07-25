@@ -7,6 +7,7 @@ test {
     _ = @import("./hash_map.zig");
     _ = @import("./js_lexer.zig");
     _ = @import("./js_lexer_tables.zig");
+    _ = @import("./global_utils.zig");
     _ = @import("./linear_fifo.zig");
     _ = @import("./string_immutable.zig");
     _ = @import("./string_mutable.zig");

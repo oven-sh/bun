@@ -1660,14 +1660,17 @@ QUICK_TEST_PKG = \
 	--pkg-end \
 	--main-pkg-path $(BUN_DIR)/src
 
+# runs a quick test (with no external dependencies and limited zig codebase)
 .PHONY: quick-test
 quick-test:
 	zig test $(realpath $(firstword $(wordlist 2, $(words $(MAKECMDGOALS)), $(MAKECMDGOALS)))) $(QUICK_TEST_PKG)
 
+# runs most of quick tests
 .PHONY: quick-tests
 quick-tests:
 	zig test $(BUN_DIR)/src/__quick_tests.zig $(QUICK_TEST_PKG)
 
+# runs quick tests including some slower ones
 .PHONY: all-quick-tests
 all-quick-tests:
 	zig test $(BUN_DIR)/src/__all_quick_tests.zig $(QUICK_TEST_PKG)

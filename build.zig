@@ -333,6 +333,8 @@ pub fn build(b: *std.build.Builder) !void {
 
         if (is_baseline) {
             obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.sandybridge };
+        } else if (arch.isX86()) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.skylake };
         }
 
         {

@@ -335,6 +335,10 @@ pub fn build(b: *std.build.Builder) !void {
             obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.sandybridge };
         } else if (arch.isX86()) {
             obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.skylake };
+        } else if (arch.isAARCH64() and target.isDarwin()) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 };
+        } else if (arch.isAARCH64() and target.isLinux()) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 };
         }
 
         {

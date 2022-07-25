@@ -99,7 +99,7 @@ jobs:
             runner: macos-11
             artifact: bun-obj-darwin-x64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
-          - cpu: apple_m1
+          - cpu: native
             arch: aarch64
             label: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64

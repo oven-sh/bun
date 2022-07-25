@@ -26,8 +26,9 @@ RUN apt-get update && \
     add-apt-repository ppa:longsleep/golang-backports && \
     wget https://apt.llvm.org/llvm.sh --no-check-certificate && \
     chmod +x llvm.sh && \
-    ./llvm.sh 13 && \
-    curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
+    ./llvm.sh 13
+
+RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && \
     apt-get update && \
     apt-get install --no-install-recommends -y \
     ca-certificates \
@@ -50,7 +51,6 @@ RUN apt-get update && \
     libc++abi-13-dev \
     lld-13 \
     libicu-dev \
-    wget \
     rustc \
     cargo \
     unzip \

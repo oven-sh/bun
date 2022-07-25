@@ -310,11 +310,12 @@ pub fn build(b: *std.build.Builder) !void {
             "bindgen",
             false,
         );
+        const is_baseline = arch.isX86() and (obj.target.cpu_model == .baseline or
+            !std.Target.x86.featureSetHas(obj.target.getCpuFeatures(), .avx2));
         opts.addOption(
             bool,
             "baseline",
-            arch.isX86() and (obj.target.cpu_model == .baseline or
-                !std.Target.x86.featureSetHas(obj.target.getCpuFeatures(), .avx2)),
+            is_baseline,
         );
         obj.addOptions("build_options", opts);
 
@@ -323,6 +324,10 @@ pub fn build(b: *std.build.Builder) !void {
             b.allocator,
             target,
         );
+
+        if (is_baseline) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.sandybridge };
+        }
 
         {
             obj_step.dependOn(&b.addLog(
@@ -339,6 +344,7 @@ pub fn build(b: *std.build.Builder) !void {
 
         obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
+
         obj.linkLibC();
         if (mode == std.builtin.Mode.Debug)
             obj.emit_llvm_ir = .{

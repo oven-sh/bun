@@ -109,7 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
-        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu)
+        run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu)
       - name: Install dependencies
         env:
           CPU_TARGET: ${{ matrix.cpu }}

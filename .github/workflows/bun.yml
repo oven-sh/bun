@@ -119,6 +119,7 @@ jobs:
         run: |
           brew install llvm@13 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild
           echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
+          echo "export PATH=$(brew --prefix llvm@13)/bin:\$PATH" >> $GITHUB_ENV
           brew link --overwrite llvm@13
       - name: Download WebKit
         env:

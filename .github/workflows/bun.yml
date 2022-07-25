@@ -77,7 +77,7 @@ jobs:
         with:
           name: ${{ matrix.label }}
           path: ${{runner.temp}}/release/bun.o
-  macOS-cpp:
+  macOS:
     name: macOS
     runs-on: ${{ matrix.runner }}
     needs: macos-object-files
@@ -140,7 +140,7 @@ jobs:
           JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
-          make picohttp vendor-without-check
+          make vendor-without-check
       - name: Compile C++
         env:
           CPU_TARGET: ${{ matrix.cpu }}
@@ -148,8 +148,6 @@ jobs:
           JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
-          rm -rf src/bun.js/bindings-obj
-          mkdir -p src/bun.js/bindings-obj
           make -j $(sysctl -n hw.ncpu) jsc-bindings-mac
       - name: Download Artifact
         uses: actions/download-artifact@v3
@@ -163,7 +161,7 @@ jobs:
           JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
-          mv ${{ runner.temp }}/release/bun.o packages/${{matrix.label}}/bun.o
+          mv ${{ runner.temp }}/release/bun.o ${{ runner.temp }}/release/bun.o
           make bun-link-lld-release
       - name: dSYM
         env:

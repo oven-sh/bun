@@ -306,13 +306,7 @@ pub const Bundler = struct {
             }
         }
 
-        if (this.env.map.get("CI") orelse
-            this.env.map.get("TDDIUM") orelse
-            this.env.map.get("JENKINS_URL") orelse
-            this.env.map.get("bamboo.buildKey")) |_|
-        {
-            Analytics.is_ci = true;
-        }
+        Analytics.is_ci = Analytics.is_ci or this.env.isCI();
 
         if (strings.eqlComptime(this.env.map.get("BUN_DISABLE_TRANSPILER") orelse "0", "1")) {
             this.options.disable_transpilation = true;

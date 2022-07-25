@@ -239,7 +239,6 @@ pub fn build(b: *std.build.Builder) !void {
     } else if (target.isLinux()) {
         target.setGnuLibCVersion(2, 27, 0);
     }
-
     std.mem.copy(
         u8,
         &triplet_buf,
@@ -258,8 +257,14 @@ pub fn build(b: *std.build.Builder) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
-    output_dir = b.pathFromRoot(output_dir_base);
+    if (std.os.getenv("OUTPUT_DIR")) |output_dir_| {
+        output_dir = output_dir_;
+    } else {
+        const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
+        output_dir = b.pathFromRoot(output_dir_base);
+    }
+
+    std.fs.cwd().makePath(output_dir) catch {};
     const bun_executable_name = if (mode == std.builtin.Mode.Debug) "bun-debug" else "bun";
     exe = b.addExecutable(bun_executable_name, if (target.getOsTag() == std.Target.Os.Tag.freestanding)
         "src/main_wasm.zig"
@@ -311,6 +316,13 @@ pub fn build(b: *std.build.Builder) !void {
             "bindgen",
             false,
         );
+        const is_baseline = arch.isX86() and (obj.target.cpu_model == .baseline or
+            !std.Target.x86.featureSetHas(obj.target.getCpuFeatures(), .avx2));
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
         obj.addOptions("build_options", opts);
 
         try addInternalPackages(
@@ -318,6 +330,16 @@ pub fn build(b: *std.build.Builder) !void {
             b.allocator,
             target,
         );
+
+        if (is_baseline) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.sandybridge };
+        } else if (arch.isX86()) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.skylake };
+        } else if (arch.isAARCH64() and target.isDarwin()) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 };
+        } else if (arch.isAARCH64() and target.isLinux()) {
+            obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.generic };
+        }
 
         {
             obj_step.dependOn(&b.addLog(
@@ -334,6 +356,7 @@ pub fn build(b: *std.build.Builder) !void {
 
         obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
+
         obj.linkLibC();
         if (mode == std.builtin.Mode.Debug)
             obj.emit_llvm_ir = .{
@@ -536,7 +559,7 @@ pub fn linkObjectFiles(b: *std.build.Builder, obj: *std.build.LibExeObjStep, tar
     });
 
     for (dirs_to_search.slice()) |deps_path| {
-        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch @panic("Failed to open dependencies directory");
+        var deps_dir = std.fs.cwd().openDir(deps_path, .{ .iterate = true }) catch continue;
         var iterator = deps_dir.iterate();
         obj.addIncludeDir(deps_path);
         obj.addLibPath(deps_path);

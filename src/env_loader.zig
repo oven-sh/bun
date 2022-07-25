@@ -417,6 +417,13 @@ pub const Loader = struct {
         return null;
     }
 
+    pub fn isCI(this: *const Loader) bool {
+        return (this.map.get("CI") orelse
+            this.map.get("TDDIUM") orelse
+            this.map.get("JENKINS_URL") orelse
+            this.map.get("bamboo.buildKey")) != null;
+    }
+
     pub fn loadNodeJSConfig(this: *Loader, fs: *Fs.FileSystem) !void {
         var buf: Fs.PathBuffer = undefined;
 

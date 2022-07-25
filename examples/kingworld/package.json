@@ -10,7 +10,7 @@
     "kingworld": "latest"
   },
   "devDependencies": {
-    "bun-types": "^0.1.4",
+    "bun-types": "latest",
     "nodemon": "^2.0.19"
   }
 }

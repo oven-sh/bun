@@ -4,7 +4,7 @@ import type {
   StackFrame as StackFrameType,
   StackFramePosition,
   StackFrameScope,
-} from "../../../src/api/schema";
+} from "../../src/api/schema";
 
 export class StackFrame implements StackFrameType {
   function_name: string;

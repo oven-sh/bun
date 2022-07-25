@@ -5015,6 +5015,11 @@ fn NewParser_(
         pub fn resolveCommonJSSymbols(p: *P) void {
             if (p.runtime_imports.__require) |*require| {
                 p.resolveGeneratedSymbol(require);
+            } else if (p.symbols.items[p.require_ref.innerIndex()].use_count_estimate == 0 and
+                p.symbols.items[p.require_ref.innerIndex()].link.isNull())
+            {
+                // ensure our unused require() never collides with require()
+                p.symbols.items[p.require_ref.innerIndex()].original_name = "__require";
             }
         }
 
@@ -17736,6 +17741,7 @@ fn NewParser_(
                             .primary = p.require_ref,
                             .ref = declareSymbolMaybeGenerated(p, .other, logger.Loc.Empty, StaticSymbolName.List.__require.internal, true) catch unreachable,
                         };
+                        p.runtime_imports.put(name, p.runtime_imports.__require.?);
                         break :brk p.runtime_imports.__require.?.ref;
                     }
                     const generated_symbol = p.declareGeneratedSymbol(.other, name) catch unreachable;

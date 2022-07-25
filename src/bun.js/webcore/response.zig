@@ -194,11 +194,6 @@ pub const Response = struct {
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
-            try this.body.writeFormat(formatter, writer, enable_ansi_colors);
-
-            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
-            try writer.writeAll("\n");
-
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("url: \"");
             try writer.print(comptime Output.prettyFmt("<r><b>{s}<r>", enable_ansi_colors), .{this.url});
@@ -208,13 +203,16 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("statusText: ");
-            try JSPrinter.writeJSONString(this.status_text, Writer, writer, false);
+            try JSPrinter.writeJSONString(this.status_text, Writer, writer, .ascii);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("redirected: ");
             formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.redirected), .BooleanObject, enable_ansi_colors);
+            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            try writer.writeAll("\n");
+            try this.body.writeFormat(formatter, writer, enable_ansi_colors);
         }
         try writer.writeAll("\n");
         try formatter.writeIndent(Writer, writer);
@@ -750,7 +748,7 @@ pub const Fetch = struct {
             }
             const fetch_error = std.fmt.allocPrint(
                 default_allocator,
-                "fetch() failed – {s}\nurl: \"{s}\"",
+                "fetch() failed {s}\nurl: \"{s}\"",
                 .{
                     @errorName(this.http.err orelse error.HTTPFail),
                     this.http.url.href,
@@ -1066,6 +1064,89 @@ pub const Blob = struct {
 
     pub fn isDetached(this: *const Blob) bool {
         return this.store == null;
+    }
+
+    pub fn writeFormat(this: *const Blob, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        const Writer = @TypeOf(writer);
+
+        try formatter.writeIndent(Writer, writer);
+
+        if (this.isDetached()) {
+            try writer.writeAll(comptime Output.prettyFmt("<d>[<r>Blob<r> detached<d>]<r>", enable_ansi_colors));
+            return;
+        }
+
+        var store = this.store.?;
+        switch (store.data) {
+            .file => |file| {
+                try writer.writeAll(comptime Output.prettyFmt("<r>FileRef<r>", enable_ansi_colors));
+                switch (file.pathlike) {
+                    .path => |path| {
+                        try writer.print(
+                            comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
+                            .{
+                                path.slice(),
+                            },
+                        );
+                    },
+                    .fd => |fd| {
+                        try writer.print(
+                            comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
+                            .{
+                                fd,
+                            },
+                        );
+                    },
+                }
+            },
+            .bytes => {
+                try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
+                try writer.print(
+                    comptime Output.prettyFmt(" (<yellow>{any}<r>)", enable_ansi_colors),
+                    .{
+                        bun.fmt.size(this.size),
+                    },
+                );
+            },
+        }
+
+        if (this.content_type.len > 0 or this.offset > 0) {
+            try writer.writeAll(" {\n");
+            {
+                formatter.indent += 1;
+                defer formatter.indent -= 1;
+
+                if (this.content_type.len > 0) {
+                    try formatter.writeIndent(Writer, writer);
+                    try writer.print(
+                        comptime Output.prettyFmt("type: <green>\"{s}\"<r>", enable_ansi_colors),
+                        .{
+                            this.content_type,
+                        },
+                    );
+
+                    if (this.offset > 0) {
+                        formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                    }
+
+                    try writer.writeAll("\n");
+                }
+
+                if (this.offset > 0) {
+                    try formatter.writeIndent(Writer, writer);
+
+                    try writer.print(
+                        comptime Output.prettyFmt("offset: <yellow>{d}<r>\n", enable_ansi_colors),
+                        .{
+                            this.offset,
+                        },
+                    );
+                }
+            }
+
+            try formatter.writeIndent(Writer, writer);
+            try writer.writeAll("}");
+        }
     }
 
     const CopyFilePromiseHandler = struct {
@@ -1962,7 +2043,6 @@ pub const Blob = struct {
             system_error: ?JSC.SystemError = null,
             errno: ?anyerror = null,
             open_completion: HTTPClient.NetworkThread.Completion = undefined,
-
             write_completion: HTTPClient.NetworkThread.Completion = undefined,
             close_completion: HTTPClient.NetworkThread.Completion = undefined,
             task: HTTPClient.NetworkThread.Task = undefined,
@@ -3701,6 +3781,11 @@ pub const Body = struct {
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll("status: ");
         formatter.printAs(.Double, Writer, writer, JSC.JSValue.jsNumber(this.init.status_code), .NumberObject, enable_ansi_colors);
+        if (this.value == .Blob) {
+            try formatter.printComma(Writer, writer, enable_ansi_colors);
+            try writer.writeAll("\n");
+            try this.value.Blob.writeFormat(formatter, writer, enable_ansi_colors);
+        }
     }
 
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
@@ -4144,7 +4229,10 @@ pub const Request = struct {
             try writer.writeAll("url: \"");
             try writer.print(comptime Output.prettyFmt("<r><b>{}<r>", enable_ansi_colors), .{this.url});
             try writer.writeAll("\"");
-            formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+            if (this.body == .Blob) {
+                try writer.writeAll("\n");
+                try this.body.Blob.writeFormat(formatter, writer, enable_ansi_colors);
+            }
         }
         try writer.writeAll("\n");
         try formatter.writeIndent(Writer, writer);

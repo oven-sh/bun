@@ -7,7 +7,7 @@
   "context": "..",
 
   // Update the 'dockerFile' property if you aren't using the standard 'Dockerfile' filename.
-  "dockerFile": "../Dockerfile",
+  "dockerFile": "../Dockerfile.devcontainer",
 
   // Set *default* container specific settings.json values on container create.
   "settings": {

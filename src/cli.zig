@@ -55,7 +55,7 @@ const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 
 const Reporter = @import("./report.zig");
-var start_time: i128 = undefined;
+pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const Cli = struct {

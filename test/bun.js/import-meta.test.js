@@ -30,6 +30,10 @@ it("import.meta.require (javascript)", () => {
   expect(require("./require-js.js").hello).toBe(sync.hello);
 });
 
+it("import() require + TLA", async () => {
+  expect((await import("./import-require-tla.js")).foo).toBe("bar");
+});
+
 it("import.meta.require (javascript, live bindings)", () => {
   var Source = import.meta.require("./import.live.decl.js");
 

@@ -116,6 +116,7 @@ jobs:
           JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
           HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
@@ -209,6 +210,7 @@ jobs:
           JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
           HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps

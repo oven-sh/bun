@@ -450,7 +450,7 @@ generate-builtins: ## to generate builtins
 	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
 
 .PHONY: tinycc
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
+vendor-without-check: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
 .PHONY: prepare-types
 prepare-types:
@@ -668,7 +668,7 @@ ensure-package-dir:
 	mkdir -p $(PACKAGE_DIR)
 
 .PHONY: prerelease
-prerelease: api analytics all-js ensure-package-dir
+prerelease: all-js ensure-package-dir
 .PHONY: release-only
 release-only: jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release-safe-only

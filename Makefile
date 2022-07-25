@@ -413,7 +413,12 @@ BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(BINDINGS
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
 
+
 bun:
+
+npm-install:
+	$(NPM_CLIENT) install
+
 
 .PHONY: base64
 base64:
@@ -450,7 +455,7 @@ generate-builtins: ## to generate builtins
 	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
 
 .PHONY: tinycc
-vendor-without-check: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
 .PHONY: prepare-types
 prepare-types:
@@ -668,7 +673,7 @@ ensure-package-dir:
 	mkdir -p $(PACKAGE_DIR)
 
 .PHONY: prerelease
-prerelease: all-js ensure-package-dir
+prerelease: api analytics all-js ensure-package-dir
 .PHONY: release-only
 release-only: jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release-safe-only
@@ -691,7 +696,6 @@ fmt: fmt-cpp fmt-zig
 
 .PHONY: api
 api:
-	$(NPM_CLIENT) install
 	./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 	$(ZIG) fmt src/api/schema.zig
 	$(PRETTIER) --write src/api/schema.js
@@ -700,6 +704,7 @@ api:
 .PHONY: node-fallbacks
 node-fallbacks:
 	@cd src/node-fallbacks; $(NPM_CLIENT) install; $(NPM_CLIENT) run --silent build
+
 
 .PHONY: fallback_decoder
 fallback_decoder:

@@ -115,9 +115,11 @@ jobs:
           CPU_TARGET: ${{ matrix.cpu }}
           JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
           JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+          HOMEBREW_NO_AUTO_UPDATE: 1
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
-          brew install llvm@13 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild
+          brew install llvm@13 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
           echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
           echo "export PATH=$(brew --prefix llvm@13)/bin:\$PATH" >> $GITHUB_ENV
           brew link --overwrite llvm@13

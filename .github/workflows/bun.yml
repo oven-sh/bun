@@ -140,7 +140,7 @@ jobs:
           JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         run: |
-          make vendor-without-check
+          make picohttp vendor-without-check
       - name: Compile C++
         env:
           CPU_TARGET: ${{ matrix.cpu }}

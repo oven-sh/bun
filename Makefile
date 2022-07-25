@@ -93,7 +93,16 @@ SED = $(shell which gsed || which sed)
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BUN_DEPS_DIR ?= $(shell pwd)/src/deps
 BUN_DEPS_OUT_DIR ?= $(BUN_DEPS_DIR)
-CPUS ?= $(shell nproc)
+CPU_COUNT = 2
+ifeq ($(OS_NAME),darwin)
+CPU_COUNT = $(shell sysctl -n hw.logicalcpu)
+endif
+
+ifeq ($(OS_NAME),linux)
+CPU_COUNT = $(shell nproc)
+endif
+
+CPUS ?= $(CPU_COUNT)
 USER ?= $(echo $USER)
 
 BUN_RELEASE_DIR ?= $(shell pwd)/../bun-release

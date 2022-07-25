@@ -71,6 +71,78 @@ jobs:
         with:
           name: ${{ matrix.label }}
           path: ${{runner.temp}}/release/bun.o
+  macOS:
+    name: macOS
+    runs-on: ${{ matrix.runner }}
+    # needs: macos-object-files
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        include:
+          - cpu: sandybridge
+            arch: x86_64
+            label: bun-darwin-x64-baseline
+            obj: bun-obj-darwin-x64-baseline
+            runner: macos-11
+            artifact: bun-obj-darwin-x64-baseline
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+          - cpu: skylake
+            arch: x86_64
+            label: bun-darwin-x64
+            obj: bun-obj-darwin-x64
+            runner: macos-11
+            artifact: bun-obj-darwin-x64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+          - cpu: apple_m1
+            arch: aarch64
+            label: bun-darwin-aarch64
+            obj: bun-obj-darwin-aarch64
+            artifact: bun-obj-darwin-aarch64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-arm64-lto.tar.gz"
+            runner: macos-arm64
+    env:
+      CPU_TARGET: ${{ matrix.cpu }}
+      JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+      JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+      BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+    steps:
+      - uses: actions/checkout@v3
+      - name: Checkout submodules
+        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
+      - name: Install dependencies
+        run: |
+          brew install llvm@13 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild go
+          echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
+          brew link --overwrite llvm@13
+      - name: Download WebKit
+        run: |
+          curl -L ${{ matrix.webkit_url }} | tar -xz -C ${{ runner.temp }}/bun-webkit --strip-components=1
+      - name: Compile dependencies
+        run: |
+          make vendor-without-check
+      - name: Compile C++
+        run: |
+          make -j $(nproc) jsc-bindings-mac
+      # - name: Download Artifact
+      #   uses: actions/download-artifact@v3
+      #   with:
+      #     name: ${{ matrix.artifact }}
+      #     path: ${{ runner.temp }}/release
+      - name: Link
+        run: make bun-link-lld-release
+      - name: dSYM
+        run: |
+          make bun-link-lld-release-dsym
+      - name: Copy release
+        run: |
+          mkdir -p $BUN_DEPLOY_DIR
+          make release-bin-generate-copy
+      - name: Upload release
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.label }}
+          path: $BUN_DEPLOY_DIR
+
   linux-x64:
     name: Linux x64 (${{ matrix.cpu }})
     runs-on: linux-amd64
@@ -212,6 +284,7 @@ jobs:
     needs:
       - linux-x64
       - linux-aarch64
+      - macOS
     steps:
       - uses: actions/download-artifact@v3
         with:

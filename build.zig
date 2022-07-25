@@ -338,7 +338,7 @@ pub fn build(b: *std.build.Builder) !void {
         } else if (arch.isAARCH64() and target.isDarwin()) {
             obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 };
         } else if (arch.isAARCH64() and target.isLinux()) {
-            obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.apple_m1 };
+            obj.target.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.generic };
         }
 
         {

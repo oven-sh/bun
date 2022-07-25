@@ -55,6 +55,7 @@ WEBKIT_RELEASE_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Release
 WEBKIT_DEBUG_DIR ?= $(WEBKIT_DIR)/WebKitBuild/Debug
 WEBKIT_RELEASE_DIR_LTO ?= $(WEBKIT_DIR)/WebKitBuild/ReleaseLTO
 
+
 NPM_CLIENT ?= $(shell which bun || which npm)
 ZIG ?= $(shell which zig || echo -e "error: Missing zig. Please make sure zig is in PATH. Or set ZIG=/path/to-zig-executable")
 
@@ -129,8 +130,6 @@ OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
 CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(EMBED_OR_EMIT_BITCODE) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
-BUN_DEPLOY_DIR = /tmp/bun-v$(PACKAGE_JSON_VERSION)/$(PACKAGE_NAME)
-
 
 DEFAULT_USE_BMALLOC := 1
 
@@ -198,6 +197,7 @@ endif
 
 
 
+BUN_DEPLOY_DIR ?= /tmp/bun-$(PACKAGE_JSON_VERSION)
 
 MACOSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION)
 MACOS_MIN_FLAG=
@@ -847,10 +847,10 @@ release-bin-entitlements:
 # ditto lets us generate it similarly to right clicking "Compress" in Finder
 .PHONY: release-bin-generate-zip
 release-bin-generate-zip:
-	dot_clean -vnm  /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET)
-	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) && \
+	dot_clean -vnm  $(BUN_DEPLOY_DIR)/bun-$(TRIPLET)
+	cd $(BUN_DEPLOY_DIR)/bun-$(TRIPLET) && \
 		codesign --entitlements $(realpath entitlements.plist) --options runtime --force --timestamp --sign "$(CODESIGN_IDENTITY)" -vvvv --deep --strict bun
-	ditto -ck --rsrc --sequesterRsrc --keepParent /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) $(BUN_DEPLOY_ZIP)
+	ditto -ck --rsrc --sequesterRsrc --keepParent $(BUN_DEPLOY_DIR)/bun-$(TRIPLET) $(BUN_DEPLOY_ZIP)
 
 .PHONY: release-bin-codesign
 release-bin-codesign:
@@ -860,13 +860,13 @@ else
 
 .PHONY: release-bin-generate-zip
 release-bin-generate-zip:
-	cd /tmp/bun-$(PACKAGE_JSON_VERSION)/ && zip -r bun-$(TRIPLET).zip bun-$(TRIPLET)
+	cd $(BUN_DEPLOY_DIR)/ && zip -r bun-$(TRIPLET).zip bun-$(TRIPLET)
 
 endif
 
 
-BUN_DEPLOY_ZIP = /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET).zip
-BUN_DEPLOY_DSYM = /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET).dSYM.tar.gz
+BUN_DEPLOY_ZIP = $(BUN_DEPLOY_DIR)/bun-$(TRIPLET).zip
+BUN_DEPLOY_DSYM = $(BUN_DEPLOY_DIR)/bun-$(TRIPLET).dSYM.tar.gz
 
 
 ifeq ($(OS_NAME),darwin)
@@ -884,9 +884,9 @@ endif
 
 .PHONY: release-bin-generate-copy
 release-bin-generate-copy:
-	rm -rf /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET) $(BUN_DEPLOY_ZIP)
-	mkdir -p /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET)
-	cp $(BUN_RELEASE_BIN) /tmp/bun-$(PACKAGE_JSON_VERSION)/bun-$(TRIPLET)/bun
+	rm -rf $(BUN_DEPLOY_DIR)/bun-$(TRIPLET) $(BUN_DEPLOY_ZIP)
+	mkdir -p $(BUN_DEPLOY_DIR)/bun-$(TRIPLET)
+	cp $(BUN_RELEASE_BIN) $(BUN_DEPLOY_DIR)/bun-$(TRIPLET)/bun
 
 .PHONY: release-bin-generate
 release-bin-generate: release-bin-generate-copy release-bin-generate-zip release-bin-generate-copy-dsym
@@ -1312,7 +1312,7 @@ bun-link-lld-release-no-jsc:
 
 bun-relink-copy:
 	mkdir -p $(PACKAGE_DIR)
-	cp /tmp/bun-$(PACKAGE_JSON_VERSION).o $(BUN_RELEASE_BIN).o
+	cp $(BUN_DEPLOY_DIR).o $(BUN_RELEASE_BIN).o
 
 bun-link-lld-release:
 	$(CXX) $(BUN_LLD_FLAGS) $(SYMBOLS) \
@@ -1324,7 +1324,7 @@ bun-link-lld-release:
 	cp $(BUN_RELEASE_BIN) $(BUN_RELEASE_BIN)-profile
 
 bun-release-copy-obj:
-	cp $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+	cp $(BUN_RELEASE_BIN).o $(BUN_DEPLOY_DIR).o
 	cp $(BUN_RELEASE_BIN).o /tmp/bun-current.o
 
 bun-link-lld-release-no-lto:
@@ -1348,7 +1348,7 @@ endif
 
 ifeq ($(OS_NAME),linux)
 bun-link-lld-release-dsym: bun-release-copy-obj
-	mv $(BUN_RELEASE_BIN).o /tmp/bun-$(PACKAGE_JSON_VERSION).o
+	mv $(BUN_RELEASE_BIN).o $(BUN_DEPLOY_DIR).o
 	-$(STRIP) -s $(BUN_RELEASE_BIN) --wildcard -K _napi\*
 copy-to-bun-release-dir-dsym:
 

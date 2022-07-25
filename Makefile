@@ -228,7 +228,7 @@ HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
 
 SRC_DIR := src/bun.js/bindings
-OBJ_DIR := src/bun.js/bindings-obj
+OBJ_DIR ?= src/bun.js/bindings-obj
 SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp)

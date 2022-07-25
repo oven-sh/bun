@@ -240,7 +240,8 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-Isrc/bun.js/bindings/sqlite \
 		-Isrc/bun.js/builtins/cpp \
 		-I$(WEBKIT_DIR)/Source/bmalloc  \
-		-I$(WEBKIT_DIR)/Source
+		-I$(WEBKIT_DIR)/Source \
+		-I$(JSC_INCLUDE_DIR)
 
 LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 						-Isrc/bun.js/builtins/ \

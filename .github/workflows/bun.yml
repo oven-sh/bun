@@ -80,9 +80,7 @@ jobs:
   macOS:
     name: macOS
     runs-on: ${{ matrix.runner }}
-    needs:
-      - macos-object-files
-    # needs: macos-object-files
+    needs: macos-object-files
     timeout-minutes: 90
     strategy:
       matrix:
@@ -153,11 +151,11 @@ jobs:
           rm -rf src/bun.js/bindings-obj
           mkdir -p src/bun.js/bindings-obj
           make -j $(sysctl -n hw.ncpu) jsc-bindings-mac
-      # - name: Download Artifact
-      #   uses: actions/download-artifact@v3
-      #   with:
-      #     name: ${{ matrix.artifact }}
-      #     path: ${{ runner.temp }}/release
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ runner.temp }}/release
       - name: Link
         env:
           CPU_TARGET: ${{ matrix.cpu }}

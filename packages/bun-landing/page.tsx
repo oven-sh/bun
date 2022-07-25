@@ -489,19 +489,19 @@ export default ({ inlineCSS }) => (
                     type="bun"
                     amount={(13080444).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5736247) * 1.25)}
                   />
                   <BarGraphItem
                     type="Node-API"
                     amount={(6870963).toFixed(2)}
                     label="operations per second"
-                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5736247) * 1.25)}
                   />
                   <BarGraphItem
                     type="deno"
-                    amount={(5239717).toFixed(2)}
+                    amount={(5736247).toFixed(2)}
                     label="operations per iteration"
-                    max={Math.ceil(Math.max(13080444, 6870963, 5239717) * 1.25)}
+                    max={Math.ceil(Math.max(13080444, 6870963, 5736247) * 1.25)}
                   />
                 </ul>
 
@@ -518,7 +518,7 @@ export default ({ inlineCSS }) => (
                   />
                   <BarGraphLabel
                     name="deno (ffi)"
-                    version="v1.23.2"
+                    version="v1.24.0"
                     source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/deno.js"
                   />
                 </div>
@@ -671,7 +671,8 @@ export default ({ inlineCSS }) => (
             makes it much simpler to write fast software.{" "}
             <a href="https://github.com/sponsors/ziglang">
               Sponsor the Zig Software Foundation
-            </a>.
+            </a>
+            .
           </p>
           <h2>Getting started</h2>
           <p>

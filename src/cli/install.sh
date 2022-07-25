@@ -79,7 +79,9 @@ if [[ $target = darwin-x64 ]]; then
     fi
 fi
 
-github_repo=https://github.com/Jarred-Sumner/bun-releases-for-updater
+
+github_repo="https://github.com/oven-sh/bun"
+
 
 if [[ $# = 0 ]]; then
     bun_uri=$github_repo/releases/latest/download/bun-$target.zip

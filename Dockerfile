@@ -20,7 +20,6 @@ RUN wget https://apt.llvm.org/llvm.sh && \
 
 RUN install_packages \
     cmake \
-    curl \
     file \
     git \
     gnupg \
@@ -68,7 +67,7 @@ FROM bun-base as bun-base-with-zig-and-webkit
 
 WORKDIR $GITHUB_WORKSPACE
 
-RUN  curl -o zig-linux-$BUILDARCH.zip -L https://github.com/oven-sh/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
+RUN curl -o zig-linux-$BUILDARCH.zip -L https://github.com/oven-sh/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
     unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 

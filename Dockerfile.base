@@ -8,7 +8,6 @@ RUN wget https://apt.llvm.org/llvm.sh && \
 
 RUN install_packages \
     cmake \
-    curl \
     file \
     git \
     gnupg \
@@ -27,7 +26,7 @@ RUN install_packages \
 ENV CXX=clang++-13
 ENV CC=clang-13
 
-RUN  curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
     install_packages nodejs && \
     npm install -g esbuild
 
@@ -56,7 +55,7 @@ FROM bun-base as bun-base-with-zig-and-webkit
 
 WORKDIR $GITHUB_WORKSPACE
 
-RUN  curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
+RUN curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
     unzip  zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 

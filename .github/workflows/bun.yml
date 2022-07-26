@@ -308,6 +308,8 @@ jobs:
           mkdir ${{matrix.tag}}-profile
           mkdir ${{matrix.tag}}
 
+          /usr/bin/strip bun
+
           mv bun-profile ${{matrix.tag}}-profile/bun-profile
           mv bun ${{matrix.tag}}/bun
 
@@ -390,22 +392,28 @@ jobs:
           cd ${{runner.temp}}/release
           chmod +x bun-profile bun
 
-          mkdir ${{matrix.tag}}-profile
-          mkdir ${{matrix.tag}}
+          STRIP=$(command -v llvm-strip || command -v strip)
 
-          mv bun-profile ${{matrix.tag}}-profile/bun-profile
-          mv bun ${{matrix.tag}}/bun
+          mkdir bun-${{matrix.tag}}-profile
+          mkdir bun-${{matrix.tag}}
 
-          zip -r ${{matrix.tag}}-profile.zip ${{matrix.tag}}-profile
-          zip -r ${{matrix.tag}}.zip ${{matrix.tag}}
+          if [ -x "$(STRIP)" ]; then
+            $(STRIP) -s bun
+          fi
+
+          mv bun-profile bun-${{matrix.tag}}-profile/bun-profile
+          mv bun bun-${{matrix.tag}}/bun
+
+          zip -r bun-${{matrix.tag}}-profile.zip bun-${{matrix.tag}}-profile
+          zip -r bun-${{matrix.tag}}.zip bun-${{matrix.tag}}
       - uses: actions/upload-artifact@v3
         with:
-          name: profile-${{matrix.tag}}
-          path: ${{runner.temp}}/release/profile-${{matrix.tag}}.zip
+          name: bun-${{matrix.tag}}-profile
+          path: ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
       - uses: actions/upload-artifact@v3
         with:
-          name: ${{matrix.tag}}
-          path: ${{runner.temp}}/release/${{matrix.tag}}.zip
+          name: bun-${{matrix.tag}}
+          path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
       - name: Release
         id: release
         uses: softprops/action-gh-release@v1

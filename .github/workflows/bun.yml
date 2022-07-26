@@ -182,6 +182,7 @@ jobs:
             arch: x86_64
             label: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
+            package: bun-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
@@ -189,6 +190,7 @@ jobs:
             arch: x86_64
             label: bun-darwin-x64
             obj: bun-obj-darwin-x64
+            package: bun-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
@@ -196,6 +198,7 @@ jobs:
             arch: aarch64
             label: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
+            package: bun-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-arm64-lto.tar.gz"
             runner: macos-arm64
@@ -256,10 +259,8 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
           BUN_RELEASE_DIR: ${{ runner.temp }}/release/bun
         run: |
-          mkdir -p $BUN_DEPLOY_DIR
-          mkdir -p $OBJ_DIR
-          mkdir -p $BUN_DEPS_OUT_DIR
-          mv ${{ runner.temp }}/release/* packages/${{ matrix.label }}/
+          mkdir -p packages/${{ matrix.package }}
+          mv ${{ runner.temp }}/release/* packages/${{ matrix.package }}/
           make bun-link-lld-release copy-to-bun-release-dir-bin
       - name: Upload Binary
         uses: actions/upload-artifact@v3

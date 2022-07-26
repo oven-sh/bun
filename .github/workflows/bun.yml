@@ -25,13 +25,6 @@ env:
   TEST_TAG: bun-test'
 
 jobs:
-  xl:
-    runs-on: ubuntu-latest-xl
-    steps:
-      - name: "Test"
-        run: |
-          echo "Check"
-
   macos-object-files:
     name: macOS Object
     runs-on: linux-amd64
@@ -312,24 +305,26 @@ jobs:
           cd ${{runner.temp}}/release
           chmod +x bun-profile bun
 
-          mv bun-profile bun-${{matrix.tag}}-profile
-          mv bun bun-${{matrix.tag}}
+          mkdir ${{matrix.tag}}-profile
+          mkdir ${{matrix.tag}}
 
-          zip -r bun-${{matrix.tag}}-profile.zip bun-${{matrix.tag}}-profile
-          zip -r bun-${{matrix.tag}}.zip bun-${{matrix.tag}}
+          mv bun-profile ${{matrix.tag}}-profile/bun-profile
+          mv bun ${{matrix.tag}}/bun
+
+          zip -r ${{matrix.tag}}-profile.zip ${{matrix.tag}}-profile
+          zip -r ${{matrix.tag}}.zip ${{matrix.tag}}
       - uses: actions/upload-artifact@v3
         with:
-          name: bun-profile-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
+          name: profile-${{matrix.tag}}
+          path: ${{runner.temp}}/release/profile-${{matrix.tag}}.zip
       - uses: actions/upload-artifact@v3
         with:
-          name: bun-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+          name: ${{matrix.tag}}
+          path: ${{runner.temp}}/release/${{matrix.tag}}.zip
       - name: Upload as Canary
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/main
         run: |
-          gh release upload canary ${{runner.temp}}/release/bun-${{matrix.tag}}.zip --clobber --repo $GITHUB_REPOSITORY
-          gh release upload canary ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip --clobber --repo $GITHUB_REPOSITORY
+          gh release upload canary ${{runner.temp}}/release/bun*.zip --clobber --repo $GITHUB_REPOSITORY
   linux:
     name: ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
@@ -395,23 +390,26 @@ jobs:
           cd ${{runner.temp}}/release
           chmod +x bun-profile bun
 
-          mv bun-profile bun-${{matrix.tag}}-profile
-          mv bun bun-${{matrix.tag}}
+          mkdir ${{matrix.tag}}-profile
+          mkdir ${{matrix.tag}}
 
-          zip -r bun-${{matrix.tag}}-profile.zip bun-${{matrix.tag}}-profile
-          zip -r bun-${{matrix.tag}}.zip bun-${{matrix.tag}}
+          mv bun-profile ${{matrix.tag}}-profile/bun-profile
+          mv bun ${{matrix.tag}}/bun
+
+          zip -r ${{matrix.tag}}-profile.zip ${{matrix.tag}}-profile
+          zip -r ${{matrix.tag}}.zip ${{matrix.tag}}
       - uses: actions/upload-artifact@v3
         with:
-          name: bun-profile-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
+          name: profile-${{matrix.tag}}
+          path: ${{runner.temp}}/release/profile-${{matrix.tag}}.zip
       - uses: actions/upload-artifact@v3
         with:
-          name: bun-${{matrix.tag}}
-          path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+          name: ${{matrix.tag}}
+          path: ${{runner.temp}}/release/${{matrix.tag}}.zip
       - name: Release
         id: release
         uses: softprops/action-gh-release@v1
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/main'
         with:
           prerelease: true
           generate_release_notes: true
@@ -419,13 +417,13 @@ jobs:
           name: "Canary (${{github.sha}})"
           tag_name: "canary"
           files: |
-            ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-            ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
+            ${{runner.temp}}/release/${{matrix.tag}}.zip
+            ${{runner.temp}}/release/${{matrix.tag}}-profile.zip
       - uses: actions/upload-artifact@v3
         with:
           name: bun-obj-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-obj
       - uses: actions/upload-artifact@v3
         with:
-          name: bun-${{matrix.tag}}-dependencies
+          name: ${{matrix.tag}}-dependencies
           path: ${{runner.temp}}/release/bun-dependencies

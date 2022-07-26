@@ -25,6 +25,13 @@ env:
   TEST_TAG: bun-test'
 
 jobs:
+  xl:
+    runs-on: ubuntu-latest-xl
+    steps:
+      - name: "Test"
+        run: |
+          echo "Check"
+
   macos-object-files:
     name: macOS Object
     runs-on: linux-amd64

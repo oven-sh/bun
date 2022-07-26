@@ -337,7 +337,7 @@ jobs:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
       - name: Upload as Canary
-        if: github.ref == "refs/heads/master"
+        if: github.ref == 'refs/heads/master'
         run: |
           gh release upload canary ${{runner.temp}}/release/bun-${{matrix.tag}}.zip --clobber --repo $GITHUB_REPOSITORY
           gh release upload canary ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip --clobber --repo $GITHUB_REPOSITORY
@@ -423,7 +423,7 @@ jobs:
       - name: Release
         id: release
         uses: softprops/action-gh-release@v1
-        if: github.ref == "refs/heads/master"
+        if: github.ref == 'refs/heads/master'
         with:
           prerelease: true
           generate_release_notes: true

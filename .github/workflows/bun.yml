@@ -420,11 +420,8 @@ jobs:
         run: |
           cd ${{runner.temp}}/release
 
-          chmod +x bun-*/*
-
-          # Bash for loop over all folders in directory
-          # zipping each one, escaping
-          for folder in $(ls -d .); do
+          chmod +x bun-{linux,darwin}-{x64,aarch64}/bun
+          for folder in $(ls bun-{linux,darwin}-{x64,aarch64}*); do
             zip -r $folder.zip $folder
           done
 
@@ -453,11 +450,8 @@ jobs:
         run: |
           cd ${{runner.temp}}/release
 
-          chmod +x bun-*/*
-
-          # Bash for loop over all folders in directory
-          # zipping each one, escaping
-          for folder in $(ls -d .); do
+          chmod +x bun-{linux,darwin}-{x64,aarch64}/bun
+          for folder in $(ls bun-{linux,darwin}-{x64,aarch64}*); do
             zip -r $folder.zip $folder
           done
 
@@ -486,11 +480,8 @@ jobs:
         run: |
           cd ${{runner.temp}}/release
 
-          chmod +x bun-*/*
-
-          # Bash for loop over all folders in directory
-          # zipping each one, escaping
-          for folder in $(ls -d .); do
+          chmod +x bun-{linux,darwin}-{x64,aarch64}/bun
+          for folder in $(ls bun-{linux,darwin}-{x64,aarch64}*); do
             zip -r $folder.zip $folder
           done
 

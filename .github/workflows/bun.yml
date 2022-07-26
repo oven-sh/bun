@@ -34,7 +34,7 @@ jobs:
           - cpu: sandybridge
             arch: x86_64
             label: bun-obj-darwin-x64-baseline
-          - cpu: skylake
+          - cpu: haswell
             arch: x86_64
             label: bun-obj-darwin-x64
           - cpu: native
@@ -91,7 +91,7 @@ jobs:
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
-          - cpu: skylake
+          - cpu: haswell
             arch: x86_64
             label: bun-darwin-x64
             obj: bun-obj-darwin-x64
@@ -186,7 +186,7 @@ jobs:
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
-          - cpu: skylake
+          - cpu: haswell
             arch: x86_64
             label: bun-darwin-x64
             obj: bun-obj-darwin-x64
@@ -273,7 +273,7 @@ jobs:
     timeout-minutes: 90
     strategy:
       matrix:
-        cpu: [native, sandybridge]
+        cpu: [haswell, sandybridge]
 
     steps:
       - uses: actions/checkout@v3
@@ -308,7 +308,7 @@ jobs:
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'native' }}
+        if: ${{ matrix.cpu == 'haswell' }}
         with:
           name: bun-linux-x64
           path: ${{runner.temp}}/release/bun
@@ -318,7 +318,7 @@ jobs:
           name: bun-linux-x64-baseline
           path: ${{runner.temp}}/release/bun
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'native' }}
+        if: ${{ matrix.cpu == 'haswell' }}
         with:
           name: bun-dependencies-linux-x64
           path: ${{runner.temp}}/release/bun-dependencies
@@ -328,7 +328,7 @@ jobs:
           name: bun-dependencies-linux-x64-baseline
           path: ${{runner.temp}}/release/bun-dependencies
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'native' }}
+        if: ${{ matrix.cpu == 'haswell' }}
         with:
           name: bun-linux-x64-profile
           path: ${{runner.temp}}/release/bun-profile
@@ -338,7 +338,7 @@ jobs:
           name: bun-linux-x64-baseline-profile
           path: ${{runner.temp}}/release/bun-profile
       - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'native' }}
+        if: ${{ matrix.cpu == 'haswell' }}
         with:
           name: bun-obj-linux-x64
           path: ${{runner.temp}}/release/bun-obj

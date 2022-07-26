@@ -14,6 +14,7 @@ endif
 
 CPU_TARGET ?= native
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
+NATIVE_OR_OLD_MARCH = 
 
 ARCH_NAME :=
 DOCKER_BUILDARCH =
@@ -29,6 +30,7 @@ else
 	BREW_PREFIX_PATH = /usr/local
 	MIN_MACOS_VERSION ?= 10.14
 	MARCH_NATIVE = -march=$(CPU_TARGET) -mtune=$(CPU_TARGET)
+	NATIVE_OR_OLD_MARCH = -march=sandybridge
 endif
 
 AR=
@@ -136,9 +138,10 @@ AR = $(shell which llvm-ar-13 || which llvm-ar || which ar)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
-CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(EMBED_OR_EMIT_BITCODE) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
+CFLAGS=$(CFLAGS_WITHOUT_MARCH) $(MARCH_NATIVE)
 
 DEFAULT_USE_BMALLOC := 1
 
@@ -435,7 +438,7 @@ TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"
 tinycc:
 	cd $(TINYCC_DIR) && \
 		make clean && \
-		AR=$(AR) CC=$(CC) CFLAGS='$(CFLAGS) $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CC) --ar=$(AR) --config-predefs=yes  && \
+		AR=$(AR) CC=$(CC) CFLAGS='$(CFLAGS_WITHOUT_MARCH) $(NATIVE_OR_OLD_MARCH) -mtune=native $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CC) --ar=$(AR) --config-predefs=yes  && \
 		make -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 

@@ -390,17 +390,17 @@ jobs:
             sudo apt-get update && sudo apt-get install -y zip --no-install-recommends
           fi
 
+          if [ ! -x "$(command -v strip)" ]; then
+            sudo apt-get update && sudo apt-get install -y binutils --no-install-recommends
+          fi
+
           cd ${{runner.temp}}/release
           chmod +x bun-profile bun
-
-          STRIP=$(command -v llvm-strip || command -v strip)
 
           mkdir bun-${{matrix.tag}}-profile
           mkdir bun-${{matrix.tag}}
 
-          if [ -x "$(STRIP)" ]; then
-            $(STRIP) -s bun
-          fi
+          strip bun
 
           mv bun-profile bun-${{matrix.tag}}-profile/bun-profile
           mv bun bun-${{matrix.tag}}/bun

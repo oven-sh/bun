@@ -326,6 +326,7 @@ jobs:
       - name: Upload as Canary
         if: github.ref == 'refs/heads/main'
         run: |
+          gh auth login $GITHUB_TOKEN
           gh release upload canary ${{runner.temp}}/release/bun*.zip --clobber --repo $GITHUB_REPOSITORY
   linux:
     name: ${{matrix.tag}}

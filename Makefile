@@ -365,16 +365,11 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = \
 		-lssl \
 		-lbase64 \
 		-ltcc \
+		-lusockets \
+		$(BUN_DEPS_OUT_DIR)/libuwsockets.o \
 		$(_MIMALLOC_LINK)
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
-
-ifeq ($(OS_NAME), darwin)
-	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/*.bc) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
-else
-	ARCHIVE_FILES += -lusockets $(BUN_DEPS_OUT_DIR)/libuwsockets.o
-endif
-
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto 
 STATIC_MUSL_FLAG ?=
 
 ifeq ($(OS_NAME), linux)

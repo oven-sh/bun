@@ -259,6 +259,7 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
           BUN_RELEASE_DIR: ${{ runner.temp }}/release
         run: |
+          rm -rf packages/${{ matrix.package }} $BUN_RELEASE_DIR
           mkdir -p packages/${{ matrix.package }} $BUN_RELEASE_DIR
           mv ${{ runner.temp }}/release/* packages/${{ matrix.package }}/
           make bun-link-lld-release copy-to-bun-release-dir-bin
@@ -266,7 +267,12 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: ${{ matrix.label }}
-          path: ${{ runner.temp }}/release
+          path: ${{ runner.temp }}/release/bun
+      - name: Upload Binary (Profile)
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.label }}-profile
+          path: ${{ runner.temp }}/release/bun-profile
   linux-x64:
     name: Linux x64 (${{ matrix.cpu }})
     runs-on: linux-amd64
@@ -417,12 +423,14 @@ jobs:
         run: |
           cd ${{runner.temp}}/release
 
-          chmod +x bun-linux-x64/*
-          chmod +x bun-linux-x64-baseline/*
-          chmod +x bun-linux-x64-profile/*
-          chmod +x bun-linux-x64-baseline-profile/*
-          chmod +x bun-linux-aarch64/*
-          chmod +x bun-linux-aarch64-profile/*
+          chmod +x bun-*/*
+
+          zip -r bun-darwin-x64.zip bun-darwin-x64
+          zip -r bun-darwin-x64-baseline.zip bun-darwin-x64-baseline
+          zip -r bun-darwin-aarch64.zip bun-darwin-aarch64
+          zip -r bun-darwin-x64-profile.zip bun-darwin-x64-profile
+          zip -r bun-darwin-x64-baseline-profile.zip bun-darwin-x64-baseline-profile
+          zip -r bun-darwin-aarch64-profile.zip bun-darwin-aarch64-profile
 
           zip -r bun-linux-x64.zip bun-linux-x64
           zip -r bun-linux-x64-baseline.zip bun-linux-x64-baseline

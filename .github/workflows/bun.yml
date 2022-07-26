@@ -322,7 +322,7 @@ jobs:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/release/${{matrix.tag}}.zip
       - name: Upload as Canary
-        if: github.ref == 'refs/heads/main
+        if: github.ref == 'refs/heads/main'
         run: |
           gh release upload canary ${{runner.temp}}/release/bun*.zip --clobber --repo $GITHUB_REPOSITORY
   linux:

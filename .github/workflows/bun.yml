@@ -423,15 +423,16 @@ jobs:
       - name: Release
         id: release
         uses: softprops/action-gh-release@v1
+        if: github.ref == "refs/heads/master"
         with:
           prerelease: true
           generate_release_notes: true
           body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
           name: "Canary (${{github.sha}})"
           tag_name: "canary"
-          files:
-            - ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-            - ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
+          files: |
+            ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+            ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
       - uses: actions/upload-artifact@v3
         with:
           name: bun-obj-${{matrix.tag}}

@@ -406,15 +406,12 @@ jobs:
           name: bun-obj-linux-aarch64
           path: ${{runner.temp}}/release/bun-obj
 
-  release:
+  release-linux-x64:
     name: release
     runs-on: ubuntu-18.04
+    needs: linux-x64
     timeout-minutes: 90
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged) || github.event_name == 'workflow_dispatch'
-    needs:
-      - linux-x64
-      - linux-aarch64
-      - macOS
+    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/download-artifact@v3
         with:
@@ -425,19 +422,77 @@ jobs:
 
           chmod +x bun-*/*
 
-          zip -r bun-darwin-x64.zip bun-darwin-x64
-          zip -r bun-darwin-x64-baseline.zip bun-darwin-x64-baseline
-          zip -r bun-darwin-aarch64.zip bun-darwin-aarch64
-          zip -r bun-darwin-x64-profile.zip bun-darwin-x64-profile
-          zip -r bun-darwin-x64-baseline-profile.zip bun-darwin-x64-baseline-profile
-          zip -r bun-darwin-aarch64-profile.zip bun-darwin-aarch64-profile
+          # Bash for loop over all folders in directory
+          # zipping each one, escaping
+          for folder in $(ls -d .); do
+            zip -r $folder.zip $folder
+          done
 
-          zip -r bun-linux-x64.zip bun-linux-x64
-          zip -r bun-linux-x64-baseline.zip bun-linux-x64-baseline
-          zip -r bun-linux-x64-profile.zip bun-linux-x64-profile
-          zip -r bun-linux-x64-baseline-profile.zip bun-linux-x64-baseline-profile
-          zip -r bun-linux-aarch64.zip bun-linux-aarch64
-          zip -r bun-linux-aarch64-profile.zip bun-linux-aarch64-profile
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: true
+          generate_release_notes: true
+          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
+          name: "Canary (${{github.sha}})"
+          tag_name: "canary"
+          files: |
+            ${{runner.temp}}/release/*.zip
+
+  release-macOS:
+    name: Release macOS
+    runs-on: ubuntu-18.04
+    timeout-minutes: 90
+    if: github.ref == 'refs/heads/main'
+    needs: macOS
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          path: ${{runner.temp}}/release
+      - name: Rename files
+        run: |
+          cd ${{runner.temp}}/release
+
+          chmod +x bun-*/*
+
+          # Bash for loop over all folders in directory
+          # zipping each one, escaping
+          for folder in $(ls -d .); do
+            zip -r $folder.zip $folder
+          done
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: true
+          generate_release_notes: true
+          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
+          name: "Canary (${{github.sha}})"
+          tag_name: "canary"
+          files: |
+            ${{runner.temp}}/release/*.zip
+
+  release-linux-aarch64:
+    name: Release (Linux AARCH64)
+    runs-on: ubuntu-18.04
+    timeout-minutes: 90
+    needs: linux-aarch64
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          path: ${{runner.temp}}/release
+      - name: Rename files
+        run: |
+          cd ${{runner.temp}}/release
+
+          chmod +x bun-*/*
+
+          # Bash for loop over all folders in directory
+          # zipping each one, escaping
+          for folder in $(ls -d .); do
+            zip -r $folder.zip $folder
+          done
 
       - name: Release
         uses: softprops/action-gh-release@v1

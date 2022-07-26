@@ -673,7 +673,7 @@ ensure-package-dir:
 	mkdir -p $(PACKAGE_DIR)
 
 .PHONY: prerelease
-prerelease: api analytics all-js ensure-package-dir
+prerelease: npm-install api analytics all-js ensure-package-dir
 .PHONY: release-only
 release-only: jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release-safe-only

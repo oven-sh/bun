@@ -257,9 +257,9 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
-          BUN_RELEASE_DIR: ${{ runner.temp }}/release/bun
+          BUN_RELEASE_DIR: ${{ runner.temp }}/release
         run: |
-          mkdir -p packages/${{ matrix.package }}
+          mkdir -p packages/${{ matrix.package }} $BUN_RELEASE_DIR
           mv ${{ runner.temp }}/release/* packages/${{ matrix.package }}/
           make bun-link-lld-release copy-to-bun-release-dir-bin
       - name: Upload Binary

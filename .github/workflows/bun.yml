@@ -220,7 +220,7 @@ jobs:
   macOS:
     name: macOS Link
     runs-on: ${{ matrix.runner }}
-    needs: [macOS-cpp, macos-object-files, get_release_url]
+    needs: [macOS-cpp, macos-object-files]
     timeout-minutes: 90
     strategy:
       matrix:
@@ -336,20 +336,11 @@ jobs:
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-      - name: Upload Bun
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ needs.get_release_url.outputs.url }}
-          asset_path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-          asset_name: bun-${{matrix.tag}}.zip
-          asset_content_type: application/zip
-      - name: Upload Bun Profile
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ needs.get_release_url.outputs.url }}
-          asset_path: ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
-          asset_name: bun-${{matrix.tag}}.zip
-          asset_content_type: application/zip
+      - name: Upload as Canary
+        if: github.ref == "refs/heads/master"
+        run: |
+          gh release upload canary ${{runner.temp}}/release/bun-${{matrix.tag}}.zip --clobber --repo $GITHUB_REPOSITORY
+          gh release upload canary ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip --clobber --repo $GITHUB_REPOSITORY
   linux:
     name: ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
@@ -408,6 +399,11 @@ jobs:
           outputs: type=local,dest=${{runner.temp}}/release
       - name: Zip
         run: |
+          # if zip is not found
+          if [ ! -x "$(command -v zip)" ]; then
+            sudo apt-get update && sudo apt-get install -y zip --no-install-recommends
+          fi
+
           cd ${{runner.temp}}/release
           chmod +x bun-profile bun
 
@@ -424,20 +420,18 @@ jobs:
         with:
           name: bun-${{matrix.tag}}
           path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-      - name: Upload Bun
-        uses: actions/upload-release-asset@v1
+      - name: Release
+        id: release
+        uses: softprops/action-gh-release@v1
         with:
-          upload_url: ${{ needs.get_release_url.outputs.url }}
-          asset_path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-          asset_name: bun-${{matrix.tag}}.zip
-          asset_content_type: application/zip
-      - name: Upload Bun Profile
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ needs.get_release_url.outputs.url }}
-          asset_path: ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
-          asset_name: bun-${{matrix.tag}}.zip
-          asset_content_type: application/zip
+          prerelease: true
+          generate_release_notes: true
+          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
+          name: "Canary (${{github.sha}})"
+          tag_name: "canary"
+          files:
+            - ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+            - ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
       - uses: actions/upload-artifact@v3
         with:
           name: bun-obj-${{matrix.tag}}

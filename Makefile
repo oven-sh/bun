@@ -434,6 +434,9 @@ base64:
 # Prevent dependency on libtcc1 so it doesn't do filesystem lookups
 TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"
 
+# TinyCC needs to run some compiled code after it's been compiled.
+# That means we can't compile for a newer microarchitecture than native
+# We compile for an older microarchitecture on x64 to ensure compatibility
 .PHONY: tinycc
 tinycc:
 	cd $(TINYCC_DIR) && \

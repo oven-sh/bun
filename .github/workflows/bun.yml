@@ -25,6 +25,24 @@ env:
   TEST_TAG: bun-test'
 
 jobs:
+  get_release_url:
+    name: Get Release URL
+    runs-on: ubuntu-18.04
+    timeout-minutes: 90
+    outputs:
+      url: ${{ steps.release.outputs.upload_url }}
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Release
+        id: release
+        uses: softprops/action-gh-release@v1
+        with:
+          prerelease: true
+          generate_release_notes: true
+          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
+          name: "Canary (${{github.sha}})"
+          tag_name: "canary"
+
   macos-object-files:
     name: macOS Object
     runs-on: linux-amd64
@@ -33,13 +51,13 @@ jobs:
         include:
           - cpu: sandybridge
             arch: x86_64
-            label: bun-obj-darwin-x64-baseline
+            tag: bun-obj-darwin-x64-baseline
           - cpu: haswell
             arch: x86_64
-            label: bun-obj-darwin-x64
+            tag: bun-obj-darwin-x64
           - cpu: native
             arch: aarch64
-            label: bun-obj-darwin-aarch64
+            tag: bun-obj-darwin-aarch64
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
@@ -75,7 +93,7 @@ jobs:
           outputs: type=local,dest=${{runner.temp}}/release
       - uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.label }}
+          name: ${{ matrix.tag }}
           path: ${{runner.temp}}/release/bun.o
   macOS-cpp:
     name: macOS C++
@@ -86,25 +104,49 @@ jobs:
         include:
           - cpu: sandybridge
             arch: x86_64
-            label: bun-darwin-x64-baseline
+            tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            dependencies: true
+            compile_obj: false
           - cpu: haswell
             arch: x86_64
-            label: bun-darwin-x64
+            tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            dependencies: true
+            compile_obj: false
+          - cpu: sandybridge
+            arch: x86_64
+            tag: bun-darwin-x64-baseline
+            obj: bun-obj-darwin-x64-baseline
+            runner: macos-11
+            artifact: bun-obj-darwin-x64-baseline
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            dependencies: false
+            compile_obj: true
+          - cpu: haswell
+            arch: x86_64
+            tag: bun-darwin-x64
+            obj: bun-obj-darwin-x64
+            runner: macos-11
+            artifact: bun-obj-darwin-x64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            dependencies: false
+            compile_obj: true
           - cpu: native
             arch: aarch64
-            label: bun-darwin-aarch64
+            tag: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-arm64-lto.tar.gz"
             runner: macos-arm64
+            dependencies: true
+            compile_obj: true
     steps:
       - uses: actions/checkout@v3
       - name: Checkout submodules
@@ -126,6 +168,7 @@ jobs:
           echo "export PATH=$(brew --prefix llvm@13)/bin:\$PATH" >> $GITHUB_ENV
           brew link --overwrite llvm@13
       - name: Download WebKit
+        if: matrix.compile_obj
         env:
           CPU_TARGET: ${{ matrix.cpu }}
           JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
@@ -138,6 +181,7 @@ jobs:
           mkdir -p $JSC_BASE_DIR
           curl -L ${{ matrix.webkit_url }} | tar -xz -C $JSC_BASE_DIR --strip-components=1
       - name: Compile dependencies
+        if: matrix.dependencies
         env:
           CPU_TARGET: ${{ matrix.cpu }}
           JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
@@ -149,6 +193,7 @@ jobs:
           mkdir -p $BUN_DEPS_OUT_DIR
           make vendor-without-check
       - name: Compile C++
+        if: matrix.compile_obj
         env:
           CPU_TARGET: ${{ matrix.cpu }}
           JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
@@ -160,27 +205,29 @@ jobs:
           mkdir -p $OBJ_DIR
           make -j $(sysctl -n hw.ncpu) jsc-bindings-mac
       - name: Upload C++
+        if: matrix.compile_obj
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.label }}-cpp
+          name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj
       - name: Upload Dependencies
+        if: matrix.dependencies
         uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.label }}-deps
+          name: ${{ matrix.tag }}-deps
           path: ${{runner.temp}}/bun-deps
 
   macOS:
     name: macOS Link
     runs-on: ${{ matrix.runner }}
-    needs: [macOS-cpp, macos-object-files]
+    needs: [macOS-cpp, macos-object-files, get_release_url]
     timeout-minutes: 90
     strategy:
       matrix:
         include:
           - cpu: sandybridge
             arch: x86_64
-            label: bun-darwin-x64-baseline
+            tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
             package: bun-darwin-x64
             runner: macos-11
@@ -188,7 +235,7 @@ jobs:
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
           - cpu: haswell
             arch: x86_64
-            label: bun-darwin-x64
+            tag: bun-darwin-x64
             obj: bun-obj-darwin-x64
             package: bun-darwin-x64
             runner: macos-11
@@ -196,7 +243,7 @@ jobs:
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
           - cpu: native
             arch: aarch64
-            label: bun-darwin-aarch64
+            tag: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
             package: bun-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
@@ -237,12 +284,12 @@ jobs:
       - name: Download C++
         uses: actions/download-artifact@v3
         with:
-          name: ${{ matrix.label }}-cpp
+          name: ${{ matrix.tag }}-cpp
           path: ${{ runner.temp }}/bun-cpp-obj
       - name: Download Dependencies
         uses: actions/download-artifact@v3
         with:
-          name: ${{ matrix.label }}-deps
+          name: ${{ matrix.tag }}-deps
           path: ${{ runner.temp }}/bun-deps
       - name: Download Object
         uses: actions/download-artifact@v3
@@ -263,23 +310,69 @@ jobs:
           mkdir -p packages/${{ matrix.package }}
           mv ${{ runner.temp }}/release/* packages/${{ matrix.package }}/
           make bun-link-lld-release copy-to-bun-release-dir-bin
-      - name: Upload Binary
-        uses: actions/upload-artifact@v3
+      - name: Zip
+        env:
+          CPU_TARGET: ${{ matrix.cpu }}
+          JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+          JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+          BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+          OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+          BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          BUN_RELEASE_DIR: ${{ runner.temp }}/release
+        run: |
+          cd ${{runner.temp}}/release
+          chmod +x bun-profile bun
+
+          mv bun-profile bun-${{matrix.tag}}-profile
+          mv bun bun-${{matrix.tag}}
+
+          zip -r bun-${{matrix.tag}}-profile.zip bun-${{matrix.tag}}-profile
+          zip -r bun-${{matrix.tag}}.zip bun-${{matrix.tag}}
+      - uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.label }}
-          path: ${{ runner.temp }}/release/bun
-      - name: Upload Binary (Profile)
-        uses: actions/upload-artifact@v3
+          name: bun-profile-${{matrix.tag}}
+          path: ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
+      - uses: actions/upload-artifact@v3
         with:
-          name: ${{ matrix.label }}-profile
-          path: ${{ runner.temp }}/release/bun-profile
-  linux-x64:
-    name: Linux x64 (${{ matrix.cpu }})
-    runs-on: linux-amd64
+          name: bun-${{matrix.tag}}
+          path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+      - name: Upload Bun
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ needs.get_release_url.outputs.url }}
+          asset_path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+          asset_name: bun-${{matrix.tag}}.zip
+          asset_content_type: application/zip
+      - name: Upload Bun Profile
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ needs.get_release_url.outputs.url }}
+          asset_path: ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
+          asset_name: bun-${{matrix.tag}}.zip
+          asset_content_type: application/zip
+  linux:
+    name: ${{matrix.tag}}
+    runs-on: ${{matrix.runner}}
     timeout-minutes: 90
+    needs: get_release_url
     strategy:
       matrix:
-        cpu: [haswell, sandybridge]
+        include:
+          - cpu: haswell
+            tag: linux-x64
+            arch: x86_64
+            build_arch: amd64
+            runner: linux-amd64
+          - cpu: sandybridge
+            tag: linux-x64-baseline
+            arch: x86_64
+            build_arch: amd64
+            runner: linux-amd64
+          - cpu: native
+            tag: linux-aarch64
+            arch: aarch64
+            build_arch: arm64
+            runner: linux-arm64
 
     steps:
       - uses: actions/checkout@v3
@@ -304,194 +397,52 @@ jobs:
           context: .
           push: false
           tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{github.sha}}
-          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-amd64
-          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-amd64,mode=max
+          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-${{matrix.build_arch}}
+          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-${{matrix.build_arch}},mode=max
           build-args: |
-            ARCH=x86_64
-            BUILDARCH=amd64
+            ARCH=${{matrix.arch}}
+            BUILDARCH=${{matrix.build_arch}}
             CPU_TARGET=${{matrix.cpu}}
-          platforms: linux/amd64
+          platforms: linux/${{matrix.build_arch}}
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release
-      - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'haswell' }}
-        with:
-          name: bun-linux-x64
-          path: ${{runner.temp}}/release/bun
-      - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'sandybridge' }}
-        with:
-          name: bun-linux-x64-baseline
-          path: ${{runner.temp}}/release/bun
-      - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'haswell' }}
-        with:
-          name: bun-dependencies-linux-x64
-          path: ${{runner.temp}}/release/bun-dependencies
-      - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'sandybridge' }}
-        with:
-          name: bun-dependencies-linux-x64-baseline
-          path: ${{runner.temp}}/release/bun-dependencies
-      - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'haswell' }}
-        with:
-          name: bun-linux-x64-profile
-          path: ${{runner.temp}}/release/bun-profile
-      - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'sandybridge' }}
-        with:
-          name: bun-linux-x64-baseline-profile
-          path: ${{runner.temp}}/release/bun-profile
-      - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'haswell' }}
-        with:
-          name: bun-obj-linux-x64
-          path: ${{runner.temp}}/release/bun-obj
-      - uses: actions/upload-artifact@v3
-        if: ${{ matrix.cpu == 'sandybridge' }}
-        with:
-          name: bun-obj-linux-x64-baseline
-          path: ${{runner.temp}}/release/bun-obj
-  linux-aarch64:
-    name: Linux aarch64
-    runs-on: linux-arm64
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v3
-      - name: Checkout submodules
-        run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
-      - uses: docker/setup-buildx-action@v2
-        id: buildx
-        with:
-          install: true
-      - name: Run
-        run: |
-          rm -rf ${{runner.temp}}/release
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push
-        uses: docker/build-push-action@v3
-        with:
-          context: .
-          tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{github.sha}}
-          push: false
-          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-aarch64
-          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-aarch64,mode=max
-          build-args: |
-            ARCH=aarch64
-            BUILDARCH=arm64
-            CPU_TARGET=native
-          platforms: linux/arm64
-          target: artifact
-          outputs: type=local,dest=${{runner.temp}}/release
-      - uses: actions/upload-artifact@v3
-        with:
-          name: bun-linux-aarch64
-          path: ${{runner.temp}}/release/bun
-      - uses: actions/upload-artifact@v3
-        with:
-          name: bun-dependencies-linux-aarch64
-          path: ${{runner.temp}}/release/bun-dependencies
-      - uses: actions/upload-artifact@v3
-        with:
-          name: bun-linux-aarch64-profile
-          path: ${{runner.temp}}/release/bun-profile
-      - uses: actions/upload-artifact@v3
-        with:
-          name: bun-obj-linux-aarch64
-          path: ${{runner.temp}}/release/bun-obj
-
-  release-linux-x64:
-    name: release
-    runs-on: ubuntu-18.04
-    needs: linux-x64
-    timeout-minutes: 90
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/download-artifact@v3
-        with:
-          path: ${{runner.temp}}/release
-      - name: Rename files
+      - name: Zip
         run: |
           cd ${{runner.temp}}/release
+          chmod +x bun-profile bun
 
-          chmod +x bun-{linux,darwin}-{x64,aarch64}/bun
-          for folder in $(ls bun-{linux,darwin}-{x64,aarch64}*); do
-            zip -r $folder.zip $folder
-          done
+          mv bun-profile bun-${{matrix.tag}}-profile
+          mv bun bun-${{matrix.tag}}
 
-      - name: Release
-        uses: softprops/action-gh-release@v1
+          zip -r bun-${{matrix.tag}}-profile.zip bun-${{matrix.tag}}-profile
+          zip -r bun-${{matrix.tag}}.zip bun-${{matrix.tag}}
+      - uses: actions/upload-artifact@v3
         with:
-          prerelease: true
-          generate_release_notes: true
-          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
-          name: "Canary (${{github.sha}})"
-          tag_name: "canary"
-          files: |
-            ${{runner.temp}}/release/*.zip
-
-  release-macOS:
-    name: Release macOS
-    runs-on: ubuntu-18.04
-    timeout-minutes: 90
-    if: github.ref == 'refs/heads/main'
-    needs: macOS
-    steps:
-      - uses: actions/download-artifact@v3
+          name: bun-profile-${{matrix.tag}}
+          path: ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
+      - uses: actions/upload-artifact@v3
         with:
-          path: ${{runner.temp}}/release
-      - name: Rename files
-        run: |
-          cd ${{runner.temp}}/release
-
-          chmod +x bun-{linux,darwin}-{x64,aarch64}/bun
-          for folder in $(ls bun-{linux,darwin}-{x64,aarch64}*); do
-            zip -r $folder.zip $folder
-          done
-
-      - name: Release
-        uses: softprops/action-gh-release@v1
+          name: bun-${{matrix.tag}}
+          path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+      - name: Upload Bun
+        uses: actions/upload-release-asset@v1
         with:
-          prerelease: true
-          generate_release_notes: true
-          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
-          name: "Canary (${{github.sha}})"
-          tag_name: "canary"
-          files: |
-            ${{runner.temp}}/release/*.zip
-
-  release-linux-aarch64:
-    name: Release (Linux AARCH64)
-    runs-on: ubuntu-18.04
-    timeout-minutes: 90
-    needs: linux-aarch64
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/download-artifact@v3
+          upload_url: ${{ needs.get_release_url.outputs.url }}
+          asset_path: ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
+          asset_name: bun-${{matrix.tag}}.zip
+          asset_content_type: application/zip
+      - name: Upload Bun Profile
+        uses: actions/upload-release-asset@v1
         with:
-          path: ${{runner.temp}}/release
-      - name: Rename files
-        run: |
-          cd ${{runner.temp}}/release
-
-          chmod +x bun-{linux,darwin}-{x64,aarch64}/bun
-          for folder in $(ls bun-{linux,darwin}-{x64,aarch64}*); do
-            zip -r $folder.zip $folder
-          done
-
-      - name: Release
-        uses: softprops/action-gh-release@v1
+          upload_url: ${{ needs.get_release_url.outputs.url }}
+          asset_path: ${{runner.temp}}/release/bun-profile-${{matrix.tag}}.zip
+          asset_name: bun-${{matrix.tag}}.zip
+          asset_content_type: application/zip
+      - uses: actions/upload-artifact@v3
         with:
-          prerelease: true
-          generate_release_notes: true
-          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
-          name: "Canary (${{github.sha}})"
-          tag_name: "canary"
-          files: |
-            ${{runner.temp}}/release/*.zip
+          name: bun-obj-${{matrix.tag}}
+          path: ${{runner.temp}}/release/bun-obj
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-${{matrix.tag}}-dependencies
+          path: ${{runner.temp}}/release/bun-dependencies

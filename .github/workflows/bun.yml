@@ -25,24 +25,6 @@ env:
   TEST_TAG: bun-test'
 
 jobs:
-  get_release_url:
-    name: Get Release URL
-    runs-on: ubuntu-18.04
-    timeout-minutes: 90
-    outputs:
-      url: ${{ steps.release.outputs.upload_url }}
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Release
-        id: release
-        uses: softprops/action-gh-release@v1
-        with:
-          prerelease: true
-          generate_release_notes: true
-          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
-          name: "Canary (${{github.sha}})"
-          tag_name: "canary"
-
   macos-object-files:
     name: macOS Object
     runs-on: linux-amd64
@@ -345,7 +327,6 @@ jobs:
     name: ${{matrix.tag}}
     runs-on: ${{matrix.runner}}
     timeout-minutes: 90
-    needs: get_release_url
     strategy:
       matrix:
         include:

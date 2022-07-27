@@ -28,6 +28,7 @@
 #include "wtf/GetPtr.h"
 #include "wtf/PointerPreparations.h"
 #include "wtf/URL.h"
+#include "wtf/text/WTFString.h"
 #include "JavaScriptCore/BuiltinNames.h"
 
 #include "JSBufferEncodingType.h"
@@ -270,8 +271,15 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
         break;
     }
 
-    case WebCore::BufferEncodingType::latin1:
     case WebCore::BufferEncodingType::ascii: {
+        if (view.is8Bit()) {
+            result = Bun__encoding__constructFromLatin1AsASCII(lexicalGlobalObject, view.characters8(), view.length());
+        } else {
+            result = Bun__encoding__constructFromUTF16AsASCII(lexicalGlobalObject, view.characters16(), view.length());
+        }
+        break;
+    }
+    case WebCore::BufferEncodingType::latin1: {
         if (view.is8Bit()) {
             result = Bun__encoding__constructFromLatin1AsASCII(lexicalGlobalObject, view.characters8(), view.length());
         } else {
@@ -1094,9 +1102,13 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         break;
     }
 
-    case WebCore::BufferEncodingType::latin1:
     case WebCore::BufferEncodingType::ascii: {
         ret = Bun__encoding__toStringASCII(castedThis->typedVector() + offset, length, lexicalGlobalObject);
+        break;
+    }
+
+    case WebCore::BufferEncodingType::latin1: {
+        ret = JSC::JSValue::encode(JSC::jsString(vm, WTF::StringImpl::create(reinterpret_cast<const UChar*>(castedThis->typedVector() + offset), length)));
         break;
     }
 

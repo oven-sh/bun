@@ -51,6 +51,7 @@ extern const char* const s_jsBufferConstructorFromCode;
 extern const int s_jsBufferConstructorFromCodeLength;
 extern const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility;
 extern const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_JSBUFFERCONSTRUCTOR_BUILTIN_DATA(macro) \
     macro(from, jsBufferConstructorFrom, 1) \
@@ -110,7 +111,7 @@ inline JSC::UnlinkedFunctionExecutable* JSBufferConstructorBuiltinsWrapper::name
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeLength = 482;
 static const JSC::Intrinsic s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCode =
@@ -73,6 +74,7 @@ const char* const s_writableStreamDefaultControllerInitializeWritableStreamDefau
 
 const JSC::ConstructAbility s_writableStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultControllerErrorCodeLength = 372;
 static const JSC::Intrinsic s_writableStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultControllerErrorCode =

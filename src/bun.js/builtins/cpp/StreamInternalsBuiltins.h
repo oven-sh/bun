@@ -51,78 +51,97 @@ extern const char* const s_streamInternalsMarkPromiseAsHandledCode;
 extern const int s_streamInternalsMarkPromiseAsHandledCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsMarkPromiseAsHandledCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsMarkPromiseAsHandledCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsMarkPromiseAsHandledCodeImplementationVisibility;
 extern const char* const s_streamInternalsShieldingPromiseResolveCode;
 extern const int s_streamInternalsShieldingPromiseResolveCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsShieldingPromiseResolveCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsShieldingPromiseResolveCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsShieldingPromiseResolveCodeImplementationVisibility;
 extern const char* const s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCode;
 extern const int s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeImplementationVisibility;
 extern const char* const s_streamInternalsPromiseInvokeOrNoopNoCatchCode;
 extern const int s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeImplementationVisibility;
 extern const char* const s_streamInternalsPromiseInvokeOrNoopMethodCode;
 extern const int s_streamInternalsPromiseInvokeOrNoopMethodCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodCodeImplementationVisibility;
 extern const char* const s_streamInternalsPromiseInvokeOrNoopCode;
 extern const int s_streamInternalsPromiseInvokeOrNoopCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopCodeImplementationVisibility;
 extern const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode;
 extern const int s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeImplementationVisibility;
 extern const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode;
 extern const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeImplementationVisibility;
 extern const char* const s_streamInternalsCreateFIFOCode;
 extern const int s_streamInternalsCreateFIFOCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility;
 extern const char* const s_streamInternalsNewQueueCode;
 extern const int s_streamInternalsNewQueueCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsNewQueueCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsNewQueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsNewQueueCodeImplementationVisibility;
 extern const char* const s_streamInternalsDequeueValueCode;
 extern const int s_streamInternalsDequeueValueCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsDequeueValueCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsDequeueValueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsDequeueValueCodeImplementationVisibility;
 extern const char* const s_streamInternalsEnqueueValueWithSizeCode;
 extern const int s_streamInternalsEnqueueValueWithSizeCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsEnqueueValueWithSizeCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsEnqueueValueWithSizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsEnqueueValueWithSizeCodeImplementationVisibility;
 extern const char* const s_streamInternalsPeekQueueValueCode;
 extern const int s_streamInternalsPeekQueueValueCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility;
 extern const char* const s_streamInternalsResetQueueCode;
 extern const int s_streamInternalsResetQueueCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsResetQueueCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsResetQueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsResetQueueCodeImplementationVisibility;
 extern const char* const s_streamInternalsExtractSizeAlgorithmCode;
 extern const int s_streamInternalsExtractSizeAlgorithmCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsExtractSizeAlgorithmCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsExtractSizeAlgorithmCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsExtractSizeAlgorithmCodeImplementationVisibility;
 extern const char* const s_streamInternalsExtractHighWaterMarkCode;
 extern const int s_streamInternalsExtractHighWaterMarkCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkCodeImplementationVisibility;
 extern const char* const s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode;
 extern const int s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeImplementationVisibility;
 extern const char* const s_streamInternalsCreateFulfilledPromiseCode;
 extern const int s_streamInternalsCreateFulfilledPromiseCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsCreateFulfilledPromiseCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsCreateFulfilledPromiseCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsCreateFulfilledPromiseCodeImplementationVisibility;
 extern const char* const s_streamInternalsToDictionaryCode;
 extern const int s_streamInternalsToDictionaryCodeLength;
 extern const JSC::ConstructAbility s_streamInternalsToDictionaryCodeConstructAbility;
 extern const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_streamInternalsToDictionaryCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_STREAMINTERNALS_BUILTIN_DATA(macro) \
     macro(markPromiseAsHandled, streamInternalsMarkPromiseAsHandled, 1) \
@@ -254,7 +273,7 @@ inline JSC::UnlinkedFunctionExecutable* StreamInternalsBuiltinsWrapper::name##Ex
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

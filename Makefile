@@ -170,8 +170,8 @@ JSC_INCLUDE_DIR ?= $(JSC_BASE_DIR)/include
 ZLIB_INCLUDE_DIR ?= $(BUN_DEPS_DIR)/zlib
 ZLIB_LIB_DIR ?= $(BUN_DEPS_DIR)/zlib
 
-JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a $(JSC_LIB)/libLowLevelInterpreterLib.a
-JSC_FILES_DEBUG := $(JSC_LIB_DEBUG)/libJavaScriptCore.a $(JSC_LIB_DEBUG)/libWTF.a  $(JSC_LIB_DEBUG)/libbmalloc.a $(JSC_LIB_DEBUG)/libLowLevelInterpreterLib.a
+JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
+JSC_FILES_DEBUG := $(JSC_LIB_DEBUG)/libJavaScriptCore.a $(JSC_LIB_DEBUG)/libWTF.a  $(JSC_LIB_DEBUG)/libbmalloc.a 
 
 
 ENABLE_MIMALLOC ?= 1
@@ -1235,7 +1235,7 @@ jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build js
 
 jsc-build-mac-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a $(BUN_DEPS_OUT_DIR)/libJavaScriptCore.a
-	cp $(WEBKIT_RELEASE_DIR)/lib/libLowLevelInterpreterLib.a $(BUN_DEPS_OUT_DIR)/libLowLevelInterpreterLib.a
+	#cp $(WEBKIT_RELEASE_DIR)/lib/libLowLevelInterpreterLib.a $(BUN_DEPS_OUT_DIR)/libLowLevelInterpreterLib.a
 	cp $(WEBKIT_RELEASE_DIR)/lib/libWTF.a $(BUN_DEPS_OUT_DIR)/libWTF.a
 	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
 

@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_jsBufferPrototypeSetBigUint64CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSetBigUint64CodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeSetBigUint64CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeSetBigUint64CodeLength = 107;
 static const JSC::Intrinsic s_jsBufferPrototypeSetBigUint64CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeSetBigUint64Code =
@@ -60,6 +61,7 @@ const char* const s_jsBufferPrototypeSetBigUint64Code =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt8CodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadInt8CodeLength = 80;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt8CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt8Code =
@@ -71,6 +73,7 @@ const char* const s_jsBufferPrototypeReadInt8Code =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt8CodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadUInt8CodeLength = 81;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt8CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt8Code =
@@ -82,6 +85,7 @@ const char* const s_jsBufferPrototypeReadUInt8Code =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt16LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadInt16LECodeLength = 87;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt16LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt16LECode =
@@ -93,6 +97,7 @@ const char* const s_jsBufferPrototypeReadInt16LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt16BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadInt16BECodeLength = 88;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt16BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt16BECode =
@@ -104,6 +109,7 @@ const char* const s_jsBufferPrototypeReadInt16BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt16LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadUInt16LECodeLength = 88;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt16LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt16LECode =
@@ -115,6 +121,7 @@ const char* const s_jsBufferPrototypeReadUInt16LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt16BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadUInt16BECodeLength = 89;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt16BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt16BECode =
@@ -126,6 +133,7 @@ const char* const s_jsBufferPrototypeReadUInt16BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt32LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadInt32LECodeLength = 87;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt32LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt32LECode =
@@ -137,6 +145,7 @@ const char* const s_jsBufferPrototypeReadInt32LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadInt32BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadInt32BECodeLength = 88;
 static const JSC::Intrinsic s_jsBufferPrototypeReadInt32BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadInt32BECode =
@@ -148,6 +157,7 @@ const char* const s_jsBufferPrototypeReadInt32BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt32LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadUInt32LECodeLength = 88;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt32LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt32LECode =
@@ -159,6 +169,7 @@ const char* const s_jsBufferPrototypeReadUInt32LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadUInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadUInt32BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadUInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadUInt32BECodeLength = 89;
 static const JSC::Intrinsic s_jsBufferPrototypeReadUInt32BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadUInt32BECode =
@@ -170,6 +181,7 @@ const char* const s_jsBufferPrototypeReadUInt32BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadFloatLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadFloatLECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadFloatLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadFloatLECodeLength = 89;
 static const JSC::Intrinsic s_jsBufferPrototypeReadFloatLECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadFloatLECode =
@@ -181,6 +193,7 @@ const char* const s_jsBufferPrototypeReadFloatLECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadFloatBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadFloatBECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadFloatBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadFloatBECodeLength = 90;
 static const JSC::Intrinsic s_jsBufferPrototypeReadFloatBECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadFloatBECode =
@@ -192,6 +205,7 @@ const char* const s_jsBufferPrototypeReadFloatBECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadDoubleLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadDoubleLECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadDoubleLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadDoubleLECodeLength = 89;
 static const JSC::Intrinsic s_jsBufferPrototypeReadDoubleLECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadDoubleLECode =
@@ -203,6 +217,7 @@ const char* const s_jsBufferPrototypeReadDoubleLECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadDoubleBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadDoubleBECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadDoubleBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadDoubleBECodeLength = 90;
 static const JSC::Intrinsic s_jsBufferPrototypeReadDoubleBECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadDoubleBECode =
@@ -214,6 +229,7 @@ const char* const s_jsBufferPrototypeReadDoubleBECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigInt64LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadBigInt64LECodeLength = 90;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigInt64LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadBigInt64LECode =
@@ -225,6 +241,7 @@ const char* const s_jsBufferPrototypeReadBigInt64LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigInt64BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadBigInt64BECodeLength = 91;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigInt64BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadBigInt64BECode =
@@ -236,6 +253,7 @@ const char* const s_jsBufferPrototypeReadBigInt64BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigUInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigUInt64LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigUInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadBigUInt64LECodeLength = 91;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigUInt64LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadBigUInt64LECode =
@@ -247,6 +265,7 @@ const char* const s_jsBufferPrototypeReadBigUInt64LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeReadBigUInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeReadBigUInt64BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeReadBigUInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeReadBigUInt64BECodeLength = 92;
 static const JSC::Intrinsic s_jsBufferPrototypeReadBigUInt64BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeReadBigUInt64BECode =
@@ -258,6 +277,7 @@ const char* const s_jsBufferPrototypeReadBigUInt64BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt8CodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteInt8CodeLength = 108;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt8CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt8Code =
@@ -270,6 +290,7 @@ const char* const s_jsBufferPrototypeWriteInt8Code =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt8CodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt8CodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt8CodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteUInt8CodeLength = 109;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt8CodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt8Code =
@@ -282,6 +303,7 @@ const char* const s_jsBufferPrototypeWriteUInt8Code =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt16LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteInt16LECodeLength = 115;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt16LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt16LECode =
@@ -294,6 +316,7 @@ const char* const s_jsBufferPrototypeWriteInt16LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt16BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteInt16BECodeLength = 116;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt16BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt16BECode =
@@ -306,6 +329,7 @@ const char* const s_jsBufferPrototypeWriteInt16BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt16LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt16LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt16LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteUInt16LECodeLength = 116;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt16LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt16LECode =
@@ -318,6 +342,7 @@ const char* const s_jsBufferPrototypeWriteUInt16LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt16BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt16BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt16BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteUInt16BECodeLength = 117;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt16BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt16BECode =
@@ -330,6 +355,7 @@ const char* const s_jsBufferPrototypeWriteUInt16BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt32LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteInt32LECodeLength = 115;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt32LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt32LECode =
@@ -342,6 +368,7 @@ const char* const s_jsBufferPrototypeWriteInt32LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteInt32BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteInt32BECodeLength = 116;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteInt32BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteInt32BECode =
@@ -354,6 +381,7 @@ const char* const s_jsBufferPrototypeWriteInt32BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt32LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt32LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt32LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteUInt32LECodeLength = 116;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt32LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt32LECode =
@@ -366,6 +394,7 @@ const char* const s_jsBufferPrototypeWriteUInt32LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteUInt32BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteUInt32BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteUInt32BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteUInt32BECodeLength = 117;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteUInt32BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteUInt32BECode =
@@ -378,6 +407,7 @@ const char* const s_jsBufferPrototypeWriteUInt32BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteFloatLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteFloatLECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteFloatLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteFloatLECodeLength = 117;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteFloatLECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteFloatLECode =
@@ -390,6 +420,7 @@ const char* const s_jsBufferPrototypeWriteFloatLECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteFloatBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteFloatBECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteFloatBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteFloatBECodeLength = 118;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteFloatBECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteFloatBECode =
@@ -402,6 +433,7 @@ const char* const s_jsBufferPrototypeWriteFloatBECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteDoubleLECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteDoubleLECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteDoubleLECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteDoubleLECodeLength = 117;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteDoubleLECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteDoubleLECode =
@@ -414,6 +446,7 @@ const char* const s_jsBufferPrototypeWriteDoubleLECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteDoubleBECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteDoubleBECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteDoubleBECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteDoubleBECodeLength = 118;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteDoubleBECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteDoubleBECode =
@@ -426,6 +459,7 @@ const char* const s_jsBufferPrototypeWriteDoubleBECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigInt64LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteBigInt64LECodeLength = 118;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigInt64LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteBigInt64LECode =
@@ -438,6 +472,7 @@ const char* const s_jsBufferPrototypeWriteBigInt64LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigInt64BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteBigInt64BECodeLength = 119;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigInt64BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteBigInt64BECode =
@@ -450,6 +485,7 @@ const char* const s_jsBufferPrototypeWriteBigInt64BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigUInt64LECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigUInt64LECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigUInt64LECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteBigUInt64LECodeLength = 119;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigUInt64LECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteBigUInt64LECode =
@@ -462,6 +498,7 @@ const char* const s_jsBufferPrototypeWriteBigUInt64LECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeWriteBigUInt64BECodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeWriteBigUInt64BECodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeWriteBigUInt64BECodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeWriteBigUInt64BECodeLength = 120;
 static const JSC::Intrinsic s_jsBufferPrototypeWriteBigUInt64BECodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeWriteBigUInt64BECode =
@@ -474,6 +511,7 @@ const char* const s_jsBufferPrototypeWriteBigUInt64BECode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeSliceCodeLength = 262;
 static const JSC::Intrinsic s_jsBufferPrototypeSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeSliceCode =
@@ -491,6 +529,7 @@ const char* const s_jsBufferPrototypeSliceCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeUtf8WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUtf8WriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeUtf8WriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeUtf8WriteCodeLength = 105;
 static const JSC::Intrinsic s_jsBufferPrototypeUtf8WriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeUtf8WriteCode =
@@ -502,6 +541,7 @@ const char* const s_jsBufferPrototypeUtf8WriteCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeUcs2WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUcs2WriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeUcs2WriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeUcs2WriteCodeLength = 105;
 static const JSC::Intrinsic s_jsBufferPrototypeUcs2WriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeUcs2WriteCode =
@@ -513,6 +553,7 @@ const char* const s_jsBufferPrototypeUcs2WriteCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeUtf16leWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUtf16leWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeUtf16leWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeUtf16leWriteCodeLength = 108;
 static const JSC::Intrinsic s_jsBufferPrototypeUtf16leWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeUtf16leWriteCode =
@@ -524,6 +565,7 @@ const char* const s_jsBufferPrototypeUtf16leWriteCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeLatin1WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeLatin1WriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeLatin1WriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeLatin1WriteCodeLength = 107;
 static const JSC::Intrinsic s_jsBufferPrototypeLatin1WriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeLatin1WriteCode =
@@ -535,6 +577,7 @@ const char* const s_jsBufferPrototypeLatin1WriteCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeAsciiWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeAsciiWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeAsciiWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeAsciiWriteCodeLength = 106;
 static const JSC::Intrinsic s_jsBufferPrototypeAsciiWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeAsciiWriteCode =
@@ -546,6 +589,7 @@ const char* const s_jsBufferPrototypeAsciiWriteCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeBase64WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeBase64WriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeBase64WriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeBase64WriteCodeLength = 107;
 static const JSC::Intrinsic s_jsBufferPrototypeBase64WriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeBase64WriteCode =
@@ -557,6 +601,7 @@ const char* const s_jsBufferPrototypeBase64WriteCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeBase64urlWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeBase64urlWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeBase64urlWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeBase64urlWriteCodeLength = 110;
 static const JSC::Intrinsic s_jsBufferPrototypeBase64urlWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeBase64urlWriteCode =
@@ -568,6 +613,7 @@ const char* const s_jsBufferPrototypeBase64urlWriteCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeHexWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeHexWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeHexWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeHexWriteCodeLength = 104;
 static const JSC::Intrinsic s_jsBufferPrototypeHexWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeHexWriteCode =
@@ -579,6 +625,7 @@ const char* const s_jsBufferPrototypeHexWriteCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeUtf8SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUtf8SliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeUtf8SliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeUtf8SliceCodeLength = 96;
 static const JSC::Intrinsic s_jsBufferPrototypeUtf8SliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeUtf8SliceCode =
@@ -590,6 +637,7 @@ const char* const s_jsBufferPrototypeUtf8SliceCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeUcs2SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUcs2SliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeUcs2SliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeUcs2SliceCodeLength = 96;
 static const JSC::Intrinsic s_jsBufferPrototypeUcs2SliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeUcs2SliceCode =
@@ -601,6 +649,7 @@ const char* const s_jsBufferPrototypeUcs2SliceCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeUtf16leSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUtf16leSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeUtf16leSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeUtf16leSliceCodeLength = 99;
 static const JSC::Intrinsic s_jsBufferPrototypeUtf16leSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeUtf16leSliceCode =
@@ -612,6 +661,7 @@ const char* const s_jsBufferPrototypeUtf16leSliceCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeLatin1SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeLatin1SliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeLatin1SliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeLatin1SliceCodeLength = 98;
 static const JSC::Intrinsic s_jsBufferPrototypeLatin1SliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeLatin1SliceCode =
@@ -623,6 +673,7 @@ const char* const s_jsBufferPrototypeLatin1SliceCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeAsciiSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeAsciiSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeAsciiSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeAsciiSliceCodeLength = 97;
 static const JSC::Intrinsic s_jsBufferPrototypeAsciiSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeAsciiSliceCode =
@@ -634,6 +685,7 @@ const char* const s_jsBufferPrototypeAsciiSliceCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeBase64SliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeBase64SliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeBase64SliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeBase64SliceCodeLength = 98;
 static const JSC::Intrinsic s_jsBufferPrototypeBase64SliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeBase64SliceCode =
@@ -645,6 +697,7 @@ const char* const s_jsBufferPrototypeBase64SliceCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeBase64urlSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeBase64urlSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeBase64urlSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeBase64urlSliceCodeLength = 101;
 static const JSC::Intrinsic s_jsBufferPrototypeBase64urlSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeBase64urlSliceCode =
@@ -656,6 +709,7 @@ const char* const s_jsBufferPrototypeBase64urlSliceCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeHexSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeHexSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeHexSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeHexSliceCodeLength = 95;
 static const JSC::Intrinsic s_jsBufferPrototypeHexSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeHexSliceCode =
@@ -667,6 +721,7 @@ const char* const s_jsBufferPrototypeHexSliceCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeToJSONCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeToJSONCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeToJSONCodeLength = 118;
 static const JSC::Intrinsic s_jsBufferPrototypeToJSONCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeToJSONCode =
@@ -680,6 +735,7 @@ const char* const s_jsBufferPrototypeToJSONCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeSubarrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSubarrayCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeSubarrayCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeSubarrayCodeLength = 196;
 static const JSC::Intrinsic s_jsBufferPrototypeSubarrayCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeSubarrayCode =
@@ -693,6 +749,7 @@ const char* const s_jsBufferPrototypeSubarrayCode =
 
 const JSC::ConstructAbility s_jsBufferPrototypeInitializeBunBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeInitializeBunBufferCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeInitializeBunBufferCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferPrototypeInitializeBunBufferCodeLength = 45;
 static const JSC::Intrinsic s_jsBufferPrototypeInitializeBunBufferCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeInitializeBunBufferCode =

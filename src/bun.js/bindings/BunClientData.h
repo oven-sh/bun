@@ -83,6 +83,11 @@ public:
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
     JSBuiltinFunctions& builtinFunctions() { return m_builtinFunctions; }
 
+    String overrideSourceURL(const StackFrame&, const String& originalSourceURL) const
+    {
+        return originalSourceURL;
+    }
+
     WebCore::DOMWrapperWorld& normalWorld() { return *m_normalWorld; }
 
     JSC::GCClient::IsoSubspace& domConstructorSpace() { return m_domConstructorSpace; }

@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeLength = 366;
 static const JSC::Intrinsic s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamControllerInitializeReadableByteStreamControllerCode =
@@ -65,6 +66,7 @@ const char* const s_readableByteStreamControllerInitializeReadableByteStreamCont
 
 const JSC::ConstructAbility s_readableByteStreamControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableByteStreamControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableByteStreamControllerEnqueueCodeLength = 665;
 static const JSC::Intrinsic s_readableByteStreamControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamControllerEnqueueCode =
@@ -90,6 +92,7 @@ const char* const s_readableByteStreamControllerEnqueueCode =
 
 const JSC::ConstructAbility s_readableByteStreamControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableByteStreamControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableByteStreamControllerErrorCodeLength = 396;
 static const JSC::Intrinsic s_readableByteStreamControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamControllerErrorCode =
@@ -109,6 +112,7 @@ const char* const s_readableByteStreamControllerErrorCode =
 
 const JSC::ConstructAbility s_readableByteStreamControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableByteStreamControllerCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableByteStreamControllerCloseCodeLength = 501;
 static const JSC::Intrinsic s_readableByteStreamControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamControllerCloseCode =
@@ -131,6 +135,7 @@ const char* const s_readableByteStreamControllerCloseCode =
 
 const JSC::ConstructAbility s_readableByteStreamControllerByobRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerByobRequestCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableByteStreamControllerByobRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableByteStreamControllerByobRequestCodeLength = 817;
 static const JSC::Intrinsic s_readableByteStreamControllerByobRequestCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamControllerByobRequestCode =
@@ -160,6 +165,7 @@ const char* const s_readableByteStreamControllerByobRequestCode =
 
 const JSC::ConstructAbility s_readableByteStreamControllerDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableByteStreamControllerDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableByteStreamControllerDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableByteStreamControllerDesiredSizeCodeLength = 231;
 static const JSC::Intrinsic s_readableByteStreamControllerDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableByteStreamControllerDesiredSizeCode =

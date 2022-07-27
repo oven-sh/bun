@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeLength = 376;
 static const JSC::Intrinsic s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCode =
@@ -72,6 +73,7 @@ const char* const s_writableStreamDefaultWriterInitializeWritableStreamDefaultWr
 
 const JSC::ConstructAbility s_writableStreamDefaultWriterClosedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterClosedCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultWriterClosedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultWriterClosedCodeLength = 247;
 static const JSC::Intrinsic s_writableStreamDefaultWriterClosedCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultWriterClosedCode =
@@ -88,6 +90,7 @@ const char* const s_writableStreamDefaultWriterClosedCode =
 
 const JSC::ConstructAbility s_writableStreamDefaultWriterDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultWriterDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultWriterDesiredSizeCodeLength = 359;
 static const JSC::Intrinsic s_writableStreamDefaultWriterDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultWriterDesiredSizeCode =
@@ -107,6 +110,7 @@ const char* const s_writableStreamDefaultWriterDesiredSizeCode =
 
 const JSC::ConstructAbility s_writableStreamDefaultWriterReadyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterReadyCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultWriterReadyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultWriterReadyCodeLength = 243;
 static const JSC::Intrinsic s_writableStreamDefaultWriterReadyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultWriterReadyCode =
@@ -123,6 +127,7 @@ const char* const s_writableStreamDefaultWriterReadyCode =
 
 const JSC::ConstructAbility s_writableStreamDefaultWriterAbortCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterAbortCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultWriterAbortCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultWriterAbortCodeLength = 401;
 static const JSC::Intrinsic s_writableStreamDefaultWriterAbortCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultWriterAbortCode =
@@ -142,6 +147,7 @@ const char* const s_writableStreamDefaultWriterAbortCode =
 
 const JSC::ConstructAbility s_writableStreamDefaultWriterCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterCloseCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultWriterCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultWriterCloseCodeLength = 569;
 static const JSC::Intrinsic s_writableStreamDefaultWriterCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultWriterCloseCode =
@@ -165,6 +171,7 @@ const char* const s_writableStreamDefaultWriterCloseCode =
 
 const JSC::ConstructAbility s_writableStreamDefaultWriterReleaseLockCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterReleaseLockCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultWriterReleaseLockCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultWriterReleaseLockCodeLength = 387;
 static const JSC::Intrinsic s_writableStreamDefaultWriterReleaseLockCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultWriterReleaseLockCode =
@@ -186,6 +193,7 @@ const char* const s_writableStreamDefaultWriterReleaseLockCode =
 
 const JSC::ConstructAbility s_writableStreamDefaultWriterWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_writableStreamDefaultWriterWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_writableStreamDefaultWriterWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_writableStreamDefaultWriterWriteCodeLength = 399;
 static const JSC::Intrinsic s_writableStreamDefaultWriterWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_writableStreamDefaultWriterWriteCode =

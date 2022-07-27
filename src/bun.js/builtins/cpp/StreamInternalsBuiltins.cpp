@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_streamInternalsMarkPromiseAsHandledCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsMarkPromiseAsHandledCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsMarkPromiseAsHandledCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsMarkPromiseAsHandledCodeLength = 217;
 static const JSC::Intrinsic s_streamInternalsMarkPromiseAsHandledCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsMarkPromiseAsHandledCode =
@@ -63,6 +64,7 @@ const char* const s_streamInternalsMarkPromiseAsHandledCode =
 
 const JSC::ConstructAbility s_streamInternalsShieldingPromiseResolveCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsShieldingPromiseResolveCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsShieldingPromiseResolveCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsShieldingPromiseResolveCodeLength = 198;
 static const JSC::Intrinsic s_streamInternalsShieldingPromiseResolveCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsShieldingPromiseResolveCode =
@@ -79,6 +81,7 @@ const char* const s_streamInternalsShieldingPromiseResolveCode =
 
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeLength = 190;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCode =
@@ -94,6 +97,7 @@ const char* const s_streamInternalsPromiseInvokeOrNoopMethodNoCatchCode =
 
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopNoCatchCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopNoCatchCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsPromiseInvokeOrNoopNoCatchCodeLength = 127;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopNoCatchCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPromiseInvokeOrNoopNoCatchCode =
@@ -107,6 +111,7 @@ const char* const s_streamInternalsPromiseInvokeOrNoopNoCatchCode =
 
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopMethodCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopMethodCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsPromiseInvokeOrNoopMethodCodeLength = 210;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopMethodCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPromiseInvokeOrNoopMethodCode =
@@ -125,6 +130,7 @@ const char* const s_streamInternalsPromiseInvokeOrNoopMethodCode =
 
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrNoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrNoopCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrNoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsPromiseInvokeOrNoopCodeLength = 198;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrNoopCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPromiseInvokeOrNoopCode =
@@ -143,6 +149,7 @@ const char* const s_streamInternalsPromiseInvokeOrNoopCode =
 
 const JSC::ConstructAbility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeLength = 362;
 static const JSC::Intrinsic s_streamInternalsPromiseInvokeOrFallbackOrNoopCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode =
@@ -164,6 +171,7 @@ const char* const s_streamInternalsPromiseInvokeOrFallbackOrNoopCode =
 
 const JSC::ConstructAbility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsValidateAndNormalizeQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsValidateAndNormalizeQueuingStrategyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsValidateAndNormalizeQueuingStrategyCodeLength = 430;
 static const JSC::Intrinsic s_streamInternalsValidateAndNormalizeQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode =
@@ -185,6 +193,7 @@ const char* const s_streamInternalsValidateAndNormalizeQueuingStrategyCode =
 
 const JSC::ConstructAbility s_streamInternalsCreateFIFOCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsCreateFIFOCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsCreateFIFOCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsCreateFIFOCodeLength = 2764;
 static const JSC::Intrinsic s_streamInternalsCreateFIFOCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsCreateFIFOCode =
@@ -291,6 +300,7 @@ const char* const s_streamInternalsCreateFIFOCode =
 
 const JSC::ConstructAbility s_streamInternalsNewQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsNewQueueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsNewQueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsNewQueueCodeLength = 85;
 static const JSC::Intrinsic s_streamInternalsNewQueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsNewQueueCode =
@@ -304,6 +314,7 @@ const char* const s_streamInternalsNewQueueCode =
 
 const JSC::ConstructAbility s_streamInternalsDequeueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsDequeueValueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsDequeueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsDequeueValueCodeLength = 195;
 static const JSC::Intrinsic s_streamInternalsDequeueValueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsDequeueValueCode =
@@ -322,6 +333,7 @@ const char* const s_streamInternalsDequeueValueCode =
 
 const JSC::ConstructAbility s_streamInternalsEnqueueValueWithSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsEnqueueValueWithSizeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsEnqueueValueWithSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsEnqueueValueWithSizeCodeLength = 248;
 static const JSC::Intrinsic s_streamInternalsEnqueueValueWithSizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsEnqueueValueWithSizeCode =
@@ -340,6 +352,7 @@ const char* const s_streamInternalsEnqueueValueWithSizeCode =
 
 const JSC::ConstructAbility s_streamInternalsPeekQueueValueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsPeekQueueValueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsPeekQueueValueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsPeekQueueValueCodeLength = 115;
 static const JSC::Intrinsic s_streamInternalsPeekQueueValueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsPeekQueueValueCode =
@@ -355,6 +368,7 @@ const char* const s_streamInternalsPeekQueueValueCode =
 
 const JSC::ConstructAbility s_streamInternalsResetQueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsResetQueueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsResetQueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsResetQueueCodeLength = 152;
 static const JSC::Intrinsic s_streamInternalsResetQueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsResetQueueCode =
@@ -371,6 +385,7 @@ const char* const s_streamInternalsResetQueueCode =
 
 const JSC::ConstructAbility s_streamInternalsExtractSizeAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsExtractSizeAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsExtractSizeAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsExtractSizeAlgorithmCodeLength = 288;
 static const JSC::Intrinsic s_streamInternalsExtractSizeAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsExtractSizeAlgorithmCode =
@@ -388,6 +403,7 @@ const char* const s_streamInternalsExtractSizeAlgorithmCode =
 
 const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsExtractHighWaterMarkCodeLength = 325;
 static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsExtractHighWaterMarkCode =
@@ -405,6 +421,7 @@ const char* const s_streamInternalsExtractHighWaterMarkCode =
 
 const JSC::ConstructAbility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeLength = 335;
 static const JSC::Intrinsic s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCode =
@@ -424,6 +441,7 @@ const char* const s_streamInternalsExtractHighWaterMarkFromQueuingStrategyInitCo
 
 const JSC::ConstructAbility s_streamInternalsCreateFulfilledPromiseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsCreateFulfilledPromiseCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsCreateFulfilledPromiseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsCreateFulfilledPromiseCodeLength = 115;
 static const JSC::Intrinsic s_streamInternalsCreateFulfilledPromiseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsCreateFulfilledPromiseCode =
@@ -437,6 +455,7 @@ const char* const s_streamInternalsCreateFulfilledPromiseCode =
 
 const JSC::ConstructAbility s_streamInternalsToDictionaryCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_streamInternalsToDictionaryCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_streamInternalsToDictionaryCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_streamInternalsToDictionaryCodeLength = 212;
 static const JSC::Intrinsic s_streamInternalsToDictionaryCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_streamInternalsToDictionaryCode =

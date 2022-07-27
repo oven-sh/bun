@@ -51,26 +51,32 @@ extern const char* const s_readableByteStreamControllerInitializeReadableByteStr
 extern const int s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamControllerInitializeReadableByteStreamControllerCodeImplementationVisibility;
 extern const char* const s_readableByteStreamControllerEnqueueCode;
 extern const int s_readableByteStreamControllerEnqueueCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamControllerEnqueueCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableByteStreamControllerEnqueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamControllerEnqueueCodeImplementationVisibility;
 extern const char* const s_readableByteStreamControllerErrorCode;
 extern const int s_readableByteStreamControllerErrorCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamControllerErrorCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableByteStreamControllerErrorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamControllerErrorCodeImplementationVisibility;
 extern const char* const s_readableByteStreamControllerCloseCode;
 extern const int s_readableByteStreamControllerCloseCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamControllerCloseCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableByteStreamControllerCloseCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamControllerCloseCodeImplementationVisibility;
 extern const char* const s_readableByteStreamControllerByobRequestCode;
 extern const int s_readableByteStreamControllerByobRequestCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamControllerByobRequestCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableByteStreamControllerByobRequestCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamControllerByobRequestCodeImplementationVisibility;
 extern const char* const s_readableByteStreamControllerDesiredSizeCode;
 extern const int s_readableByteStreamControllerDesiredSizeCodeLength;
 extern const JSC::ConstructAbility s_readableByteStreamControllerDesiredSizeCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableByteStreamControllerDesiredSizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableByteStreamControllerDesiredSizeCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_READABLEBYTESTREAMCONTROLLER_BUILTIN_DATA(macro) \
     macro(initializeReadableByteStreamController, readableByteStreamControllerInitializeReadableByteStreamController, 3) \
@@ -150,7 +156,7 @@ inline JSC::UnlinkedFunctionExecutable* ReadableByteStreamControllerBuiltinsWrap
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

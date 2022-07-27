@@ -180,7 +180,6 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(JSClassRef* globalObje
     auto heapSize = JSC::HeapType::Large;
 
     JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
-    JSC::Wasm::enableFastMemory();
 
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
@@ -1207,7 +1206,7 @@ JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject * globalOb
     scope.assertNoException();
 
     ExceptionCode code { TypeError };
-    if (codeValue == "AbortError")
+    if (codeValue == "AbortError"_s)
         code = AbortError;
     auto value = createDOMException(globalObject, code, message);
 

@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_transformStreamInternalsIsTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsIsTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsIsTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsIsTransformStreamCodeLength = 120;
 static const JSC::Intrinsic s_transformStreamInternalsIsTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsIsTransformStreamCode =
@@ -62,6 +63,7 @@ const char* const s_transformStreamInternalsIsTransformStreamCode =
 
 const JSC::ConstructAbility s_transformStreamInternalsIsTransformStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsIsTransformStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsIsTransformStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsIsTransformStreamDefaultControllerCodeLength = 142;
 static const JSC::Intrinsic s_transformStreamInternalsIsTransformStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsIsTransformStreamDefaultControllerCode =
@@ -75,6 +77,7 @@ const char* const s_transformStreamInternalsIsTransformStreamDefaultControllerCo
 
 const JSC::ConstructAbility s_transformStreamInternalsCreateTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsCreateTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsCreateTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsCreateTransformStreamCodeLength = 1317;
 static const JSC::Intrinsic s_transformStreamInternalsCreateTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsCreateTransformStreamCode =
@@ -113,6 +116,7 @@ const char* const s_transformStreamInternalsCreateTransformStreamCode =
 
 const JSC::ConstructAbility s_transformStreamInternalsInitializeTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsInitializeTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsInitializeTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsInitializeTransformStreamCodeLength = 1881;
 static const JSC::Intrinsic s_transformStreamInternalsInitializeTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsInitializeTransformStreamCode =
@@ -156,6 +160,7 @@ const char* const s_transformStreamInternalsInitializeTransformStreamCode =
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamErrorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamErrorCodeLength = 330;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamErrorCode =
@@ -173,6 +178,7 @@ const char* const s_transformStreamInternalsTransformStreamErrorCode =
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeLength = 431;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamErrorWritableAndUnblockWriteCode =
@@ -192,6 +198,7 @@ const char* const s_transformStreamInternalsTransformStreamErrorWritableAndUnblo
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamSetBackpressureCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamSetBackpressureCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamSetBackpressureCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamSetBackpressureCodeLength = 498;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamSetBackpressureCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamSetBackpressureCode =
@@ -212,6 +219,7 @@ const char* const s_transformStreamInternalsTransformStreamSetBackpressureCode =
 
 const JSC::ConstructAbility s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeLength = 478;
 static const JSC::Intrinsic s_transformStreamInternalsSetUpTransformStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControllerCode =
@@ -231,6 +239,7 @@ const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControlle
 
 const JSC::ConstructAbility s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeLength = 940;
 static const JSC::Intrinsic s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControllerFromTransformerCode =
@@ -266,6 +275,7 @@ const char* const s_transformStreamInternalsSetUpTransformStreamDefaultControlle
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeLength = 190;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultControllerClearAlgorithmsCode =
@@ -281,6 +291,7 @@ const char* const s_transformStreamInternalsTransformStreamDefaultControllerClea
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeLength = 979;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultControllerEnqueueCode =
@@ -313,6 +324,7 @@ const char* const s_transformStreamInternalsTransformStreamDefaultControllerEnqu
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeLength = 125;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultControllerErrorCode =
@@ -326,6 +338,7 @@ const char* const s_transformStreamInternalsTransformStreamDefaultControllerErro
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeLength = 500;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultControllerPerformTransformCode =
@@ -348,6 +361,7 @@ const char* const s_transformStreamInternalsTransformStreamDefaultControllerPerf
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeLength = 554;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultControllerTerminateCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultControllerTerminateCode =
@@ -369,6 +383,7 @@ const char* const s_transformStreamInternalsTransformStreamDefaultControllerTerm
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeLength = 1373;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgorithmCode =
@@ -412,6 +427,7 @@ const char* const s_transformStreamInternalsTransformStreamDefaultSinkWriteAlgor
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeLength = 126;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgorithmCode =
@@ -426,6 +442,7 @@ const char* const s_transformStreamInternalsTransformStreamDefaultSinkAbortAlgor
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeLength = 1295;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgorithmCode =
@@ -462,6 +479,7 @@ const char* const s_transformStreamInternalsTransformStreamDefaultSinkCloseAlgor
 
 const JSC::ConstructAbility s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeLength = 325;
 static const JSC::Intrinsic s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInternalsTransformStreamDefaultSourcePullAlgorithmCode =

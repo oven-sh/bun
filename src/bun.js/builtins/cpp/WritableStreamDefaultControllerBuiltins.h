@@ -51,10 +51,12 @@ extern const char* const s_writableStreamDefaultControllerInitializeWritableStre
 extern const int s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultControllerInitializeWritableStreamDefaultControllerCodeImplementationVisibility;
 extern const char* const s_writableStreamDefaultControllerErrorCode;
 extern const int s_writableStreamDefaultControllerErrorCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultControllerErrorCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultControllerErrorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultControllerErrorCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_WRITABLESTREAMDEFAULTCONTROLLER_BUILTIN_DATA(macro) \
     macro(initializeWritableStreamDefaultController, writableStreamDefaultControllerInitializeWritableStreamDefaultController, 0) \
@@ -118,7 +120,7 @@ inline JSC::UnlinkedFunctionExecutable* WritableStreamDefaultControllerBuiltinsW
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

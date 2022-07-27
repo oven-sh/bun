@@ -51,14 +51,17 @@ extern const char* const s_transformStreamInitializeTransformStreamCode;
 extern const int s_transformStreamInitializeTransformStreamCodeLength;
 extern const JSC::ConstructAbility s_transformStreamInitializeTransformStreamCodeConstructAbility;
 extern const JSC::ConstructorKind s_transformStreamInitializeTransformStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamInitializeTransformStreamCodeImplementationVisibility;
 extern const char* const s_transformStreamReadableCode;
 extern const int s_transformStreamReadableCodeLength;
 extern const JSC::ConstructAbility s_transformStreamReadableCodeConstructAbility;
 extern const JSC::ConstructorKind s_transformStreamReadableCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamReadableCodeImplementationVisibility;
 extern const char* const s_transformStreamWritableCode;
 extern const int s_transformStreamWritableCodeLength;
 extern const JSC::ConstructAbility s_transformStreamWritableCodeConstructAbility;
 extern const JSC::ConstructorKind s_transformStreamWritableCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamWritableCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_TRANSFORMSTREAM_BUILTIN_DATA(macro) \
     macro(initializeTransformStream, transformStreamInitializeTransformStream, 0) \
@@ -126,7 +129,7 @@ inline JSC::UnlinkedFunctionExecutable* TransformStreamBuiltinsWrapper::name##Ex
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

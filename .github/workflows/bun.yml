@@ -326,7 +326,7 @@
 #       - name: Upload as Canary
 #         if: github.ref == 'refs/heads/main'
 #         run: |
-#           echo "$GITHUB_TOKEN" > ${{runner.temp}}/token.txt
-#           gh auth login --with-token < cat ${{runner.temp}}/token.txt
-#           rm -f ${{runner.temp}}/token.txt
+#
+#           echo $GITHUB_TOKEN | gh auth login --with-token
+#
 #           gh release upload canary ${{runner.temp}}/release/bun*.zip --clobber --repo $GITHUB_REPOSITORY

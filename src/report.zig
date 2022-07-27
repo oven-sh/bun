@@ -259,8 +259,8 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
     };
 
     crash_report_writer.print(
-        "\n<r><red>{s}<d> at 0x{}\n\n",
-        .{ @errorName(name), std.fmt.fmtSliceHexUpper(std.mem.asBytes(addr)) },
+        "\n<r><red>{s}<d> at 0x{any}\n\n",
+        .{ @errorName(name), std.fmt.fmtSliceHexUpper(std.mem.asBytes(&addr)) },
     );
     printMetadata();
     CrashReportWriter.dump();

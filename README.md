@@ -40,6 +40,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
 - [Install](#install)
 - [Using bun.js - a new JavaScript runtime environment](#using-bunjs---a-new-javascript-runtime-environment)
   - [Types for bun.js (editor autocomplete)](#types-for-bunjs-editor-autocomplete)
+  - [CLI autocomplete](#CLI-autocomplete)
   - [Fast paths for Web APIs](#fast-paths-for-web-apis)
 - [Using bun as a package manager](#using-bun-as-a-package-manager)
 - [Using bun as a task runner](#using-bun-as-a-task-runner)
@@ -279,6 +280,17 @@ bun add bun-types
 ```
 
 You can also [view the types here](./types/bun/bun.d.ts).
+
+### CLI Autocomplete
+You can get IDE-style autocompletions like this using [Fig](https://fig.io/) <a href="https://fig.io/" target="_blank"><img src="https://fig.io/badges/Logo.svg" width="15" height="15"/></a>. It works in zsh, bash, and fish. 
+
+<img src="https://fig.io/badges/bun_demo.png" width="411" height="192"/>
+
+To install, run:
+
+```shell
+brew install fig
+```
 
 ### Fast paths for Web APIs
 

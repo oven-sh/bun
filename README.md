@@ -253,7 +253,7 @@ PRs adding more examples are very welcome!
 
 ### Types for bun.js (editor autocomplete)
 
-The best docs right now are the TypeScript types in the [`bun-types`](types/bun/bun.d.ts) npm package. A docs site is coming soon.
+The best docs right now are the TypeScript types in the [`bun-types`](https://github.com/oven-sh/bun-types/blob/master/dist/types.d.ts) npm package. A docs site is coming soon.
 
 To get autocomplete for bun.js types in your editor,
 
@@ -278,7 +278,9 @@ bun add bun-types
 }
 ```
 
-You can also [view the types here](./types/bun/bun.d.ts).
+You can also [view the types here](https://github.com/oven-sh/bun-types/blob/master/dist/types.d.ts).
+
+To contribute to the types, head over to [oven-sh/bun-types](https://github.com/oven-sh/bun-types).
 
 ### Fast paths for Web APIs
 

@@ -323,10 +323,16 @@ jobs:
         with:
           name: ${{matrix.tag}}
           path: ${{runner.temp}}/release/${{matrix.tag}}.zip
-      - name: Upload as Canary
+      - name: Release
+        id: release
+        uses: softprops/action-gh-release@v1
         if: github.ref == 'refs/heads/main'
-        run: |
-
-          echo $GITHUB_TOKEN | gh auth login --with-token
-
-          gh release upload canary ${{runner.temp}}/release/bun*.zip --clobber --repo $GITHUB_REPOSITORY
+        with:
+          prerelease: true
+          generate_release_notes: true
+          body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
+          name: "Canary (${{github.sha}})"
+          tag_name: "canary"
+          files: |
+            ${{runner.temp}}/release/${{matrix.tag}}.zip
+            ${{runner.temp}}/release/${{matrix.tag}}-profile.zip

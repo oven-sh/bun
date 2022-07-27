@@ -334,5 +334,5 @@ jobs:
           name: "Canary (${{github.sha}})"
           tag_name: "canary"
           files: |
-            ${{runner.temp}}/release/bun-${{matrix.tag}}.zip
-            ${{runner.temp}}/release/bun-${{matrix.tag}}-profile.zip
+            ${{runner.temp}}/release/${{matrix.tag}}.zip
+            ${{runner.temp}}/release/${{matrix.tag}}-profile.zip

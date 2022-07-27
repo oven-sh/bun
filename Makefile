@@ -14,6 +14,7 @@ endif
 
 CPU_TARGET ?= native
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
+NATIVE_OR_OLD_MARCH = 
 
 ARCH_NAME :=
 DOCKER_BUILDARCH =
@@ -29,6 +30,7 @@ else
 	BREW_PREFIX_PATH = /usr/local
 	MIN_MACOS_VERSION ?= 10.14
 	MARCH_NATIVE = -march=$(CPU_TARGET) -mtune=$(CPU_TARGET)
+	NATIVE_OR_OLD_MARCH = -march=sandybridge
 endif
 
 AR=
@@ -136,9 +138,10 @@ AR = $(shell which llvm-ar-13 || which llvm-ar || which ar)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
-CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(EMBED_OR_EMIT_BITCODE) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
+CFLAGS=$(CFLAGS_WITHOUT_MARCH) $(MARCH_NATIVE)
 
 DEFAULT_USE_BMALLOC := 1
 
@@ -228,7 +231,7 @@ HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
 
 SRC_DIR := src/bun.js/bindings
-OBJ_DIR := src/bun.js/bindings-obj
+OBJ_DIR ?= src/bun.js/bindings-obj
 SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp)
@@ -362,16 +365,11 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = \
 		-lssl \
 		-lbase64 \
 		-ltcc \
+		-lusockets \
+		$(BUN_DEPS_OUT_DIR)/libuwsockets.o \
 		$(_MIMALLOC_LINK)
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
-
-ifeq ($(OS_NAME), darwin)
-	ARCHIVE_FILES += $(wildcard $(BUN_DEPS_DIR)/uws/uSockets/*.bc) $(BUN_DEPS_OUT_DIR)/libuwsockets.o
-else
-	ARCHIVE_FILES += -lusockets $(BUN_DEPS_OUT_DIR)/libuwsockets.o
-endif
-
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto 
 STATIC_MUSL_FLAG ?=
 
 ifeq ($(OS_NAME), linux)
@@ -413,7 +411,12 @@ BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(BINDINGS
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
 
+
 bun:
+
+npm-install:
+	$(NPM_CLIENT) install
+
 
 .PHONY: base64
 base64:
@@ -426,11 +429,14 @@ base64:
 # Prevent dependency on libtcc1 so it doesn't do filesystem lookups
 TINYCC_CFLAGS= -DTCC_LIBTCC1=\"\0\"
 
+# TinyCC needs to run some compiled code after it's been compiled.
+# That means we can't compile for a newer microarchitecture than native
+# We compile for an older microarchitecture on x64 to ensure compatibility
 .PHONY: tinycc
 tinycc:
 	cd $(TINYCC_DIR) && \
 		make clean && \
-		AR=$(AR) CC=$(CC) CFLAGS='$(CFLAGS) $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CC) --ar=$(AR) --config-predefs=yes  && \
+		AR=$(AR) CC=$(CC) CFLAGS='$(CFLAGS_WITHOUT_MARCH) $(NATIVE_OR_OLD_MARCH) -mtune=native $(TINYCC_CFLAGS)' ./configure --enable-static --cc=$(CC) --ar=$(AR) --config-predefs=yes  && \
 		make -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 
@@ -450,19 +456,21 @@ generate-builtins: ## to generate builtins
 	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
 
 .PHONY: tinycc
-vendor-without-check: api analytics node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
+vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
+
+BUN_TYPES_REPO_PATH ?= $(realpath ../bun-types)
 
 .PHONY: prepare-types
 prepare-types:
-	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) types/bun/bundle.ts packages/bun-types
-	echo "Generated types for $(PACKAGE_JSON_VERSION) in packages/bun-types"
-	cp packages/bun-types/types.d.ts /tmp/bun-types.d.ts
-	cd /tmp && tsc /tmp/bun-types.d.ts
+	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) $(BUN_TYPES_REPO_PATH)/bundle.ts $(BUN_TYPES_REPO_PATH)/dist
+	echo "Generated types for $(PACKAGE_JSON_VERSION) in $(BUN_TYPES_REPO_PATH)/dist"
+	cp $(BUN_TYPES_REPO_PATH)/dist/types.d.ts /tmp/bun-types.d.ts
+	cd /tmp && $(PACKAGE_DIR)/../../node_modules/.bin/tsc /tmp/bun-types.d.ts
 
 release-types:
 	# can be removed when/if "bun publish" is implemented
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
-	cd packages/bun-types && npm publish
+	cd $(BUN_TYPES_REPO_PATH)/dist && npm publish
 
 .PHONY: format
 format: ## to format the code
@@ -668,7 +676,7 @@ ensure-package-dir:
 	mkdir -p $(PACKAGE_DIR)
 
 .PHONY: prerelease
-prerelease: api analytics all-js ensure-package-dir
+prerelease: npm-install api analytics all-js ensure-package-dir
 .PHONY: release-only
 release-only: jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release-safe-only
@@ -691,7 +699,6 @@ fmt: fmt-cpp fmt-zig
 
 .PHONY: api
 api:
-	$(NPM_CLIENT) install
 	./node_modules/.bin/peechy --schema src/api/schema.peechy --esm src/api/schema.js --ts src/api/schema.d.ts --zig src/api/schema.zig
 	$(ZIG) fmt src/api/schema.zig
 	$(PRETTIER) --write src/api/schema.js
@@ -700,6 +707,7 @@ api:
 .PHONY: node-fallbacks
 node-fallbacks:
 	@cd src/node-fallbacks; $(NPM_CLIENT) install; $(NPM_CLIENT) run --silent build
+
 
 .PHONY: fallback_decoder
 fallback_decoder:

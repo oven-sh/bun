@@ -458,17 +458,19 @@ generate-builtins: ## to generate builtins
 .PHONY: tinycc
 vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
+BUN_TYPES_REPO_PATH ?= $(realpath ../bun-types)
+
 .PHONY: prepare-types
 prepare-types:
-	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) types/bun/bundle.ts packages/bun-types
-	echo "Generated types for $(PACKAGE_JSON_VERSION) in packages/bun-types"
-	cp packages/bun-types/types.d.ts /tmp/bun-types.d.ts
-	cd /tmp && tsc /tmp/bun-types.d.ts
+	BUN_VERSION=$(PACKAGE_JSON_VERSION) $(BUN_RELEASE_BIN) $(BUN_TYPES_REPO_PATH)/bundle.ts $(BUN_TYPES_REPO_PATH)/dist
+	echo "Generated types for $(PACKAGE_JSON_VERSION) in $(BUN_TYPES_REPO_PATH)/dist"
+	cp $(BUN_TYPES_REPO_PATH)/dist/types.d.ts /tmp/bun-types.d.ts
+	cd /tmp && $(PACKAGE_DIR)/../../node_modules/.bin/tsc /tmp/bun-types.d.ts
 
 release-types:
 	# can be removed when/if "bun publish" is implemented
 	@npm --version >/dev/null 2>&1 || (echo -e "ERROR: npm is required."; exit 1)
-	cd packages/bun-types && npm publish
+	cd $(BUN_TYPES_REPO_PATH)/dist && npm publish
 
 .PHONY: format
 format: ## to format the code

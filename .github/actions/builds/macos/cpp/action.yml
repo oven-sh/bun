@@ -1,0 +1,94 @@
+name: "Build for macos xx (cpp)"
+description: "Build bun for macos xx (cpp)"
+
+inputs:
+  cpu:
+    required: true
+  arch:
+    required: true
+  tag:
+    required: true
+  obj:
+    required: true
+  artifact:
+    required: true
+  webkit_url:
+    required: true
+  runner:
+    required: true
+  dependencies:
+    required: true
+  compile_obj:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v3
+    - name: Checkout submodules
+      run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu)
+    - name: Install dependencies
+      env:
+        CPU_TARGET: ${{ inputs.cpu }}
+        JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+        JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+        HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        HOMEBREW_NO_AUTO_UPDATE: 1
+        HOMEBREW_NO_INSTALL_CLEANUP: 1
+        BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+        OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+        BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+      run: |
+        brew install rust llvm@13 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+        echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
+        echo "export PATH=$(brew --prefix llvm@13)/bin:\$PATH" >> $GITHUB_ENV
+        brew link --overwrite llvm@13
+    - name: Download WebKit
+      if: inputs.compile_obj
+      env:
+        CPU_TARGET: ${{ inputs.cpu }}
+        JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+        JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+        BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+        OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+        BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+      run: |
+        rm -rf $JSC_BASE_DIR
+        mkdir -p $JSC_BASE_DIR
+        curl -L ${{ inputs.webkit_url }} | tar -xz -C $JSC_BASE_DIR --strip-components=1
+    - name: Compile dependencies
+      if: inputs.dependencies
+      env:
+        CPU_TARGET: ${{ inputs.cpu }}
+        JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+        JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+        BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+        OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+        BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+      run: |
+        mkdir -p $BUN_DEPS_OUT_DIR
+        make vendor-without-check
+    - name: Compile C++
+      if: inputs.compile_obj
+      env:
+        CPU_TARGET: ${{ inputs.cpu }}
+        JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+        JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+        BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+        OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+        BUN_DEPS_OUT_DIR: ${{ runner.temp }}/bun-deps
+      run: |
+        mkdir -p $OBJ_DIR
+        make -j $(sysctl -n hw.ncpu) bindings
+    - name: Upload C++
+      if: inputs.compile_obj
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ inputs.tag }}-cpp
+        path: ${{ runner.temp }}/bun-cpp-obj
+    - name: Upload Dependencies
+      if: inputs.dependencies
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ inputs.tag }}-deps
+        path: ${{ runner.temp }}/bun-deps

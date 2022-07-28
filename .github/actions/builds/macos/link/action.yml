@@ -1,0 +1,128 @@
+name: "Build for macos xx (link)"
+description: "Build bun for macos xx (link)"
+
+inputs:
+  cpu:
+    required: true
+  arch:
+    required: true
+  tag:
+    required: true
+  obj:
+    required: true
+  package:
+    required: true
+  artifact:
+    required: true
+  webkit_url:
+    required: true
+  runner:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v3
+    - name: Checkout submodules
+      run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu)
+    - name: Install dependencies
+      env:
+        CPU_TARGET: ${{ inputs.cpu }}
+        JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+        JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+        HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+        HOMEBREW_NO_AUTO_UPDATE: 1
+        HOMEBREW_NO_INSTALL_CLEANUP: 1
+        BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+        OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+        BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+      run: |
+        brew install rust llvm@13 pkg-config coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild --force
+        echo "export PATH=$(brew --prefix coreutils)/libexec/gnubin:\$PATH" >> $GITHUB_ENV
+        echo "export PATH=$(brew --prefix llvm@13)/bin:\$PATH" >> $GITHUB_ENV
+        brew link --overwrite llvm@13
+    - name: Download WebKit
+      env:
+        CPU_TARGET: ${{ inputs.cpu }}
+        JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+        JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+        BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+        OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+        BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+      run: |
+        rm -rf $JSC_BASE_DIR
+        mkdir -p $JSC_BASE_DIR
+        curl -L ${{ inputs.webkit_url }} | tar -xz -C $JSC_BASE_DIR --strip-components=1
+    - name: Download C++
+      uses: actions/download-artifact@v3
+      with:
+        name: ${{ inputs.tag }}-cpp
+        path: ${{ runner.temp }}/bun-cpp-obj
+    - name: Download Dependencies
+      uses: actions/download-artifact@v3
+      with:
+        name: ${{ inputs.tag }}-deps
+        path: ${{ runner.temp }}/bun-deps
+    - name: Download Object
+      uses: actions/download-artifact@v3
+      with:
+        name: ${{ inputs.obj }}
+        path: ${{ runner.temp }}/release
+    - name: Link
+      env:
+        CPU_TARGET: ${{ inputs.cpu }}
+        JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+        JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+        BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+        OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+        BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+        BUN_RELEASE_DIR: ${{ runner.temp }}/release
+      run: |
+        rm -rf packages/${{ inputs.package }}
+        mkdir -p packages/${{ inputs.package }}
+        mv ${{ runner.temp }}/release/* packages/${{ inputs.package }}/
+        make bun-link-lld-release copy-to-bun-release-dir-bin
+    - name: Zip
+      env:
+        CPU_TARGET: ${{ inputs.cpu }}
+        JSC_BASE_DIR: ${{ runner.temp }}/bun-webkit
+        JSC_LIB: ${{ runner.temp }}/bun-webkit/lib
+        BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
+        OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
+        BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+        BUN_RELEASE_DIR: ${{ runner.temp }}/release
+      run: |
+        cd ${{runner.temp}}/release
+        chmod +x bun-profile bun
+
+        mkdir ${{inputs.tag}}-profile
+        mkdir ${{inputs.tag}}
+
+        /usr/bin/strip -S bun
+
+        mv bun-profile ${{inputs.tag}}-profile/bun-profile
+        mv bun ${{inputs.tag}}/bun
+
+        zip -r ${{inputs.tag}}-profile.zip ${{inputs.tag}}-profile
+        zip -r ${{inputs.tag}}.zip ${{inputs.tag}}
+    - uses: actions/upload-artifact@v3
+      with:
+        name: ${{inputs.tag}}-profile
+        path: ${{runner.temp}}/release/${{inputs.tag}}-profile.zip
+    - uses: actions/upload-artifact@v3
+      with:
+        name: ${{inputs.tag}}
+        path: ${{runner.temp}}/release/${{inputs.tag}}.zip
+    - name: Release
+      id: release
+      uses: softprops/action-gh-release@v1
+      if: github.ref == 'refs/heads/main'
+      with:
+        prerelease: true
+        generate_release_notes: true
+        body: "This is the canary release of Bun that corresponds to the commit [${{ github.sha }}]"
+        name: "Canary (${{github.sha}})"
+        tag_name: "canary"
+        files: |
+          ${{runner.temp}}/release/${{inputs.tag}}.zip
+          ${{runner.temp}}/release/${{inputs.tag}}-profile.zip

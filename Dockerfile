@@ -72,9 +72,8 @@ FROM bun-base as bun-base-with-zig-and-webkit
 
 WORKDIR $GITHUB_WORKSPACE
 
-
-RUN curl -o zig-linux-$BUILDARCH.zip -L $ZIG_URL && \
-    unzip -q zig-linux-$BUILDARCH.zip && \
+ADD $ZIG_URL .
+RUN unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 
 
@@ -91,7 +90,9 @@ ARG ZIG_PATH
 ARG WEBKIT_URL
 ARG ZIG_URL
 
-RUN mkdir -p ${WEBKIT_DIR} && cd ${WEBKIT_DIR}/../ && curl -L $WEBKIT_URL -o bun-webkit-linux-$BUILDARCH.tar.gz && \
+ADD ${WEBKIT_URL} ${GITHUB_WORKSPACE}
+
+RUN mkdir -p ${WEBKIT_DIR} && cd ${GITHUB_WORKSPACE} && \
     gunzip bun-webkit-linux-$BUILDARCH.tar.gz && tar -xf bun-webkit-linux-$BUILDARCH.tar && \
     cat ${WEBKIT_DIR}/include/cmakeconfig.h > /dev/null
 

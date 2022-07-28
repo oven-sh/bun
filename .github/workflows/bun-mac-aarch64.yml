@@ -35,7 +35,7 @@ jobs:
             tag: bun-obj-darwin-aarch64
     steps:
       - name: Object files
-        uses: oven-sh/bun/.github/actions/builds/macos/object-files@master
+        uses: oven-sh/bun/.github/actions/builds/macos/object-files@${GITHUB_REF##*/}
         env:
           cpu: ${{ matrix.cpu }}
           arch: ${{ matrix.aarch }}
@@ -58,7 +58,7 @@ jobs:
             compile_obj: true
     steps:
       - name: C++
-        uses: oven-sh/bun/.github/actions/builds/macos/cpp@master
+        uses: oven-sh/bun/.github/actions/builds/macos/cpp@${GITHUB_REF##*/}
         env:
           cpu: ${{ matrix.cpu }}
           arch: ${{ matrix.aarch }}
@@ -88,7 +88,7 @@ jobs:
             runner: macos-arm64
     steps:
       - name: Link
-        uses: oven-sh/bun/.github/actions/builds/macos/link@master
+        uses: oven-sh/bun/.github/actions/builds/macos/link@${GITHUB_REF##*/}
         env:
           cpu: ${{ matrix.cpu }}
           arch: ${{ matrix.aarch }}

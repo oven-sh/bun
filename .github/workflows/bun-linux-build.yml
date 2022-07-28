@@ -49,7 +49,7 @@ jobs:
 
     steps:
       - name: Build
-        uses: oven-sh/bun/.github/actions/builds/linux@${GITHUB_REF##*/}
+        uses: oven-sh/bun/.github/actions/builds/linux@main
         env:
           cpu: ${{ matrix.cpu }}
           tag: ${{ matrix.tag }}

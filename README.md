@@ -3258,18 +3258,39 @@ which clang-13
 If it is not, you will have to run this to link it:
 
 ```bash
-export PATH=$(brew --prefix llvm@13)/bin:$PATH
+export PATH="$(brew --prefix llvm@13)/bin:$HOME/.bun-tools/zig:$PATH"
 export LDFLAGS="$LDFLAGS -L$(brew --prefix llvm@13)/lib"
 export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@13)/include"
 ```
 
 On fish that looks like `fish_add_path (brew --prefix llvm@13)/bin`
 
+
+#### Install Zig (macOS)
+
 You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expected is the HEAD in [Jarred-Sumner/zig](https://github.com/Jarred-Sumner/zig).
+
+If you wan to install the zig binary, follow this script below:
+
+```bash
+# Custom path for the custom zig install
+mkdir -p ~/.bun-tools
+
+# Requires jq & grab latest binary
+curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/$(curl -s https://api.github.com/repos/oven-sh/zig/releases/latest | jq '.tag_name' | tr -d '"')/zig-macos-$(uname -m).tar.gz
+
+# This will extract to $HOME/.bun-tools/zig
+tar -xvf zig.tar.gz -C $HOME/.bun-tools/
+
+# Make sure it gets trusted
+xattr -dr com.apple.quarantine .bun-tools/zig/zig
+```
 
 #### Build bun (macOS)
 
 If you're building on a macOS device, you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one.
+
+You can still work with the generated binary locally at `packages/debug-bun-*/bun-debug` even if the code signing fails.
 
 In `bun`:
 

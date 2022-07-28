@@ -1,18 +1,27 @@
-FROM ubuntu:20.04 as bun.devcontainer
-
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GITHUB_WORKSPACE=/build
 ARG BUILDARCH=amd64
-
 ARG ZIG_PATH=${GITHUB_WORKSPACE}/zig
 ARG WEBKIT_DIR=${GITHUB_WORKSPACE}/bun-webkit 
 ARG BUN_RELEASE_DIR=${GITHUB_WORKSPACE}/bun-release
 ARG BUN_DEPS_OUT_DIR=${GITHUB_WORKSPACE}/bun-deps
 ARG BUN_DIR=${GITHUB_WORKSPACE}/bun
+
+FROM --platform=linux/${BUILDARCH} ubuntu:20.04 as bun.devcontainer
+
+ARG DEBIAN_FRONTEND
+ARG GITHUB_WORKSPACE
+ARG BUILDARCH
+ARG ZIG_PATH
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+
 ENV WEBKIT_OUT_DIR ${WEBKIT_DIR}
 ENV PATH "$ZIG_PATH:$PATH"
 ENV JSC_BASE_DIR $WEBKIT_OUT_DIR
-ENV LIB_ICU_PATH ${GITHUB_WORKSPACE}/icu/source/lib
+ENV LIB_ICU_PATH ${WEBKIT_OUT_DIR}/lib
 ENV BUN_RELEASE_DIR ${BUN_RELEASE_DIR}
 ENV PATH "${GITHUB_WORKSPACE}/packages/bun-linux-x64:${GITHUB_WORKSPACE}/packages/bun-linux-aarch64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-x64:${GITHUB_WORKSPACE}/packages/debug-bun-linux-aarch64:$PATH"
 ENV PATH "/home/ubuntu/zls/zig-out/bin:$PATH"
@@ -64,7 +73,7 @@ RUN apt-get update && \
 ENV CC=clang-13 
 ENV CXX=clang++-13
 ENV ZIG "${ZIG_PATH}/zig"
-ARG BUILDARCH=amd64
+
 
 
 WORKDIR $GITHUB_WORKSPACE
@@ -79,7 +88,7 @@ RUN cd $GITHUB_WORKSPACE && \
     rm zig-linux-$BUILDARCH.zip;
 
 RUN cd $GITHUB_WORKSPACE && \
-    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/Jarred-Sumner/WebKit/releases/download/jul4/bun-webkit-linux-$BUILDARCH.tar.gz && \
+    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/Jarred-Sumner/WebKit/releases/download/jul26/bun-webkit-linux-$BUILDARCH.tar.gz && \
     tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz && \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && \
     cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
@@ -91,6 +100,13 @@ COPY .devcontainer/zls.json $GITHUB_WORKSPACE/workspace.code-workspace
 COPY .devcontainer/limits.conf /etc/security/limits.conf
 COPY ".devcontainer/scripts/" /scripts/
 COPY ".devcontainer/scripts/getting-started.sh" $GITHUB_WORKSPACE/getting-started.sh
+COPY ".devcontainer/README.md" $GITHUB_WORKSPACE/README.md
+
+ENV JSC_BASE_DIR=$WEBKIT_DIR
+ENV WEBKIT_RELEASE_DIR=$WEBKIT_DIR
+ENV WEBKIT_DEBUG_DIR=$WEBKIT_DIR
+ENV WEBKIT_RELEASE_DIR_LTO=$WEBKIT_DIR
+
 RUN mkdir -p /home/ubuntu/.bun /home/ubuntu/.config $GITHUB_WORKSPACE/bun && \
     bash /scripts/common-debian.sh && \
     bash /scripts/github.sh && \

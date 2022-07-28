@@ -96,7 +96,7 @@ RUN mkdir -p ${WEBKIT_DIR} && cd ${WEBKIT_DIR}/../ && curl -L $WEBKIT_URL -o bun
     cat ${WEBKIT_DIR}/include/cmakeconfig.h > /dev/null
 
 LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
-LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
+LABEL org.opencontainers.image.source=https://github.com/oven-sh/bun
 
 
 FROM bun-base as lolhtml
@@ -458,7 +458,7 @@ COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && \
-    make jsc-bindings-mac -j10 && mv src/bun.js/bindings-obj/* /tmp
+    make bindings -j10 && mv src/bun.js/bindings-obj/* /tmp
 
 FROM prepare_release as sqlite
 
@@ -557,12 +557,12 @@ WORKDIR $BUN_DIR
 ENV PATH "$ZIG_PATH:$PATH"
 ENV LIB_ICU_PATH "${WEBKIT_DIR}/lib"
 
-CMD make jsc-bindings-headers \
+CMD make headers \
     api \
     analytics \
     bun_error \
     fallback_decoder \
-    jsc-bindings-mac -j10 && \
+    bindings -j10 && \
     make \
     run-all-unit-tests
 

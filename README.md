@@ -3211,17 +3211,17 @@ npm install -g @vscode/dev-container-cli
 Then, in the `bun` repository locally run:
 
 ```bash
-devcontainer build
+# devcontainer-build just sets the architecture so if you're on ARM64, it'll do the right thing.
+make devcontainer-build
 devcontainer open
 ```
 
-You will need to clone the GitHub repository inside that container, which also requires authenticating with GitHub (until bun's repository is public). Make sure to login with a Personal Access Token rather than a web browser.
+You will need to clone the GitHub repository inside that container.
 
 Inside the container, run this:
 
 ```bash
 # First time setup
-gh auth login
 gh repo clone oven-sh/bun . -- --depth=1 --progress -j8
 
 # update all submodules except webkit because webkit takes awhile and it's already compiled for you.
@@ -3237,14 +3237,14 @@ make dev
 bun-debug
 ```
 
-It is very similar to my own development environment.
+It is very similar to my own development environment (except I use macOS)
 
 ### MacOS
 
 Install LLVM 13 and homebrew dependencies:
 
 ```bash
-brew install llvm@13 coreutils libtool cmake libiconv automake openssl@1.1 ninja gnu-sed pkg-config esbuild go rust
+brew install llvm@13 coreutils libtool cmake libiconv automake ninja gnu-sed pkg-config esbuild go rust
 ```
 
 bun (& the version of Zig) need LLVM 13 and Clang 13 (clang is part of LLVM). Weird build & runtime errors will happen otherwise.
@@ -3265,19 +3265,18 @@ export CPPFLAGS="$CPPFLAGS -I$(brew --prefix llvm@13)/include"
 
 On fish that looks like `fish_add_path (brew --prefix llvm@13)/bin`
 
-
 #### Install Zig (macOS)
 
-You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expected is the HEAD in [Jarred-Sumner/zig](https://github.com/Jarred-Sumner/zig).
+Note: **you must use the same version of Zig used by Bun in [oven-sh/zig](https://github.com/oven-sh/zig)**. Installing `zig` from brew will not work. Installing the latest stable version of Zig won't work. If you don't use the same version Bun uses, you will get strange build errors and be sad because you put all this work into trying to get Bun to compile and it failed for weird reasons.
 
-If you wan to install the zig binary, follow this script below:
+To install the zig binary:
 
 ```bash
 # Custom path for the custom zig install
 mkdir -p ~/.bun-tools
 
 # Requires jq & grab latest binary
-curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/$(curl -s https://api.github.com/repos/oven-sh/zig/releases/latest | jq '.tag_name' | tr -d '"')/zig-macos-$(uname -m).tar.gz
+curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/jul1/zig-macos-$(uname -m).tar.gz
 
 # This will extract to $HOME/.bun-tools/zig
 tar -xvf zig.tar.gz -C $HOME/.bun-tools/
@@ -3285,6 +3284,31 @@ tar -xvf zig.tar.gz -C $HOME/.bun-tools/
 # Make sure it gets trusted
 xattr -dr com.apple.quarantine .bun-tools/zig/zig
 ```
+
+Now you'll need to add Zig to your PATH.
+
+Using `zsh`:
+
+```zsh
+echo 'export PATH="$HOME/.bun-tools/zig:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Using `fish`:
+
+```fish
+# Add to PATH (fish)
+fish_add_path $HOME/.bun-tools/zig
+```
+
+Using `bash`:
+
+```bash
+echo 'export PATH="$HOME/.bun-tools/zig:$PATH"' >> ~/.bash_profile
+source ~/.bash_profile
+```
+
+The version of Zig used by Bun is not a fork, just a slightly older version. Zig is a new programming language and moves quickly.
 
 #### Build bun (macOS)
 

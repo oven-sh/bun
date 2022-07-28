@@ -440,8 +440,8 @@ tinycc:
 		make -j10 && \
 		cp $(TINYCC_DIR)/*.a $(BUN_DEPS_OUT_DIR)
 
-.PHONY: generate-builtins
-generate-builtins: ## to generate builtins
+.PHONY: builtins
+builtins: ## to generate builtins
 	rm -f src/bun.js/bindings/*Builtin*.cpp src/bun.js/bindings/*Builtin*.h src/bun.js/bindings/*Builtin*.cpp
 	rm -rf src/bun.js/builtins/cpp
 	mkdir -p src/bun.js/builtins/cpp
@@ -454,6 +454,9 @@ generate-builtins: ## to generate builtins
 	$(SED) -i -e 's/class JSDOMGlobalObject/using JSDOMGlobalObject = Zig::GlobalObject/' src/bun.js/builtins/cpp/WebCoreJSBuiltinInternals.h
 	# this is the one we actually build
 	mv src/bun.js/builtins/cpp/*JSBuiltin*.cpp src/bun.js/builtins
+
+.PHONY: generate-builtins
+generate-builtins: builtins
 
 .PHONY: tinycc
 vendor-without-check: npm-install node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive libbacktrace lolhtml usockets uws base64 tinycc
@@ -541,23 +544,6 @@ zlib:
 	cd $(BUN_DEPS_DIR)/zlib; CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) .; CFLAGS="$(CFLAGS)" make;
 	cp $(BUN_DEPS_DIR)/zlib/libz.a $(BUN_DEPS_OUT_DIR)/libz.a
 
-docker-login:
-	docker login ghcr.io --username jarred@jarredsumner.com
-
-docker-push-base:
-	BUILDKIT=1 docker build -f Dockerfile.base --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(DOCKER_BUILDARCH) --tag bun-base --target base .
-	BUILDKIT=1 docker build -f Dockerfile.base --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(DOCKER_BUILDARCH) --tag bun-base-with-zig-and-webkit --target base-with-zig-and-webkit .
-	BUILDKIT=1 docker build -f Dockerfile.base --build-arg GITHUB_WORKSPACE=/build --platform=linux/$(DOCKER_BUILDARCH) --tag bun-base-with-args --target base-with-args .
-
-	docker tag bun-base ghcr.io/jarred-sumner/bun-base:latest
-	docker push ghcr.io/jarred-sumner/bun-base:latest
-
-	docker tag bun-base-with-zig-and-webkit ghcr.io/jarred-sumner/bun-base-with-zig-and-webkit:latest
-	docker push ghcr.io/jarred-sumner/bun-base-with-zig-and-webkit:latest
-
-	docker tag bun-base-with-args ghcr.io/jarred-sumner/bun-base-with-args:latest
-	docker push ghcr.io/jarred-sumner/bun-base-with-args:latest
-
 ifeq ($(POSIX_PKG_MANAGER), brew)
 PKGNAME_NINJA := ninja
 else
@@ -574,7 +560,7 @@ require:
 	@go version >/dev/null 2>&1 || (echo -e "ERROR: go is required."; exit 1)
 	@which aclocal > /dev/null || (echo -e  "ERROR: automake is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install automake"; exit 1)
 	@which $(LIBTOOL) > /dev/null || (echo -e "ERROR: libtool is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install libtool"; exit 1)
-	@which ninja > /dev/null || (echo -e "ERROR: Ninja is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install $(PKGNAME_NINJA)"; exit 1)
+	@which $(PKGNAME_NINJA) > /dev/null || (echo -e "ERROR: Ninja is required. Install with:\n\n    $(POSIX_PKG_MANAGER) install $(PKGNAME_NINJA)"; exit 1)
 	@echo "You have the dependencies installed! Woo"
 
 init-submodules:
@@ -678,9 +664,9 @@ ensure-package-dir:
 .PHONY: prerelease
 prerelease: npm-install api analytics all-js ensure-package-dir
 .PHONY: release-only
-release-only: jsc-bindings-mac build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
+release-only: bindings build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release-safe-only
-release-safe-only: all-js jsc-bindings-mac build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
+release-safe-only: all-js bindings build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release
 release: prerelease release-only
 .PHONY: release-safe
@@ -798,19 +784,27 @@ jsc: jsc-build jsc-copy-headers jsc-bindings
 .PHONY: jsc-build
 jsc-build: $(JSC_BUILD_STEPS)
 .PHONY: jsc-bindings
-jsc-bindings: jsc-bindings-headers jsc-bindings-mac
+jsc-bindings: headers bindings
 
 .PHONY: clone-submodules
 clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 .PHONY: devcontainer
-devcontainer: clone-submodules mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks jsc-bindings-headers api analytics bun_error fallback_decoder jsc-bindings-mac dev runtime_js_dev libarchive libbacktrace lolhtml usockets uws base64 tinycc
+devcontainer: clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks headers api analytics bun_error fallback_decoder bindings dev runtime_js_dev libarchive libbacktrace lolhtml usockets uws base64 tinycc
+
+.PHONY: devcontainer-build
+devcontainer-build:
+	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer build
+
+.PHONY: devcontainer-open
+devcontainer-open:
+	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer open
 
 CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 
-.PHONY: jsc-bindings-headers
-jsc-bindings-headers:
+.PHONY: headers
+headers:
 	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
 	touch src/bun.js/bindings/headers.zig
 	mkdir -p src/bun.js/bindings-obj/
@@ -821,6 +815,8 @@ jsc-bindings-headers:
 	$(BUN_OR_NODE) misctools/headers-cleaner.js
 	$(ZIG) fmt src/bun.js/bindings/headers.zig
 
+.PHONY: jsc-bindings-headers
+jsc-bindings-headers: headers
 
 MIMALLOC_OVERRIDE_FLAG ?=
 
@@ -1255,7 +1251,11 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
-jsc-bindings-mac: $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+.PHONY: bindings
+bindings: $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+
+.PHONY: jsc-bindings-mac
+jsc-bindings-mac: bindings
 
 mimalloc-debug:
 	rm -rf $(BUN_DEPS_DIR)/mimalloc/CMakeCache* $(BUN_DEPS_DIR)/mimalloc/CMakeFiles

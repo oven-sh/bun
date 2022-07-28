@@ -70,6 +70,9 @@ FROM bun-base as bun-base-with-zig-and-webkit
 
 WORKDIR $GITHUB_WORKSPACE
 
+ARG WEBKIT_URL
+ARG ZIG_URL
+
 RUN curl -o zig-linux-$BUILDARCH.zip -L $ZIG_URL && \
     unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;

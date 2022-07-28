@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Object files
-        uses: xHyroM/bun/.github/actions/builds/macos/object-files@f8a6b0e7f477ca9b9e3acc45ccf1ca69a56c6068
+        uses: oven-sh/bun/.github/actions/builds/macos/object-files@main
         env:
           cpu: ${{ matrix.cpu }}
           arch: ${{ matrix.aarch }}
@@ -71,7 +71,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: C++
-        uses: xHyroM/bun/.github/actions/builds/macos/cpp@f8a6b0e7f477ca9b9e3acc45ccf1ca69a56c6068
+        uses: oven-sh/bun/.github/actions/builds/macos/cpp@main
         env:
           cpu: ${{ matrix.cpu }}
           arch: ${{ matrix.aarch }}
@@ -103,7 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Link
-        uses: xHyroM/bun/.github/actions/builds/macos/link@f8a6b0e7f477ca9b9e3acc45ccf1ca69a56c6068
+        uses: oven-sh/bun/.github/actions/builds/macos/link@main
         env:
           cpu: ${{ matrix.cpu }}
           arch: ${{ matrix.aarch }}

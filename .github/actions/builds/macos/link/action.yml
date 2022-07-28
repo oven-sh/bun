@@ -22,7 +22,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: actions/checkout@v3
     - name: Checkout submodules
       run: git submodule update --init --recursive --depth=1 --progress -j $(sysctl -n hw.ncpu)
     - name: Install dependencies

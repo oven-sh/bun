@@ -49,6 +49,7 @@ jobs:
             runner: linux-arm64
 
     steps:
+      - uses: actions/checkout@v3
       - name: Build
         uses: oven-sh/bun/.github/actions/builds/linux@main
         env:

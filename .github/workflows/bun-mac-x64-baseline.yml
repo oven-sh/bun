@@ -35,6 +35,7 @@ jobs:
             arch: x86_64
             tag: bun-obj-darwin-x64-baseline
     steps:
+      - uses: actions/checkout@v3
       - name: Object files
         uses: xHyroM/bun/.github/actions/builds/macos/object-files@chore/better-build-workflow
         env:
@@ -68,6 +69,7 @@ jobs:
             dependencies: false
             compile_obj: true
     steps:
+      - uses: actions/checkout@v3
       - name: C++
         uses: xHyroM/bun/.github/actions/builds/macos/cpp@chore/better-build-workflow
         env:
@@ -99,6 +101,7 @@ jobs:
             artifact: bun-obj-darwin-x64-baseline
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
     steps:
+      - uses: actions/checkout@v3
       - name: Link
         uses: xHyroM/bun/.github/actions/builds/macos/link@chore/better-build-workflow
         env:

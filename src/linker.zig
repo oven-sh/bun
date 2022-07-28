@@ -27,7 +27,7 @@ const sync = @import("sync.zig");
 const _import_record = @import("./import_record.zig");
 const ImportRecord = _import_record.ImportRecord;
 const ImportKind = _import_record.ImportKind;
-const allocators = @import("./allocators.zig");
+const BSSStringList = @import("./data_structures.zig").BSSStringList;
 const MimeType = @import("./http/mime_type.zig");
 const resolve_path = @import("./resolver/resolve_path.zig");
 const _bundler = @import("./bundler.zig");
@@ -621,7 +621,7 @@ pub const Linker = struct {
         }
     }
 
-    const ImportPathsList = allocators.BSSStringList(512, 128);
+    const ImportPathsList = BSSStringList(512, 128);
     pub var relative_paths_list: *ImportPathsList = undefined;
 
     pub fn generateImportPath(

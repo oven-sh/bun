@@ -2,9 +2,9 @@ const mem = @import("std").mem;
 const builtin = @import("std").builtin;
 const std = @import("std");
 
-const mimalloc = @import("./allocators/mimalloc.zig");
-const FeatureFlags = @import("./feature_flags.zig");
-const Environment = @import("./env.zig");
+const mimalloc = @import("./mimalloc.zig");
+const FeatureFlags = @import("../feature_flags.zig");
+const Environment = @import("../env.zig");
 const c = struct {
     pub const malloc_size = mimalloc.mi_malloc_size;
     pub const malloc_usable_size = mimalloc.mi_malloc_usable_size;

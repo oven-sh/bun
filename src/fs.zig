@@ -18,7 +18,7 @@ const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
 const PathString = bun.PathString;
-const allocators = @import("./allocators.zig");
+const data_structures = @import("./data_structures.zig");
 
 pub const MAX_PATH_BYTES = bun.MAX_PATH_BYTES;
 pub const PathBuffer = [bun.MAX_PATH_BYTES]u8;
@@ -132,8 +132,8 @@ pub const FileSystem = struct {
     pub var instance_loaded: bool = false;
     pub var instance: FileSystem = undefined;
 
-    pub const DirnameStore = allocators.BSSStringList(Preallocate.Counts.dir_entry, 128);
-    pub const FilenameStore = allocators.BSSStringList(Preallocate.Counts.files, 64);
+    pub const DirnameStore = data_structures.BSSStringList(Preallocate.Counts.dir_entry, 128);
+    pub const FilenameStore = data_structures.BSSStringList(Preallocate.Counts.files, 64);
 
     pub const Error = error{
         ENOENT,
@@ -191,7 +191,7 @@ pub const FileSystem = struct {
 
     pub const DirEntry = struct {
         pub const EntryMap = std.StringHashMapUnmanaged(*Entry);
-        pub const EntryStore = allocators.BSSList(Entry, Preallocate.Counts.files);
+        pub const EntryStore = data_structures.BSSList(Entry, Preallocate.Counts.files);
         dir: string,
         fd: StoredFileDescriptorType = 0,
         data: EntryMap,
@@ -810,7 +810,7 @@ pub const FileSystem = struct {
             // This custom map implementation:
             // - Preallocates a fixed amount of directory name space
             // - Doesn't store directory names which don't exist.
-            pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128, true);
+            pub const Map = data_structures.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128, true);
         };
 
         pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {
@@ -865,7 +865,7 @@ pub const FileSystem = struct {
 
         pub fn readDirectoryWithIterator(fs: *RealFS, _dir: string, _handle: ?std.fs.Dir, comptime Iterator: type, iterator: Iterator) !*EntriesOption {
             var dir = _dir;
-            var cache_result: ?allocators.Result = null;
+            var cache_result: ?data_structures.Result = null;
             if (comptime FeatureFlags.enable_entry_cache) {
                 fs.entries_mutex.lock();
             }
@@ -1229,7 +1229,7 @@ pub const Path = struct {
             new_path.namespace = this.namespace;
             new_path.is_symlink = this.is_symlink;
             return new_path;
-        } else if (allocators.sliceRange(this.pretty, this.text)) |start_end| {
+        } else if (data_structures.sliceRange(this.pretty, this.text)) |start_end| {
             if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
                 return this.*;
             }

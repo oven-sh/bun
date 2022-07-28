@@ -16,7 +16,6 @@ const Ref = @import("ast/base.zig").Ref;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
-const allocators = @import("allocators.zig");
 const JSC = @import("javascript_core");
 const HTTP = @import("http");
 const RefCtx = @import("./ast/base.zig").RefCtx;

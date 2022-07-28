@@ -7,8 +7,17 @@ pub const stringMutable = []u8;
 pub const CodePoint = i32;
 
 pub const FeatureFlags = @import("./feature_flags.zig");
-pub usingnamespace @import("./global_allocators.zig");
 pub usingnamespace @import("./global_utils.zig");
+
+pub const use_mimalloc = false;
+
+pub const default_allocator: std.mem.Allocator = std.heap.c_allocator;
+
+pub const huge_allocator: std.mem.Allocator = std.heap.c_allocator;
+
+pub const auto_allocator: std.mem.Allocator = std.heap.c_allocator;
+
+pub const huge_allocator_threshold = 1024 * 256;
 
 pub const strings = @import("./string_immutable.zig");
 pub const MutableString = @import("./string_mutable.zig").MutableString;

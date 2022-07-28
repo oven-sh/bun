@@ -11,21 +11,21 @@ const C = bun.C;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 
-const allocators = @import("../allocators.zig");
+const data_structures = @import("../data_structures.zig");
 const DirInfo = @This();
 const Fs = @import("../fs.zig");
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;
 const PackageJSON = @import("./package_json.zig").PackageJSON;
 
-pub const Index = allocators.IndexType;
+pub const Index = data_structures.IndexType;
 
 // These objects are immutable, so we can just point to the parent directory
 // and avoid having to lock the cache again
-parent: Index = allocators.NotFound,
+parent: Index = data_structures.NotFound,
 
 // A pointer to the enclosing dirInfo with a valid "browser" field in
 // package.json. We need this to remap paths after they have been resolved.
-enclosing_browser_scope: Index = allocators.NotFound,
+enclosing_browser_scope: Index = data_structures.NotFound,
 package_json_for_browser_field: ?*const PackageJSON = null,
 enclosing_tsconfig_json: ?*const TSConfigJSON = null,
 
@@ -96,4 +96,4 @@ pub fn getEnclosingBrowserScope(i: *const DirInfo) ?*DirInfo {
 // 2. Don't expect a provided key to exist after it's queried
 // 3. Store whether a directory has been queried and whether that query was successful.
 // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
-pub const HashMap = allocators.BSSMap(DirInfo, Fs.Preallocate.Counts.dir_entry, false, 128, true);
+pub const HashMap = data_structures.BSSMap(DirInfo, Fs.Preallocate.Counts.dir_entry, false, 128, true);

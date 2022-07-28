@@ -18,7 +18,6 @@ const js_parser = @import("../js_parser.zig");
 const js_ast = @import("../js_ast.zig");
 const linker = @import("../linker.zig");
 const panicky = @import("../panic_handler.zig");
-const allocators = @import("../allocators.zig");
 const sync = @import("../sync.zig");
 const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");

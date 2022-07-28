@@ -3,9 +3,9 @@ const std = @import("std");
 const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
 const Wyhash = std.hash.Wyhash;
-const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const constStrToU8 = @import("./global.zig").constStrToU8;
 const bun = @import("./global.zig");
+
 pub fn isSliceInBuffer(slice: anytype, buffer: anytype) bool {
     return (@ptrToInt(&buffer) <= @ptrToInt(slice.ptr) and (@ptrToInt(slice.ptr) + slice.len) <= (@ptrToInt(buffer) + buffer.len));
 }

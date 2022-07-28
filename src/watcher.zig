@@ -14,7 +14,6 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const c = std.c;
 const options = @import("./options.zig");
-const IndexType = @import("./allocators.zig").IndexType;
 
 const os = std.os;
 

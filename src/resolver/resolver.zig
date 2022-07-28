@@ -34,7 +34,7 @@ const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = std.StringHashMap(bool);
 const FileDescriptorType = bun.FileDescriptorType;
 
-const allocators = @import("../allocators.zig");
+const data_structures = @import("../data_structures.zig");
 const Msg = logger.Msg;
 const Path = Fs.Path;
 const NodeModuleBundle = @import("../node_module_bundle.zig").NodeModuleBundle;
@@ -211,7 +211,7 @@ pub const Result = struct {
 };
 
 pub const DirEntryResolveQueueItem = struct {
-    result: allocators.Result,
+    result: data_structures.Result,
     unsafe_path: string,
     safe_path: string = "",
     fd: StoredFileDescriptorType = 0,
@@ -1466,8 +1466,8 @@ pub const Resolver = struct {
         _dir_entry_paths_to_resolve[0] = (DirEntryResolveQueueItem{ .result = top_result, .unsafe_path = path, .safe_path = "" });
         var top = Dirname.dirname(path);
 
-        var top_parent: allocators.Result = allocators.Result{
-            .index = allocators.NotFound,
+        var top_parent: data_structures.Result = data_structures.Result{
+            .index = data_structures.NotFound,
             .hash = 0,
             .status = .not_found,
         };
@@ -2501,10 +2501,10 @@ pub const Resolver = struct {
         info: *DirInfo,
         path: string,
         _entries: *Fs.FileSystem.RealFS.EntriesOption,
-        _result: allocators.Result,
-        dir_entry_index: allocators.IndexType,
+        _result: data_structures.Result,
+        dir_entry_index: data_structures.IndexType,
         parent: ?*DirInfo,
-        parent_index: allocators.IndexType,
+        parent_index: data_structures.IndexType,
         fd: FileDescriptorType,
     ) anyerror!void {
         var result = _result;

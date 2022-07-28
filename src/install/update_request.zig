@@ -98,6 +98,10 @@ pub const UpdateRequest = struct {
                 Global.exit(1);
             }
 
+            if ((op == .link or op == .unlink) and !strings.hasPrefixComptime(request.version_buf, "link:")) {
+                request.version_buf = std.fmt.allocPrint(allocator, "link:{s}", .{request.name}) catch unreachable;
+            }
+
             if (request.version_buf.len == 0) {
                 request.missing_version = true;
             } else {
@@ -113,7 +117,7 @@ pub const UpdateRequest = struct {
 };
 
 const std = @import("std");
-const default_allocator = @import("../global_allocators.zig").default_allocator;
+const default_allocator = @import("global").default_allocator;
 
 test "UpdateRequests.parse" {
     var log = logger.Log.init(default_allocator);

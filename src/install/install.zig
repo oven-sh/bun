@@ -46,9 +46,10 @@ const clap = @import("clap");
 const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;
-const z_allocator = @import("../memory_allocator.zig").z_allocator;
+const z_allocator = @import("../allocators/memory_allocator.zig").z_allocator;
 const Syscall = @import("javascript_core").Node.Syscall;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
+
 threadlocal var initialized_store = false;
 
 pub const Lockfile = @import("./lockfile.zig");
@@ -4036,114 +4037,7 @@ pub const PackageManager = struct {
     };
     const latest: string = "latest";
 
-<<<<<<< HEAD
-    pub const UpdateRequest = struct {
-        name: string = "",
-        name_hash: PackageNameHash = 0,
-        resolved_version_buf: string = "",
-        version: Dependency.Version = Dependency.Version{},
-        version_buf: []const u8 = "",
-        missing_version: bool = false,
-        failed: bool = false,
-        // This must be cloned to handle when the AST store resets
-        e_string: ?*JSAst.E.String = null,
-
-        pub const Array = std.BoundedArray(UpdateRequest, 64);
-
-        pub fn parse(
-            allocator: std.mem.Allocator,
-            log: *logger.Log,
-            positionals: []const string,
-            update_requests: *Array,
-            op: Lockfile.Package.Diff.Op,
-        ) []UpdateRequest {
-            // first one is always either:
-            // add
-            // remove
-            for (positionals) |positional| {
-                var request = UpdateRequest{
-                    .name = positional,
-                };
-                var unscoped_name = positional;
-                request.name = unscoped_name;
-
-                // request.name = "@package..." => unscoped_name = "package..."
-                if (unscoped_name.len > 0 and unscoped_name[0] == '@') {
-                    unscoped_name = unscoped_name[1..];
-                }
-
-                // if there is a semver in package name...
-                if (std.mem.indexOfScalar(u8, unscoped_name, '@')) |i| {
-                    // unscoped_name = "package@1.0.0" => request.name = "package"
-                    request.name = unscoped_name[0..i];
-
-                    // if package was scoped, put "@" back in request.name
-                    if (unscoped_name.ptr != positional.ptr) {
-                        request.name = positional[0 .. i + 1];
-                    }
-
-                    // unscoped_name = "package@1.0.0" => request.version_buf = "1.0.0"
-                    if (unscoped_name.len > i + 1) request.version_buf = unscoped_name[i + 1 ..];
-                }
-
-                if (strings.hasPrefix("http://", request.name) or
-                    strings.hasPrefix("https://", request.name))
-                {
-                    if (Output.isEmojiEnabled()) {
-                        Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                            @tagName(op),
-                        });
-                    } else {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                            @tagName(op),
-                        });
-                    }
-
-                    Global.exit(1);
-                }
-
-                request.name = std.mem.trim(u8, request.name, "\n\r\t");
-                if (request.name.len == 0) continue;
-
-                request.version_buf = std.mem.trim(u8, request.version_buf, "\n\r\t");
-
-                // https://github.com/npm/npm-package-arg/blob/fbaf2fd0b72a0f38e7c24260fd4504f4724c9466/npa.js#L330
-                if (strings.hasPrefix("https://", request.version_buf) or
-                    strings.hasPrefix("http://", request.version_buf))
-                {
-                    if (Output.isEmojiEnabled()) {
-                        Output.prettyErrorln("<r>😢 <red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                            @tagName(op),
-                        });
-                    } else {
-                        Output.prettyErrorln("<r><red>error<r><d>:<r> bun {s} http://url is not implemented yet.", .{
-                            @tagName(op),
-                        });
-                    }
-
-                    Global.exit(1);
-                }
-
-                if ((op == .link or op == .unlink) and !strings.hasPrefixComptime(request.version_buf, "link:")) {
-                    request.version_buf = std.fmt.allocPrint(allocator, "link:{s}", .{request.name}) catch unreachable;
-                }
-
-                if (request.version_buf.len == 0) {
-                    request.missing_version = true;
-                } else {
-                    const sliced = SlicedString.init(request.version_buf, request.version_buf);
-                    request.version = Dependency.parse(allocator, request.version_buf, &sliced, log) orelse Dependency.Version{};
-                }
-                request.name_hash = String.Builder.stringHash(request.name);
-                update_requests.append(request) catch break;
-            }
-
-            return update_requests.slice();
-        }
-    };
-=======
     pub const UpdateRequest = @import("./update_request.zig").UpdateRequest;
->>>>>>> 598514ae (compile quick unit tests)
 
     fn updatePackageJSONAndInstall(
         ctx: Command.Context,

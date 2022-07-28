@@ -644,7 +644,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_toBufferBody(JSC::
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    if (!buffer.isCell() || !JSC::isTypedView(buffer.getObject()->type())) {
+    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->type())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return JSValue::encode(jsUndefined());
     }
@@ -789,7 +789,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
 
     auto buffer = callFrame->uncheckedArgument(0);
 
-    if (!buffer.isCell() || !JSC::isTypedView(buffer.getObject()->type())) {
+    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->type())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return JSValue::encode(jsUndefined());
     }

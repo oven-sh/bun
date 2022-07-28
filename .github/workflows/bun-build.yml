@@ -26,7 +26,9 @@ jobs:
     strategy:
       matrix:
         settings:
+          #
           # FOR MACOS - x64
+          #
           - cpu: haswell
             arch: x86_64
             tag: bun-obj-darwin-x64
@@ -61,7 +63,9 @@ jobs:
             artifact: bun-obj-darwin-x64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
             link: true
+          #
           # FOR MACOS - x64 - baseline
+          #
           - cpu: westmere
             arch: x86_64
             tag: bun-obj-darwin-x64-baseline
@@ -98,6 +102,35 @@ jobs:
             runner: macos-11
             artifact: bun-obj-darwin-x64-baseline
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            link: true
+          #
+          # FOR MACOS - aarch64
+          #
+          - cpu: native
+            arch: aarch64
+            tag: bun-obj-darwin-aarch64
+            runner: linux-amd64
+            object-files: true
+          # cpp
+          - cpu: native
+            arch: aarch64
+            tag: bun-darwin-aarch64
+            obj: bun-obj-darwin-aarch64
+            artifact: bun-obj-darwin-aarch64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-arm64-lto.tar.gz"
+            runner: macos-arm64
+            dependencies: true
+            compile_obj: true
+            cpp: true
+          # link
+          - cpu: native
+            arch: aarch64
+            tag: bun-darwin-aarch64
+            obj: bun-obj-darwin-aarch64
+            package: bun-darwin-aarch64
+            artifact: bun-obj-darwin-aarch64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-arm64-lto.tar.gz"
+            runner: macos-arm64
             link: true
 
     steps:

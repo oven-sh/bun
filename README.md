@@ -3268,15 +3268,17 @@ On fish that looks like `fish_add_path (brew --prefix llvm@13)/bin`
 
 You’ll want to make sure `zig` is in `$PATH`. The specific version of Zig expected is the HEAD in [Jarred-Sumner/zig](https://github.com/Jarred-Sumner/zig).
 
-Download the latest release from [here](https://github.com/oven-sh/zig/releases/latest/) (`zig-macos-aarch` for M1 & `zig-macos-x86_64` for Intel).
-Extract that somewhere.
+If you wan to install the zig binary, follow this script below:
 
 ```bash
 # Custom path for the custom zig install
-mkdir ~/.bun-tools
+mkdir -p ~/.bun-tools
 
-# Looks like - mv zig-macos-aarch64-0.10.0-dev.2822+b79884eaf/ ~/.bun-tools/zig
-mv path/to/zig-extracted/ ~/.bun-tools/zig
+# Requires jq & grab latest binary
+curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/$(curl -s https://api.github.com/repos/oven-sh/zig/releases/latest | jq '.tag_name' | tr -d '"')/zig-macos-$(uname -m).tar.gz
+
+# This will extract to $HOME/.bun-tools/zig
+tar -xvf zig.tar.gz -C $HOME/.bun-tools/
 
 # Make sure it gets trusted
 xattr -dr com.apple.quarantine .bun-tools/zig/zig

@@ -36,7 +36,7 @@ jobs:
             tag: bun-obj-darwin-x64-baseline
     steps:
       - name: Object files
-        uses: oven-sh/bun/.github/actions/builds/macos/object-files@chore/better-build-workflow
+        uses: oven-sh/bun/.github/actions/builds/macos/object-files@bun-actions
         env:
           cpu: ${{ matrix.cpu }}
           arch: ${{ matrix.aarch }}
@@ -69,7 +69,7 @@ jobs:
             compile_obj: true
     steps:
       - name: C++
-        uses: oven-sh/bun/.github/actions/builds/macos/cpp@chore/better-build-workflow
+        uses: oven-sh/bun/.github/actions/builds/macos/cpp@bun-actions
         env:
           cpu: ${{ matrix.cpu }}
           arch: ${{ matrix.aarch }}
@@ -100,7 +100,7 @@ jobs:
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
     steps:
       - name: Link
-        uses: oven-sh/bun/.github/actions/builds/macos/link@chore/better-build-workflow
+        uses: oven-sh/bun/.github/actions/builds/macos/link@bun-actions
         env:
           cpu: ${{ matrix.cpu }}
           arch: ${{ matrix.aarch }}

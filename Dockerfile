@@ -9,8 +9,8 @@ ARG CPU_TARGET=native
 ARG ARCH=x86_64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
-ARG WEBKIT_URL=https://github.com/oven-sh/WebKit/releases/download/jul27/bun-webkit-linux-${BUILDARCH}.tar.gz 
-ARG ZIG_URL=https://github.com/oven-sh/zig/releases/download/jul1/zig-linux-${BUILDARCH}.zip
+ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/jul27/bun-webkit-linux-$BUILDARCH.tar.gz"
+ARG ZIG_URL="https://github.com/oven-sh/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip"
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -70,7 +70,7 @@ FROM bun-base as bun-base-with-zig-and-webkit
 
 WORKDIR $GITHUB_WORKSPACE
 
-RUN curl -o zig-linux-$BUILDARCH.zip -L ${ZIG_URL} && \
+RUN curl -o zig-linux-$BUILDARCH.zip -L $ZIG_URL && \
     unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 

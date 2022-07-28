@@ -754,7 +754,7 @@ export default {
           <Group>
             <Command>bun install</Command>
             <p>
-              Bun install is an npm-compatible package manager. You probably
+              <code classsName="mono">bun install</code> is an npm-compatible package manager. You probably
               will be surprised by how much faster copying files can get.
             </p>
             <strong>
@@ -764,7 +764,7 @@ export default {
             </strong>
             <br />
             <div>
-	      <code className="mono">bun install</code> uses the fastest system calls available to copy files.
+              <code className="mono">bun install</code> uses the fastest system calls available to copy files.
             </div>
           </Group>
           <Group>

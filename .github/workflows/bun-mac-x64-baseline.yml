@@ -308,7 +308,7 @@ jobs:
           mkdir ${{matrix.tag}}-profile
           mkdir ${{matrix.tag}}
 
-          /usr/bin/strip --strip-debug bun
+          /usr/bin/strip -S bun
 
           mv bun-profile ${{matrix.tag}}-profile/bun-profile
           mv bun ${{matrix.tag}}/bun

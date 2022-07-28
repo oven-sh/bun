@@ -1,0 +1,177 @@
+name: bun-build
+on:
+  push:
+    branches: [main, bun-actions]
+    paths:
+      - "src/**/*"
+      - "test/**/*"
+      - "build.zig"
+      - "Makefile"
+      - "Dockerfile"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**/*"
+      - "test/**/*"
+      - "build.zig"
+      - "Makefile"
+      - "Dockerfile"
+  workflow_dispatch:
+
+jobs:
+  macos:
+    name: ${{ matrix.settings.runner }} - ${{ matrix.settings.arch }}
+    runs-on: ${{ matrix.settings.runner }}
+    if: github.repository_owner == 'oven-sh'
+    strategy:
+      matrix:
+        settings:
+          # FOR MACOS - x64
+          - cpu: haswell
+            arch: x86_64
+            tag: bun-obj-darwin-x64
+            runner: linux-amd64
+            object-files: true
+          - cpu: haswell
+            arch: x86_64
+            tag: bun-darwin-x64
+            obj: bun-obj-darwin-x64
+            runner: macos-11
+            artifact: bun-obj-darwin-x64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            dependencies: true
+            compile_obj: false
+            cpp: true
+          - cpu: haswell
+            arch: x86_64
+            tag: bun-darwin-x64
+            obj: bun-obj-darwin-x64
+            runner: macos-11
+            artifact: bun-obj-darwin-x64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            dependencies: false
+            compile_obj: true
+            cpp: true
+          - cpu: haswell
+            arch: x86_64
+            tag: bun-darwin-x64
+            obj: bun-obj-darwin-x64
+            package: bun-darwin-x64
+            runner: macos-11
+            artifact: bun-obj-darwin-x64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            link: true
+          # FOR MACOS - x64 - baseline
+          - cpu: westmere
+            arch: x86_64
+            tag: bun-obj-darwin-x64-baseline
+            runner: linux-amd64
+            object-files: true
+          # cpp
+          - cpu: westmere
+            arch: x86_64
+            tag: bun-darwin-x64-baseline
+            obj: bun-obj-darwin-x64-baseline
+            runner: macos-11
+            artifact: bun-obj-darwin-x64-baseline
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            dependencies: true
+            compile_obj: false
+            cpp: true
+          # cpp
+          - cpu: westmere
+            arch: x86_64
+            tag: bun-darwin-x64-baseline
+            obj: bun-obj-darwin-x64-baseline
+            runner: macos-11
+            artifact: bun-obj-darwin-x64-baseline
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            dependencies: false
+            compile_obj: true
+            cpp: true
+          # link
+          - cpu: westmere
+            arch: x86_64
+            tag: bun-darwin-x64-baseline
+            obj: bun-obj-darwin-x64-baseline
+            package: bun-darwin-x64
+            runner: macos-11
+            artifact: bun-obj-darwin-x64-baseline
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            link: true
+
+    steps:
+      - name: Object files
+        if: ${{ matrix.settings.object-files }}
+        uses: oven-sh/bun/.github/actions/builds/macos/object-files@main
+        env:
+          cpu: ${{ matrix.cpu }}
+          arch: ${{ matrix.aarch }}
+          tag: ${{ matrix.tag }}
+          obj: ${{ matrix.obj }}
+          package: ${{ matrix.package }}
+          artifact: ${{ matrix.artifact }}
+          webkit_url: ${{ matrix.webkit_url }}
+          runner: ${{ matrix.runner }}
+          dependencies: ${{ matrix.dependencies }}
+          compile_obj: ${{ matrix.compile_obj }}
+
+      - name: C++
+        if: ${{ matrix.settings.cpp }}
+        uses: oven-sh/bun/.github/actions/builds/macos/cpp@main
+        env:
+          cpu: ${{ matrix.cpu }}
+          arch: ${{ matrix.aarch }}
+          tag: ${{ matrix.tag }}
+          obj: ${{ matrix.obj }}
+          artifact: ${{ matrix.artifact }}
+          webkit_url: ${{ matrix.webkit_url }}
+          runner: ${{ matrix.runner }}
+          dependencies: ${{ matrix.dependencies }}
+          compile_obj: ${{ matrix.compile_obj }}
+
+      - name: Link
+        if: ${{ matrix.settings.link }}
+        uses: oven-sh/bun/.github/actions/builds/macos/link@main
+        env:
+          cpu: ${{ matrix.cpu }}
+          arch: ${{ matrix.aarch }}
+          tag: ${{ matrix.tag }}
+          obj: ${{ matrix.obj }}
+          package: ${{ matrix.package }}
+          artifact: ${{ matrix.artifact }}
+          webkit_url: ${{ matrix.webkit_url }}
+          runner: ${{ matrix.runner }}
+
+  linux:
+    name: ${{ matrix.settings.runner }} - ${{ matrix.settings.arch }}
+    runs-on: ${{ matrix.settings.runner }}
+    if: github.repository_owner == 'oven-sh'
+    strategy:
+      matrix:
+        settings:
+          - cpu: haswell
+            tag: linux-x64
+            arch: x86_64
+            build_arch: amd64
+            runner: linux-amd64
+          - cpu: westmere
+            tag: linux-x64-baseline
+            arch: x86_64
+            build_arch: amd64
+            runner: linux-amd64
+          - cpu: native
+            tag: linux-aarch64
+            arch: aarch64
+            build_arch: arm64
+            runner: linux-arm64
+
+    steps:
+      - name: Build
+        uses: oven-sh/bun/.github/actions/builds/linux@main
+        env:
+          cpu: ${{ matrix.cpu }}
+          tag: ${{ matrix.tag }}
+          arch: ${{ matrix.aarch }}
+          build_arch: ${{ matrix.build_arch }}
+          runner: ${{ matrix.runner }}

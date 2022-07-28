@@ -1,0 +1,55 @@
+name: "Build for macos xx (all)"
+description: "Build bun for macos xx (all)"
+
+inputs:
+  cpu:
+    required: true
+  arch:
+    required: true
+  tag:
+    required: true
+  obj:
+    required: true
+  package:
+    required: true
+  artifact:
+    required: true
+  webkit_url:
+    required: true
+  runner:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout submodules
+      run: git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress -j $(nproc)
+    - name: Object files
+      uses: oven-sh/bun/.github/actions/builds/macos/object-files@main
+      env:
+        cpu: ${{ inputs.cpu }}
+        arch: ${{ inputs.aarch }}
+        tag: ${{ inputs.tag }}
+    - name: C++
+      uses: oven-sh/bun/.github/actions/builds/macos/cpp@main
+      env:
+        cpu: ${{ inputs.cpu }}
+        arch: ${{ inputs.aarch }}
+        tag: ${{ inputs.tag }}
+        obj: ${{ inputs.obj }}
+        artifact: ${{ inputs.artifact }}
+        webkit_url: ${{ inputs.webkit_url }}
+        runner: ${{ inputs.runner }}
+        dependencies: ${{ inputs.dependencies }}
+        compile_obj: ${{ inputs.compile_obj }}
+    - name: Link
+      uses: oven-sh/bun/.github/actions/builds/macos/link@main
+      env:
+        cpu: ${{ inputs.cpu }}
+        arch: ${{ inputs.aarch }}
+        tag: ${{ inputs.tag }}
+        obj: ${{ inputs.obj }}
+        package: ${{ inputs.package }}
+        artifact: ${{ inputs.artifact }}
+        webkit_url: ${{ inputs.webkit_url }}
+        runner: ${{ inputs.runner }}

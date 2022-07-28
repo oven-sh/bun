@@ -144,7 +144,7 @@ fn execTask(allocator: std.mem.Allocator, task_: string, cwd: string, _: string,
     Output.disableBuffering();
     defer Output.enableBuffering();
 
-    proc = std.ChildProcess.init(argv, allocator) ;
+    proc = std.ChildProcess.init(argv, allocator);
     proc.stdin_behavior = .Inherit;
     proc.stdout_behavior = .Inherit;
     proc.stderr_behavior = .Inherit;
@@ -2103,12 +2103,12 @@ pub const CreateListExamplesCommand = struct {
 
         if (env_loader.map.get("HOME")) |homedir| {
             Output.prettyln(
-                "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/jarred-sumner/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
+                "<d>This command is completely optional. To add a new local template, create a folder in {s}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
                 .{homedir},
             );
         } else {
             Output.prettyln(
-                "<d>This command is completely optional. To add a new local template, create a folder in $HOME/.bun-create/. To publish a new template, git clone https://github.com/jarred-sumner/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
+                "<d>This command is completely optional. To add a new local template, create a folder in $HOME/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
                 .{},
             );
         }

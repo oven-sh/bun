@@ -19,7 +19,17 @@ const JSAst = @import("./js_ast.zig");
 const BUN_ROOT = "../../";
 
 const Api = Schema.Api;
+fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []const u8 {
+    const FallbackMessage = struct {
+        pub var has_printed = false;
+    };
+    if (!FallbackMessage.has_printed) {
+        FallbackMessage.has_printed = true;
+        Output.debug(msg, .{});
+    }
 
+    return code;
+}
 pub const ErrorCSS = struct {
     const ErrorCSSPath = "packages/bun-error/dist/bun-error.css";
     const ErrorCSSPathDev = "packages/bun-error/bun-error.css";
@@ -34,7 +44,10 @@ pub const ErrorCSS = struct {
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{ .mode = .read_only },
-            ) catch @panic("Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"");
+            ) catch return embedDebugFallback(
+                "Missing packages/bun-error/bun-error.css. Please run \"make bun_error\"",
+                ProdSourceContent,
+            );
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
@@ -58,7 +71,10 @@ pub const ErrorJS = struct {
             const file = std.fs.cwd().openFile(
                 resolve_path.joinAbsString(dirname, std.mem.span(&paths), .auto),
                 .{ .mode = .read_only },
-            ) catch @panic("Missing " ++ ErrorJSPath ++ ". Please run \"make bun_error\"");
+            ) catch return embedDebugFallback(
+                "Missing " ++ ErrorJSPath ++ ". Please run \"make bun_error\"",
+                ProdSourceContent,
+            );
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
@@ -120,7 +136,10 @@ pub const Fallback = struct {
                 env.get("USER").?,
             ) catch unreachable;
             var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "fallback.out.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/fallback.out.js. " ++ "Please run \"make fallback_decoder\"");
+            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
+                "Missing bun/src/fallback.out.js. " ++ "Please run \"make fallback_decoder\"",
+                ProdSourceContent,
+            );
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
@@ -204,7 +223,10 @@ pub const Runtime = struct {
                 env.get("USER").?,
             ) catch unreachable;
             var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/runtime.out.js. " ++ "Please run \"make runtime_js_dev\"");
+            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
+                "Missing bun/src/runtime.out.js. " ++ "Please run \"make runtime_js_dev\"",
+                ProdSourceContent,
+            );
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
@@ -238,7 +260,10 @@ pub const Runtime = struct {
                 env.get("USER").?,
             ) catch unreachable;
             var runtime_path = std.fs.path.join(default_allocator, &[_]string{ dir, "runtime.out.refresh.js" }) catch unreachable;
-            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch @panic("Missing bun/src/runtime.out.refresh.js. " ++ "Please run \"make runtime_js_dev\"");
+            const file = std.fs.openFileAbsolute(runtime_path, .{}) catch return embedDebugFallback(
+                "Missing bun/src/runtime.out.refresh.js. " ++ "Please run \"make runtime_js_dev\"",
+                ProdSourceContentWithRefresh,
+            );
             defer file.close();
             return file.readToEndAlloc(default_allocator, (file.stat() catch unreachable).size) catch unreachable;
         } else {
@@ -291,7 +316,7 @@ pub const Runtime = struct {
         trim_unused_imports: bool = false,
         should_fold_numeric_constants: bool = false,
 
-        /// Use `import.meta.require()` instead of require()? 
+        /// Use `import.meta.require()` instead of require()?
         /// This is only supported in Bun.
         dynamic_require: bool = false,
 

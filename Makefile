@@ -30,7 +30,7 @@ else
 	BREW_PREFIX_PATH = /usr/local
 	MIN_MACOS_VERSION ?= 10.14
 	MARCH_NATIVE = -march=$(CPU_TARGET) -mtune=$(CPU_TARGET)
-	NATIVE_OR_OLD_MARCH = -march=sandybridge
+	NATIVE_OR_OLD_MARCH = -march=westmere
 endif
 
 AR=

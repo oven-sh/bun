@@ -31,7 +31,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: sandybridge
+          - cpu: westmere
             arch: x86_64
             tag: bun-obj-darwin-x64-baseline
           # - cpu: haswell
@@ -84,7 +84,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: sandybridge
+          - cpu: westmere
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
@@ -102,7 +102,7 @@ jobs:
           #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
-          - cpu: sandybridge
+          - cpu: westmere
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
@@ -207,7 +207,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: sandybridge
+          - cpu: westmere
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline

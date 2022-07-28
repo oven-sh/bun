@@ -258,7 +258,10 @@ pub noinline fn handleCrash(signal: i32, addr: usize) void {
         else => error.Crash,
     };
 
-    crash_report_writer.print("\n<r><red>{s}<d> at {d}\n\n", .{ @errorName(name), addr });
+    crash_report_writer.print(
+        "\n<r><red>{s}<d> at 0x{any}\n\n",
+        .{ @errorName(name), std.fmt.fmtSliceHexUpper(std.mem.asBytes(&addr)) },
+    );
     printMetadata();
     CrashReportWriter.dump();
 

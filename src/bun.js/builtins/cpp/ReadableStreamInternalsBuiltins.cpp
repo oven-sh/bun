@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeLength = 788;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamReaderGenericInitializeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamReaderGenericInitializeCode =
@@ -80,6 +81,7 @@ const char* const s_readableStreamInternalsReadableStreamReaderGenericInitialize
 
 const JSC::ConstructAbility s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeLength = 873;
 static const JSC::Intrinsic s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPrivateInitializeReadableStreamDefaultControllerCode =
@@ -117,6 +119,7 @@ const char* const s_readableStreamInternalsPrivateInitializeReadableStreamDefaul
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeLength = 305;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerErrorCode =
@@ -133,6 +136,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerErrorC
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamPipeToCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamPipeToCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamPipeToCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamPipeToCodeLength = 739;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamPipeToCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamPipeToCode =
@@ -175,6 +179,7 @@ const char* const s_readableStreamInternalsReadableStreamPipeToCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeLength = 190;
 static const JSC::Intrinsic s_readableStreamInternalsAcquireReadableStreamDefaultReaderCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsAcquireReadableStreamDefaultReaderCode =
@@ -191,6 +196,7 @@ const char* const s_readableStreamInternalsAcquireReadableStreamDefaultReaderCod
 
 const JSC::ConstructAbility s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeLength = 975;
 static const JSC::Intrinsic s_readableStreamInternalsSetupReadableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsSetupReadableStreamDefaultControllerCode =
@@ -238,6 +244,7 @@ const char* const s_readableStreamInternalsSetupReadableStreamDefaultControllerC
 
 const JSC::ConstructAbility s_readableStreamInternalsCreateReadableStreamControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsCreateReadableStreamControllerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsCreateReadableStreamControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsCreateReadableStreamControllerCodeLength = 1243;
 static const JSC::Intrinsic s_readableStreamInternalsCreateReadableStreamControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsCreateReadableStreamControllerCode =
@@ -292,6 +299,7 @@ const char* const s_readableStreamInternalsCreateReadableStreamControllerCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerStartCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerStartCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerStartCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerStartCodeLength = 762;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerStartCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerStartCode =
@@ -325,6 +333,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerStartC
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 3257;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCode =
@@ -437,6 +446,7 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToLoopCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToLoopCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPipeToLoopCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPipeToLoopCodeLength = 180;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToLoopCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToLoopCode =
@@ -452,6 +462,7 @@ const char* const s_readableStreamInternalsPipeToLoopCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToDoReadWriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToDoReadWriteCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPipeToDoReadWriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPipeToDoReadWriteCodeLength = 1296;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToDoReadWriteCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToDoReadWriteCode =
@@ -507,6 +518,7 @@ const char* const s_readableStreamInternalsPipeToDoReadWriteCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeLength = 687;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCode =
@@ -541,6 +553,7 @@ const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedForwardCo
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeLength = 598;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardCode =
@@ -571,6 +584,7 @@ const char* const s_readableStreamInternalsPipeToErrorsMustBePropagatedBackwardC
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeLength = 673;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedForwardCode =
@@ -600,6 +614,7 @@ const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedForwardC
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeLength = 492;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedBackwardCode =
@@ -628,6 +643,7 @@ const char* const s_readableStreamInternalsPipeToClosingMustBePropagatedBackward
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToShutdownWithActionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToShutdownWithActionCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPipeToShutdownWithActionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPipeToShutdownWithActionCodeLength = 850;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToShutdownWithActionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToShutdownWithActionCode =
@@ -672,6 +688,7 @@ const char* const s_readableStreamInternalsPipeToShutdownWithActionCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToShutdownCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToShutdownCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPipeToShutdownCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPipeToShutdownCodeLength = 692;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToShutdownCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToShutdownCode =
@@ -707,6 +724,7 @@ const char* const s_readableStreamInternalsPipeToShutdownCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsPipeToFinalizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsPipeToFinalizeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsPipeToFinalizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsPipeToFinalizeCodeLength = 349;
 static const JSC::Intrinsic s_readableStreamInternalsPipeToFinalizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsPipeToFinalizeCode =
@@ -727,6 +745,7 @@ const char* const s_readableStreamInternalsPipeToFinalizeCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamTeeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamTeeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamTeeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamTeeCodeLength = 1689;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamTeeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamTeeCode =
@@ -801,6 +820,7 @@ const char* const s_readableStreamInternalsReadableStreamTeeCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamTeePullFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamTeePullFunctionCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamTeePullFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamTeePullFunctionCodeLength = 1336;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamTeePullFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamTeePullFunctionCode =
@@ -847,6 +867,7 @@ const char* const s_readableStreamInternalsReadableStreamTeePullFunctionCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeLength = 442;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctionCode =
@@ -872,6 +893,7 @@ const char* const s_readableStreamInternalsReadableStreamTeeBranch1CancelFunctio
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeLength = 442;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctionCode =
@@ -897,6 +919,7 @@ const char* const s_readableStreamInternalsReadableStreamTeeBranch2CancelFunctio
 
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsIsReadableStreamCodeLength = 174;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsIsReadableStreamCode =
@@ -915,6 +938,7 @@ const char* const s_readableStreamInternalsIsReadableStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamDefaultReaderCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamDefaultReaderCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamDefaultReaderCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsIsReadableStreamDefaultReaderCodeLength = 135;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamDefaultReaderCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsIsReadableStreamDefaultReaderCode =
@@ -930,6 +954,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultReaderCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsIsReadableStreamDefaultControllerCodeLength = 170;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode =
@@ -949,6 +974,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 
 const JSC::ConstructAbility s_readableStreamInternalsReadDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadDirectStreamCodeLength = 1534;
 static const JSC::Intrinsic s_readableStreamInternalsReadDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadDirectStreamCode =
@@ -1023,6 +1049,7 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsAssignToStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsAssignToStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsAssignToStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsAssignToStreamCodeLength = 438;
 static const JSC::Intrinsic s_readableStreamInternalsAssignToStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsAssignToStreamCode =
@@ -1053,6 +1080,7 @@ const char* const s_readableStreamInternalsAssignToStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadStreamIntoSinkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadStreamIntoSinkCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadStreamIntoSinkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadStreamIntoSinkCodeLength = 2795;
 static const JSC::Intrinsic s_readableStreamInternalsReadStreamIntoSinkCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadStreamIntoSinkCode =
@@ -1178,6 +1206,7 @@ const char* const s_readableStreamInternalsReadStreamIntoSinkCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsHandleDirectStreamErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsHandleDirectStreamErrorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsHandleDirectStreamErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsHandleDirectStreamErrorCodeLength = 774;
 static const JSC::Intrinsic s_readableStreamInternalsHandleDirectStreamErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsHandleDirectStreamErrorCode =
@@ -1220,6 +1249,7 @@ const char* const s_readableStreamInternalsHandleDirectStreamErrorCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsHandleDirectStreamErrorRejectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsHandleDirectStreamErrorRejectCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsHandleDirectStreamErrorRejectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsHandleDirectStreamErrorRejectCodeLength = 92;
 static const JSC::Intrinsic s_readableStreamInternalsHandleDirectStreamErrorRejectCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsHandleDirectStreamErrorRejectCode =
@@ -1231,6 +1261,7 @@ const char* const s_readableStreamInternalsHandleDirectStreamErrorRejectCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsOnPullDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsOnPullDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsOnPullDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsOnPullDirectStreamCodeLength = 1503;
 static const JSC::Intrinsic s_readableStreamInternalsOnPullDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsOnPullDirectStreamCode =
@@ -1306,6 +1337,7 @@ const char* const s_readableStreamInternalsOnPullDirectStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsNoopDoneFunctionCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsNoopDoneFunctionCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsNoopDoneFunctionCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsNoopDoneFunctionCodeLength = 81;
 static const JSC::Intrinsic s_readableStreamInternalsNoopDoneFunctionCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsNoopDoneFunctionCode =
@@ -1316,6 +1348,7 @@ const char* const s_readableStreamInternalsNoopDoneFunctionCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeLength = 107;
 static const JSC::Intrinsic s_readableStreamInternalsOnReadableStreamDirectControllerClosedCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsOnReadableStreamDirectControllerClosedCode =
@@ -1327,6 +1360,7 @@ const char* const s_readableStreamInternalsOnReadableStreamDirectControllerClose
 
 const JSC::ConstructAbility s_readableStreamInternalsOnCloseDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsOnCloseDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsOnCloseDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsOnCloseDirectStreamCodeLength = 2190;
 static const JSC::Intrinsic s_readableStreamInternalsOnCloseDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsOnCloseDirectStreamCode =
@@ -1414,6 +1448,7 @@ const char* const s_readableStreamInternalsOnCloseDirectStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsOnFlushDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsOnFlushDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsOnFlushDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsOnFlushDirectStreamCodeLength = 929;
 static const JSC::Intrinsic s_readableStreamInternalsOnFlushDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsOnFlushDirectStreamCode =
@@ -1452,6 +1487,7 @@ const char* const s_readableStreamInternalsOnFlushDirectStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsCreateTextStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsCreateTextStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsCreateTextStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsCreateTextStreamCodeLength = 2393;
 static const JSC::Intrinsic s_readableStreamInternalsCreateTextStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsCreateTextStreamCode =
@@ -1573,6 +1609,7 @@ const char* const s_readableStreamInternalsCreateTextStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsInitializeTextStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsInitializeTextStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsInitializeTextStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsInitializeTextStreamCodeLength = 822;
 static const JSC::Intrinsic s_readableStreamInternalsInitializeTextStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsInitializeTextStreamCode =
@@ -1607,6 +1644,7 @@ const char* const s_readableStreamInternalsInitializeTextStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsInitializeArrayStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsInitializeArrayStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsInitializeArrayStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsInitializeArrayStreamCodeLength = 1330;
 static const JSC::Intrinsic s_readableStreamInternalsInitializeArrayStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsInitializeArrayStreamCode =
@@ -1675,6 +1713,7 @@ const char* const s_readableStreamInternalsInitializeArrayStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsInitializeArrayBufferStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsInitializeArrayBufferStreamCodeLength = 1005;
 static const JSC::Intrinsic s_readableStreamInternalsInitializeArrayBufferStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode =
@@ -1718,6 +1757,7 @@ const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamErrorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamErrorCodeLength = 1212;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamErrorCode =
@@ -1760,6 +1800,7 @@ const char* const s_readableStreamInternalsReadableStreamErrorCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeLength = 700;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerShouldCallPullCode =
@@ -1789,6 +1830,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerShould
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeLength = 1277;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerCallPullIfNeededCode =
@@ -1838,6 +1880,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCallPu
 
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamLockedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamLockedCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamLockedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsIsReadableStreamLockedCodeLength = 131;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamLockedCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsIsReadableStreamLockedCode =
@@ -1851,6 +1894,7 @@ const char* const s_readableStreamInternalsIsReadableStreamLockedCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeLength = 403;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerGetDesiredSizeCode =
@@ -1872,6 +1916,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerGetDes
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamReaderGenericCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamReaderGenericCancelCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamReaderGenericCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamReaderGenericCancelCodeLength = 189;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamReaderGenericCancelCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamReaderGenericCancelCode =
@@ -1886,6 +1931,7 @@ const char* const s_readableStreamInternalsReadableStreamReaderGenericCancelCode
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamCancelCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamCancelCodeLength = 505;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamCancelCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamCancelCode =
@@ -1906,6 +1952,7 @@ const char* const s_readableStreamInternalsReadableStreamCancelCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeLength = 213;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCancelCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerCancelCode =
@@ -1922,6 +1969,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCancel
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerPullCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerPullCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerPullCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerPullCodeLength = 751;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerPullCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerPullCode =
@@ -1952,6 +2000,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerPullCo
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeLength = 351;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerCloseCode =
@@ -1969,6 +2018,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCloseC
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamCloseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamCloseCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamCloseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamCloseCodeLength = 883;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamCloseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamCloseCode =
@@ -2007,6 +2057,7 @@ const char* const s_readableStreamInternalsReadableStreamCloseCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamFulfillReadRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamFulfillReadRequestCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamFulfillReadRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamFulfillReadRequestCodeLength = 237;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamFulfillReadRequestCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamFulfillReadRequestCode =
@@ -2022,6 +2073,7 @@ const char* const s_readableStreamInternalsReadableStreamFulfillReadRequestCode 
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeLength = 986;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerEnqueueCode =
@@ -2063,6 +2115,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerEnqueu
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultReaderReadCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultReaderReadCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultReaderReadCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultReaderReadCodeLength = 631;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultReaderReadCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultReaderReadCode =
@@ -2088,6 +2141,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultReaderReadCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamAddReadRequestCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamAddReadRequestCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamAddReadRequestCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamAddReadRequestCodeLength = 377;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamAddReadRequestCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamAddReadRequestCode =
@@ -2112,6 +2166,7 @@ const char* const s_readableStreamInternalsReadableStreamAddReadRequestCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsIsReadableStreamDisturbedCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsIsReadableStreamDisturbedCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsIsReadableStreamDisturbedCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsIsReadableStreamDisturbedCodeLength = 132;
 static const JSC::Intrinsic s_readableStreamInternalsIsReadableStreamDisturbedCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsIsReadableStreamDisturbedCode =
@@ -2125,6 +2180,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDisturbedCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeLength = 1083;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamReaderGenericReleaseCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamReaderGenericReleaseCode =
@@ -2174,6 +2230,7 @@ const char* const s_readableStreamInternalsReadableStreamReaderGenericReleaseCod
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeLength = 257;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanCloseOrEnqueueCode =
@@ -2192,6 +2249,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsLazyLoadStreamCodeLength = 2505;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
@@ -2291,6 +2349,7 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamIntoArrayCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamIntoArrayCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamIntoArrayCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamIntoArrayCodeLength = 578;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamIntoArrayCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamIntoArrayCode =
@@ -2328,6 +2387,7 @@ const char* const s_readableStreamInternalsReadableStreamIntoArrayCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamIntoTextCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamIntoTextCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamIntoTextCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamIntoTextCodeLength = 333;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamIntoTextCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamIntoTextCode =
@@ -2347,6 +2407,7 @@ const char* const s_readableStreamInternalsReadableStreamIntoTextCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeLength = 1543;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamToArrayBufferDirectCode =
@@ -2415,6 +2476,7 @@ const char* const s_readableStreamInternalsReadableStreamToArrayBufferDirectCode
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamToTextDirectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToTextDirectCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamToTextDirectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamToTextDirectCodeLength = 496;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamToTextDirectCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamToTextDirectCode =
@@ -2446,6 +2508,7 @@ const char* const s_readableStreamInternalsReadableStreamToTextDirectCode =
 
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamToArrayDirectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArrayDirectCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamToArrayDirectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_readableStreamInternalsReadableStreamToArrayDirectCodeLength = 667;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamToArrayDirectCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamToArrayDirectCode =

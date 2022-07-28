@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_byteLengthQueuingStrategyHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_byteLengthQueuingStrategyHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_byteLengthQueuingStrategyHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_byteLengthQueuingStrategyHighWaterMarkCodeLength = 286;
 static const JSC::Intrinsic s_byteLengthQueuingStrategyHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_byteLengthQueuingStrategyHighWaterMarkCode =
@@ -66,6 +67,7 @@ const char* const s_byteLengthQueuingStrategyHighWaterMarkCode =
 
 const JSC::ConstructAbility s_byteLengthQueuingStrategySizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_byteLengthQueuingStrategySizeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_byteLengthQueuingStrategySizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_byteLengthQueuingStrategySizeCodeLength = 71;
 static const JSC::Intrinsic s_byteLengthQueuingStrategySizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_byteLengthQueuingStrategySizeCode =
@@ -79,6 +81,7 @@ const char* const s_byteLengthQueuingStrategySizeCode =
 
 const JSC::ConstructAbility s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeLength = 155;
 static const JSC::Intrinsic s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCode =

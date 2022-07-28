@@ -1647,7 +1647,7 @@ pub const JSGlobalObject = extern struct {
             // if this fails
             // you most likely need to run
             //   make clean-jsc-bindings
-            //   make jsc-bindings-mac -j10
+            //   make bindings -j10
             std.debug.assert(this.bunVM_() == @ptrCast(*anyopaque, JSC.VirtualMachine.vm));
         }
         return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));

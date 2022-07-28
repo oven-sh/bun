@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeLength = 54;
 static const JSC::Intrinsic s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCode =
@@ -62,6 +63,7 @@ const char* const s_transformStreamDefaultControllerInitializeTransformStreamDef
 
 const JSC::ConstructAbility s_transformStreamDefaultControllerDesiredSizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerDesiredSizeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamDefaultControllerDesiredSizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamDefaultControllerDesiredSizeCodeLength = 465;
 static const JSC::Intrinsic s_transformStreamDefaultControllerDesiredSizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamDefaultControllerDesiredSizeCode =
@@ -82,6 +84,7 @@ const char* const s_transformStreamDefaultControllerDesiredSizeCode =
 
 const JSC::ConstructAbility s_transformStreamDefaultControllerEnqueueCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerEnqueueCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamDefaultControllerEnqueueCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamDefaultControllerEnqueueCodeLength = 235;
 static const JSC::Intrinsic s_transformStreamDefaultControllerEnqueueCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamDefaultControllerEnqueueCode =
@@ -98,6 +101,7 @@ const char* const s_transformStreamDefaultControllerEnqueueCode =
 
 const JSC::ConstructAbility s_transformStreamDefaultControllerErrorCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerErrorCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamDefaultControllerErrorCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamDefaultControllerErrorCodeLength = 223;
 static const JSC::Intrinsic s_transformStreamDefaultControllerErrorCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamDefaultControllerErrorCode =
@@ -114,6 +118,7 @@ const char* const s_transformStreamDefaultControllerErrorCode =
 
 const JSC::ConstructAbility s_transformStreamDefaultControllerTerminateCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamDefaultControllerTerminateCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamDefaultControllerTerminateCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamDefaultControllerTerminateCodeLength = 227;
 static const JSC::Intrinsic s_transformStreamDefaultControllerTerminateCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamDefaultControllerTerminateCode =

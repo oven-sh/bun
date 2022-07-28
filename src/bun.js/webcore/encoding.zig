@@ -838,9 +838,6 @@ pub const Encoder = struct {
     export fn Bun__encoding__toStringASCII(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
         return toString(input, len, globalObject, .ascii);
     }
-    export fn Bun__encoding__toStringLatin1(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
-        return toString(input, len, globalObject, .latin1);
-    }
 
     export fn Bun__encoding__toStringHex(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
         return toString(input, len, globalObject, .hex);
@@ -866,7 +863,7 @@ pub const Encoder = struct {
         const allocator = VirtualMachine.vm.allocator;
 
         switch (comptime encoding) {
-            .latin1, .ascii => {
+            .ascii => {
                 var to = allocator.alloc(u8, len) catch return ZigString.init("Out of memory").toErrorInstance(global);
 
                 @memcpy(to.ptr, input_ptr, to.len);
@@ -875,6 +872,13 @@ pub const Encoder = struct {
                 for (to[0..to.len]) |c, i| {
                     to[i] = @as(u8, @truncate(u7, c));
                 }
+
+                return ZigString.init(to).toExternalValue(global);
+            },
+            .latin1 => {
+                var to = allocator.alloc(u8, len) catch return ZigString.init("Out of memory").toErrorInstance(global);
+
+                @memcpy(to.ptr, input_ptr, to.len);
 
                 return ZigString.init(to).toExternalValue(global);
             },
@@ -1109,12 +1113,8 @@ pub const Encoder = struct {
             },
             .latin1, .ascii => {
                 var to = allocator.alloc(u8, len) catch return &[_]u8{};
-                @memcpy(to.ptr, input, len);
 
-                // Hoping this gets auto vectorized
-                for (to[0..len]) |c, i| {
-                    to[i] = @as(u8, @truncate(u7, c));
-                }
+                @memcpy(to.ptr, input, len);
 
                 return to;
             },
@@ -1257,7 +1257,6 @@ pub const Encoder = struct {
             _ = Bun__encoding__toStringUTF16;
             _ = Bun__encoding__toStringUTF8;
             _ = Bun__encoding__toStringASCII;
-            _ = Bun__encoding__toStringLatin1;
             _ = Bun__encoding__toStringHex;
             _ = Bun__encoding__toStringBase64;
             _ = Bun__encoding__toStringURLSafeBase64;

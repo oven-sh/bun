@@ -636,7 +636,7 @@ pub const UpgradeCommand = struct {
                     if (target_hash == source_hash) {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln(
-                            "<r><green>Congrats!<r> You're already on the latest canary build of bun",
+                            "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of bun",
                             .{},
                         );
                         Global.exit(0);

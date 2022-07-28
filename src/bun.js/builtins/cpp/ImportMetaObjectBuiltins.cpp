@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_importMetaObjectRequireCodeLength = 1162;
 static const JSC::Intrinsic s_importMetaObjectRequireCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectRequireCode =
@@ -96,6 +97,7 @@ const char* const s_importMetaObjectRequireCode =
 
 const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectLoadModuleCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_importMetaObjectLoadModuleCodeLength = 2834;
 static const JSC::Intrinsic s_importMetaObjectLoadModuleCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectLoadModuleCode =
@@ -213,6 +215,7 @@ const char* const s_importMetaObjectLoadModuleCode =
 
 const JSC::ConstructAbility s_importMetaObjectRequireModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectRequireModuleCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_importMetaObjectRequireModuleCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_importMetaObjectRequireModuleCodeLength = 606;
 static const JSC::Intrinsic s_importMetaObjectRequireModuleCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectRequireModuleCode =

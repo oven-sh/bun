@@ -51,26 +51,32 @@ extern const char* const s_readableStreamDefaultReaderInitializeReadableStreamDe
 extern const int s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeLength;
 extern const JSC::ConstructAbility s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderInitializeReadableStreamDefaultReaderCodeImplementationVisibility;
 extern const char* const s_readableStreamDefaultReaderCancelCode;
 extern const int s_readableStreamDefaultReaderCancelCodeLength;
 extern const JSC::ConstructAbility s_readableStreamDefaultReaderCancelCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamDefaultReaderCancelCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderCancelCodeImplementationVisibility;
 extern const char* const s_readableStreamDefaultReaderReadManyCode;
 extern const int s_readableStreamDefaultReaderReadManyCodeLength;
 extern const JSC::ConstructAbility s_readableStreamDefaultReaderReadManyCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamDefaultReaderReadManyCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadManyCodeImplementationVisibility;
 extern const char* const s_readableStreamDefaultReaderReadCode;
 extern const int s_readableStreamDefaultReaderReadCodeLength;
 extern const JSC::ConstructAbility s_readableStreamDefaultReaderReadCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamDefaultReaderReadCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderReadCodeImplementationVisibility;
 extern const char* const s_readableStreamDefaultReaderReleaseLockCode;
 extern const int s_readableStreamDefaultReaderReleaseLockCodeLength;
 extern const JSC::ConstructAbility s_readableStreamDefaultReaderReleaseLockCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamDefaultReaderReleaseLockCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderReleaseLockCodeImplementationVisibility;
 extern const char* const s_readableStreamDefaultReaderClosedCode;
 extern const int s_readableStreamDefaultReaderClosedCodeLength;
 extern const JSC::ConstructAbility s_readableStreamDefaultReaderClosedCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamDefaultReaderClosedCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamDefaultReaderClosedCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_READABLESTREAMDEFAULTREADER_BUILTIN_DATA(macro) \
     macro(initializeReadableStreamDefaultReader, readableStreamDefaultReaderInitializeReadableStreamDefaultReader, 1) \
@@ -150,7 +156,7 @@ inline JSC::UnlinkedFunctionExecutable* ReadableStreamDefaultReaderBuiltinsWrapp
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

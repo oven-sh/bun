@@ -39,13 +39,13 @@ int main() {
   cout << "//    Failure to do so will lead to undefined behavior and probably "
           "some frustrated people.\n";
   cout << "// --- Regenerate this: --- \n";
-  cout << "// 1. \"make jsc-bindings-headers\"\n";
+  cout << "// 1. \"make headers\"\n";
   cout << "// 2. \"make sizegen\"\n";
-  cout << "// 3. \"make jsc-bindings-headers\"\n";
+  cout << "// 3. \"make headers\"\n";
   cout << "// ------------------------\n";
   cout << "// You can verify the numbers written in this file at runtime via "
           "the `extern`d types\n";
-  cout << "// Run \"jsc-bindings-headers\" twice because it uses these values "
+  cout << "// Run \"headers\" twice because it uses these values "
           "in the output. That's how all the bJSC__.* types are created - from "
           "these values. \n";
   int i = 0;

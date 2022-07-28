@@ -28,6 +28,7 @@
 #include "wtf/GetPtr.h"
 #include "wtf/PointerPreparations.h"
 #include "wtf/URL.h"
+#include "wtf/text/WTFString.h"
 #include "JavaScriptCore/BuiltinNames.h"
 
 #include "JSBufferEncodingType.h"
@@ -270,8 +271,15 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
         break;
     }
 
-    case WebCore::BufferEncodingType::latin1:
     case WebCore::BufferEncodingType::ascii: {
+        if (view.is8Bit()) {
+            result = Bun__encoding__constructFromLatin1AsASCII(lexicalGlobalObject, view.characters8(), view.length());
+        } else {
+            result = Bun__encoding__constructFromUTF16AsASCII(lexicalGlobalObject, view.characters16(), view.length());
+        }
+        break;
+    }
+    case WebCore::BufferEncodingType::latin1: {
         if (view.is8Bit()) {
             result = Bun__encoding__constructFromLatin1AsASCII(lexicalGlobalObject, view.characters8(), view.length());
         } else {
@@ -636,7 +644,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_toBufferBody(JSC::
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->classInfo()->typedArrayStorageType)) {
+    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->type())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return JSValue::encode(jsUndefined());
     }
@@ -654,7 +662,6 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_toBufferBody(JSC::
 class JSBufferPrototype : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr JSC::TypedArrayType TypedArrayStorageType = JSC::JSUint8Array::Adaptor::typeValue;
     static JSBufferPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
         JSBufferPrototype* ptr = new (NotNull, JSC::allocateCell<JSBufferPrototype>(vm)) JSBufferPrototype(vm, globalObject, structure);
@@ -782,7 +789,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
 
     auto buffer = callFrame->uncheckedArgument(0);
 
-    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->classInfo()->typedArrayStorageType)) {
+    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->type())) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
         return JSValue::encode(jsUndefined());
     }
@@ -1094,9 +1101,13 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
         break;
     }
 
-    case WebCore::BufferEncodingType::latin1:
     case WebCore::BufferEncodingType::ascii: {
         ret = Bun__encoding__toStringASCII(castedThis->typedVector() + offset, length, lexicalGlobalObject);
+        break;
+    }
+
+    case WebCore::BufferEncodingType::latin1: {
+        ret = JSC::JSValue::encode(JSC::jsString(vm, WTF::StringImpl::create(reinterpret_cast<const UChar*>(castedThis->typedVector() + offset), length)));
         break;
     }
 

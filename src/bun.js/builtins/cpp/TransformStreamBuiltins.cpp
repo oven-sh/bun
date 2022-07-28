@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_transformStreamInitializeTransformStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamInitializeTransformStreamCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamInitializeTransformStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamInitializeTransformStreamCodeLength = 2727;
 static const JSC::Intrinsic s_transformStreamInitializeTransformStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamInitializeTransformStreamCode =
@@ -126,6 +127,7 @@ const char* const s_transformStreamInitializeTransformStreamCode =
 
 const JSC::ConstructAbility s_transformStreamReadableCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamReadableCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamReadableCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamReadableCodeLength = 190;
 static const JSC::Intrinsic s_transformStreamReadableCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamReadableCode =
@@ -142,6 +144,7 @@ const char* const s_transformStreamReadableCode =
 
 const JSC::ConstructAbility s_transformStreamWritableCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_transformStreamWritableCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_transformStreamWritableCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_transformStreamWritableCodeLength = 190;
 static const JSC::Intrinsic s_transformStreamWritableCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_transformStreamWritableCode =

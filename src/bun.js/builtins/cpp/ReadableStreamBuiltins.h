@@ -51,62 +51,77 @@ extern const char* const s_readableStreamInitializeReadableStreamCode;
 extern const int s_readableStreamInitializeReadableStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamInitializeReadableStreamCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamInitializeReadableStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamInitializeReadableStreamCodeImplementationVisibility;
 extern const char* const s_readableStreamReadableStreamToArrayCode;
 extern const int s_readableStreamReadableStreamToArrayCodeLength;
 extern const JSC::ConstructAbility s_readableStreamReadableStreamToArrayCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamReadableStreamToArrayCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayCodeImplementationVisibility;
 extern const char* const s_readableStreamReadableStreamToTextCode;
 extern const int s_readableStreamReadableStreamToTextCodeLength;
 extern const JSC::ConstructAbility s_readableStreamReadableStreamToTextCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamReadableStreamToTextCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToTextCodeImplementationVisibility;
 extern const char* const s_readableStreamReadableStreamToArrayBufferCode;
 extern const int s_readableStreamReadableStreamToArrayBufferCodeLength;
 extern const JSC::ConstructAbility s_readableStreamReadableStreamToArrayBufferCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamReadableStreamToArrayBufferCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayBufferCodeImplementationVisibility;
 extern const char* const s_readableStreamReadableStreamToJSONCode;
 extern const int s_readableStreamReadableStreamToJSONCodeLength;
 extern const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToJSONCodeImplementationVisibility;
 extern const char* const s_readableStreamReadableStreamToBlobCode;
 extern const int s_readableStreamReadableStreamToBlobCodeLength;
 extern const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamReadableStreamToBlobCodeImplementationVisibility;
 extern const char* const s_readableStreamConsumeReadableStreamCode;
 extern const int s_readableStreamConsumeReadableStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamConsumeReadableStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamConsumeReadableStreamCodeImplementationVisibility;
 extern const char* const s_readableStreamCreateEmptyReadableStreamCode;
 extern const int s_readableStreamCreateEmptyReadableStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamCreateEmptyReadableStreamCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamCreateEmptyReadableStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamCreateEmptyReadableStreamCodeImplementationVisibility;
 extern const char* const s_readableStreamCreateNativeReadableStreamCode;
 extern const int s_readableStreamCreateNativeReadableStreamCodeLength;
 extern const JSC::ConstructAbility s_readableStreamCreateNativeReadableStreamCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamCreateNativeReadableStreamCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamCreateNativeReadableStreamCodeImplementationVisibility;
 extern const char* const s_readableStreamCancelCode;
 extern const int s_readableStreamCancelCodeLength;
 extern const JSC::ConstructAbility s_readableStreamCancelCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamCancelCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamCancelCodeImplementationVisibility;
 extern const char* const s_readableStreamGetReaderCode;
 extern const int s_readableStreamGetReaderCodeLength;
 extern const JSC::ConstructAbility s_readableStreamGetReaderCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamGetReaderCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamGetReaderCodeImplementationVisibility;
 extern const char* const s_readableStreamPipeThroughCode;
 extern const int s_readableStreamPipeThroughCodeLength;
 extern const JSC::ConstructAbility s_readableStreamPipeThroughCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamPipeThroughCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamPipeThroughCodeImplementationVisibility;
 extern const char* const s_readableStreamPipeToCode;
 extern const int s_readableStreamPipeToCodeLength;
 extern const JSC::ConstructAbility s_readableStreamPipeToCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamPipeToCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamPipeToCodeImplementationVisibility;
 extern const char* const s_readableStreamTeeCode;
 extern const int s_readableStreamTeeCodeLength;
 extern const JSC::ConstructAbility s_readableStreamTeeCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamTeeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamTeeCodeImplementationVisibility;
 extern const char* const s_readableStreamLockedCode;
 extern const int s_readableStreamLockedCodeLength;
 extern const JSC::ConstructAbility s_readableStreamLockedCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamLockedCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamLockedCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_READABLESTREAM_BUILTIN_DATA(macro) \
     macro(initializeReadableStream, readableStreamInitializeReadableStream, 2) \
@@ -222,7 +237,7 @@ inline JSC::UnlinkedFunctionExecutable* ReadableStreamBuiltinsWrapper::name##Exe
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

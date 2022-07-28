@@ -44,14 +44,14 @@ src/bun.js/WebKit/WebKitBuild/Release/bin/jsc --help
 Then, clear out our bindings and regenerate the C++<>Zig headers:
 
 ```bash
-make clean-bindings jsc-bindings-headers generate-builtins
+make clean-bindings headers builtins
 ```
 
 Now update Bun's bindings wherever there are compiler errors:
 
 ```bash
 # It will take awhile if you don't pass -j here
-make jsc-bindings-mac -j10
+make bindings -j10
 ```
 
 This is the hard part. It might involve digging through WebKit's commit history to figure out what changed and why. Fortunately, WebKit contributors write great commit messages.

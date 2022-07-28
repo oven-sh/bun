@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_jsBufferConstructorFromCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferConstructorFromCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferConstructorFromCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_jsBufferConstructorFromCodeLength = 1019;
 static const JSC::Intrinsic s_jsBufferConstructorFromCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferConstructorFromCode =

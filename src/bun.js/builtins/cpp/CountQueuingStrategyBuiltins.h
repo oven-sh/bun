@@ -51,14 +51,17 @@ extern const char* const s_countQueuingStrategyHighWaterMarkCode;
 extern const int s_countQueuingStrategyHighWaterMarkCodeLength;
 extern const JSC::ConstructAbility s_countQueuingStrategyHighWaterMarkCodeConstructAbility;
 extern const JSC::ConstructorKind s_countQueuingStrategyHighWaterMarkCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_countQueuingStrategyHighWaterMarkCodeImplementationVisibility;
 extern const char* const s_countQueuingStrategySizeCode;
 extern const int s_countQueuingStrategySizeCodeLength;
 extern const JSC::ConstructAbility s_countQueuingStrategySizeCodeConstructAbility;
 extern const JSC::ConstructorKind s_countQueuingStrategySizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_countQueuingStrategySizeCodeImplementationVisibility;
 extern const char* const s_countQueuingStrategyInitializeCountQueuingStrategyCode;
 extern const int s_countQueuingStrategyInitializeCountQueuingStrategyCodeLength;
 extern const JSC::ConstructAbility s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructAbility;
 extern const JSC::ConstructorKind s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_countQueuingStrategyInitializeCountQueuingStrategyCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_COUNTQUEUINGSTRATEGY_BUILTIN_DATA(macro) \
     macro(highWaterMark, countQueuingStrategyHighWaterMark, 0) \
@@ -126,7 +129,7 @@ inline JSC::UnlinkedFunctionExecutable* CountQueuingStrategyBuiltinsWrapper::nam
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

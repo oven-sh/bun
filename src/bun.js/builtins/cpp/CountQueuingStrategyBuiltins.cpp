@@ -49,6 +49,7 @@ namespace WebCore {
 
 const JSC::ConstructAbility s_countQueuingStrategyHighWaterMarkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_countQueuingStrategyHighWaterMarkCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_countQueuingStrategyHighWaterMarkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_countQueuingStrategyHighWaterMarkCodeLength = 281;
 static const JSC::Intrinsic s_countQueuingStrategyHighWaterMarkCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_countQueuingStrategyHighWaterMarkCode =
@@ -66,6 +67,7 @@ const char* const s_countQueuingStrategyHighWaterMarkCode =
 
 const JSC::ConstructAbility s_countQueuingStrategySizeCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_countQueuingStrategySizeCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_countQueuingStrategySizeCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_countQueuingStrategySizeCodeLength = 51;
 static const JSC::Intrinsic s_countQueuingStrategySizeCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_countQueuingStrategySizeCode =
@@ -79,6 +81,7 @@ const char* const s_countQueuingStrategySizeCode =
 
 const JSC::ConstructAbility s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_countQueuingStrategyInitializeCountQueuingStrategyCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_countQueuingStrategyInitializeCountQueuingStrategyCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
 const int s_countQueuingStrategyInitializeCountQueuingStrategyCodeLength = 155;
 static const JSC::Intrinsic s_countQueuingStrategyInitializeCountQueuingStrategyCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_countQueuingStrategyInitializeCountQueuingStrategyCode =

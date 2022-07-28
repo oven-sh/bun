@@ -161,6 +161,17 @@ it("Buffer.from", () => {
   gc();
 });
 
+it("Buffer.from latin1 vs ascii", () => {
+  const simpleBuffer = Buffer.from('\xa4', 'binary');
+  expect(simpleBuffer.toString("latin1").toBe("¤"));
+  expect(simpleBuffer.toString('ascii').toBe("$"));
+
+  const asciiBuffer = Buffer.from('\xa4', 'ascii');
+  expect(asciiBuffer.toString("latin1").toBe("¤"));
+  expect(asciiBuffer.toString('ascii').toBe("$"));
+  gc();
+});
+
 it("Buffer.equals", () => {
   var a = new Uint8Array(10);
   a[2] = 1;

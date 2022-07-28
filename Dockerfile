@@ -9,6 +9,10 @@ ARG CPU_TARGET=native
 ARG ARCH=x86_64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
+ARG WEBKIT_TAG=jul27
+ARG ZIG_TAG=jul1
+ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/bun-webkit-linux-$BUILDARCH.tar.gz"
+ARG ZIG_URL="https://github.com/oven-sh/zig/releases/download/$ZIG_TAG/zig-linux-$BUILDARCH.zip"
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -46,14 +50,14 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - && \
 
 ARG DEBIAN_FRONTEND
 ARG GITHUB_WORKSPACE
-
-# Directory extracts to "bun-webkit"
 ARG WEBKIT_DIR
 ARG BUN_RELEASE_DIR
 ARG BUN_DEPS_OUT_DIR
 ARG BUN_DIR
 ARG BUILDARCH
 ARG ZIG_PATH
+ARG WEBKIT_URL
+ARG ZIG_URL
 
 ENV WEBKIT_OUT_DIR=${WEBKIT_DIR}
 ENV BUILDARCH=${BUILDARCH}
@@ -68,21 +72,32 @@ FROM bun-base as bun-base-with-zig-and-webkit
 
 WORKDIR $GITHUB_WORKSPACE
 
-RUN  curl -o zig-linux-$BUILDARCH.zip -L https://github.com/oven-sh/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
-    unzip -q zig-linux-$BUILDARCH.zip && \
+ADD $ZIG_URL .
+RUN unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 
-RUN mkdir -p $WEBKIT_OUT_DIR && cd $WEBKIT_OUT_DIR && cd ../ && \
-    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/jul4-2/bun-webkit-linux-$BUILDARCH.tar.gz && \
-    gunzip bun-webkit-linux-$BUILDARCH.tar.gz && \
-    tar -xf bun-webkit-linux-$BUILDARCH.tar && \
-    ls && \
-    echo $(pwd) && \
-    rm bun-webkit-linux-$BUILDARCH.tar && \
-    cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
+
+
+WORKDIR $GITHUB_WORKSPACE
+
+ARG GITHUB_WORKSPACE
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG BUILDARCH
+ARG ZIG_PATH
+ARG WEBKIT_URL
+ARG ZIG_URL
+
+ADD ${WEBKIT_URL} ${GITHUB_WORKSPACE}
+
+RUN mkdir -p ${WEBKIT_DIR} && cd ${GITHUB_WORKSPACE} && \
+    gunzip bun-webkit-linux-$BUILDARCH.tar.gz && tar -xf bun-webkit-linux-$BUILDARCH.tar && \
+    cat ${WEBKIT_DIR}/include/cmakeconfig.h > /dev/null
 
 LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
-LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun
+LABEL org.opencontainers.image.source=https://github.com/oven-sh/bun
 
 
 FROM bun-base as lolhtml
@@ -444,7 +459,7 @@ COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && \
-    make jsc-bindings-mac -j10 && mv src/bun.js/bindings-obj/* /tmp
+    make bindings -j10 && mv src/bun.js/bindings-obj/* /tmp
 
 FROM prepare_release as sqlite
 
@@ -543,12 +558,12 @@ WORKDIR $BUN_DIR
 ENV PATH "$ZIG_PATH:$PATH"
 ENV LIB_ICU_PATH "${WEBKIT_DIR}/lib"
 
-CMD make jsc-bindings-headers \
+CMD make headers \
     api \
     analytics \
     bun_error \
     fallback_decoder \
-    jsc-bindings-mac -j10 && \
+    bindings -j10 && \
     make \
     run-all-unit-tests
 

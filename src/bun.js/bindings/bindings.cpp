@@ -2084,9 +2084,9 @@ bWTF__String JSC__JSValue__toWTFString(JSC__JSValue JSValue0, JSC__JSGlobalObjec
     return Wrap<WTF::String, bWTF__String>::wrap(value.toWTFString(arg1));
 };
 
-static void populateStackFrameMetadata(const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
+static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
-    frame->source_url = Zig::toZigString(stackFrame->sourceURL());
+    frame->source_url = Zig::toZigString(stackFrame->sourceURL(vm));
 
     if (stackFrame->isWasmFrame()) {
         frame->code_type = ZigStackFrameCodeWasm;
@@ -2122,7 +2122,6 @@ static void populateStackFrameMetadata(const JSC::StackFrame* stackFrame, ZigSta
         return;
 
     JSC::JSObject* callee = JSC::jsCast<JSC::JSObject*>(calleeCell);
-    auto& vm = m_codeBlock->vm();
 
     // Does the code block have a user-defined name property?
     JSC::JSValue name = callee->getDirect(vm, vm.propertyNames->name);
@@ -2274,15 +2273,15 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, ZigStr
 
     return;
 }
-static void populateStackFrame(ZigStackTrace* trace, const JSC::StackFrame* stackFrame,
+static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::StackFrame* stackFrame,
     ZigStackFrame* frame, bool is_top)
 {
-    populateStackFrameMetadata(stackFrame, frame);
+    populateStackFrameMetadata(vm, stackFrame, frame);
     populateStackFramePosition(stackFrame, is_top ? trace->source_lines_ptr : nullptr,
         is_top ? trace->source_lines_numbers : nullptr,
         is_top ? trace->source_lines_to_collect : 0, &frame->position);
 }
-static void populateStackTrace(const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace)
+static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace* trace)
 {
     uint8_t frame_i = 0;
     size_t stack_frame_i = 0;
@@ -2298,7 +2297,7 @@ static void populateStackTrace(const WTF::Vector<JSC::StackFrame>& frames, ZigSt
             break;
 
         ZigStackFrame* frame = &trace->frames_ptr[frame_i];
-        populateStackFrame(trace, &frames[stack_frame_i], frame, frame_i == 0);
+        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0);
         stack_frame_i++;
         frame_i++;
     }
@@ -2315,9 +2314,9 @@ static void fromErrorInstance(ZigException* except, JSC::JSGlobalObject* global,
 
     bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(*stackTrace, &except->stack);
+        populateStackTrace(global->vm(), *stackTrace, &except->stack);
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(*err->stackTrace(), &except->stack);
+        populateStackTrace(global->vm(), *err->stackTrace(), &except->stack);
     } else {
         getFromSourceURL = true;
     }
@@ -2541,7 +2540,7 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
 
 void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* trace)
 {
-    populateStackTrace(arg0->stack(), trace);
+    populateStackTrace(arg0->vm(), arg0->stack(), trace);
 }
 
 #pragma mark - JSC::PropertyName

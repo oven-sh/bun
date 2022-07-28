@@ -51,22 +51,27 @@ extern const char* const s_transformStreamDefaultControllerInitializeTransformSt
 extern const int s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeLength;
 extern const JSC::ConstructAbility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructAbility;
 extern const JSC::ConstructorKind s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerInitializeTransformStreamDefaultControllerCodeImplementationVisibility;
 extern const char* const s_transformStreamDefaultControllerDesiredSizeCode;
 extern const int s_transformStreamDefaultControllerDesiredSizeCodeLength;
 extern const JSC::ConstructAbility s_transformStreamDefaultControllerDesiredSizeCodeConstructAbility;
 extern const JSC::ConstructorKind s_transformStreamDefaultControllerDesiredSizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerDesiredSizeCodeImplementationVisibility;
 extern const char* const s_transformStreamDefaultControllerEnqueueCode;
 extern const int s_transformStreamDefaultControllerEnqueueCodeLength;
 extern const JSC::ConstructAbility s_transformStreamDefaultControllerEnqueueCodeConstructAbility;
 extern const JSC::ConstructorKind s_transformStreamDefaultControllerEnqueueCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerEnqueueCodeImplementationVisibility;
 extern const char* const s_transformStreamDefaultControllerErrorCode;
 extern const int s_transformStreamDefaultControllerErrorCodeLength;
 extern const JSC::ConstructAbility s_transformStreamDefaultControllerErrorCodeConstructAbility;
 extern const JSC::ConstructorKind s_transformStreamDefaultControllerErrorCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerErrorCodeImplementationVisibility;
 extern const char* const s_transformStreamDefaultControllerTerminateCode;
 extern const int s_transformStreamDefaultControllerTerminateCodeLength;
 extern const JSC::ConstructAbility s_transformStreamDefaultControllerTerminateCodeConstructAbility;
 extern const JSC::ConstructorKind s_transformStreamDefaultControllerTerminateCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_transformStreamDefaultControllerTerminateCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_TRANSFORMSTREAMDEFAULTCONTROLLER_BUILTIN_DATA(macro) \
     macro(initializeTransformStreamDefaultController, transformStreamDefaultControllerInitializeTransformStreamDefaultController, 0) \
@@ -142,7 +147,7 @@ inline JSC::UnlinkedFunctionExecutable* TransformStreamDefaultControllerBuiltins
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

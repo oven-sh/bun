@@ -5,6 +5,7 @@
 
   // Sets the run context to one level up instead of the .devcontainer folder.
   "context": "..",
+  "hostRequirements": { "memory": "16gb" },
 
   // Update the 'dockerFile' property if you aren't using the standard 'Dockerfile' filename.
   "dockerFile": "../Dockerfile.devcontainer",
@@ -26,12 +27,16 @@
     "esbenp.prettier-vscode",
     "xaver.clang-format"
   ],
-  "postCreateCommand": "cd /build/bun; bash /build/getting-started.sh; zsh",
+  "postCreateCommand": "cd /build/bun; bash /build/getting-started.sh; code /build/README.md",
 
   "build": {
     "target": "bun.devcontainer",
-    "cacheFrom": ["bun.devcontainer:latest"],
-    "args": {}
+    "cacheFrom": ["ghcr.io/oven-sh/bun.devcontainer:latest"],
+    "args": {
+      "BUILDARCH": "${localEnv:DOCKER_BUILDARCH:amd64}",
+      "--platform": "linux/${localEnv:DOCKER_BUILDARCH:amd64}",
+      "--tag": "ghcr.io/oven-sh/bun.devcontainer:latest"
+    }
   },
   "runArgs": [
     "--ulimit",

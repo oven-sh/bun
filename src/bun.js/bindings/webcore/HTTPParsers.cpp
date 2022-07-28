@@ -340,7 +340,7 @@ StringView filenameFromHTTPContentDisposition(StringView value)
 
         auto key = keyValuePair.left(valueStartPos).stripWhiteSpace();
 
-        if (key.isEmpty() || key != "filename")
+        if (key.isEmpty() || key != "filename"_s)
             continue;
 
         auto value = keyValuePair.substring(valueStartPos + 1).stripWhiteSpace();
@@ -1061,13 +1061,13 @@ CrossOriginResourcePolicy parseCrossOriginResourcePolicyHeader(StringView header
     if (strippedHeader.isEmpty())
         return CrossOriginResourcePolicy::None;
 
-    if (strippedHeader == "same-origin")
+    if (strippedHeader == "same-origin"_s)
         return CrossOriginResourcePolicy::SameOrigin;
 
-    if (strippedHeader == "same-site")
+    if (strippedHeader == "same-site"_s)
         return CrossOriginResourcePolicy::SameSite;
 
-    if (strippedHeader == "cross-origin")
+    if (strippedHeader == "cross-origin"_s)
         return CrossOriginResourcePolicy::CrossOrigin;
 
     return CrossOriginResourcePolicy::Invalid;

@@ -539,21 +539,21 @@ pub fn parseWithTag(
             };
         },
         .tarball => {
-            if (strings.indexOf(dependency, "://")) |protocol| {
-                if (strings.eqlComptime(dependency[0..protocol], "file")) {
-                    return Version{
-                        .tag = .tarball,
-                        .value = .{ .tarball = URI{ .local = sliced.sub(dependency[7..]).value() } },
-                    };
-                } else if (strings.eqlComptime(dependency[0..protocol], "http") or strings.eqlComptime(dependency[0..protocol], "https")) {
-                    return Version{
-                        .tag = .tarball,
-                        .value = .{ .tarball = URI{ .remote = sliced.sub(dependency).value() } },
-                    };
-                } else {
-                    if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid dependency \"{s}\"", .{dependency}) catch unreachable;
-                    return null;
-                }
+            if (strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://")) {
+                return Version{
+                    .tag = .tarball,
+                    .literal = sliced.value(),
+                    .value = .{ .tarball = URI{ .remote = sliced.sub(dependency).value() } },
+                };
+            } else if (strings.hasPrefixComptime(dependency, "file://")) {
+                return Version{
+                    .tag = .tarball,
+                    .literal = sliced.value(),
+                    .value = .{ .tarball = URI{ .local = sliced.sub(dependency[7..]).value() } },
+                };
+            } else if (strings.contains(dependency, "://")) {
+                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid or unsupported dependency \"{s}\"", .{dependency}) catch unreachable;
+                return null;
             }
 
             return Version{
@@ -567,7 +567,7 @@ pub fn parseWithTag(
             };
         },
         .folder => {
-            if (strings.indexOf(dependency, ":")) |protocol| {
+            if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
                     if (dependency.len <= protocol) {
                         if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"file\" dependency missing a path", .{}) catch unreachable;

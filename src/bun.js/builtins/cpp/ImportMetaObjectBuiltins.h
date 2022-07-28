@@ -51,14 +51,17 @@ extern const char* const s_importMetaObjectRequireCode;
 extern const int s_importMetaObjectRequireCodeLength;
 extern const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility;
 extern const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility;
 extern const char* const s_importMetaObjectLoadModuleCode;
 extern const int s_importMetaObjectLoadModuleCodeLength;
 extern const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility;
 extern const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectLoadModuleCodeImplementationVisibility;
 extern const char* const s_importMetaObjectRequireModuleCode;
 extern const int s_importMetaObjectRequireModuleCodeLength;
 extern const JSC::ConstructAbility s_importMetaObjectRequireModuleCodeConstructAbility;
 extern const JSC::ConstructorKind s_importMetaObjectRequireModuleCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectRequireModuleCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_DATA(macro) \
     macro(require, importMetaObjectRequire, 1) \
@@ -126,7 +129,7 @@ inline JSC::UnlinkedFunctionExecutable* ImportMetaObjectBuiltinsWrapper::name##E
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

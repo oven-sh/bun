@@ -51,34 +51,42 @@ extern const char* const s_writableStreamDefaultWriterInitializeWritableStreamDe
 extern const int s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterInitializeWritableStreamDefaultWriterCodeImplementationVisibility;
 extern const char* const s_writableStreamDefaultWriterClosedCode;
 extern const int s_writableStreamDefaultWriterClosedCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultWriterClosedCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultWriterClosedCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterClosedCodeImplementationVisibility;
 extern const char* const s_writableStreamDefaultWriterDesiredSizeCode;
 extern const int s_writableStreamDefaultWriterDesiredSizeCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultWriterDesiredSizeCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultWriterDesiredSizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterDesiredSizeCodeImplementationVisibility;
 extern const char* const s_writableStreamDefaultWriterReadyCode;
 extern const int s_writableStreamDefaultWriterReadyCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultWriterReadyCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultWriterReadyCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterReadyCodeImplementationVisibility;
 extern const char* const s_writableStreamDefaultWriterAbortCode;
 extern const int s_writableStreamDefaultWriterAbortCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultWriterAbortCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultWriterAbortCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterAbortCodeImplementationVisibility;
 extern const char* const s_writableStreamDefaultWriterCloseCode;
 extern const int s_writableStreamDefaultWriterCloseCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultWriterCloseCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultWriterCloseCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterCloseCodeImplementationVisibility;
 extern const char* const s_writableStreamDefaultWriterReleaseLockCode;
 extern const int s_writableStreamDefaultWriterReleaseLockCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultWriterReleaseLockCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultWriterReleaseLockCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterReleaseLockCodeImplementationVisibility;
 extern const char* const s_writableStreamDefaultWriterWriteCode;
 extern const int s_writableStreamDefaultWriterWriteCodeLength;
 extern const JSC::ConstructAbility s_writableStreamDefaultWriterWriteCodeConstructAbility;
 extern const JSC::ConstructorKind s_writableStreamDefaultWriterWriteCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_writableStreamDefaultWriterWriteCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_WRITABLESTREAMDEFAULTWRITER_BUILTIN_DATA(macro) \
     macro(initializeWritableStreamDefaultWriter, writableStreamDefaultWriterInitializeWritableStreamDefaultWriter, 1) \
@@ -166,7 +174,7 @@ inline JSC::UnlinkedFunctionExecutable* WritableStreamDefaultWriterBuiltinsWrapp
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

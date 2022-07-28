@@ -51,14 +51,17 @@ extern const char* const s_byteLengthQueuingStrategyHighWaterMarkCode;
 extern const int s_byteLengthQueuingStrategyHighWaterMarkCodeLength;
 extern const JSC::ConstructAbility s_byteLengthQueuingStrategyHighWaterMarkCodeConstructAbility;
 extern const JSC::ConstructorKind s_byteLengthQueuingStrategyHighWaterMarkCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_byteLengthQueuingStrategyHighWaterMarkCodeImplementationVisibility;
 extern const char* const s_byteLengthQueuingStrategySizeCode;
 extern const int s_byteLengthQueuingStrategySizeCodeLength;
 extern const JSC::ConstructAbility s_byteLengthQueuingStrategySizeCodeConstructAbility;
 extern const JSC::ConstructorKind s_byteLengthQueuingStrategySizeCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_byteLengthQueuingStrategySizeCodeImplementationVisibility;
 extern const char* const s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCode;
 extern const int s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeLength;
 extern const JSC::ConstructAbility s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeConstructAbility;
 extern const JSC::ConstructorKind s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_byteLengthQueuingStrategyInitializeByteLengthQueuingStrategyCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_BYTELENGTHQUEUINGSTRATEGY_BUILTIN_DATA(macro) \
     macro(highWaterMark, byteLengthQueuingStrategyHighWaterMark, 0) \
@@ -126,7 +129,7 @@ inline JSC::UnlinkedFunctionExecutable* ByteLengthQueuingStrategyBuiltinsWrapper
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

@@ -51,18 +51,22 @@ extern const char* const s_readableStreamBYOBRequestInitializeReadableStreamBYOB
 extern const int s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeLength;
 extern const JSC::ConstructAbility s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestInitializeReadableStreamBYOBRequestCodeImplementationVisibility;
 extern const char* const s_readableStreamBYOBRequestRespondCode;
 extern const int s_readableStreamBYOBRequestRespondCodeLength;
 extern const JSC::ConstructAbility s_readableStreamBYOBRequestRespondCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamBYOBRequestRespondCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestRespondCodeImplementationVisibility;
 extern const char* const s_readableStreamBYOBRequestRespondWithNewViewCode;
 extern const int s_readableStreamBYOBRequestRespondWithNewViewCodeLength;
 extern const JSC::ConstructAbility s_readableStreamBYOBRequestRespondWithNewViewCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamBYOBRequestRespondWithNewViewCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestRespondWithNewViewCodeImplementationVisibility;
 extern const char* const s_readableStreamBYOBRequestViewCode;
 extern const int s_readableStreamBYOBRequestViewCodeLength;
 extern const JSC::ConstructAbility s_readableStreamBYOBRequestViewCodeConstructAbility;
 extern const JSC::ConstructorKind s_readableStreamBYOBRequestViewCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_readableStreamBYOBRequestViewCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_READABLESTREAMBYOBREQUEST_BUILTIN_DATA(macro) \
     macro(initializeReadableStreamBYOBRequest, readableStreamBYOBRequestInitializeReadableStreamBYOBRequest, 2) \
@@ -134,7 +138,7 @@ inline JSC::UnlinkedFunctionExecutable* ReadableStreamBYOBRequestBuiltinsWrapper
         JSC::Identifier executableName = functionName##PublicName();\
         if (overriddenName)\
             executableName = JSC::Identifier::fromString(m_vm, overriddenName);\
-        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
+        m_##name##Executable = JSC::Weak<JSC::UnlinkedFunctionExecutable>(JSC::createBuiltinExecutable(m_vm, m_##name##Source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility), this, &m_##name##Executable);\
     }\
     return m_##name##Executable.get();\
 }

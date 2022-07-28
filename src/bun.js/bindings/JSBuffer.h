@@ -36,7 +36,6 @@ class WEBCORE_EXPORT JSBuffer final : public JSDOMWrapper<Buffer> {
 public:
     using Base = JSDOMWrapper<Buffer>;
 
-    static constexpr JSC::TypedArrayType TypedArrayStorageType = JSC::JSUint8Array::Adaptor::typeValue;
     static JSBuffer* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Buffer>&& impl)
     {
         JSBuffer* ptr = new (NotNull, JSC::allocateCell<JSBuffer>(globalObject->vm())) JSBuffer(structure, *globalObject, WTFMove(impl));

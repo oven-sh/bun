@@ -197,17 +197,11 @@ pub const Bunfig = struct {
                         var registry_map = install.scoped orelse std.mem.zeroes(Api.NpmRegistryMap);
                         try this.expect(scopes, .e_object);
                         const count = scopes.data.e_object.properties.len + registry_map.registries.len;
-                        var registries = std.ArrayListUnmanaged(Api.NpmRegistry){
-                            .items = try this.allocator.alloc(Api.NpmRegistry, count),
-                            .capacity = count,
-                        };
+
+                        var registries = try std.ArrayListUnmanaged(Api.NpmRegistry).initCapacity(this.allocator, count);
                         registries.appendSliceAssumeCapacity(registry_map.registries);
 
-                        var names = std.ArrayListUnmanaged(string){
-                            .items = try this.allocator.alloc(string, count),
-                            .capacity = count,
-                        };
-
+                        var names = try std.ArrayListUnmanaged(string).initCapacity(this.allocator, count);
                         names.appendSliceAssumeCapacity(registry_map.scopes);
 
                         for (scopes.data.e_object.properties.slice()) |prop| {

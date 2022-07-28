@@ -6,7 +6,7 @@ TLDR:
 # Delete the built files
 make clean-bindings generate-bindings && \
     # Compile all the C++ files which live in ../bindings
-    make jsc-bindings-mac -j10 && \
+    make bindings -j10 && \
     # Re-link the binary without compiling zig (so it's faster)
     make bun-link-lld-debug
 ```
@@ -31,7 +31,7 @@ The `js` directory is necessary for the bindings generator to work.
 To regenerate the builtins, run this from Bun's project root (where the `Makefile` is)
 
 ```bash
-make generate-builtins
+make builtins
 ```
 
 You'll want to also rebuild all the C++ bindings or you will get strange crashes on start

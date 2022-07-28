@@ -31,7 +31,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: sandybridge
+          - cpu: westmere
             arch: x86_64
             tag: bun-obj-darwin-x64-baseline
           # - cpu: haswell
@@ -63,8 +63,8 @@ jobs:
           context: .
           push: false
           tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{github.sha}}
-          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-${{matrix.arch}}-macos
-          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-${{matrix.arch}}-macos,mode=max
+          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-1--${{matrix.cpu}}-${{matrix.arch}}-macos
+          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-1--${{matrix.cpu}}-${{matrix.arch}}-macos,mode=max
           build-args: |
             ARCH=${{ matrix.arch }}
             BUILDARCH=amd64
@@ -84,7 +84,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: sandybridge
+          - cpu: westmere
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
@@ -102,7 +102,7 @@ jobs:
           #   webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
           #   dependencies: true
           #   compile_obj: false
-          - cpu: sandybridge
+          - cpu: westmere
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
@@ -185,7 +185,7 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           mkdir -p $OBJ_DIR
-          make -j $(sysctl -n hw.ncpu) jsc-bindings-mac
+          make -j $(sysctl -n hw.ncpu) bindings
       - name: Upload C++
         if: matrix.compile_obj
         uses: actions/upload-artifact@v3
@@ -207,7 +207,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - cpu: sandybridge
+          - cpu: westmere
             arch: x86_64
             tag: bun-darwin-x64-baseline
             obj: bun-obj-darwin-x64-baseline
@@ -308,7 +308,7 @@ jobs:
           mkdir ${{matrix.tag}}-profile
           mkdir ${{matrix.tag}}
 
-          /usr/bin/strip bun
+          /usr/bin/strip -S bun
 
           mv bun-profile ${{matrix.tag}}-profile/bun-profile
           mv bun ${{matrix.tag}}/bun

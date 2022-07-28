@@ -78,10 +78,22 @@ RUN curl -o zig-linux-$BUILDARCH.zip -L $ZIG_URL && \
     rm zig-linux-$BUILDARCH.zip;
 
 
-ADD $WEBKIT_URL $WEBKIT_DIR
 
-# Sanity check
-RUN cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
+WORKDIR $GITHUB_WORKSPACE
+
+ARG GITHUB_WORKSPACE
+ARG WEBKIT_DIR
+ARG BUN_RELEASE_DIR
+ARG BUN_DEPS_OUT_DIR
+ARG BUN_DIR
+ARG BUILDARCH
+ARG ZIG_PATH
+ARG WEBKIT_URL
+ARG ZIG_URL
+
+RUN mkdir -p ${WEBKIT_DIR} && cd ${WEBKIT_DIR}/../ && curl -L $WEBKIT_URL -o bun-webkit-linux-$BUILDARCH.tar.gz && \
+    gunzip bun-webkit-linux-$BUILDARCH.tar.gz && tar -xf bun-webkit-linux-$BUILDARCH.tar && \
+    cat ${WEBKIT_DIR}/include/cmakeconfig.h > /dev/null
 
 LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun

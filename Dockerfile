@@ -9,6 +9,8 @@ ARG CPU_TARGET=native
 ARG ARCH=x86_64
 ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
+ARG WEBKIT_URL=https://github.com/oven-sh/WebKit/releases/download/jul27/bun-webkit-linux-${BUILDARCH}.tar.gz 
+ARG ZIG_URL=https://github.com/oven-sh/zig/releases/download/jul1/zig-linux-${BUILDARCH}.zip
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -68,18 +70,15 @@ FROM bun-base as bun-base-with-zig-and-webkit
 
 WORKDIR $GITHUB_WORKSPACE
 
-RUN  curl -o zig-linux-$BUILDARCH.zip -L https://github.com/oven-sh/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
+RUN curl -o zig-linux-$BUILDARCH.zip -L ${ZIG_URL} && \
     unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 
-RUN mkdir -p $WEBKIT_OUT_DIR && cd $WEBKIT_OUT_DIR && cd ../ && \
-    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/jul4-2/bun-webkit-linux-$BUILDARCH.tar.gz && \
-    gunzip bun-webkit-linux-$BUILDARCH.tar.gz && \
-    tar -xf bun-webkit-linux-$BUILDARCH.tar && \
-    ls && \
-    echo $(pwd) && \
-    rm bun-webkit-linux-$BUILDARCH.tar && \
-    cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
+
+ADD ${WEBKIT_URL} ${GITHUB_WORKSPACE}
+
+# Sanity check
+RUN cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null
 
 LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
 LABEL org.opencontainers.image.source=https://github.com/jarred-sumner/bun

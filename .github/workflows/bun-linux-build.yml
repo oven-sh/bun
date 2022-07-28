@@ -71,8 +71,8 @@ jobs:
           context: .
           push: false
           tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{github.sha}}
-          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-${{matrix.build_arch}}
-          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-${{matrix.cpu}}-${{matrix.build_arch}},mode=max
+          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-1--${{matrix.cpu}}-${{matrix.build_arch}}
+          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-1--${{matrix.cpu}}-${{matrix.build_arch}},mode=max
           build-args: |
             ARCH=${{matrix.arch}}
             BUILDARCH=${{matrix.build_arch}}

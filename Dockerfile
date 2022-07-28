@@ -78,7 +78,7 @@ RUN curl -o zig-linux-$BUILDARCH.zip -L $ZIG_URL && \
     rm zig-linux-$BUILDARCH.zip;
 
 
-ADD ${WEBKIT_URL} ${GITHUB_WORKSPACE}
+ADD $WEBKIT_URL $WEBKIT_DIR
 
 # Sanity check
 RUN cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null

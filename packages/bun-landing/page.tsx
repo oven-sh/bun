@@ -580,41 +580,41 @@ export default ({ inlineCSS }) => (
             </li>
             <li>
               <NodeJS>node_modules</NodeJS> bun implements Node.js' module
-              resolution algorithm, so you can use npm packages in bun.js. ESM
+              resolution algorithm, so you can use npm packages in Bun. ESM
               and CommonJS are supported, but Bun internally uses ESM
             </li>
             <li>
-              In bun.js, every file is transpiled.{" "}
+              In Bun, every file is transpiled.{" "}
               <TypeScript>TypeScript</TypeScript> &amp; <React>JSX</React> just
               work
             </li>
             <li>
-              bun supports <code className="">"paths"</code>,{" "}
+              Bun supports <code className="">"paths"</code>,{" "}
               <code>"jsxImportSource"</code>
               and more from <TypeScript>tsconfig.json</TypeScript> files
             </li>
             <li>
-              <Bun>Bun.Transpiler</Bun> bun's JSX &amp; TypeScript transpiler is
-              available as an API in Bun.js
+              <Bun>Bun.Transpiler</Bun> Bun's JSX &amp; TypeScript transpiler is
+              available as an API in Bun
             </li>
             <li>
               use the fastest system calls available with <Bun>Bun.write</Bun>{" "}
               to write, copy, pipe, send and clone files
             </li>
             <li>
-              bun.js automatically loads environment variables from{" "}
+              Bun automatically loads environment variables from{" "}
               <Bun>.env</Bun> files. No more{" "}
               <code class="mono">require("dotenv").config()</code>
             </li>
             <li>
-              bun ships with a fast SQLite3 client built-in{" "}
+              Bun ships with a fast SQLite3 client built-in{" "}
               <Bun>bun:sqlite</Bun>
             </li>
             <li>
               <NodeJS href="https://github.com/oven-sh/bun/issues/158">
                 Node-API
               </NodeJS>{" "}
-              bun.js implements most of{" "}
+              Bun implements most of{" "}
               <a
                 href="https://nodejs.org/api/n-api.html#node-api"
                 target="_blank"
@@ -624,11 +624,11 @@ export default ({ inlineCSS }) => (
               . Many Node.js native modules just work
             </li>
             <li>
-              <Bun>bun:ffi</Bun> call native code from JavaScript with bun's
+              <Bun>bun:ffi</Bun> call native code from JavaScript with Bun's
               low-overhead foreign function interface
             </li>
             <li>
-              <NodeJS>node:fs</NodeJS> <NodeJS>node:path</NodeJS> bun.js
+              <NodeJS>node:fs</NodeJS> <NodeJS>node:path</NodeJS> Bun
               natively supports a growing list of Node.js core modules along
               with globals like Buffer and process
             </li>
@@ -636,7 +636,7 @@ export default ({ inlineCSS }) => (
 
           <h2>How does Bun work?</h2>
           <p>
-            Bun.js uses the{" "}
+            Bun uses the{" "}
             <a href="https://github.com/WebKit/WebKit/tree/main/Source/JavaScriptCore">
               JavaScriptCore
             </a>{" "}
@@ -676,7 +676,7 @@ export default ({ inlineCSS }) => (
           </p>
           <h2>Getting started</h2>
           <p>
-            To install bun, run this{" "}
+            To install Bun, run this{" "}
             <a target="_blank" href="https://bun.sh/install">
               install script
             </a>{" "}
@@ -711,7 +711,7 @@ export default {
   },
 };
           `}</CodeBlock>
-          <p>Run it with bun:</p>
+          <p>Run it with Bun:</p>
           <CodeBlock lang="shell">{`bun run http.js`}</CodeBlock>
           <p>
             Then open{" "}
@@ -744,7 +744,7 @@ export default {
             </strong>
             <br />
             <div>
-              bun runs package.json scripts{" "}
+              Bun runs package.json scripts{" "}
               <PerformanceClaim href="https://twitter.com/jarredsumner/status/1454218996983623685">
                 30x faster than <code className="mono">npm run</code>
               </PerformanceClaim>
@@ -754,7 +754,7 @@ export default {
           <Group>
             <Command>bun install</Command>
             <p>
-              bun install is an npm-compatible package manager. You probably
+              <code classsName="mono">bun install</code> is an npm-compatible package manager. You probably
               will be surprised by how much faster copying files can get.
             </p>
             <strong>
@@ -764,14 +764,14 @@ export default {
             </strong>
             <br />
             <div>
-              bun install uses the fastest system calls available to copy files.
+              <code className="mono">bun install</code> uses the fastest system calls available to copy files.
             </div>
           </Group>
           <Group>
             <Command>bun wiptest</Command>
             <p>
               A Jest-like test runner for JavaScript &amp; TypeScript projects
-              built-in to bun.
+              built-in to Bun.
             </p>
             <Label>
               <PerformanceClaim href="https://twitter.com/jarredsumner/status/1542824445810642946">

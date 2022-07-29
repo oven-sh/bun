@@ -37,12 +37,13 @@ runs:
         context: .
         push: false
         tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{ github.sha }}
-        cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-1--${{ inputs.cpu }}-${{ inputs.build_arch }}
-        cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-1--${{ inputs.cpu }}-${{ inputs.build_arch }},mode=max
+        cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-3--${{ inputs.cpu }}-${{ inputs.build_arch }}
+        cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-3--${{ inputs.cpu }}-${{ inputs.build_arch }},mode=max
         build-args: |
           ARCH=${{ inputs.arch }}
           BUILDARCH=${{ inputs.build_arch }}
           CPU_TARGET=${{ inputs.cpu }}
+          WEBKIT_URL=${{ inputs.webkit_url }}
         platforms: linux/${{ inputs.build_arch }}
         target: artifact
         outputs: type=local,dest=${{ runner.temp }}/release

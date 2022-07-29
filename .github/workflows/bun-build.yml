@@ -40,7 +40,7 @@ jobs:
             obj: bun-obj-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-macos-amd64-lto-baseline.tar.gz"
             dependencies: true
             compile_obj: false
             cpp: true
@@ -50,7 +50,7 @@ jobs:
             obj: bun-obj-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-macos-amd64-lto-baseline.tar.gz"
             dependencies: false
             compile_obj: true
             cpp: true
@@ -188,16 +188,19 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: linux-amd64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-linux-amd64-baseline.tar.gz"
           - cpu: westmere
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
             runner: linux-amd64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-linux-amd64-baseline.tar.gz"
           - cpu: native
             tag: linux-aarch64
             arch: aarch64
             build_arch: arm64
             runner: linux-arm64
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-linux-amd64-baseline.tar.gz"
 
     steps:
       - name: Build

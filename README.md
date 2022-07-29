@@ -2508,7 +2508,7 @@ console.log(`SQLite 3 version: ${sqlite3_libversion()}`);
 - 5x faster than napi (Node v17.7.1)
 - 100x faster than Deno v1.21.1
 
-As measured in [this simple benchmark](./bench/ffi/plus100)
+As measured in [this simple benchmark](./bench/ffi)
 
 <img src="https://user-images.githubusercontent.com/709451/166429741-e6d83ca5-3808-4397-acb7-bb2c9f4329be.png" height="400">
 

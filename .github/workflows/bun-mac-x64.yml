@@ -99,7 +99,7 @@ jobs:
             obj: bun-obj-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-macos-amd64-lto-baseline.tar.gz"
             dependencies: true
             compile_obj: false
           # - cpu: westmere
@@ -117,7 +117,7 @@ jobs:
             obj: bun-obj-darwin-x64
             runner: macos-11
             artifact: bun-obj-darwin-x64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-macos-amd64-lto-baseline.tar.gz"
             dependencies: false
             compile_obj: true
           # - cpu: native

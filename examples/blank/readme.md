@@ -7,7 +7,7 @@ bun create blank ./NAME_HERE
 ```
 
 ### Execute a file (eg. src/index.js)
-    
+
 ```sh
-bun run ./src/index.js
+bun run ./src/index.ts
 ```

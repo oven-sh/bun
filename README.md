@@ -3205,7 +3205,7 @@ The VSCode Dev Container in this repository is the easiest way to get started. I
 To get started, install the devcontainer cli:
 
 ```bash
-npm install -g @vscode/dev-container-cli
+npm install -g @devcontainers/cli
 ```
 
 Then, in the `bun` repository locally run:

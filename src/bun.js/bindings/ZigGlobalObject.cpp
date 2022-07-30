@@ -381,9 +381,9 @@ void GlobalObject::setConsole(void* console)
 
 static JSC_DECLARE_HOST_FUNCTION(functionFulfillModuleSync);
 
-JSC_DECLARE_CUSTOM_GETTER(functionLazyLoadStreamProtoypeMap_getter);
+JSC_DECLARE_CUSTOM_GETTER(functionLazyLoadStreamPrototypeMap_getter);
 
-JSC_DEFINE_CUSTOM_GETTER(functionLazyLoadStreamProtoypeMap_getter,
+JSC_DEFINE_CUSTOM_GETTER(functionLazyLoadStreamPrototypeMap_getter,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
 {
@@ -1917,7 +1917,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URL"_s), JSC::CustomGetterSetter::create(vm, JSDOMURL_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | 0);
 
-    putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamProtoypeMap_getter, nullptr),
+    putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamPrototypeMap_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     putDirectCustomAccessor(vm, builtinNames.requireMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionRequireMap_getter, nullptr),

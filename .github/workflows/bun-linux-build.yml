@@ -38,18 +38,21 @@ jobs:
             build_arch: amd64
             runner: linux-amd64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-linux-amd64-baseline.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-baseline"
           - cpu: westmere
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
             runner: linux-amd64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-linux-amd64-baseline.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64-baseline"
           - cpu: native
             tag: linux-aarch64
             arch: aarch64
             build_arch: arm64
             runner: linux-arm64
             webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul27-2/bun-webkit-linux-arm64.tar.gz"
+            webkit_basename: "bun-webkit-linux-arm64"
 
     steps:
       - uses: actions/checkout@v3
@@ -82,6 +85,7 @@ jobs:
             CPU_TARGET=${{matrix.cpu}}
             WEBKIT_URL=${{matrix.webkit_url}}
             GIT_SHA=${{github.sha}}
+            WEBKIT_BASENMAE=${{matrix.webkit_basename}}
           platforms: linux/${{matrix.build_arch}}
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release

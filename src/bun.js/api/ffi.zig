@@ -568,7 +568,6 @@ pub const FFI = struct {
         var i: usize = 0;
         while (i < count) : (i += 1) {
             var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(keys, i);
-            defer JSC.C.JSStringRelease(property_name_ref);
             const len = JSC.C.JSStringGetLength(property_name_ref);
             if (len == 0) continue;
             var prop = JSC.C.JSStringGetCharacters8Ptr(property_name_ref)[0..len];

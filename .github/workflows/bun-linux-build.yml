@@ -81,6 +81,7 @@ jobs:
             BUILDARCH=${{matrix.build_arch}}
             CPU_TARGET=${{matrix.cpu}}
             WEBKIT_URL=${{matrix.webkit_url}}
+            GIT_SHA=${{github.sha}}
           platforms: linux/${{matrix.build_arch}}
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release

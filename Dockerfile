@@ -13,6 +13,7 @@ ARG WEBKIT_TAG=jul27-2
 ARG ZIG_TAG=jul1
 ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/bun-webkit-linux-$BUILDARCH.tar.gz"
 ARG ZIG_URL="https://github.com/oven-sh/zig/releases/download/$ZIG_TAG/zig-linux-$BUILDARCH.zip"
+ARG GIT_SHA=""
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -90,7 +91,7 @@ ARG ZIG_PATH
 ARG WEBKIT_URL
 ARG ZIG_URL
 
-ADD ${WEBKIT_URL} ${GITHUB_WORKSPACE}
+ADD ${WEBKIT_URL} .
 
 RUN mkdir -p ${WEBKIT_DIR} && cd ${GITHUB_WORKSPACE} && \
     gunzip bun-webkit-linux-$BUILDARCH.tar.gz && tar -xf bun-webkit-linux-$BUILDARCH.tar && \

@@ -13,7 +13,7 @@
     "react-is": "^17.0.2"
   },
   "peerDependencies": {
-    "next": "^12.2.3"
+    "next": "~12.2.3"
   },
   "devDependencies": {
     "@types/react": "^18",

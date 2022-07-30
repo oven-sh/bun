@@ -17,7 +17,7 @@ import {
   type RenderPage,
   type RenderPageResult,
 } from "next/dist/shared/lib/utils";
-import * as NextUtils from "next/dist/shared/lib/utils";
+import { HtmlContext } from "next/dist/shared/lib/html-context";
 import type { RenderOpts } from "next/dist/server/render";
 import * as NextDocument from "next/document";
 import * as ReactDOMServer from "react-dom/server.browser";
@@ -26,18 +26,6 @@ import * as ReactIs from "react-is";
 import packageJson from "next/package.json";
 
 const nextVersion = packageJson.version;
-
-var HtmlContext;
-// HtmlContext is in different places depending on the next version
-if ("HtmlContext" in NextUtils) {
-  HtmlContext = NextUtils.HtmlContext;
-} else {
-  try {
-    HtmlContext = require("next/dist/shared/lib/html-context").HtmlContext;
-  } catch (err) {
-    throw err;
-  }
-}
 
 function appendNextBody(documentHTML: string, pageContent: string) {
   if (nextVersion.startsWith("12.0")) {

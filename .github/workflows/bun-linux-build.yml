@@ -85,7 +85,7 @@ jobs:
             CPU_TARGET=${{matrix.cpu}}
             WEBKIT_URL=${{matrix.webkit_url}}
             GIT_SHA=${{github.sha}}
-            WEBKIT_BASENMAE=${{matrix.webkit_basename}}
+            WEBKIT_BASENAME=${{matrix.webkit_basename}}
           platforms: linux/${{matrix.build_arch}}
           target: artifact
           outputs: type=local,dest=${{runner.temp}}/release

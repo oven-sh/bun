@@ -791,7 +791,7 @@ clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 .PHONY: devcontainer
-devcontainer: clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks headers api analytics bun_error fallback_decoder bindings dev runtime_js_dev libarchive libbacktrace lolhtml usockets uws base64 tinycc
+devcontainer: clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks api analytics bun_error fallback_decoder bindings dev runtime_js_dev libarchive libbacktrace lolhtml usockets uws base64 tinycc
 
 .PHONY: devcontainer-build
 devcontainer-build:
@@ -807,7 +807,6 @@ CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 headers:
 	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
 	touch src/bun.js/bindings/headers.zig
-	mkdir -p src/bun.js/bindings-obj/
 	$(ZIG) build headers-obj
 	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES_DEBUG) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)  -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
 	/tmp/build-jsc-headers
@@ -1391,7 +1390,10 @@ EMIT_LLVM=$(EMIT_LLVM_FOR_RELEASE)
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+$(OBJ_DIR):
+	mkdir -p $(OBJ_DIR)
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp $(OBJ_DIR)
 	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
@@ -1401,7 +1403,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
+$(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp $(OBJ_DIR)
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
@@ -1411,7 +1413,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
+$(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp $(OBJ_DIR)
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
@@ -1421,7 +1423,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
 
-$(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
+$(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp $(OBJ_DIR)
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \

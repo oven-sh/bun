@@ -253,7 +253,7 @@ PRs adding more examples are very welcome!
 
 ### Types for bun.js (editor autocomplete)
 
-The best docs right now are the TypeScript types in the [`bun-types`](https://github.com/oven-sh/bun-types/blob/master/dist/types.d.ts) npm package. A docs site is coming soon.
+The best docs right now are the TypeScript types in the [`bun-types`](https://github.com/oven-sh/bun-types) npm package. A docs site is coming soon.
 
 To get autocomplete for bun.js types in your editor,
 
@@ -278,7 +278,7 @@ bun add bun-types
 }
 ```
 
-You can also [view the types here](https://github.com/oven-sh/bun-types/blob/master/dist/types.d.ts).
+You can also [view the types here](https://github.com/oven-sh/bun-types).
 
 To contribute to the types, head over to [oven-sh/bun-types](https://github.com/oven-sh/bun-types).
 
@@ -3146,7 +3146,7 @@ Per LGPL2:
 
 > (1) If you statically link against an LGPL’d library, you must also provide your application in an object (not necessarily source) format, so that a user has the opportunity to modify the library and relink the application.
 
-You can find the patched version of WebKit used by bun here: <https://github.com/jarred-sumner/webkit>. If you would like to relink bun with changes:
+You can find the patched version of WebKit used by bun here: <https://github.com/oven-sh/webkit>. If you would like to relink bun with changes:
 
 - `git submodule update --init --recursive`
 - `make jsc`

@@ -13,7 +13,11 @@
   }
 }
 
-.App-header {
+.App h1 {
+	font-size: 1.75rem;
+}
+
+.App-article {
   background-color: #282c34;
   min-height: 100vh;
   display: flex;

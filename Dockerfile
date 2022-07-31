@@ -11,8 +11,8 @@ ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
 ARG WEBKIT_TAG=jul27-2
 ARG ZIG_TAG=jul1
-ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH.tar.gz"
-ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}"
+ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH"
+ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
 
 ARG ZIG_URL="https://github.com/oven-sh/zig/releases/download/$ZIG_TAG/zig-linux-$BUILDARCH.zip"
 ARG GIT_SHA=""

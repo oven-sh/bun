@@ -37,22 +37,22 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: linux-amd64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/autobuild-d9959f572df1d91c358a7af64ecac18c1ed2601c/bun-webkit-linux-amd64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-amd64-lto"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/autobuild-d9959f572df1d91c358a7af64ecac18c1ed2601c/bun-webkit-linux-amd64.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64"
           - cpu: westmere
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
             runner: linux-amd64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/autobuild-d9959f572df1d91c358a7af64ecac18c1ed2601c/bun-webkit-linux-amd64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-amd64-lto"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/autobuild-d9959f572df1d91c358a7af64ecac18c1ed2601c/bun-webkit-linux-amd64.tar.gz"
+            webkit_basename: "bun-webkit-linux-amd64"
           - cpu: native
             tag: linux-aarch64
             arch: aarch64
             build_arch: arm64
             runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/autobuild-d9959f572df1d91c358a7af64ecac18c1ed2601c/bun-webkit-linux-arm64-lto.tar.gz"
-            webkit_basename: "bun-webkit-linux-arm64-lto"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/autobuild-d9959f572df1d91c358a7af64ecac18c1ed2601c/bun-webkit-linux-arm64.tar.gz"
+            webkit_basename: "bun-webkit-linux-arm64"
 
     steps:
       - uses: actions/checkout@v3

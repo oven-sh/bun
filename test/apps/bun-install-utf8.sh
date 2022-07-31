@@ -8,7 +8,7 @@ dir=$(mktemp -d)
 
 cd $dir
 
-# https://github.com/Jarred-Sumner/bun/issues/115
+# https://github.com/oven-sh/bun/issues/115
 echo '{ "author": "Arnaud Barré (https://github.com/ArnaudBarre)" }' >package.json
 
 $BUN_BIN add react

@@ -509,17 +509,17 @@ export default ({ inlineCSS }) => (
                   <BarGraphLabel
                     name="bun:ffi"
                     version="v0.1.3"
-                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/bun.js"
+                    source="https://github.com/oven-sh/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/bun.js"
                   />
                   <BarGraphLabel
                     name="node (napi)"
-                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/node.mjs"
+                    source="https://github.com/oven-sh/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/node.mjs"
                     version="node v18.2.0"
                   />
                   <BarGraphLabel
                     name="deno (ffi)"
                     version="v1.24.0"
-                    source="https://github.com/Jarred-Sumner/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/deno.js"
+                    source="https://github.com/oven-sh/bun/blob/cbc1e407c3aad3d396ab60317fc24b94341dfb45/bench/ffi/deno.js"
                   />
                 </div>
               </div>

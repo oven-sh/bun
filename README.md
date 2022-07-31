@@ -3146,7 +3146,7 @@ Per LGPL2:
 
 > (1) If you statically link against an LGPL’d library, you must also provide your application in an object (not necessarily source) format, so that a user has the opportunity to modify the library and relink the application.
 
-You can find the patched version of WebKit used by bun here: <https://github.com/jarred-sumner/webkit>. If you would like to relink bun with changes:
+You can find the patched version of WebKit used by bun here: <https://github.com/oven-sh/webkit>. If you would like to relink bun with changes:
 
 - `git submodule update --init --recursive`
 - `make jsc`

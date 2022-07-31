@@ -10,6 +10,7 @@ node_modules
 .swcrc
 yarn.lock
 dist
+*.tmp
 *.log
 *.out.js
 *.out.refresh.js

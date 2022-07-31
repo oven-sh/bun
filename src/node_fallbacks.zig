@@ -10,6 +10,7 @@ const buffer_code: string = @embedFile("./node-fallbacks/out/buffer.js");
 const console_code: string = @embedFile("./node-fallbacks/out/console.js");
 const constants_code: string = @embedFile("./node-fallbacks/out/constants.js");
 const crypto_code: string = @embedFile("./node-fallbacks/out/crypto.js");
+const dns_code: string = @embedFile("./node-fallbacks/out/dns.js");
 const domain_code: string = @embedFile("./node-fallbacks/out/domain.js");
 const events_code: string = @embedFile("./node-fallbacks/out/events.js");
 const http_code: string = @embedFile("./node-fallbacks/out/http.js");
@@ -39,6 +40,7 @@ const buffer_import_path = "/bun-vfs/node_modules/buffer/index.js";
 const console_import_path = "/bun-vfs/node_modules/console/index.js";
 const constants_import_path = "/bun-vfs/node_modules/constants/index.js";
 const crypto_import_path = "/bun-vfs/node_modules/crypto/index.js";
+const dns_import_path = "/bun-vfs/node_modules/dns/index.js";
 const domain_import_path = "/bun-vfs/node_modules/domain/index.js";
 const events_import_path = "/bun-vfs/node_modules/events/index.js";
 const http_import_path = "/bun-vfs/node_modules/http/index.js";
@@ -107,6 +109,15 @@ const crypto_package_json = PackageJSON{
     .main_fields = undefined,
     .browser_map = undefined,
     .source = logger.Source.initPathString("/bun-vfs/node_modules/crypto/package.json", ""),
+};
+const dns_package_json = PackageJSON{
+    .name = "dns",
+    .version = "0.0.0-polyfill",
+    .module_type = .cjs,
+    .hash = @truncate(u32, std.hash.Wyhash.hash(0, "dns@0.0.0-polyfill")),
+    .main_fields = undefined,
+    .browser_map = undefined,
+    .source = logger.Source.initPathString("/bun-vfs/node_modules/dns/package.json", ""),
 };
 const domain_package_json = PackageJSON{
     .name = "domain",
@@ -344,6 +355,11 @@ pub const FallbackModule = struct {
         .code = crypto_code,
         .package_json = &crypto_package_json,
     };
+    pub const @"dns" = FallbackModule{
+        .path = Fs.Path.initWithNamespaceVirtual(dns_import_path, "node", "dns"),
+        .code = dns_code,
+        .package_json = &dns_package_json,
+    };
     pub const @"domain" = FallbackModule{
         .path = Fs.Path.initWithNamespaceVirtual(domain_import_path, "node", "domain"),
         .code = domain_code,
@@ -466,6 +482,7 @@ pub const Map = ComptimeStringMap(FallbackModule, .{
     &.{ "console", FallbackModule.console },
     &.{ "constants", FallbackModule.constants },
     &.{ "crypto", FallbackModule.crypto },
+    &.{ "dns", FallbackModule.dns },
     &.{ "domain", FallbackModule.domain },
     &.{ "events", FallbackModule.events },
     &.{ "http", FallbackModule.http },

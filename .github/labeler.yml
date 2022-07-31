@@ -1,5 +1,5 @@
 chore:
-  - any: ['*']
+  - any: ['*', '**/*']
     all: ['!packages/*', '!packages/**/*', '!src/*', '!src/**/*', '!types/*', '!types/**/*', '!test/*', '!test/**/*', '!bench/*', '!bench/**/*', '!examples/*', '!examples/**/*']
 
 'packages:bun':

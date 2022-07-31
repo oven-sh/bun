@@ -14,7 +14,7 @@ endif
 
 CPU_TARGET ?= native
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
-NATIVE_OR_OLD_MARCH = 
+NATIVE_OR_OLD_MARCH =
 
 ARCH_NAME :=
 DOCKER_BUILDARCH =
@@ -171,7 +171,7 @@ ZLIB_INCLUDE_DIR ?= $(BUN_DEPS_DIR)/zlib
 ZLIB_LIB_DIR ?= $(BUN_DEPS_DIR)/zlib
 
 JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
-JSC_FILES_DEBUG := $(JSC_LIB_DEBUG)/libJavaScriptCore.a $(JSC_LIB_DEBUG)/libWTF.a  $(JSC_LIB_DEBUG)/libbmalloc.a 
+JSC_FILES_DEBUG := $(JSC_LIB_DEBUG)/libJavaScriptCore.a $(JSC_LIB_DEBUG)/libWTF.a  $(JSC_LIB_DEBUG)/libbmalloc.a
 
 
 ENABLE_MIMALLOC ?= 1
@@ -369,7 +369,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o \
 		$(_MIMALLOC_LINK)
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto 
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 STATIC_MUSL_FLAG ?=
 
 ifeq ($(OS_NAME), linux)
@@ -795,7 +795,7 @@ devcontainer: clone-submodules libbacktrace mimalloc zlib libarchive boringssl p
 
 .PHONY: devcontainer-build
 devcontainer-build:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer build
+	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer build --workspace-folder .
 
 .PHONY: devcontainer-open
 devcontainer-open:
@@ -1357,7 +1357,7 @@ bun-link-lld-release-no-lto:
 ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym: bun-release-copy-obj
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
-	-$(STRIP) $(BUN_RELEASE_BIN) 
+	-$(STRIP) $(BUN_RELEASE_BIN)
 
 copy-to-bun-release-dir-dsym:
 	gzip --keep -c $(PACKAGE_DIR)/bun.dSYM > $(BUN_RELEASE_DIR)/bun.dSYM.gz

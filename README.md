@@ -272,6 +272,7 @@ bun add bun-types
     "lib": ["ESNext"],
     "module": "esnext",
     "target": "esnext",
+    "moduleResolution": "node",
     // "bun-types" is the important part
     "types": ["bun-types"]
   }

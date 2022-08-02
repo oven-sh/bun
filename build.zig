@@ -283,13 +283,21 @@ pub fn build(b: *std.build.Builder) !void {
     b.install_path = output_dir;
 
     var typings_exe = b.addExecutable("typescript-decls", "src/typegen.zig");
+    const blank_version: std.builtin.Version = .{ .major = 0, .minor = 0, .patch = 0 };
 
     const min_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
-        target.getOsVersionMin().semver
-    else .{ .major = 0, .minor = 0, .patch = 0 };
+        if (target.os_version_min) |version|
+            version.semver
+        else
+            blank_version
+    else
+        blank_version;
 
     const max_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
-        target.getOsVersionMax().semver
+        if (target.os_version_max) |version|
+            version.semver
+        else
+            blank_version
     else .{ .major = 0, .minor = 0, .patch = 0 };
 
     // exe.want_lto = true;

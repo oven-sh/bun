@@ -3,6 +3,8 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "node_api.h"
 #include <dlfcn.h>
+#include "ZigGlobalObject.h"
+#include "headers.h"
 
 #pragma mark - Node.js Process
 
@@ -167,6 +169,62 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+extern "C" uint64_t Bun__readOriginTimer(void*);
+
+static JSC_DECLARE_HOST_FUNCTION(Process_functionHRTime);
+
+static JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
+    (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject
+        = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
+    auto& vm = globalObject->vm();
+    uint64_t time = Bun__readOriginTimer(globalObject->bunVM());
+    uint64_t seconds = static_cast<uint64_t>(time / 1000000000);
+    uint64_t nanoseconds = time % 1000000000;
+
+    if (callFrame->argumentCount() > 0) {
+        JSC::JSValue arg0 = callFrame->uncheckedArgument(0);
+        JSArray* relativeArray = JSC::jsDynamicCast<JSC::JSArray*>(arg0);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        if ((!relativeArray && !arg0.isUndefinedOrNull()) || relativeArray->length() < 2) {
+            JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array or undefined"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        JSValue relativeSecondsValue = relativeArray->getIndexQuickly(0);
+        JSValue relativeNanosecondsValue = relativeArray->getIndexQuickly(1);
+        if (!relativeSecondsValue.isNumber() || !relativeNanosecondsValue.isNumber()) {
+            JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array of 2 integers"_s);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+
+        uint64_t relativeSeconds = JSC__JSValue__toUInt64NoTruncate(JSC::JSValue::encode(relativeSecondsValue));
+        uint64_t relativeNanoseconds = JSC__JSValue__toUInt64NoTruncate(JSC::JSValue::encode(relativeNanosecondsValue));
+        seconds -= relativeSeconds;
+        nanoseconds -= relativeNanoseconds;
+        if (seconds < 0) {
+            seconds = 0;
+        }
+
+        if (nanoseconds < 0) {
+            nanoseconds = 0;
+        }
+    }
+
+    auto* array = JSArray::create(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 2);
+    array->setIndexQuickly(vm, 0, JSC::jsNumber(static_cast<uint32_t>(seconds)));
+    array->setIndexQuickly(vm, 1, JSC::jsNumber(static_cast<uint32_t>(nanoseconds)));
+    return JSC::JSValue::encode(JSC::JSValue(array));
+}
+static JSC_DECLARE_HOST_FUNCTION(Process_functionHRTimeBigInt);
+
+static JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt,
+    (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
+    return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
+}
+
 static JSC_DECLARE_HOST_FUNCTION(Process_functionChdir);
 
 static JSC_DEFINE_HOST_FUNCTION(Process_functionChdir,
@@ -276,6 +334,15 @@ void Process::finishCreation(JSC::VM& vm)
     this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "arch"_s),
         JSC::jsString(this->vm(), makeAtomString("arm64")));
 #endif
+
+    JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        MAKE_STATIC_STRING_IMPL("hrtime"), Process_functionHRTime);
+
+    JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
+        MAKE_STATIC_STRING_IMPL("bigint"), Process_functionHRTimeBigInt);
+
+    hrtime->putDirect(vm, JSC::Identifier::fromString(vm, "bigint"_s), hrtimeBigInt);
+    this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "hrtime"_s), hrtime);
 }
 
 const JSC::ClassInfo Process::s_info = { "Process"_s, &Base::s_info, nullptr, nullptr,

@@ -257,9 +257,10 @@ pub fn build(b: *std.build.Builder) !void {
 
     var triplet = triplet_buf[0 .. osname.len + cpuArchName.len + 1];
 
-    if (std.os.getenv("OUTPUT_DIR")) |output_dir_| {
+    if (std.process.getEnvVarOwned(b.allocator, "OUTPUT_DIR")) |output_dir_| {
+        defer b.allocator.free(output_dir_);
         output_dir = output_dir_;
-    } else {
+    } else |_| {
         const output_dir_base = try std.fmt.bufPrint(&output_dir_buf, "{s}{s}", .{ bin_label, triplet });
         output_dir = b.pathFromRoot(output_dir_base);
     }

@@ -553,6 +553,7 @@ endif
 .PHONY: require
 require:
 	@echo "Checking if the required utilities are available..."
+	@$(SED) --version >/dev/null 2>&1 || (echo -e "ERROR: GNU sed is required, Install with:\n\n    $(POSIX_PKG_MANAGER) install gsed"; exit 1)
 	@if [ $(CLANG_VERSION) -lt "13" ]; then echo -e "ERROR: clang version >=13 required, found: $(CLANG_VERSION). Install with:\n\n    $(POSIX_PKG_MANAGER) install llvm@13"; exit 1; fi
 	@cmake --version >/dev/null 2>&1 || (echo -e "ERROR: cmake is required."; exit 1)
 	@esbuild --version >/dev/null 2>&1 || (echo -e "ERROR: esbuild is required."; exit 1)

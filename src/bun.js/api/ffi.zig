@@ -559,20 +559,18 @@ pub const FFI = struct {
     pub fn generateSymbols(global: *JSGlobalObject, symbols: *std.StringArrayHashMapUnmanaged(Function), object: JSC.JSValue) !?JSValue {
         const allocator = VirtualMachine.vm.allocator;
 
-        var keys = JSC.C.JSObjectCopyPropertyNames(global.ref(), object.asObjectRef());
-        defer JSC.C.JSPropertyNameArrayRelease(keys);
-        const count = JSC.C.JSPropertyNameArrayGetCount(keys);
+        var symbols_iter = JSC.JSPropertyIterator(.{
+            .skip_empty_name = true,
+            .name_encoding = .utf8,
+            .include_value = true,
+        }).init(global.ref(), object.asObjectRef());
+        defer symbols_iter.deinit();
 
-        try symbols.ensureTotalCapacity(allocator, count);
+        try symbols.ensureTotalCapacity(allocator, symbols_iter.len);
 
-        var i: usize = 0;
-        while (i < count) : (i += 1) {
-            var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(keys, i);
-            const len = JSC.C.JSStringGetLength(property_name_ref);
-            if (len == 0) continue;
-            var prop = JSC.C.JSStringGetCharacters8Ptr(property_name_ref)[0..len];
+        while (symbols_iter.next()) |prop| {
+            const value = symbols_iter.value;
 
-            var value = JSC.JSValue.c(JSC.C.JSObjectGetProperty(global.ref(), object.asObjectRef(), property_name_ref, null));
             if (value.isEmptyOrUndefinedOrNull()) {
                 return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{s}\"", .{prop}, global.ref());
             }

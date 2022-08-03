@@ -3197,6 +3197,10 @@ For compatibility reasons, these NPM packages are embedded into bun’s binary a
 
 Estimated: 30-90 minutes :(
 
+### Prerequisites 
+
+- On all systems, [Docker](https://www.docker.com) is required. If using WSL on Windows, it is recommended to use [Docker Desktop](https://docs.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers) for its WSL2 integration.
+
 ### VSCode Dev Container (Linux)
 
 The VSCode Dev Container in this repository is the easiest way to get started. It comes with Zig, JavaScriptCore, Zig Language Server, vscode-zig, and more pre-installed on an instance of Ubuntu.

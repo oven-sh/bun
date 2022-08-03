@@ -3218,10 +3218,12 @@ Then, in the `bun` repository locally run:
 ```bash
 # devcontainer-build just sets the architecture so if you're on ARM64, it'll do the right thing.
 make devcontainer-build
-devcontainer open
 ```
 
-You will need to clone the GitHub repository inside that container.
+Next, open VS Code in the `bun` repository. 
+To open the dev container, open the command palette (Ctrl + Shift + P) and run: `Remote-Containers: Reopen in Container`.
+
+You will then need to clone the GitHub repository inside that container.
 
 Inside the container, run this:
 

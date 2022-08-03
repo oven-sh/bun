@@ -3708,6 +3708,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         /// is enabled. Zero-sized when `options.override_writing_cstring` is
         /// not enabled.
         cstring_buffer: if (options.override_writing_cstring) []u8 else void,
+        cstring_buffer_offset: if (options.override_writing_cstring) usize else void,
 
         const Self = @This();
 
@@ -3725,6 +3726,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
                 .global = if (comptime options.include_value) global else .{},
                 .value = undefined,
                 .cstring_buffer = undefined,
+                .cstring_buffer_offset = undefined,
             };
         }
 
@@ -3746,7 +3748,8 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             pub fn initCStringBuffer(global: JSC.C.JSContextRef, object: JSC.C.JSObjectRef, allocator: std.mem.Allocator) Self {
                 var self = Self.initInternal(global, object);
                 const total_len = self.peekTotalPropertyLengths();
-                self.cstring_buffer = allocator.alloc(u8, total_len) catch unreachable;
+                self.cstring_buffer = allocator.alloc(u8, total_len + self.len) catch unreachable;
+                self.cstring_buffer_offset = 0;
                 return self;
             }
 
@@ -3784,16 +3787,16 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             self.i += 1;
 
             if (comptime options.override_writing_cstring) {
-                const start = self.cstring_buffer.len;
+                const start = self.cstring_buffer_offset;
 
                 // The JSStringGetUTF8CString returns a null terminated string
                 // and writes to the buffer. We just need to adjust the length
                 // to update the slice to hold the items wrote to the pointer
                 // because we already those bytes are allocated from the initial
                 // iteration.
-                _ = JSC.C.JSStringGetUTF8CString(property_name_ref, self.cstring_buffer.ptr + start, self.cstring_buffer.len - start);
+                self.cstring_buffer_offset += JSC.C.JSStringGetUTF8CString(property_name_ref, self.cstring_buffer.ptr + start, self.cstring_buffer.len - start);
 
-                const prop = self.cstring_buffer[start..self.cstring_buffer.len];
+                const prop = self.cstring_buffer[start..self.cstring_buffer_offset];
 
                 if (comptime options.skip_empty_name) {
                     if (prop.len == 0) return self.next();

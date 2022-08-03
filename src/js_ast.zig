@@ -1179,7 +1179,7 @@ pub const E = struct {
     ///     - static the function is React.jsxsDEV, "jsxs" instead of "jsx"
     ///     - one child? the function is React.jsxDEV,
     ///     - no children? the function is React.jsxDEV and children is an empty array.
-    /// `isStaticChildren`: https://github.com/facebook/react/blob/4ca62cac45c288878d2532e5056981d177f9fdac/packages/react/src/jsx/ReactJSXElementValidator.js#L369-L384 
+    /// `isStaticChildren`: https://github.com/facebook/react/blob/4ca62cac45c288878d2532e5056981d177f9fdac/packages/react/src/jsx/ReactJSXElementValidator.js#L369-L384
     ///     This flag means children is an array of JSX Elements literals.
     ///     The documentation on this is sparse, but it appears that
     ///     React just calls Object.freeze on the children array.
@@ -4147,7 +4147,7 @@ pub const Op = struct {
         bin_bitwise_xor_assign,
         /// Right-associative
         bin_nullish_coalescing_assign,
-        /// Right-associative 
+        /// Right-associative
         bin_logical_or_assign,
         /// Right-associative
         bin_logical_and_assign,
@@ -6990,27 +6990,21 @@ pub const Macro = struct {
                             }
 
                             const JSLexer = @import("./js_lexer.zig");
-                            var array = js.JSObjectCopyPropertyNames(writer.ctx, import_namespace_arg.asObjectRef());
-                            defer js.JSPropertyNameArrayRelease(array);
-                            const property_names_count = @intCast(u32, js.JSPropertyNameArrayGetCount(array));
-                            var iter = JSCBase.JSPropertyNameIterator{
-                                .array = array,
-                                .count = @intCast(u32, property_names_count),
-                            };
+
+                            var array_iter = JSC.JSPropertyIterator(.{
+                                .skip_empty_name = true,
+                                .name_encoding = .utf8,
+                                .include_value = true,
+                            }).init(writer.ctx, import_namespace_arg.asObjectRef());
+                            defer array_iter.deinit();
 
                             import.import.items = writer.allocator.alloc(
                                 ClauseItem,
-                                @intCast(u32, @boolToInt(has_default)) + property_names_count,
+                                @intCast(u32, @boolToInt(has_default)) + array_iter.len,
                             ) catch return false;
 
-                            var object_ref = import_namespace_arg.asObjectRef();
-
-                            while (iter.next()) |prop| {
-                                const ptr = js.JSStringGetCharacters8Ptr(prop);
-                                const len = js.JSStringGetLength(prop);
-                                const name = ptr[0..len];
-
-                                const property_value = JSC.JSValue.fromRef(js.JSObjectGetProperty(writer.ctx, object_ref, prop, writer.exception));
+                            while (array_iter.next()) |name| {
+                                const property_value = array_iter.value;
 
                                 if (!property_value.isString()) {
                                     return false;
@@ -7938,10 +7932,13 @@ pub const Macro = struct {
                             }
 
                             var object = value.asObjectRef();
-                            var array = JSC.C.JSObjectCopyPropertyNames(this.global.ref(), object);
-                            defer JSC.C.JSPropertyNameArrayRelease(array);
-                            const count_ = JSC.C.JSPropertyNameArrayGetCount(array);
-                            var properties = this.allocator.alloc(G.Property, count_) catch unreachable;
+                            var object_iter = JSC.JSPropertyIterator(.{
+                                .skip_empty_name = false,
+                                .name_encoding = .utf8,
+                                .include_value = true,
+                            }).init(this.global.ref(), object);
+                            defer object_iter.deinit();
+                            var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                             errdefer this.allocator.free(properties);
                             var out = Expr.init(
                                 E.Object,
@@ -7953,21 +7950,13 @@ pub const Macro = struct {
                             );
                             _entry.value_ptr.* = out;
 
-                            var i: usize = 0;
-                            while (i < count_) : (i += 1) {
-                                var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(array, i);
-                                defer JSC.C.JSStringRelease(property_name_ref);
-                                properties[i] = G.Property{
-                                    .key = Expr.init(E.String, E.String.init(this.allocator.dupe(
-                                        u8,
-                                        JSC.C.JSStringGetCharacters8Ptr(property_name_ref)[0..JSC.C.JSStringGetLength(property_name_ref)],
-                                    ) catch unreachable), this.caller.loc),
-                                    .value = try this.run(
-                                        JSC.JSValue.fromRef(JSC.C.JSObjectGetProperty(this.global.ref(), object, property_name_ref, null)),
-                                    ),
+                            while (object_iter.next()) |prop| {
+                                properties[object_iter.i] = G.Property{
+                                    .key = Expr.init(E.String, E.String.init(this.allocator.dupe(u8, prop) catch unreachable), this.caller.loc),
+                                    .value = try this.run(object_iter.value),
                                 };
                             }
-                            out.data.e_object.properties = BabyList(G.Property).init(properties[0..i]);
+                            out.data.e_object.properties = BabyList(G.Property).init(properties[0..object_iter.i]);
                             _entry.value_ptr.* = out;
                             return out;
                         },

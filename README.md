@@ -3246,6 +3246,7 @@ bun-debug
 
 It is very similar to my own development environment (except I use macOS)
 
+
 ### MacOS
 
 Install LLVM 13 and homebrew dependencies:
@@ -3370,3 +3371,7 @@ code --install-extension vscode-zig.vsix
 ```
 
 <a target="_blank" href="https://github.com/jarred-sumner/vscode-zig"><img src="https://pbs.twimg.com/media/FBZsKHlUcAYDzm5?format=jpg&name=large"></a>
+
+### Troubleshooting (general)
+
+If you encounter `error: the build command failed with exit code 9` during `make dev`, this means you ran out of memory or swap. Bun currently needs about 22 GB of RAM to compile.

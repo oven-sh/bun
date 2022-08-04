@@ -47,7 +47,7 @@ const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
-
+const RunCommand = @import("../cli/run_command.zig").RunCommand;
 threadlocal var initialized_store = false;
 
 pub const Lockfile = @import("./lockfile.zig");
@@ -2941,6 +2941,10 @@ pub const PackageManager = struct {
                     this.local_package_features.dev_dependencies = false;
                 }
 
+                if (cli.global or cli.ignore_scripts) {
+                    this.do.run_scripts = false;
+                }
+
                 this.local_package_features.optional_dependencies = !cli.omit.optional;
 
                 const disable_progress_bar = default_disable_progress_bar or cli.no_progress;
@@ -3006,6 +3010,7 @@ pub const PackageManager = struct {
             save_lockfile: bool = true,
             load_lockfile: bool = true,
             install_packages: bool = true,
+            run_scripts: bool = true,
             save_yarn_lock: bool = false,
             print_meta_hash_string: bool = false,
             verify_integrity: bool = true,
@@ -3406,6 +3411,7 @@ pub const PackageManager = struct {
         clap.parseParam("--verbose                         Excessively verbose logging") catch unreachable,
         clap.parseParam("--no-progress                     Disable the progress bar") catch unreachable,
         clap.parseParam("--no-verify                       Skip verifying integrity of newly downloaded packages") catch unreachable,
+        clap.parseParam("--ignore-scripts                  Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
         clap.parseParam("-g, --global                      Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
         clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
@@ -3454,6 +3460,7 @@ pub const PackageManager = struct {
         verbose: bool = false,
         no_progress: bool = false,
         no_verify: bool = false,
+        ignore_scripts: bool = false,
 
         link_native_bins: []const string = &[_]string{},
 
@@ -3516,6 +3523,7 @@ pub const PackageManager = struct {
             cli.no_cache = args.flag("--no-cache");
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose");
+            cli.ignore_scripts = args.flag("--ignore-scripts");
 
             if (args.option("--config")) |opt| {
                 cli.config = opt;
@@ -4710,6 +4718,7 @@ pub const PackageManager = struct {
                             .is_main = true,
                             .check_for_duplicate_dependencies = true,
                             .peer_dependencies = false,
+                            .scripts = true,
                         },
                     );
 
@@ -4834,6 +4843,7 @@ pub const PackageManager = struct {
                     .is_main = true,
                     .check_for_duplicate_dependencies = true,
                     .peer_dependencies = false,
+                    .scripts = true,
                 },
             );
 
@@ -4972,6 +4982,7 @@ pub const PackageManager = struct {
 
                     manager.progress.refresh();
                 }
+
                 manager.lockfile.saveToDisk(manager.options.save_lockfile_path);
                 if (comptime log_level.showProgress()) {
                     node.end();
@@ -4983,6 +4994,38 @@ pub const PackageManager = struct {
                     Output.flush();
                 }
             }
+        }
+
+        // Install script order for npm 8.3.0:
+        // 1. preinstall
+        // 2. install
+        // 3. postinstall
+        // 4. preprepare
+        // 5. prepare
+        // 6. postprepare
+
+        const run_lifecycle_scripts = manager.options.do.run_scripts and manager.lockfile.scripts.hasAny() and manager.options.do.install_packages;
+        const has_pre_lifecycle_scripts = manager.lockfile.scripts.preinstall.items.len > 0;
+        const needs_configure_bundler_for_run = run_lifecycle_scripts and !has_pre_lifecycle_scripts;
+
+        if (run_lifecycle_scripts and has_pre_lifecycle_scripts) {
+            // We need to figure out the PATH and other environment variables
+            // to do that, we re-use the code from bun run
+            // this is expensive, it traverses the entire directory tree going up to the root
+            // so we really only want to do it when strictly necessary
+            {
+                var this_bundler: bundler.Bundler = undefined;
+                var ORIGINAL_PATH: string = "";
+                _ = try RunCommand.configureEnvForRun(
+                    ctx,
+                    &this_bundler,
+                    manager.env,
+                    &ORIGINAL_PATH,
+                    log_level != .silent,
+                );
+            }
+
+            try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preinstall");
         }
 
         var install_summary = PackageInstall.Summary{};
@@ -5089,6 +5132,57 @@ pub const PackageManager = struct {
 
             if (install_summary.fail > 0) {
                 Output.prettyln("<r> Failed to install <red><b>{d}<r> packages\n", .{install_summary.fail});
+            }
+
+            if (run_lifecycle_scripts and install_summary.fail == 0) {
+                // We need to figure out the PATH and other environment variables
+                // to do that, we re-use the code from bun run
+                // this is expensive, it traverses the entire directory tree going up to the root
+                // so we really only want to do it when strictly necessary
+                if (needs_configure_bundler_for_run) {
+                    var this_bundler: bundler.Bundler = undefined;
+                    var ORIGINAL_PATH: string = "";
+                    _ = try RunCommand.configureEnvForRun(
+                        ctx,
+                        &this_bundler,
+                        manager.env,
+                        &ORIGINAL_PATH,
+                        log_level != .silent,
+                    );
+                } else {
+                    // bun install may have installed new bins, so we need to update the PATH
+                    // this can happen if node_modules/.bin didn't previously exist
+                    // note: it is harmless to have the same directory in the PATH multiple times
+                    const current_path = manager.env.map.get("PATH");
+
+                    // TODO: windows
+                    const cwd_without_trailing_slash = if (Fs.FileSystem.instance.top_level_dir.len > 1 and Fs.FileSystem.instance.top_level_dir[Fs.FileSystem.instance.top_level_dir.len - 1] == '/')
+                        Fs.FileSystem.instance.top_level_dir[0 .. Fs.FileSystem.instance.top_level_dir.len - 1]
+                    else
+                        Fs.FileSystem.instance.top_level_dir;
+
+                    try manager.env.map.put("PATH", try std.fmt.allocPrint(
+                        ctx.allocator,
+                        "{s}:{s}/node_modules/.bin",
+                        .{
+                            current_path,
+                            cwd_without_trailing_slash,
+                        },
+                    ));
+                }
+
+                // 1. preinstall
+                // 2. install
+                // 3. postinstall
+                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "install");
+                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "postinstall");
+
+                // 4. preprepare
+                // 5. prepare
+                // 6. postprepare
+                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "preprepare");
+                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "prepare");
+                try manager.lockfile.scripts.run(manager.allocator, manager.env, log_level != .silent, "postprepare");
             }
 
             if (!printed_timestamp) {

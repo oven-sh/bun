@@ -6993,7 +6993,6 @@ pub const Macro = struct {
 
                             var array_iter = JSC.JSPropertyIterator(.{
                                 .skip_empty_name = true,
-                                .name_encoding = .utf8,
                                 .include_value = true,
                             }).init(writer.ctx, import_namespace_arg.asObjectRef());
                             defer array_iter.deinit();
@@ -7018,7 +7017,7 @@ pub const Macro = struct {
                                 if (!JSLexer.isIdentifier(alias)) throwTypeError(writer.ctx, "import alias must be an identifier", writer.exception);
 
                                 import.import.items[import_item_i] = ClauseItem{
-                                    .alias = name,
+                                    .alias = name.toOwnedSlice(writer.allocator) catch return false,
                                     .original_name = alias,
                                     .name = .{ .loc = writer.loc, .ref = Ref.None },
                                     .alias_loc = writer.loc,
@@ -7934,7 +7933,6 @@ pub const Macro = struct {
                             var object = value.asObjectRef();
                             var object_iter = JSC.JSPropertyIterator(.{
                                 .skip_empty_name = false,
-                                .name_encoding = .utf8,
                                 .include_value = true,
                             }).init(this.global.ref(), object);
                             defer object_iter.deinit();
@@ -7952,7 +7950,7 @@ pub const Macro = struct {
 
                             while (object_iter.next()) |prop| {
                                 properties[object_iter.i] = G.Property{
-                                    .key = Expr.init(E.String, E.String.init(this.allocator.dupe(u8, prop) catch unreachable), this.caller.loc),
+                                    .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
                                     .value = try this.run(object_iter.value),
                                 };
                             }

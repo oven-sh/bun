@@ -561,7 +561,7 @@ pub const FFI = struct {
 
         var symbols_iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = true,
-            .name_encoding = .utf8,
+            
             .include_value = true,
         }).init(global.ref(), object.asObjectRef());
         defer symbols_iter.deinit();
@@ -572,14 +572,14 @@ pub const FFI = struct {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {
-                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{s}\"", .{prop}, global.ref());
+                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global.ref());
             }
 
             var function: Function = .{};
             if (try generateSymbolForFunction(global, allocator, value, &function)) |val| {
                 return val;
             }
-            function.base_name = try allocator.dupeZ(u8, prop);
+            function.base_name = try prop.toOwnedSliceZ(allocator);
 
             symbols.putAssumeCapacity(std.mem.span(function.base_name.?), function);
         }

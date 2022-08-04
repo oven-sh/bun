@@ -101,6 +101,33 @@ pub const ZigString = extern struct {
         return this;
     }
 
+    pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) ![]u8 {
+        return try std.fmt.allocPrint(allocator, "{any}", .{this});
+    }
+
+    pub fn toOwnedSliceZ(this: ZigString, allocator: std.mem.Allocator) ![:0]u8 {
+        return try std.fmt.allocPrintZ(allocator, "{any}", .{this});
+    }
+
+    pub fn trunc(this: ZigString, len: usize) ZigString {
+        return .{ .ptr = this.ptr, .len = @minimum(len, this.len) };
+    }
+
+    pub fn eqlComptime(this: ZigString, comptime other: []const u8) bool {
+        if (this.len != other.len)
+            return false;
+
+        if (this.is16Bit()) {
+            return strings.eqlComptimeUTF16(this.utf16SliceAligned(), other);
+        }
+
+        if (comptime strings.isAllASCIISimple(other)) {
+            return strings.eqlComptimeIgnoreLen(this.slice(), other);
+        }
+
+        @compileError("Not implemented yet for latin1");
+    }
+
     pub const shim = Shimmer("", "ZigString", @This());
 
     pub const Slice = struct {
@@ -1454,6 +1481,19 @@ pub const SourceCode = extern struct {
 };
 
 pub const Thenables = opaque {};
+
+pub const StrongValue = opaque {
+    pub const shim = Shimmer("JSC", "JSFunction", @This());
+
+    const cppFn = shim.cppFn;
+    pub const include = "JavaScriptCore/JSFunction.h";
+    pub const name = "JSC::JSFunction";
+    pub const namespace = "JSC";
+
+    pub fn get(this: *StrongValue) JSValue {
+        return cppFn("get", .{this});
+    }
+};
 
 pub const JSFunction = extern struct {
     pub const shim = Shimmer("JSC", "JSFunction", @This());
@@ -3667,30 +3707,16 @@ pub fn Thenable(comptime Then: type, comptime onResolve: fn (*Then, globalThis: 
 
 pub const JSPropertyIteratorOptions = struct {
     skip_empty_name: bool,
-    name_encoding: NameEncoding,
     include_value: bool,
-    /// Overrides the setup for the iterator's item to instead be a `usize`
-    /// indicating the length of the latest property value and writes the
-    override_writing_cstring: bool = false,
-
-    pub const NameEncoding = enum {
-        utf8,
-        utf16,
-        /// Constructs the strings with a variable encoding using JSC's string
-        /// encoding API.
-        infer,
-    };
 };
 
 pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
-    comptime if (options.override_writing_cstring) {
-        if (options.name_encoding != .utf8) {
-            @compileError(std.fmt.comptimePrint("{} is not a supported encoding when 'options.override_writing_cstring' is enabled. Try using utf8 instead.", .{options.name_encoding}));
-        }
-    };
-
     return struct {
+        /// Position in the property list array
+        /// Update is deferred until the next iteration
         i: u32 = 0,
+
+        iter_i: u32 = 0,
         len: u32,
         array_ref: JSC.C.JSPropertyNameArrayRef,
 
@@ -3704,29 +3730,16 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         /// Zero-sized when `options.include_value` is not enabled.
         global: if (options.include_value) JSC.C.JSContextRef else void,
 
-        /// The buffer for writing to when `options.override_writing_cstring`
-        /// is enabled. Zero-sized when `options.override_writing_cstring` is
-        /// not enabled.
-        cstring_buffer: if (options.override_writing_cstring) []u8 else void,
-        cstring_buffer_offset: if (options.override_writing_cstring) usize else void,
-
         const Self = @This();
 
-        pub const Item = switch (options.name_encoding) {
-            .utf8 => []const u8,
-            .utf16 => []const u16,
-            .infer => ZigString,
-        };
-
         inline fn initInternal(global: JSC.C.JSContextRef, object: JSC.C.JSObjectRef) Self {
+            const array_ref = JSC.C.JSObjectCopyPropertyNames(global, object);
             return .{
-                .array_ref = JSC.C.JSObjectCopyPropertyNames(global, object),
-                .len = @intCast(u32, JSC.C.JSPropertyNameArrayGetCount(object)),
+                .array_ref = array_ref,
+                .len = @truncate(u32, JSC.C.JSPropertyNameArrayGetCount(array_ref)),
                 .object = if (comptime options.include_value) object else .{},
                 .global = if (comptime options.include_value) global else .{},
                 .value = undefined,
-                .cstring_buffer = undefined,
-                .cstring_buffer_offset = undefined,
             };
         }
 
@@ -3739,75 +3752,23 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             return Self.initInternal(global, object);
         }
 
-        usingnamespace if (options.override_writing_cstring) struct {
-            /// Initializes the iterator using the CString buffer created using your
-            /// provided allocator. Note that this is requires two iterations for
-            /// each item at the slowest speed because we need to do a look-ahead
-            /// to preallocate the string buffer so it should only be used in
-            /// secular cases.
-            pub fn initCStringBuffer(global: JSC.C.JSContextRef, object: JSC.C.JSObjectRef, allocator: std.mem.Allocator) Self {
-                var self = Self.initInternal(global, object);
-                const total_len = self.peekTotalPropertyLengths();
-                self.cstring_buffer = allocator.alloc(u8, total_len + self.len) catch unreachable;
-                self.cstring_buffer_offset = 0;
-                return self;
-            }
-
-            /// Deinitializes the property name array and all of the string
-            /// references constructed by the copy along with the CString
-            /// buffer. The allocator the CString buffer was initialized with
-            /// **must** be the same as the one passed in here.
-            pub inline fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-                JSC.C.JSPropertyNameArrayRelease(self.array_ref);
-                allocator.free(self.cstring_buffer);
-            }
-
-            /// Deinitializes the property name array from JSC and returns the
-            /// CString buffer. The caller owns the returned buffer and free the
-            /// buffer with the same allocator as it was initialized with.
-            pub inline fn toOwnedCStringBuffer(self: Self) []u8 {
-                JSC.C.JSPropertyNameArrayRelease(self.array_ref);
-                return self.cstring_buffer;
-            }
-        } else struct {
-            /// Deinitializes the property name array and all of the string
-            /// references constructed by the copy.
-            pub inline fn deinit(self: *Self) void {
-                JSC.C.JSPropertyNameArrayRelease(self.array_ref);
-            }
-        };
+        /// Deinitializes the property name array and all of the string
+        /// references constructed by the copy.
+        pub inline fn deinit(self: *Self) void {
+            JSC.C.JSPropertyNameArrayRelease(self.array_ref);
+        }
 
         /// Finds the next property string and, if `options.include_value` is
         /// enabled, updates the `iter.value` to respect the latest property's
         /// value. Also note the behavior of the other options.
-        pub fn next(self: *Self) ?Item {
-            if (self.i == self.len) return null;
-
-            var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, self.i);
-            self.i += 1;
-
-            if (comptime options.override_writing_cstring) {
-                const start = self.cstring_buffer_offset;
-
-                // The JSStringGetUTF8CString returns a null terminated string
-                // and writes to the buffer. We just need to adjust the length
-                // to update the slice to hold the items wrote to the pointer
-                // because we already those bytes are allocated from the initial
-                // iteration.
-                self.cstring_buffer_offset += JSC.C.JSStringGetUTF8CString(property_name_ref, self.cstring_buffer.ptr + start, self.cstring_buffer.len - start);
-
-                const prop = self.cstring_buffer[start..self.cstring_buffer_offset];
-
-                if (comptime options.skip_empty_name) {
-                    if (prop.len == 0) return self.next();
-                }
-
-                if (comptime options.include_value) {
-                    self.value = JSC.JSValue.fromRef(JSC.C.JSObjectGetProperty(self.global, self.object, property_name_ref, null));
-                }
-
-                return prop;
+        pub fn next(self: *Self) ?ZigString {
+            if (self.iter_i >= self.len) {
+                self.i = self.iter_i;
+                return null;
             }
+            self.i = self.iter_i;
+            var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, self.iter_i);
+            self.iter_i += 1;
 
             const len = JSC.C.JSStringGetLength(property_name_ref);
 
@@ -3815,25 +3776,11 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
                 if (len == 0) return self.next();
             }
 
-            const prop = switch (comptime options.name_encoding) {
-                .utf8 => JSC.C.JSStringGetCharacters8Ptr(property_name_ref)[0..len],
-                .utf16 => JSC.C.JSStringGetCharactersPtr(property_name_ref)[0..len],
-                .infer => blk: {
-                    const enc = JSC.C.JSStringEncoding(property_name_ref);
-                    break :blk switch (enc) {
-                        .empty => ZigString.Empty,
-                        .char8 => blk2: {
-                            var s = ZigString.init((JSC.C.JSStringGetCharacters8Ptr(property_name_ref))[0..len]);
-                            s.markUTF8();
-                            break :blk2 s;
-                        },
-                        .char16 => blk2: {
-                            var s = ZigString.init16(JSC.C.JSStringGetCharactersPtr(property_name_ref)[0..len]);
-                            s.markUTF16();
-                            break :blk2 s;
-                        },
-                    };
-                },
+            const prop = switch (JSC.C.JSStringEncoding(property_name_ref)) {
+                .empty => ZigString.Empty,
+                // latin1
+                .char8 => ZigString.init((JSC.C.JSStringGetCharacters8Ptr(property_name_ref))[0..len]),
+                .char16 => ZigString.init16(JSC.C.JSStringGetCharactersPtr(property_name_ref)[0..len]),
             };
 
             if (comptime options.include_value) {
@@ -3841,21 +3788,6 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
             }
 
             return prop;
-        }
-
-        /// Finds the combined lengths of all of the unconsumed string property
-        /// names without advancing the iterator. Starts from the current index
-        /// in the iterator.
-        pub fn peekTotalPropertyLengths(self: *const Self) usize {
-            var i = self.i;
-            var total: usize = 0;
-
-            while (i < self.len) : (i += 1) {
-                const ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, i);
-                total += JSC.C.JSStringGetLength(ref);
-            }
-
-            return total;
         }
     };
 }

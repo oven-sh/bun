@@ -364,8 +364,8 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
             }
 
             var define_iter = JSC.JSPropertyIterator(.{
-                .skip_empty_name = false,
-                .name_encoding = .utf8,
+                .skip_empty_name = true,
+
                 .include_value = true,
             }).init(globalThis.ref(), define.asObjectRef());
             defer define_iter.deinit();
@@ -385,7 +385,7 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                     return transpiler;
                 }
 
-                names[define_iter.i] = allocator.dupe(u8, prop) catch unreachable;
+                names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;
                 var val = JSC.ZigString.init("");
                 property_value.toZigString(&val, globalThis);
                 if (val.len == 0) {
@@ -500,6 +500,10 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
     }
 
     transpiler.runtime.allow_runtime = false;
+    transpiler.runtime.dynamic_require = switch (transpiler.transform.platform orelse .browser) {
+        .bun, .bun_macro => true,
+        else => false,
+    };
 
     if (object.getIfPropertyExists(globalThis, "macro")) |macros| {
         macros: {
@@ -639,28 +643,32 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
 
             var iter = JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
-                .name_encoding = .utf8,
                 .include_value = true,
-                .override_writing_cstring = true,
-            }).initCStringBuffer(globalThis.ref(), replace.asObjectRef(), bun.default_allocator);
+            }).init(globalThis, replace.asObjectRef());
 
             if (iter.len > 0) {
-                errdefer iter.deinit(bun.default_allocator);
+                errdefer iter.deinit();
                 try replacements.ensureUnusedCapacity(bun.default_allocator, iter.len);
 
                 // We cannot set the exception before `try` because it could be
                 // a double free with the `errdefer`.
                 defer if (exception.* != null) {
-                    iter.deinit(bun.default_allocator);
+                    iter.deinit();
+                    for (replacements.keys()) |key| {
+                        bun.default_allocator.free(bun.constStrToU8(key));
+                    }
                     replacements.clearAndFree(bun.default_allocator);
                 };
 
-                while (iter.next()) |key| {
+                while (iter.next()) |key_| {
                     const value = iter.value;
                     if (value.isEmpty()) continue;
 
+                    var key = try key_.toOwnedSlice(bun.default_allocator);
+
                     if (!JSLexer.isIdentifier(key)) {
                         JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key}, ctx, exception);
+                        bun.default_allocator.free(key);
                         return transpiler;
                     }
 

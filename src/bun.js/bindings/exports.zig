@@ -1930,7 +1930,7 @@ pub const ZigConsoleClient = struct {
 
                         var props_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = true,
-                            .name_encoding = .utf8,
+
                             .include_value = true,
                         }).init(this.globalThis.ref(), props.asObjectRef());
                         defer props_iter.deinit();
@@ -1938,13 +1938,12 @@ pub const ZigConsoleClient = struct {
                         var children_prop = props.get(this.globalThis, "children");
                         if (props_iter.len > 0) {
                             {
-                                var i: usize = 0;
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 const count_without_children = props_iter.len - @as(usize, @boolToInt(children_prop != null));
 
                                 while (props_iter.next()) |prop| {
-                                    if (strings.eqlComptime(prop, "children"))
+                                    if (prop.eqlComptime("children"))
                                         continue;
 
                                     var property_value = props_iter.value;
@@ -1957,7 +1956,7 @@ pub const ZigConsoleClient = struct {
 
                                     writer.print(
                                         comptime Output.prettyFmt("<r><blue>{s}<d>=<r>", enable_ansi_colors),
-                                        .{prop[0..@minimum(prop.len, 128)]},
+                                        .{prop.trunc(128)},
                                     );
 
                                     if (tag.cell.isStringLike()) {
@@ -1977,17 +1976,17 @@ pub const ZigConsoleClient = struct {
                                     if (
                                     // count_without_children is necessary to prevent printing an extra newline
                                     // if there are children and one prop and the child prop is the last prop
-                                    i + 1 < count_without_children and
+                                    props_iter.i + 1 < count_without_children and
                                         // 3 is arbitrary but basically
                                         //  <input type="text" value="foo" />
                                         //  ^ should be one line
                                         // <input type="text" value="foo" bar="true" baz={false} />
                                         //  ^ should be multiple lines
-                                        i > 3)
+                                        props_iter.i > 3)
                                     {
                                         writer.writeAll("\n");
                                         this.writeIndent(Writer, writer_) catch unreachable;
-                                    } else if (i + 1 < count_without_children) {
+                                    } else if (props_iter.i + 1 < count_without_children) {
                                         writer.writeAll(" ");
                                     }
                                 }
@@ -2090,7 +2089,6 @@ pub const ZigConsoleClient = struct {
                     {
                         var props_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = true,
-                            .name_encoding = .infer,
                             .include_value = true,
                         }).init(this.globalThis.ref(), object);
                         defer props_iter.deinit();

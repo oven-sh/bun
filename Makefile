@@ -232,16 +232,27 @@ HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
 SRC_DIR := src/bun.js/bindings
 OBJ_DIR ?= src/bun.js/bindings-obj
+DEBUG_OBJ_DIR := src/bun.js/debug-bindings-obj
+
 SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp)
 SRC_SQLITE_FILES := $(wildcard $(SRC_DIR)/sqlite/*.cpp)
 SRC_BUILTINS_FILES := $(wildcard  src/bun.js/builtins/*.cpp)
+
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
 SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
 BUILTINS_OBJ_FILES := $(patsubst src/bun.js/builtins/%.cpp,$(OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
+
+DEBUG_OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_FILES))
+DEBUG_WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
+DEBUG_SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
+DEBUG_BUILTINS_OBJ_FILES := $(patsubst src/bun.js/builtins/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
+
 BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+DEBUG_BINDINGS_OBJ := $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES)
+
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
@@ -345,7 +356,7 @@ endif
 SHARED_LIB_EXTENSION = .so
 
 JSC_BINDINGS = $(BINDINGS_OBJ) $(JSC_FILES)
-JSC_BINDINGS_DEBUG = $(BINDINGS_OBJ) $(JSC_FILES_DEBUG)
+JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG)
 
 RELEASE_FLAGS=
 DEBUG_FLAGS=
@@ -404,9 +415,8 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 
 
 BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES) $(BINDINGS_OBJ)
-BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES_DEBUG) $(BINDINGS_OBJ)
-
-BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(BINDINGS_OBJ)
+BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(DEBUG_BINDINGS_OBJ)
+BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_DEBUG)
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -664,7 +674,7 @@ ensure-package-dir:
 .PHONY: prerelease
 prerelease: npm-install api analytics all-js ensure-package-dir
 .PHONY: release-only
-release-only: bindings build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
+release-only: release-bindings build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release-safe-only
 release-safe-only: all-js bindings build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release
@@ -1250,8 +1260,8 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
-.PHONY: bindings
-bindings: $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES)
 
 .PHONY: jsc-bindings-mac
 jsc-bindings-mac: bindings
@@ -1393,6 +1403,9 @@ EMIT_LLVM=$(EMIT_LLVM_FOR_RELEASE)
 $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
+$(DEBUG_OBJ_DIR):
+	mkdir -p $(DEBUG_OBJ_DIR)
+
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp $(OBJ_DIR)
 	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
@@ -1431,6 +1444,54 @@ $(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp $(OBJ_DIR)
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM) \
+		-g3 -c -o $@ $<
+
+# $(DEBUG_OBJ_DIR) is not included here because it breaks
+# detecting if a file needs to be rebuilt
+$(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
+		-g3 -c -o $@ $<
+
+# $(DEBUG_OBJ_DIR) is not included here because it breaks
+# detecting if a file needs to be rebuilt
+$(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
+		-g3 -c -o $@ $<
+
+# $(DEBUG_OBJ_DIR) is not included here because it breaks
+# detecting if a file needs to be rebuilt
+$(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
+		-g3 -c -o $@ $<
+
+# $(DEBUG_OBJ_DIR) is not included here because it breaks
+# detecting if a file needs to be rebuilt
+$(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
 sizegen:

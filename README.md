@@ -1,7 +1,10 @@
 # bun
 
 <p align="center">
-  <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
+  <a href="https://bun.sh"><img src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Logo" height=170></a>
+  <br />
+  <br />
+  <a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>
 </p>
 
 bun is a new:
@@ -15,6 +18,7 @@ bun is a new:
 All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for development, you only need bun.
 
 **bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#not-implemented-yet).
+
 
 Today, bun's primary focus is bun.js: bun's JavaScript runtime.
 

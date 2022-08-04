@@ -180,40 +180,40 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime,
         = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     auto& vm = globalObject->vm();
     uint64_t time = Bun__readOriginTimer(globalObject->bunVM());
-    uint64_t seconds = static_cast<uint64_t>(time / 1000000000);
-    uint64_t nanoseconds = time % 1000000000;
+    int64_t seconds = static_cast<int64_t>(time / 1000000000);
+    int64_t nanoseconds = time % 1000000000;
 
     if (callFrame->argumentCount() > 0) {
         JSC::JSValue arg0 = callFrame->uncheckedArgument(0);
-        JSArray* relativeArray = JSC::jsDynamicCast<JSC::JSArray*>(arg0);
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        if ((!relativeArray && !arg0.isUndefinedOrNull()) || relativeArray->length() < 2) {
-            JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array or undefined"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
-        JSValue relativeSecondsValue = relativeArray->getIndexQuickly(0);
-        JSValue relativeNanosecondsValue = relativeArray->getIndexQuickly(1);
-        if (!relativeSecondsValue.isNumber() || !relativeNanosecondsValue.isNumber()) {
-            JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array of 2 integers"_s);
-            return JSC::JSValue::encode(JSC::JSValue {});
-        }
+        if (!arg0.isUndefinedOrNull()) {
+            JSArray* relativeArray = JSC::jsDynamicCast<JSC::JSArray*>(arg0);
+            auto throwScope = DECLARE_THROW_SCOPE(vm);
+            if ((!relativeArray && !arg0.isUndefinedOrNull()) || relativeArray->length() < 2) {
+                JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array or undefined"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            JSValue relativeSecondsValue = relativeArray->getIndexQuickly(0);
+            JSValue relativeNanosecondsValue = relativeArray->getIndexQuickly(1);
+            if (!relativeSecondsValue.isNumber() || !relativeNanosecondsValue.isNumber()) {
+                JSC::throwTypeError(globalObject, throwScope, "hrtime() argument must be an array of 2 integers"_s);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
 
-        uint64_t relativeSeconds = JSC__JSValue__toUInt64NoTruncate(JSC::JSValue::encode(relativeSecondsValue));
-        uint64_t relativeNanoseconds = JSC__JSValue__toUInt64NoTruncate(JSC::JSValue::encode(relativeNanosecondsValue));
-        seconds -= relativeSeconds;
-        nanoseconds -= relativeNanoseconds;
-        if (seconds < 0) {
-            seconds = 0;
-        }
-
-        if (nanoseconds < 0) {
-            nanoseconds = 0;
+            int64_t relativeSeconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeSecondsValue));
+            int64_t relativeNanoseconds = JSC__JSValue__toInt64(JSC::JSValue::encode(relativeNanosecondsValue));
+            seconds -= relativeSeconds;
+            nanoseconds -= relativeNanoseconds;
+            if (nanoseconds < 0) {
+                seconds--;
+                nanoseconds += 1000000000;
+            }
+            throwScope.release();
         }
     }
 
     auto* array = JSArray::create(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), 2);
-    array->setIndexQuickly(vm, 0, JSC::jsNumber(static_cast<uint32_t>(seconds)));
-    array->setIndexQuickly(vm, 1, JSC::jsNumber(static_cast<uint32_t>(nanoseconds)));
+    array->setIndexQuickly(vm, 0, JSC::jsNumber(seconds));
+    array->setIndexQuickly(vm, 1, JSC::jsNumber(nanoseconds));
     return JSC::JSValue::encode(JSC::JSValue(array));
 }
 static JSC_DECLARE_HOST_FUNCTION(Process_functionHRTimeBigInt);
@@ -270,6 +270,9 @@ void Process::finishCreation(JSC::VM& vm)
     putDirectCustomAccessor(vm, clientData->builtinNames().argvPublicName(),
         JSC::CustomGetterSetter::create(vm, Process_getArgv, Process_setArgv),
         static_cast<unsigned>(JSC::PropertyAttribute::CustomValue));
+
+    putDirect(vm, JSC::Identifier::fromString(vm, "revision"_s),
+        JSC::jsString(vm, makeAtomString(Bun__version_sha)), 0);
 
     this->putDirect(vm, clientData->builtinNames().nextTickPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,

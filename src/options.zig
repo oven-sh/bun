@@ -443,7 +443,7 @@ pub const Platform = enum {
 
     pub inline fn supportsBrowserField(this: Platform) bool {
         return switch (this) {
-            .neutral, .browser, .bun, .bun_macro => true,
+            .neutral, .browser => true,
             else => false,
         };
     }

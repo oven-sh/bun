@@ -372,7 +372,7 @@ pub fn normalizeStringGeneric(path: []const u8, buf: []u8, comptime allow_above_
             continue;
         }
 
-        if (@"is ../"(path[r..]) or @"is .."(path[r..])) {
+        if (@"is .."(path[r..]) and (r + 2 == n or isSeparator(path[r + 2]))) {
             r += 2;
             // .. element: remove to last separator
             if (buf_i > dotdot) {

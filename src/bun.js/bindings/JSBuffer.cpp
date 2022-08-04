@@ -201,13 +201,13 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JS
     RELEASE_AND_RETURN(throwScope, JSBuffer__bufferFromLength(lexicalGlobalObject, length));
 }
 
-EncodedJSValue JSBuffer__bufferFromPointerAndLength(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, unsigned int length)
+EncodedJSValue JSBuffer__bufferFromPointerAndLength(JSC::JSGlobalObject* lexicalGlobalObject, const unsigned char* ptr, unsigned int length)
 {
 
     JSC::JSUint8Array* uint8Array;
 
     if (LIKELY(length > 0)) {
-        auto buffer = ArrayBuffer::createFromBytes(ptr, length, nullptr);
+        auto buffer = ArrayBuffer::create(ptr, length);
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(buffer), 0, length);
     } else {
@@ -273,7 +273,8 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
 
     case WebCore::BufferEncodingType::ascii: {
         if (view.is8Bit()) {
-            result = Bun__encoding__constructFromLatin1AsASCII(lexicalGlobalObject, view.characters8(), view.length());
+            // ascii is a noop for latin1
+            result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, view.characters8(), view.length());
         } else {
             result = Bun__encoding__constructFromUTF16AsASCII(lexicalGlobalObject, view.characters16(), view.length());
         }
@@ -281,7 +282,9 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
     }
     case WebCore::BufferEncodingType::latin1: {
         if (view.is8Bit()) {
-            result = Bun__encoding__constructFromLatin1AsASCII(lexicalGlobalObject, view.characters8(), view.length());
+            // The native encoding is latin1
+            // so we don't need to do any conversion.
+            result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, view.characters8(), view.length());
         } else {
             result = Bun__encoding__constructFromUTF16AsASCII(lexicalGlobalObject, view.characters16(), view.length());
         }
@@ -292,7 +295,9 @@ static inline JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGl
         if (view.is8Bit()) {
             result = Bun__encoding__constructFromLatin1AsUTF16(lexicalGlobalObject, view.characters8(), view.length());
         } else {
-            result = Bun__encoding__constructFromUTF16AsUTF16(lexicalGlobalObject, view.characters16(), view.length());
+            // The native encoding is UTF-16
+            // so we don't need to do any conversion.
+            result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, reinterpret_cast<const unsigned char*>(view.characters16()), view.length() * 2);
         }
         break;
     }

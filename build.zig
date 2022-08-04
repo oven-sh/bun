@@ -448,6 +448,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        headers_obj.addOptions("build_options", opts);
     }
 
     {
@@ -455,6 +456,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        headers_obj.addOptions("build_options", opts);
     }
 
     {
@@ -462,6 +464,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("string-bench", "src/bench/string-handling.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        headers_obj.addOptions("build_options", opts);
     }
 
     {
@@ -469,6 +472,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("sha", "src/sha.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        headers_obj.addOptions("build_options", opts);
     }
 
     {
@@ -476,6 +480,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("vlq-bench", "src/sourcemap/vlq_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        headers_obj.addOptions("build_options", opts);
     }
 
     {
@@ -483,6 +488,7 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        headers_obj.addOptions("build_options", opts);
     }
 
     {

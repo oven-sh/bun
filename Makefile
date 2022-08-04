@@ -674,7 +674,7 @@ ensure-package-dir:
 .PHONY: prerelease
 prerelease: npm-install api analytics all-js ensure-package-dir
 .PHONY: release-only
-release-only: bindings-release build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
+release-only: release-bindings build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release-safe-only
 release-safe-only: all-js bindings build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release
@@ -1260,7 +1260,7 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
-bindings-release: $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
 bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES)
 
 .PHONY: jsc-bindings-mac

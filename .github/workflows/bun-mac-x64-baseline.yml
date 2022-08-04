@@ -185,7 +185,7 @@ jobs:
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         run: |
           mkdir -p $OBJ_DIR
-          make -j $(sysctl -n hw.ncpu) bindings
+          make -j $(sysctl -n hw.ncpu) release-bindings
       - name: Upload C++
         if: matrix.compile_obj
         uses: actions/upload-artifact@v3

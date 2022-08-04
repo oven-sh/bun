@@ -463,7 +463,7 @@ COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && \
-    make bindings -j10 && mv src/bun.js/bindings-obj/* /tmp
+    make release-bindings -j10 && mv src/bun.js/bindings-obj/* /tmp
 
 FROM prepare_release as sqlite
 

@@ -3378,4 +3378,4 @@ code --install-extension vscode-zig.vsix
 
 ### Troubleshooting (general)
 
-If you encounter `error: the build command failed with exit code 9` during `make dev`, this means you ran out of memory or swap. Bun currently needs about 22 GB of RAM to compile.
+If you encounter `error: the build command failed with exit code 9` during the build process, this means you ran out of memory or swap. Bun currently needs about 22 GB of RAM to compile.

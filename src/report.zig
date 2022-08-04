@@ -117,8 +117,8 @@ pub fn printMetadata() void {
 
     crash_report_writer.print(
         \\
-        \\<r>–––– bun meta ––––
-    ++ "\nBun v" ++ Global.package_json_version ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
+        \\<r>----- bun meta -----
+    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
         \\{s}: {}
         \\
     , .{
@@ -165,7 +165,7 @@ pub fn printMetadata() void {
         });
     }
 
-    crash_report_writer.print("–––– bun meta ––––\n", .{});
+    crash_report_writer.print("----- bun meta -----\n", .{});
 }
 var has_printed_fatal = false;
 var has_printed_crash = false;

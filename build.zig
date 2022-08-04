@@ -323,6 +323,34 @@ pub fn build(b: *std.build.Builder) !void {
             "baseline",
             is_baseline,
         );
+        var git_sha: [:0]const u8 = "";
+        if (std.os.getenvZ("GITHUB_SHA") orelse std.os.getenvZ("GIT_SHA")) |sha| {
+            git_sha = std.heap.page_allocator.dupeZ(u8, sha) catch unreachable;
+        } else {
+            sha: {
+                const result = std.ChildProcess.exec(.{
+                    .allocator = std.heap.page_allocator,
+                    .argv = &.{
+                        "git",
+                        "rev-parse",
+                        "--short",
+                        "HEAD",
+                    },
+                    .cwd = b.pathFromRoot("."),
+                    .expand_arg0 = .expand,
+                }) catch {
+                    std.debug.print("Warning: failed to get git HEAD", .{});
+                    break :sha;
+                };
+
+                git_sha = std.heap.page_allocator.dupeZ(u8, result.stdout) catch unreachable;
+            }
+        }
+
+        const is_canary = (std.os.getenvZ("BUN_CANARY") orelse "0")[0] == '1';
+
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
         obj.addOptions("build_options", opts);
 
         try addInternalPackages(

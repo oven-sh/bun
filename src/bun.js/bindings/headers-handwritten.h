@@ -189,6 +189,8 @@ extern "C" const char* Bun__versions_libarchive;
 extern "C" const char* Bun__versions_picohttpparser;
 extern "C" const char* Bun__versions_boringssl;
 extern "C" const char* Bun__versions_zlib;
+extern "C" const char* Bun__version_sha;
+
 extern "C" const char* Bun__versions_zig;
 
 extern "C" void ZigString__free_global(const unsigned char* ptr, size_t len);

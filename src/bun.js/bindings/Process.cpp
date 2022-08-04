@@ -271,6 +271,9 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::CustomGetterSetter::create(vm, Process_getArgv, Process_setArgv),
         static_cast<unsigned>(JSC::PropertyAttribute::CustomValue));
 
+    putDirect(vm, JSC::Identifier::fromString(vm, "revision"_s),
+        JSC::jsString(vm, makeAtomString(Bun__version_sha)), 0);
+
     this->putDirect(vm, clientData->builtinNames().nextTickPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
             MAKE_STATIC_STRING_IMPL("nextTick"), Process_functionNextTick),

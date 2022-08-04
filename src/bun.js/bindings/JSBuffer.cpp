@@ -545,13 +545,8 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::J
         }
     }
 
-    if (targetStart > std::min(targetEnd, targetEndInit) || targetEnd > targetEndInit) {
-        return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "targetStart and targetEnd out of range"_s));
-    }
-
-    if (sourceStart > std::min(sourceEnd, sourceEndInit) || sourceEnd > sourceEndInit) {
-        return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "sourceStart and sourceEnd out of range"_s));
-    }
+    targetStart = std::min(targetStart, std::min(targetEnd, targetEndInit));
+    sourceStart = std::min(sourceStart, std::min(sourceEnd, sourceEndInit));
 
     auto sourceLength = sourceEnd - sourceStart;
     auto targetLength = targetEnd - targetStart;
@@ -763,13 +758,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSG
         }
     }
 
-    if (targetStart > std::min(targetEnd, targetEndInit) || targetEnd > targetEndInit) {
-        return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "targetStart and targetEnd out of range"_s));
-    }
-
-    if (sourceStart > std::min(sourceEnd, sourceEndInit) || sourceEnd > sourceEndInit) {
-        return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "sourceStart and sourceEnd out of range"_s));
-    }
+    targetStart = std::min(targetStart, std::min(targetEnd, targetEndInit));
+    sourceStart = std::min(sourceStart, std::min(sourceEnd, sourceEndInit));
 
     auto sourceLength = sourceEnd - sourceStart;
     auto targetLength = targetEnd - targetStart;
@@ -852,13 +842,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
         }
     }
 
-    if (targetStart > std::min(targetEnd, targetEndInit) || targetEnd > targetEndInit) {
-        return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "targetStart and targetEnd out of range"_s));
-    }
-
-    if (sourceStart > std::min(sourceEnd, sourceEndInit) || sourceEnd > sourceEndInit) {
-        return throwVMError(lexicalGlobalObject, throwScope, createRangeError(lexicalGlobalObject, "sourceStart and sourceEnd out of range"_s));
-    }
+    targetStart = std::min(targetStart, std::min(targetEnd, targetEndInit));
+    sourceStart = std::min(sourceStart, std::min(sourceEnd, sourceEndInit));
 
     auto sourceLength = sourceEnd - sourceStart;
     auto targetLength = targetEnd - targetStart;
@@ -867,7 +852,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     auto sourceStartPtr = castedThis->typedVector() + sourceStart;
     auto targetStartPtr = view->typedVector() + targetStart;
 
-    memmove(targetStartPtr, sourceStartPtr, actualLength);
+    if (actualLength > 0)
+        memmove(targetStartPtr, sourceStartPtr, actualLength);
 
     return JSValue::encode(jsNumber(actualLength));
 }

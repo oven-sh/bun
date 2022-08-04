@@ -885,36 +885,39 @@ pub const Resolver = struct {
             }
 
             // Check the "browser" map
-            if (r.dirInfoCached(std.fs.path.dirname(abs_path) orelse unreachable) catch null) |_import_dir_info| {
-                if (_import_dir_info.getEnclosingBrowserScope()) |import_dir_info| {
-                    const pkg = import_dir_info.package_json.?;
-                    if (r.checkBrowserMap(
-                        import_dir_info,
-                        abs_path,
-                        .AbsolutePath,
-                    )) |remap| {
+            if (r.opts.platform.supportsBrowserField()) {
+                if (r.dirInfoCached(std.fs.path.dirname(abs_path) orelse unreachable) catch null) |_import_dir_info| {
+                    if (_import_dir_info.getEnclosingBrowserScope()) |import_dir_info| {
+                        const pkg = import_dir_info.package_json.?;
+                        if (r.checkBrowserMap(
+                            import_dir_info,
+                            abs_path,
+                            .AbsolutePath,
+                        )) |remap| {
 
-                        // Is the path disabled?
-                        if (remap.len == 0) {
-                            var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
-                            _path.is_disabled = true;
-                            return Result{
-                                .path_pair = PathPair{
-                                    .primary = _path,
-                                },
-                            };
-                        }
-
-                        if (r.resolveWithoutRemapping(import_dir_info, remap, kind)) |_result| {
-                            result = Result{
-                                .path_pair = _result.path_pair,
-                                .diff_case = _result.diff_case,
-                                .dirname_fd = _result.dirname_fd,
-                                .package_json = pkg,
-                                .jsx = r.opts.jsx,
-                            };
-                            check_relative = false;
-                            check_package = false;
+                            // Is the path disabled?
+                            if (remap.len == 0) {
+                                // Ignore disable path bun platform to enable node packages.
+                                if (!r.opts.platform.isBun()) {
+                                    var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
+                                    _path.is_disabled = true;
+                                    return Result{
+                                        .path_pair = PathPair{
+                                            .primary = _path,
+                                        },
+                                    };
+                                }
+                            } else if (r.resolveWithoutRemapping(import_dir_info, remap, kind)) |_result| {
+                                result = Result{
+                                    .path_pair = _result.path_pair,
+                                    .diff_case = _result.diff_case,
+                                    .dirname_fd = _result.dirname_fd,
+                                    .package_json = pkg,
+                                    .jsx = r.opts.jsx,
+                                };
+                                check_relative = false;
+                                check_package = false;
+                            }
                         }
                     }
                 }

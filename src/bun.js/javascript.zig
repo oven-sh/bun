@@ -435,7 +435,9 @@ pub const VirtualMachine = struct {
             this.macro_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
         }
 
-        this.bundler.options.platform = .bun_macro;
+        if (this.bundler.options.platform == .bun) {
+            this.bundler.options.platform = .bun_macro;
+        }
         this.bundler.resolver.caches.fs.is_macro_mode = true;
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
@@ -443,7 +445,9 @@ pub const VirtualMachine = struct {
     }
 
     pub fn disableMacroMode(this: *VirtualMachine) void {
-        this.bundler.options.platform = .bun;
+        if (this.bundler.options.platform == .bun_macro) {
+            this.bundler.options.platform = .bun;
+        }
         this.bundler.resolver.caches.fs.is_macro_mode = false;
         this.macro_mode = false;
         this.event_loop = &this.regular_event_loop;
@@ -2828,3 +2832,4 @@ pub const DisabledModule = bun.ComptimeStringMap(
         .{"worker_threads"},
     },
 );
+

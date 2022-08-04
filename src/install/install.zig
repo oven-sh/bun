@@ -4721,7 +4721,7 @@ pub const PackageManager = struct {
                             .scripts = true,
                         },
                     );
-
+                    manager.lockfile.scripts = lockfile.scripts;
                     var mapping = try manager.lockfile.allocator.alloc(PackageID, maybe_root.dependencies.len);
                     std.mem.set(PackageID, mapping, invalid_package_id);
 

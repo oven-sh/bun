@@ -240,4 +240,12 @@ describe("util", () => {
       expect(util.TextEncoder === globalThis.TextEncoder).toBe(true);
     });
   });
+  
+  describe("TextDecoder", () => {
+    // test/bun.js/text-decoder.test.js covers test cases for TextDecoder
+    // here we test only if we use the same via util.TextDecoder
+    it("is same as global TextDecoder", () => {
+      expect(util.TextDecoder === globalThis.TextDecoder).toBe(true);
+    });
+  });
 });

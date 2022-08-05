@@ -1,21 +1,4 @@
-import { readFileSync } from "fs";
-import * as shiki from "shiki";
-
-const DOCS = "https://github.com/oven-sh/bun#Reference";
-
-// because we don't want to wait for it to reload everytime this page reloads
-globalThis._highlighter ||= await shiki.getHighlighter({
-  theme: "dracula",
-});
-
-const highlighter = globalThis._highlighter as shiki.Highlighter;
-
-const CodeBlock = ({ children, lang = "js" }) => {
-  const html = highlighter.codeToHtml(children.trim(), { lang });
-  return (
-    <div className="CodeBlock" dangerouslySetInnerHTML={{ __html: html }} />
-  );
-};
+import CodeBlock from "../components/CodeBlock";
 
 const Command = ({ children, href, Tag = href ? "a" : "span" }) => (
   <Tag target="_blank" href={href} className="Tag Tag--Command">
@@ -118,7 +101,7 @@ const Zig = () => (
         <polygon points="46,22 28,44 19,30" />
         <polygon
           points="46,22 33,33 28,44 22,44 22,95 31,95 20,100 12,117 0,117 0,22"
-          shape-rendering="crispEdges"
+          shapeRendering="crispEdges"
         />
         <polygon points="31,95 12,117 4,106" />
       </g>
@@ -126,12 +109,12 @@ const Zig = () => (
         <polygon points="56,22 62,36 37,44" />
         <polygon
           points="56,22 111,22 111,44 37,44 56,32"
-          shape-rendering="crispEdges"
+          shapeRendering="crispEdges"
         />
         <polygon points="116,95 97,117 90,104" />
         <polygon
           points="116,95 100,104 97,117 42,117 42,95"
-          shape-rendering="crispEdges"
+          shapeRendering="crispEdges"
         />
         <polygon points="150,0 52,117 3,140 101,22" />
       </g>
@@ -139,7 +122,7 @@ const Zig = () => (
         <polygon points="141,22 140,40 122,45" />
         <polygon
           points="153,22 153,117 106,117 120,105 125,95 131,95 131,45 122,45 132,36 141,22"
-          shape-rendering="crispEdges"
+          shapeRendering="crispEdges"
         />
         <polygon points="125,95 130,110 106,117" />
       </g>
@@ -148,25 +131,19 @@ const Zig = () => (
       <g>
         <polygon
           points="260,22 260,37 229,40 177,40 177,22"
-          shape-rendering="crispEdges"
+          shapeRendering="crispEdges"
         />
         <polygon points="260,37 207,99 207,103 176,103 229,40 229,37" />
         <polygon
           points="261,99 261,117 176,117 176,103 206,99"
-          shape-rendering="crispEdges"
+          shapeRendering="crispEdges"
         />
       </g>
-      <rect
-        x="272"
-        y="22"
-        shape-rendering="crispEdges"
-        width="22"
-        height="95"
-      />
+      <rect x="272" y="22" shapeRendering="crispEdges" width="22" height="95" />
       <g>
         <polygon
           points="394,67 394,106 376,106 376,81 360,70 346,67"
-          shape-rendering="crispEdges"
+          shapeRendering="crispEdges"
         />
         <polygon points="360,68 376,81 346,67" />
         <path
@@ -215,101 +192,9 @@ const Group = ({ children, ...props }) => (
   </div>
 );
 
-export default ({ inlineCSS }) => (
-  <html lang="en">
-    <head>
-      <meta charSet="UTF-8" />
-
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <meta
-        property="og:title"
-        content="Bun is a fast all-in-one JavaScript runtime"
-      />
-      <meta
-        property="og:description"
-        content={`Bundle, transpile, install and run JavaScript & TypeScript
-        projects – all in Bun. Bun is a new JavaScript runtime with
-        a native bundler, transpiler, task runner and npm client built-in.`}
-      />
-      <meta name="og:locale" content="en_US" />
-      <meta name="twitter:site" content="@jarredsumner" />
-      <meta name="twitter:card" content="summary_large_image" />
-      <meta property="og:image" content="https://bun.sh/share.png" />
-      <meta
-        name="description"
-        content={`Bundle, transpile, install and run JavaScript & TypeScript
-        projects – all in Bun. Bun is a new JavaScript runtime with
-        a native bundler, transpiler, task runner and npm client built-in.`}
-      />
-      <meta name="theme-color" content="#fbf0df" />
-      <link rel="manifest" href="manifest.json" />
-      <link
-        rel="icon"
-        type="image/png"
-        sizes="256x256"
-        href="/logo-square.png"
-      />
-      <link
-        rel="icon"
-        type="image/png"
-        sizes="32x32"
-        href="/logo-square@32px.png"
-      />
-      <link
-        rel="icon"
-        type="image/png"
-        sizes="16x16"
-        href="/logo-square@16px.png"
-      />
-
-      <title>Bun is a fast all-in-one JavaScript runtime</title>
-
-      {inlineCSS ? (
-        <style
-          dangerouslySetInnerHTML={{
-            __html: readFileSync(import.meta.dir + "/index.css", "utf8"),
-          }}
-        ></style>
-      ) : (
-        <link rel="stylesheet" href="/index.css" />
-      )}
-    </head>
-
-    <body>
-      <div id="header-wrap">
-        <header>
-          <a href="/" id="logo-link" aria-label="home">
-            <img height="61px" src="/logo.svg" alt="Bun logo" id="logo" />
-            <img
-              height="31.65px"
-              src="/Bun.png"
-              srcSet="/Bun.png 1x, /Bun@2x.png 2x"
-              alt="Bun"
-              id="logo-text"
-            />
-          </a>
-
-          <nav className="Navigation">
-            <ul>
-              <li>
-                <a className="NavText" href={DOCS}>
-                  Docs
-                </a>
-              </li>
-              <li>
-                <a className="NavText" href="https://bun.sh/discord">
-                  Discord
-                </a>
-              </li>
-              <li>
-                <a className="NavText" href="https://github.com/oven-sh/bun">
-                  GitHub
-                </a>
-              </li>
-            </ul>
-          </nav>
-        </header>
-      </div>
+export default function LandingPage() {
+  return (
+    <>
       <div id="pitch">
         <main>
           <div id="pitch-content">
@@ -580,8 +465,8 @@ export default ({ inlineCSS }) => (
             </li>
             <li>
               <NodeJS>node_modules</NodeJS> bun implements Node.js' module
-              resolution algorithm, so you can use npm packages in Bun. ESM
-              and CommonJS are supported, but Bun internally uses ESM
+              resolution algorithm, so you can use npm packages in Bun. ESM and
+              CommonJS are supported, but Bun internally uses ESM
             </li>
             <li>
               In Bun, every file is transpiled.{" "}
@@ -589,8 +474,7 @@ export default ({ inlineCSS }) => (
               work
             </li>
             <li>
-              Bun supports <code className="">"paths"</code>,{" "}
-              <code>"jsxImportSource"</code>
+              Bun supports <code>"paths"</code>, <code>"jsxImportSource"</code>
               and more from <TypeScript>tsconfig.json</TypeScript> files
             </li>
             <li>
@@ -602,9 +486,9 @@ export default ({ inlineCSS }) => (
               to write, copy, pipe, send and clone files
             </li>
             <li>
-              Bun automatically loads environment variables from{" "}
-              <Bun>.env</Bun> files. No more{" "}
-              <code class="mono">require("dotenv").config()</code>
+              Bun automatically loads environment variables from <Bun>.env</Bun>{" "}
+              files. No more{" "}
+              <code className="mono">require("dotenv").config()</code>
             </li>
             <li>
               Bun ships with a fast SQLite3 client built-in{" "}
@@ -628,9 +512,9 @@ export default ({ inlineCSS }) => (
               low-overhead foreign function interface
             </li>
             <li>
-              <NodeJS>node:fs</NodeJS> <NodeJS>node:path</NodeJS> Bun
-              natively supports a growing list of Node.js core modules along
-              with globals like Buffer and process
+              <NodeJS>node:fs</NodeJS> <NodeJS>node:path</NodeJS> Bun natively
+              supports a growing list of Node.js core modules along with globals
+              like Buffer and process
             </li>
           </ul>
 
@@ -725,8 +609,9 @@ export default {
             <a href="https://github.com/oven-sh/bun/tree/main/examples">
               more examples
             </a>{" "}
-            and check out <a href={DOCS}>the docs</a>. If you have any questions
-            or want help, join{" "}
+            and check out{" "}
+            <a href="https://github.com/oven-sh/bun#Reference">the docs</a>. If
+            you have any questions or want help, join{" "}
             <a href="https://bun.sh/discord">Bun's Discord</a>.
           </p>
 
@@ -754,8 +639,9 @@ export default {
           <Group>
             <Command>bun install</Command>
             <p>
-              <code classsName="mono">bun install</code> is an npm-compatible package manager. You probably
-              will be surprised by how much faster copying files can get.
+              <code classsName="mono">bun install</code> is an npm-compatible
+              package manager. You probably will be surprised by how much faster
+              copying files can get.
             </p>
             <strong>
               Replace <code className="mono">yarn</code> with{" "}
@@ -764,7 +650,8 @@ export default {
             </strong>
             <br />
             <div>
-              <code className="mono">bun install</code> uses the fastest system calls available to copy files.
+              <code className="mono">bun install</code> uses the fastest system
+              calls available to copy files.
             </div>
           </Group>
           <Group>
@@ -851,6 +738,10 @@ for (const el of document.querySelectorAll(".InstallBox-copy")) {
         }}
       />
       <div className="Built">Built with Bun {process.version}</div>
-    </body>
-  </html>
-);
+    </>
+  );
+}
+
+export const config = {
+  unstable_runtimeJS: false,
+};

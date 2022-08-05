@@ -46,7 +46,7 @@ var bun_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 const Futex = @import("../futex.zig");
 const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
-const target_nextjs_version = "12.1.3";
+const target_nextjs_version = "12.2.3";
 pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
@@ -706,6 +706,8 @@ pub const CreateCommand = struct {
             ) catch {};
         }
 
+        var start_command: string = "bun dev";
+
         process_package_json: {
             if (create_options.skip_package_json) package_json_file = null;
 
@@ -1330,7 +1332,7 @@ pub const CreateCommand = struct {
                     var i: usize = 0;
                     var property_i: usize = 0;
                     while (i < package_json_expr.data.e_object.properties.len) : (i += 1) {
-                        const property = package_json_expr.data.e_object.properties.ptr[i];
+                        const property: js_ast.G.Property = package_json_expr.data.e_object.properties.ptr[i];
                         const key = property.key.?.asString(ctx.allocator).?;
 
                         if (strings.eqlComptime(key, "scripts")) {
@@ -1432,6 +1434,14 @@ pub const CreateCommand = struct {
                                     }
                                 },
                                 else => {},
+                            }
+                        }
+
+                        if (value.asProperty("start")) |start| {
+                            if (start.expr.asString(ctx.allocator)) |start_str| {
+                                if (start_str.len > 0) {
+                                    start_command = start_str;
+                                }
                             }
                         }
                     }
@@ -1628,11 +1638,12 @@ pub const CreateCommand = struct {
             \\<d>#<r><b> To get started, run:<r>
             \\
             \\  <b><cyan>cd {s}<r>
-            \\  <b><cyan>bun dev<r>
+            \\  <b><cyan>{s}<r>
             \\
             \\
         , .{
             filesystem.relativeTo(destination),
+            start_command,
         });
 
         Output.flush();

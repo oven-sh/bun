@@ -154,6 +154,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
     - [Build bun (macOS)](#build-bun-macos)
     - [Verify it worked (macOS)](#verify-it-worked-macos)
     - [Troubleshooting (macOS)](#troubleshooting-macos)
+  - [Troubleshooting (general)](#troubleshooting-general)
 - [vscode-zig](#vscode-zig)
 
 ## Using bun.js - a new JavaScript runtime environment
@@ -3207,11 +3208,10 @@ The VSCode Dev Container in this repository is the easiest way to get started. I
 
 <img src="https://user-images.githubusercontent.com/709451/147319227-6446589c-a4d9-480d-bd5b-43037a9e56fd.png" />
 
-#### Prerequisites 
-
 To develop on Linux, the following is required:
 
 - [Visual Studio Code](https://code.visualstudio.com/)
+- [Remote - Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension for Visual Studio Code
 - [Docker](https://www.docker.com). If using WSL on Windows, it is recommended to use [Docker Desktop](https://docs.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers) for its WSL2 integration.
 - [Dev Container CLI](https://www.npmjs.com/package/@devcontainers/cli): `npm install -g @devcontainers/cli`
 

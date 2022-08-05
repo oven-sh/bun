@@ -645,9 +645,8 @@ const AutoCommand = struct {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
 };
-const InitCommand = struct {
-    pub fn exec(_: std.mem.Allocator) !void {}
-};
+const InitCommand = @import("./cli/init_command.zig").InitCommand;
+
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
         @setCold(true);
@@ -690,7 +689,8 @@ pub const HelpCommand = struct {
             \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a bun Dev Server
             \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
             \\
-            \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(bun c)<r>
+            \\> <r> <b><cyan>init<r>                            Start an empty Bun project from a blank template<r>
+            \\> <r> <b><cyan>create    <r><d>next ./app<r>            Create a new project from a template <d>(bun c)<r>
             \\> <r> <b><magenta>run     <r><d>  test        <r>          Run JavaScript with bun, a package.json script, or a bin<r>
             \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
             \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
@@ -909,7 +909,7 @@ pub const Command = struct {
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator),
+            .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
             else => {},
         }
 

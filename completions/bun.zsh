@@ -1,10 +1,10 @@
 _bun() {
     zstyle ':completion:*:*:bun:*' group-name ''
     zstyle ':completion:*:*:bun-grouped:*' group-name ''
-    
+
     zstyle ':completion:*:*:bun::descriptions' format '%F{green}-- %d --%f'
     zstyle ':completion:*:*:bun-grouped:*' format '%F{green}-- %d --%f'
-    
+
     local program=bun
     typeset -A opt_args
     local curcontext="$curcontext" state line context
@@ -88,6 +88,15 @@ _bun() {
                 _files
                 ;;
             esac
+
+            ;;
+        init)
+            # ---- Command: init
+            _arguments -s -C \
+                '1: :->cmd' \
+                '-y[Answer yes to all prompts]' \
+                '--yes[Answer yes to all prompts]' &&
+                ret=0
 
             ;;
         create)

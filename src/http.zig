@@ -3531,27 +3531,27 @@ pub const Server = struct {
                 Output.prettyError(
                     " bun!! <d>v{s}<r>\n\n\n  Link:<r> <b><cyan>http://localhost:{d}<r>\n        <d>{s}/index.html<r> \n\n\n",
                     .{
-                        Global.package_json_version,
+                        Global.package_json_version_with_sha,
                         addr.ipv4.port,
                         display_path,
                     },
                 );
             } else {
                 Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://localhost:{d}<r>\n\n\n", .{
-                    Global.package_json_version,
+                    Global.package_json_version_with_sha,
                     addr.ipv4.port,
                 });
             }
         } else {
             if (server.bundler.options.routes.single_page_app_routing) {
                 Output.prettyError(" bun!! <d>v{s}<r>\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n       <d>{s}/index.html<r> \n\n\n", .{
-                    Global.package_json_version,
+                    Global.package_json_version_with_sha,
                     addr,
                     display_path,
                 });
             } else {
                 Output.prettyError(" bun!! <d>v{s}\n\n\n<d>  Link:<r> <b><cyan>http://{s}<r>\n\n\n", .{
-                    Global.package_json_version,
+                    Global.package_json_version_with_sha,
                     addr,
                 });
             }

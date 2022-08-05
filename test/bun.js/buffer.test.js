@@ -162,13 +162,13 @@ it("Buffer.from", () => {
 });
 
 it("Buffer.from latin1 vs ascii", () => {
-  const simpleBuffer = Buffer.from('\xa4', 'binary');
-  expect(simpleBuffer.toString("latin1").toBe("¤"));
-  expect(simpleBuffer.toString('ascii').toBe("$"));
-
-  const asciiBuffer = Buffer.from('\xa4', 'ascii');
-  expect(asciiBuffer.toString("latin1").toBe("¤"));
-  expect(asciiBuffer.toString('ascii').toBe("$"));
+  const simpleBuffer = Buffer.from("\xa4", "binary");
+  expect(simpleBuffer.toString("latin1")).toBe("¤");
+  expect(simpleBuffer.toString("ascii")).toBe("$");
+  gc();
+  const asciiBuffer = Buffer.from("\xa4", "ascii");
+  expect(asciiBuffer.toString("latin1")).toBe("¤");
+  expect(asciiBuffer.toString("ascii")).toBe("$");
   gc();
 });
 

@@ -527,7 +527,7 @@ pub const Mask = struct {
         var input = input_;
         var output = output_;
 
-        if (comptime Environment.isAarch64 or Environment.isX64) {
+        if (comptime Environment.enableSIMD) {
             if (input.len >= strings.ascii_vector_size) {
                 const vec: strings.AsciiVector = brk: {
                     var in: [strings.ascii_vector_size]u8 = undefined;

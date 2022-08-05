@@ -7,7 +7,7 @@
 // clang-format off
 // This file is only compatible with 64 bit CPUs
 // It must be kept in sync with JSCJSValue.h
-// https://github.com/Jarred-Sumner/WebKit/blob/72c2052b781cbfd4af867ae79ac9de460e392fba/Source/JavaScriptCore/runtime/JSCJSValue.h#L455-L458
+// https://github.com/oven-sh/WebKit/blob/72c2052b781cbfd4af867ae79ac9de460e392fba/Source/JavaScriptCore/runtime/JSCJSValue.h#L455-L458
 #ifdef IS_CALLBACK
 #define INJECT_BEFORE int c = 500; // This is a callback, so we need to inject code before the call
 #endif

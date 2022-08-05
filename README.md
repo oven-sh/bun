@@ -1,7 +1,10 @@
 # bun
 
 <p align="center">
-  <a href="https://bun.sh"><img src="https://bun.sh/logo@2x.png" alt="Logo"></a>
+  <a href="https://bun.sh"><img src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Logo" height=170></a>
+  <br />
+  <br />
+  <a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>
 </p>
 
 bun is a new:
@@ -94,6 +97,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
     - [Testing your new template](#testing-your-new-template)
     - [Config](#config)
     - [How `bun create` works](#how-bun-create-works)
+  - [`bun init`](#bun-init)
   - [`bun bun`](#bun-bun)
     - [Why bundle?](#why-bundle)
     - [What is `.bun`?](#what-is-bun)
@@ -253,7 +257,7 @@ PRs adding more examples are very welcome!
 
 ### Types for bun.js (editor autocomplete)
 
-The best docs right now are the TypeScript types in the [`bun-types`](https://github.com/oven-sh/bun-types/blob/master/dist/types.d.ts) npm package. A docs site is coming soon.
+The best docs right now are the TypeScript types in the [`bun-types`](https://github.com/oven-sh/bun-types) npm package. A docs site is coming soon.
 
 To get autocomplete for bun.js types in your editor,
 
@@ -272,13 +276,14 @@ bun add bun-types
     "lib": ["ESNext"],
     "module": "esnext",
     "target": "esnext",
+    "moduleResolution": "node",
     // "bun-types" is the important part
     "types": ["bun-types"]
   }
 }
 ```
 
-You can also [view the types here](https://github.com/oven-sh/bun-types/blob/master/dist/types.d.ts).
+You can also [view the types here](https://github.com/oven-sh/bun-types).
 
 To contribute to the types, head over to [oven-sh/bun-types](https://github.com/oven-sh/bun-types).
 
@@ -1581,7 +1586,7 @@ bun is distributed as a single binary file, so you can also do this manually:
 
 ### Canary builds
 
-[Canary](https://github.com/oven-sh/bun/releases/tag/canary) builds are generated on every commit. At the time of writing, only Linux x64 &amp; Linux arm64 are generated.
+[Canary](https://github.com/oven-sh/bun/releases/tag/canary) builds are generated on every commit.
 
 To install a [canary](https://github.com/oven-sh/bun/releases/tag/canary) build of bun, run:
 
@@ -1598,6 +1603,29 @@ To revert to the latest published version of bun, run:
 ```bash
 bun upgrade
 ```
+
+### `bun init`
+
+`bun init` is a quick way to start a blank project with Bun. It guesses with sane defaults and is non-destructive when run multiple times.
+
+![Demo](https://user-images.githubusercontent.com/709451/183006613-271960a3-ff22-4f7c-83f5-5e18f684c836.gif)
+
+It creates:
+
+- a `package.json` file with a name that defaults to the current directory name
+- a `tsconfig.json` file or a `jsconfig.json` file, depending if the entry point is a TypeScript file or not
+- an entry point which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
+- a `README.md` file
+
+If you pass `-y` or `--yes`, it will assume you want to continue without asking questions.
+
+At the end, it runs `bun install` to install `bun-types`.
+
+Added in Bun v0.1.7.
+
+#### How is `bun init` different than `bun create`?
+
+`bun init` is for blank projects. `bun create` applies templates.
 
 ### `bun completions`
 
@@ -2508,7 +2536,7 @@ console.log(`SQLite 3 version: ${sqlite3_libversion()}`);
 - 5x faster than napi (Node v17.7.1)
 - 100x faster than Deno v1.21.1
 
-As measured in [this simple benchmark](./bench/ffi/plus100)
+As measured in [this simple benchmark](./bench/ffi)
 
 <img src="https://user-images.githubusercontent.com/709451/166429741-e6d83ca5-3808-4397-acb7-bb2c9f4329be.png" height="400">
 
@@ -3146,7 +3174,7 @@ Per LGPL2:
 
 > (1) If you statically link against an LGPL’d library, you must also provide your application in an object (not necessarily source) format, so that a user has the opportunity to modify the library and relink the application.
 
-You can find the patched version of WebKit used by bun here: <https://github.com/jarred-sumner/webkit>. If you would like to relink bun with changes:
+You can find the patched version of WebKit used by bun here: <https://github.com/oven-sh/webkit>. If you would like to relink bun with changes:
 
 - `git submodule update --init --recursive`
 - `make jsc`
@@ -3205,7 +3233,7 @@ The VSCode Dev Container in this repository is the easiest way to get started. I
 To get started, install the devcontainer cli:
 
 ```bash
-npm install -g @vscode/dev-container-cli
+npm install -g @devcontainers/cli
 ```
 
 Then, in the `bun` repository locally run:

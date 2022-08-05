@@ -55,4 +55,4 @@ fi
 
 docker rm $id
 
-gh release upload $TAG $temp/$CONTAINER_NAME.zip --clobber --repo Jarred-Sumner/zig
+gh release upload $TAG $temp/$CONTAINER_NAME.zip --clobber --repo oven-sh/zig

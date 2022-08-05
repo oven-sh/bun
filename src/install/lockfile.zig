@@ -106,8 +106,39 @@ string_pool: StringPool,
 allocator: std.mem.Allocator,
 scratch: Scratch = Scratch{},
 
+scripts: Scripts = .{},
+
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
+
+pub const Scripts = struct {
+    const StringArrayList = std.ArrayListUnmanaged(string);
+    const RunCommand = @import("../cli/run_command.zig").RunCommand;
+
+    preinstall: StringArrayList = .{},
+    install: StringArrayList = .{},
+    postinstall: StringArrayList = .{},
+    preprepare: StringArrayList = .{},
+    prepare: StringArrayList = .{},
+    postprepare: StringArrayList = .{},
+
+    pub fn hasAny(this: Scripts) bool {
+        return (this.preinstall.items.len +
+            this.install.items.len +
+            this.postinstall.items.len +
+            this.preprepare.items.len +
+            this.prepare.items.len +
+            this.postprepare.items.len) > 0;
+    }
+
+    pub fn run(this: Scripts, allocator: std.mem.Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
+        for (@field(this, hook).items) |script| {
+            std.debug.assert(Fs.FileSystem.instance_loaded);
+            const cwd = Fs.FileSystem.instance.top_level_dir;
+            _ = try RunCommand.runPackageScript(allocator, script, hook, cwd, env, &.{}, silent);
+        }
+    }
+};
 
 pub fn isEmpty(this: *const Lockfile) bool {
     return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
@@ -155,6 +186,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: std.mem.Allocator, l
 
     this.workspace_path = "";
     this.format = FormatVersion.current;
+    this.scripts = .{};
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
@@ -547,7 +579,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
 }
 
 pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile {
-
+    const old_scripts = old.scripts;
     // We will only shrink the number of packages here.
     // never grow
 
@@ -649,7 +681,7 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
             }
         }
     }
-
+    new.scripts = old_scripts;
     return new;
 }
 
@@ -1441,6 +1473,7 @@ pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
         .string_pool = StringPool.init(allocator),
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
+        .scripts = .{},
     };
 }
 
@@ -2225,6 +2258,38 @@ pub const Package = extern struct {
             if (json.asProperty("version")) |version_q| {
                 if (version_q.expr.asString(allocator)) |version_str| {
                     string_builder.count(version_str);
+                }
+            }
+        }
+
+        if (comptime features.scripts) {
+            if (json.asProperty("scripts")) |scripts_prop| {
+                if (scripts_prop.expr.data == .e_object) {
+                    const scripts = .{
+                        "install",
+                        "postinstall",
+                        "postprepare",
+                        "preinstall",
+                        "prepare",
+                        "preprepare",
+                    };
+
+                    inline for (scripts) |script_name| {
+                        if (scripts_prop.expr.get(script_name)) |script| {
+                            if (script.asString(allocator)) |input| {
+                                var list = @field(lockfile.scripts, script_name);
+                                if (list.capacity == 0) {
+                                    list.capacity = 1;
+                                    list.items = try allocator.alloc(string, 1);
+                                    list.items[0] = input;
+                                } else {
+                                    try list.append(allocator, input);
+                                }
+
+                                @field(lockfile.scripts, script_name) = list;
+                            }
+                        }
+                    }
                 }
             }
         }

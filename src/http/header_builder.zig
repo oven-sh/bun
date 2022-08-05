@@ -47,7 +47,7 @@ pub fn appendFmt(this: *HeaderBuilder, name: string, comptime fmt: string, args:
     const value = this.content.fmt(fmt, args);
 
     const value_ptr = Api.StringPointer{
-        .offset = @truncate(u32, this.content.len),
+        .offset = @truncate(u32, this.content.len - value.len),
         .length = @truncate(u32, value.len),
     };
 

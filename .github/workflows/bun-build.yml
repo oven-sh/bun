@@ -32,7 +32,7 @@ jobs:
           - cpu: haswell
             arch: x86_64
             tag: bun-obj-darwin-x64
-            runner: linux-amd64
+            runner: zig-object
             object-files: true
           - cpu: haswell
             arch: x86_64
@@ -69,7 +69,7 @@ jobs:
           - cpu: westmere
             arch: x86_64
             tag: bun-obj-darwin-x64-baseline
-            runner: linux-amd64
+            runner: zig-object
             object-files: true
           # cpp
           - cpu: westmere
@@ -109,7 +109,7 @@ jobs:
           - cpu: native
             arch: aarch64
             tag: bun-obj-darwin-aarch64
-            runner: linux-amd64
+            runner: zig-object
             object-files: true
           # cpp
           - cpu: native
@@ -117,7 +117,7 @@ jobs:
             tag: bun-darwin-aarch64
             obj: bun-obj-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-arm64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul31/bun-webkit-macos-arm64-lto.tar.gz"
             runner: macos-arm64
             dependencies: true
             compile_obj: true
@@ -129,7 +129,7 @@ jobs:
             obj: bun-obj-darwin-aarch64
             package: bun-darwin-aarch64
             artifact: bun-obj-darwin-aarch64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/latest/bun-webkit-macos-arm64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul31/bun-webkit-macos-arm64-lto.tar.gz"
             runner: macos-arm64
             link: true
 

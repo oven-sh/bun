@@ -1000,7 +1000,10 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     if (count == 0)
         return;
     JSC::ObjectInitializationScope initializationScope(vm);
-    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), count);
+
+    // 64 is the maximum we can preallocate here
+    // see https://github.com/oven-sh/bun/issues/987
+    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64));
 
     for (int i = 0; i < count; i++) {
         const char* name = sqlite3_column_name(stmt, i);

@@ -1191,142 +1191,158 @@ pub const PackageManifest = struct {
 
                     inline for (dependency_groups) |pair| {
                         if (prop.value.?.asProperty(comptime pair.prop)) |versioned_deps| {
-                            const items = versioned_deps.expr.data.e_object.properties.slice();
-                            var count = items.len;
+                            if (versioned_deps.expr.data == .e_object) {
+                                const items = versioned_deps.expr.data.e_object.properties.slice();
+                                var count = items.len;
 
-                            var this_names = dependency_names[0..count];
-                            var this_versions = dependency_values[0..count];
+                                var this_names = dependency_names[0..count];
+                                var this_versions = dependency_values[0..count];
 
-                            var name_hasher = std.hash.Wyhash.init(0);
-                            var version_hasher = std.hash.Wyhash.init(0);
+                                var name_hasher = std.hash.Wyhash.init(0);
+                                var version_hasher = std.hash.Wyhash.init(0);
 
-                            const is_peer = comptime strings.eqlComptime(pair.prop, "peerDependencies");
+                                const is_peer = comptime strings.eqlComptime(pair.prop, "peerDependencies");
 
-                            if (comptime is_peer) {
-                                optional_peer_dep_names.clearRetainingCapacity();
+                                if (comptime is_peer) {
+                                    optional_peer_dep_names.clearRetainingCapacity();
 
-                                if (prop.value.?.asProperty("peerDependenciesMeta")) |meta| {
-                                    if (meta.expr.data == .e_object) {
-                                        const meta_props = meta.expr.data.e_object.properties.slice();
-                                        try optional_peer_dep_names.ensureUnusedCapacity(meta_props.len);
-                                        for (meta_props) |meta_prop| {
-                                            if (meta_prop.value.?.asProperty("optional")) |optional| {
-                                                if (optional.expr.data != .e_boolean or !optional.expr.data.e_boolean.value) {
-                                                    continue;
+                                    if (prop.value.?.asProperty("peerDependenciesMeta")) |meta| {
+                                        if (meta.expr.data == .e_object) {
+                                            const meta_props = meta.expr.data.e_object.properties.slice();
+                                            try optional_peer_dep_names.ensureUnusedCapacity(meta_props.len);
+                                            for (meta_props) |meta_prop| {
+                                                if (meta_prop.value.?.asProperty("optional")) |optional| {
+                                                    if (optional.expr.data != .e_boolean or !optional.expr.data.e_boolean.value) {
+                                                        continue;
+                                                    }
+
+                                                    optional_peer_dep_names.appendAssumeCapacity(String.Builder.stringHash(meta_prop.key.?.asString(allocator) orelse unreachable));
                                                 }
-
-                                                optional_peer_dep_names.appendAssumeCapacity(String.Builder.stringHash(meta_prop.key.?.asString(allocator) orelse unreachable));
                                             }
                                         }
                                     }
                                 }
-                            }
 
-                            var i: usize = 0;
+                                var i: usize = 0;
 
-                            for (items) |item| {
-                                const name_str = item.key.?.asString(allocator) orelse if (comptime Environment.allow_assert) unreachable else continue;
-                                const version_str = item.value.?.asString(allocator) orelse if (comptime Environment.allow_assert) unreachable else continue;
+                                for (items) |item| {
+                                    const name_str = item.key.?.asString(allocator) orelse if (comptime Environment.allow_assert) unreachable else continue;
+                                    const version_str = item.value.?.asString(allocator) orelse if (comptime Environment.allow_assert) unreachable else continue;
 
-                                this_names[i] = string_builder.append(ExternalString, name_str);
-                                this_versions[i] = string_builder.append(ExternalString, version_str);
+                                    this_names[i] = string_builder.append(ExternalString, name_str);
+                                    this_versions[i] = string_builder.append(ExternalString, version_str);
 
-                                if (comptime is_peer) {
-                                    if (std.mem.indexOfScalar(u64, optional_peer_dep_names.items, this_names[i].hash) != null) {
-                                        // For optional peer dependencies, we store a length instead of a whole separate array
-                                        // To make that work, we have to move optional peer dependencies to the front of the array
-                                        //
-                                        if (peer_dependency_len != i) {
-                                            const current_name = this_names[i];
-                                            this_names[i] = this_names[peer_dependency_len];
-                                            this_names[peer_dependency_len] = current_name;
+                                    if (comptime is_peer) {
+                                        if (std.mem.indexOfScalar(u64, optional_peer_dep_names.items, this_names[i].hash) != null) {
+                                            // For optional peer dependencies, we store a length instead of a whole separate array
+                                            // To make that work, we have to move optional peer dependencies to the front of the array
+                                            //
+                                            if (peer_dependency_len != i) {
+                                                const current_name = this_names[i];
+                                                this_names[i] = this_names[peer_dependency_len];
+                                                this_names[peer_dependency_len] = current_name;
 
-                                            const current_version = this_versions[i];
-                                            this_versions[i] = this_versions[peer_dependency_len];
-                                            this_versions[peer_dependency_len] = current_version;
+                                                const current_version = this_versions[i];
+                                                this_versions[i] = this_versions[peer_dependency_len];
+                                                this_versions[peer_dependency_len] = current_version;
 
-                                            peer_dependency_len += 1;
+                                                peer_dependency_len += 1;
+                                            }
                                         }
-                                    }
 
-                                    if (optional_peer_dep_names.items.len == 0) {
+                                        if (optional_peer_dep_names.items.len == 0) {
+                                            const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
+                                            name_hasher.update(&names_hash_bytes);
+                                            const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
+                                            version_hasher.update(&versions_hash_bytes);
+                                        }
+                                    } else {
                                         const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
                                         name_hasher.update(&names_hash_bytes);
                                         const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
                                         version_hasher.update(&versions_hash_bytes);
                                     }
-                                } else {
-                                    const names_hash_bytes = @bitCast([8]u8, this_names[i].hash);
-                                    name_hasher.update(&names_hash_bytes);
-                                    const versions_hash_bytes = @bitCast([8]u8, this_versions[i].hash);
-                                    version_hasher.update(&versions_hash_bytes);
+
+                                    i += 1;
                                 }
 
-                                i += 1;
-                            }
+                                count = i;
 
-                            count = i;
-
-                            var name_list = ExternalStringList.init(all_extern_strings, this_names);
-                            var version_list = ExternalStringList.init(version_extern_strings, this_versions);
-
-                            if (comptime is_peer) {
-                                package_version.optional_peer_dependencies_len = @truncate(u32, peer_dependency_len);
-                            }
-
-                            if (count > 0 and
-                                ((comptime !is_peer) or
-                                optional_peer_dep_names.items.len == 0))
-                            {
-                                const name_map_hash = name_hasher.final();
-                                const version_map_hash = version_hasher.final();
-
-                                var name_entry = try external_string_maps.getOrPut(name_map_hash);
-                                if (name_entry.found_existing) {
-                                    name_list = name_entry.value_ptr.*;
-                                    this_names = name_list.mut(all_extern_strings);
-                                } else {
-                                    name_entry.value_ptr.* = name_list;
-                                    dependency_names = dependency_names[count..];
-                                }
-
-                                var version_entry = try external_string_maps.getOrPut(version_map_hash);
-                                if (version_entry.found_existing) {
-                                    version_list = version_entry.value_ptr.*;
-                                    this_versions = version_list.mut(version_extern_strings);
-                                } else {
-                                    version_entry.value_ptr.* = version_list;
-                                    dependency_values = dependency_values[count..];
-                                }
-                            }
-
-                            if (comptime is_peer) {
-                                if (optional_peer_dep_names.items.len > 0) {
-                                    dependency_names = dependency_names[count..];
-                                    dependency_values = dependency_values[count..];
-                                }
-                            }
-
-                            @field(package_version, pair.field) = ExternalStringMap{
-                                .name = name_list,
-                                .value = version_list,
-                            };
-
-                            if (comptime Environment.allow_assert) {
-                                const dependencies_list = @field(package_version, pair.field);
-
-                                std.debug.assert(dependencies_list.name.off < all_extern_strings.len);
-                                std.debug.assert(dependencies_list.value.off < all_extern_strings.len);
-                                std.debug.assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
-                                std.debug.assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
-
-                                std.debug.assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
-                                std.debug.assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
-                                var j: usize = 0;
-                                const name_dependencies = dependencies_list.name.get(all_extern_strings);
+                                var name_list = ExternalStringList.init(all_extern_strings, this_names);
+                                var version_list = ExternalStringList.init(version_extern_strings, this_versions);
 
                                 if (comptime is_peer) {
-                                    if (optional_peer_dep_names.items.len == 0) {
+                                    package_version.optional_peer_dependencies_len = @truncate(u32, peer_dependency_len);
+                                }
+
+                                if (count > 0 and
+                                    ((comptime !is_peer) or
+                                    optional_peer_dep_names.items.len == 0))
+                                {
+                                    const name_map_hash = name_hasher.final();
+                                    const version_map_hash = version_hasher.final();
+
+                                    var name_entry = try external_string_maps.getOrPut(name_map_hash);
+                                    if (name_entry.found_existing) {
+                                        name_list = name_entry.value_ptr.*;
+                                        this_names = name_list.mut(all_extern_strings);
+                                    } else {
+                                        name_entry.value_ptr.* = name_list;
+                                        dependency_names = dependency_names[count..];
+                                    }
+
+                                    var version_entry = try external_string_maps.getOrPut(version_map_hash);
+                                    if (version_entry.found_existing) {
+                                        version_list = version_entry.value_ptr.*;
+                                        this_versions = version_list.mut(version_extern_strings);
+                                    } else {
+                                        version_entry.value_ptr.* = version_list;
+                                        dependency_values = dependency_values[count..];
+                                    }
+                                }
+
+                                if (comptime is_peer) {
+                                    if (optional_peer_dep_names.items.len > 0) {
+                                        dependency_names = dependency_names[count..];
+                                        dependency_values = dependency_values[count..];
+                                    }
+                                }
+
+                                @field(package_version, pair.field) = ExternalStringMap{
+                                    .name = name_list,
+                                    .value = version_list,
+                                };
+
+                                if (comptime Environment.allow_assert) {
+                                    const dependencies_list = @field(package_version, pair.field);
+
+                                    std.debug.assert(dependencies_list.name.off < all_extern_strings.len);
+                                    std.debug.assert(dependencies_list.value.off < all_extern_strings.len);
+                                    std.debug.assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
+                                    std.debug.assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
+
+                                    std.debug.assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
+                                    std.debug.assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
+                                    var j: usize = 0;
+                                    const name_dependencies = dependencies_list.name.get(all_extern_strings);
+
+                                    if (comptime is_peer) {
+                                        if (optional_peer_dep_names.items.len == 0) {
+                                            while (j < name_dependencies.len) : (j += 1) {
+                                                const dep_name = name_dependencies[j];
+                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
+                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                            }
+
+                                            j = 0;
+                                            while (j < dependencies_list.value.len) : (j += 1) {
+                                                const dep_name = dependencies_list.value.get(version_extern_strings)[j];
+
+                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
+                                                std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                            }
+                                        }
+                                    } else {
                                         while (j < name_dependencies.len) : (j += 1) {
                                             const dep_name = name_dependencies[j];
                                             std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
@@ -1340,20 +1356,6 @@ pub const PackageManifest = struct {
                                             std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
                                             std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
                                         }
-                                    }
-                                } else {
-                                    while (j < name_dependencies.len) : (j += 1) {
-                                        const dep_name = name_dependencies[j];
-                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
-                                    }
-
-                                    j = 0;
-                                    while (j < dependencies_list.value.len) : (j += 1) {
-                                        const dep_name = dependencies_list.value.get(version_extern_strings)[j];
-
-                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                        std.debug.assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
                                     }
                                 }
                             }

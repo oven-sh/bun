@@ -128,7 +128,7 @@ function exceptionToMarkdown(exception: JSException): string {
 
               prefix +=
                 "/* ".padEnd(column - 1 - prefix.length, " ") +
-                "^ happend here ";
+                "^ happened here ";
               markdown +=
                 prefix.padEnd(Math.max(lineText.length, 1) - 1, " ") + "*/\n";
             }

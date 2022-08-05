@@ -154,6 +154,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
     - [Build bun (macOS)](#build-bun-macos)
     - [Verify it worked (macOS)](#verify-it-worked-macos)
     - [Troubleshooting (macOS)](#troubleshooting-macos)
+  - [Troubleshooting (general)](#troubleshooting-general)
 - [vscode-zig](#vscode-zig)
 
 ## Using bun.js - a new JavaScript runtime environment
@@ -3230,21 +3231,24 @@ The VSCode Dev Container in this repository is the easiest way to get started. I
 
 <img src="https://user-images.githubusercontent.com/709451/147319227-6446589c-a4d9-480d-bd5b-43037a9e56fd.png" />
 
-To get started, install the devcontainer cli:
+To develop on Linux, the following is required:
 
-```bash
-npm install -g @devcontainers/cli
-```
+- [Visual Studio Code](https://code.visualstudio.com/)
+- [Remote - Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension for Visual Studio Code
+- [Docker](https://www.docker.com). If using WSL on Windows, it is recommended to use [Docker Desktop](https://docs.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers) for its WSL2 integration.
+- [Dev Container CLI](https://www.npmjs.com/package/@devcontainers/cli): `npm install -g @devcontainers/cli`
 
-Then, in the `bun` repository locally run:
+To get started, in the `bun` repository, locally run:
 
 ```bash
 # devcontainer-build just sets the architecture so if you're on ARM64, it'll do the right thing.
 make devcontainer-build
-devcontainer open
 ```
 
-You will need to clone the GitHub repository inside that container.
+Next, open VS Code in the `bun` repository. 
+To open the dev container, open the command palette (Ctrl + Shift + P) and run: `Remote-Containers: Reopen in Container`.
+
+You will then need to clone the GitHub repository inside that container.
 
 Inside the container, run this:
 
@@ -3266,6 +3270,7 @@ bun-debug
 ```
 
 It is very similar to my own development environment (except I use macOS)
+
 
 ### MacOS
 
@@ -3391,3 +3396,7 @@ code --install-extension vscode-zig.vsix
 ```
 
 <a target="_blank" href="https://github.com/jarred-sumner/vscode-zig"><img src="https://pbs.twimg.com/media/FBZsKHlUcAYDzm5?format=jpg&name=large"></a>
+
+### Troubleshooting (general)
+
+If you encounter `error: the build command failed with exit code 9` during the build process, this means you ran out of memory or swap. Bun currently needs about 22 GB of RAM to compile.

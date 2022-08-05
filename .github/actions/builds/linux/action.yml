@@ -12,6 +12,10 @@ inputs:
     required: true
   runner:
     required: true
+  webkit_url:
+    required: true
+  webkit_basename:
+    required: true
 
 runs:
   using: "composite"
@@ -43,7 +47,9 @@ runs:
           ARCH=${{ inputs.arch }}
           BUILDARCH=${{ inputs.build_arch }}
           CPU_TARGET=${{ inputs.cpu }}
+          GIT_SHA=${{ github.sha }}
           WEBKIT_URL=${{ inputs.webkit_url }}
+          WEBKIT_BASENAME=${{ inputs.webkit_basename }}
         platforms: linux/${{ inputs.build_arch }}
         target: artifact
         outputs: type=local,dest=${{ runner.temp }}/release

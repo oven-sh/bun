@@ -1608,7 +1608,7 @@ bun upgrade
 
 `bun init` is a quick way to start a blank project with Bun. It guesses with sane defaults and is non-destructive when run multiple times.
 
-![Demo](https://user-images.githubusercontent.com/709451/182999974-926a67d6-c03e-4311-8b0a-4ebebf0b4884.gif)
+![Demo](https://user-images.githubusercontent.com/709451/183006613-271960a3-ff22-4f7c-83f5-5e18f684c836.gif)
 
 It creates:
 

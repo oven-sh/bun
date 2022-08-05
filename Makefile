@@ -223,7 +223,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(which llvm-strip || which llvm-strip-13 || echo "Missing strip")
+STRIP=$(which llvm-strip || which llvm-strip-13 || which strip || echo "Missing strip")
 endif
 
 
@@ -1006,12 +1006,20 @@ test-dev-bun-snapshot:
 	touch test/bun.js/snapshots.debug.js
 	$(foreach i,$(wildcard test/bun.js/*.snapshot.*),echo "" >> test/bun.js/snapshots.debug.js; echo "// $i" >> test/bun.js/snapshots.debug.js; $(DEBUG_BUN) build $i --platform=bun >> test/bun.js/snapshots.debug.js;)
 
+.PHONY: test-bun-init
+test-bun-init:
+	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-init-check.sh
+
+.PHONY: test-dev-bun-init
+test-dev-bun-init:
+	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-init-check.sh
+
 .PHONY: test-bun-wiptest
 test-bun-wiptest: test/wiptest/run
 	cd test/wiptest && BUN_BIN=$(DEBUG_BUN) ./run ./fixtures
 
 .PHONY: test-all
-test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev
+test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev test-bun-init
 
 .PHONY: copy-test-node-modules
 copy-test-node-modules:
@@ -1084,7 +1092,7 @@ test-dev-bun-run:
 	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
 
 .PHONY: test-dev-all
-test-dev-all: test-install test-dev-bun-snapshot test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev
+test-dev-all: test-install test-dev-bun-snapshot test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev test-dev-bun-init
 test-dev-bunjs:
 
 test-dev: test-dev-with-hmr
@@ -1406,7 +1414,7 @@ $(OBJ_DIR):
 $(DEBUG_OBJ_DIR):
 	mkdir -p $(DEBUG_OBJ_DIR)
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp $(OBJ_DIR)
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
@@ -1416,7 +1424,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp $(OBJ_DIR)
 		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp $(OBJ_DIR)
+$(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
@@ -1426,7 +1434,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp $(OBJ_DIR)
 		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp $(OBJ_DIR)
+$(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \
@@ -1436,7 +1444,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp $(OBJ_DIR)
 		$(EMIT_LLVM) \
 		-g3 -c -o $@ $<
 
-$(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp $(OBJ_DIR)
+$(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
 		$(OPTIMIZATION_LEVEL) \

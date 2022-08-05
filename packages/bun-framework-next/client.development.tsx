@@ -20,8 +20,6 @@ import { RouterContext } from "next/dist/shared/lib/router-context";
 import Router, {
   AppComponent,
   AppProps,
-  delBasePath,
-  hasBasePath,
   PrivateRouteInfo,
 } from "next/dist/shared/lib/router/router";
 
@@ -136,9 +134,31 @@ setConfig({
 });
 
 let asPath: string = getURL();
+const basePath = (process.env.__NEXT_ROUTER_BASEPATH as string) || ''
+
+function pathNoQueryHash(path: string) {
+  const queryIndex = path.indexOf('?')
+  const hashIndex = path.indexOf('#')
+
+  if (queryIndex > -1 || hashIndex > -1) {
+    path = path.substring(0, queryIndex > -1 ? queryIndex : hashIndex)
+  }
+  return path
+}
+
+function hasBasePath(path: string): boolean {
+  path = pathNoQueryHash(path)
+  return path === prefix || path.startsWith(prefix + '/')
+}
+
+function delBasePath(path: string): string {
+  path = path.slice(basePath.length)
+  if (!path.startsWith('/')) path = `/${path}`
+  return path
+}
 
 // make sure not to attempt stripping basePath for 404s
-if (hasBasePath(asPath)) {
+if (hasBasePath(asPath)) { 
   asPath = delBasePath(asPath);
 }
 

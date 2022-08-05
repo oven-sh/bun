@@ -1790,6 +1790,7 @@ pub const Process = struct {
     pub export const Bun__versions_boringssl: [:0]const u8 = bun.Global.versions.boringssl;
     pub export const Bun__versions_zlib: [:0]const u8 = bun.Global.versions.zlib;
     pub export const Bun__versions_zig: [:0]const u8 = bun.Global.versions.zig;
+    pub export const Bun__version_sha: [:0]const u8 = bun.Environment.git_sha;
 };
 
 comptime {

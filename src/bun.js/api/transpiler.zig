@@ -363,45 +363,37 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                 return transpiler;
             }
 
-            var array = JSC.C.JSObjectCopyPropertyNames(globalThis.ref(), define.asObjectRef());
-            defer JSC.C.JSPropertyNameArrayRelease(array);
-            const count = JSC.C.JSPropertyNameArrayGetCount(array);
+            var define_iter = JSC.JSPropertyIterator(.{
+                .skip_empty_name = true,
+
+                .include_value = true,
+            }).init(globalThis.ref(), define.asObjectRef());
+            defer define_iter.deinit();
+
             // cannot be a temporary because it may be loaded on different threads.
-            var map_entries = allocator.alloc([]u8, count * 2) catch unreachable;
-            var names = map_entries[0..count];
+            var map_entries = allocator.alloc([]u8, define_iter.len * 2) catch unreachable;
+            var names = map_entries[0..define_iter.len];
 
-            var values = map_entries[count..];
+            var values = map_entries[define_iter.len..];
 
-            var i: usize = 0;
-            while (i < count) : (i += 1) {
-                // no need to free because we free the name array at once
-                var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(
-                    array,
-                    i,
-                );
-                const prop: []const u8 = JSC.C.JSStringGetCharacters8Ptr(property_name_ref)[0..JSC.C.JSStringGetLength(property_name_ref)];
-                const property_value: JSC.JSValue = JSC.JSValue.fromRef(
-                    JSC.C.JSObjectGetProperty(
-                        globalThis.ref(),
-                        define.asObjectRef(),
-                        property_name_ref,
-                        null,
-                    ),
-                );
+            while (define_iter.next()) |prop| {
+                const property_value = define_iter.value;
                 const value_type = property_value.jsType();
 
                 if (!value_type.isStringLike()) {
                     JSC.throwInvalidArguments("define \"{s}\" must be a JSON string", .{prop}, ctx, exception);
                     return transpiler;
                 }
-                names[i] = allocator.dupe(u8, prop) catch unreachable;
+
+                names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;
                 var val = JSC.ZigString.init("");
                 property_value.toZigString(&val, globalThis);
                 if (val.len == 0) {
                     val = JSC.ZigString.init("\"\"");
                 }
-                values[i] = std.fmt.allocPrint(allocator, "{}", .{val}) catch unreachable;
+                values[define_iter.i] = std.fmt.allocPrint(allocator, "{}", .{val}) catch unreachable;
             }
+
             transpiler.transform.define = Api.StringMap{
                 .keys = names,
                 .values = values,
@@ -508,6 +500,10 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
     }
 
     transpiler.runtime.allow_runtime = false;
+    transpiler.runtime.dynamic_require = switch (transpiler.transform.platform orelse .browser) {
+        .bun, .bun_macro => true,
+        else => false,
+    };
 
     if (object.getIfPropertyExists(globalThis, "macro")) |macros| {
         macros: {
@@ -645,55 +641,34 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
                 return transpiler;
             }
 
-            var total_name_buf_len: usize = 0;
+            var iter = JSC.JSPropertyIterator(.{
+                .skip_empty_name = true,
+                .include_value = true,
+            }).init(globalThis, replace.asObjectRef());
 
-            var array = js.JSObjectCopyPropertyNames(ctx, replace.asObjectRef());
-            defer js.JSPropertyNameArrayRelease(array);
-            const property_names_count = @intCast(u32, js.JSPropertyNameArrayGetCount(array));
-            var iter = JSC.JSPropertyNameIterator{
-                .array = array,
-                .count = @intCast(u32, property_names_count),
-            };
+            if (iter.len > 0) {
+                errdefer iter.deinit();
+                try replacements.ensureUnusedCapacity(bun.default_allocator, iter.len);
 
-            {
-                var key_iter = iter;
-                while (key_iter.next()) |item| {
-                    total_name_buf_len += JSC.C.JSStringGetLength(item);
-                }
-            }
-
-            if (total_name_buf_len > 0) {
-                var total_name_buf = try std.ArrayList(u8).initCapacity(bun.default_allocator, total_name_buf_len);
-                errdefer total_name_buf.clearAndFree();
-
-                try replacements.ensureUnusedCapacity(bun.default_allocator, property_names_count);
-                defer {
-                    if (exception.* != null) {
-                        total_name_buf.clearAndFree();
-                        replacements.clearAndFree(bun.default_allocator);
+                // We cannot set the exception before `try` because it could be
+                // a double free with the `errdefer`.
+                defer if (exception.* != null) {
+                    iter.deinit();
+                    for (replacements.keys()) |key| {
+                        bun.default_allocator.free(bun.constStrToU8(key));
                     }
-                }
+                    replacements.clearAndFree(bun.default_allocator);
+                };
 
-                while (iter.next()) |item| {
-                    // no need to free key because we free the name array at once
-
-                    const start = total_name_buf.items.len;
-                    total_name_buf.items.len += @maximum(
-                        // this returns a null terminated string
-                        JSC.C.JSStringGetUTF8CString(item, total_name_buf.items.ptr + start, total_name_buf.capacity - start),
-                        1,
-                    ) - 1;
-                    const key = total_name_buf.items[start..total_name_buf.items.len];
-                    // if somehow the string is empty, skip it
-                    if (key.len == 0)
-                        continue;
-
-                    const value = replace.get(globalThis, key).?;
+                while (iter.next()) |key_| {
+                    const value = iter.value;
                     if (value.isEmpty()) continue;
+
+                    var key = try key_.toOwnedSlice(bun.default_allocator);
 
                     if (!JSLexer.isIdentifier(key)) {
                         JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{key}, ctx, exception);
-                        total_name_buf.deinit();
+                        bun.default_allocator.free(key);
                         return transpiler;
                     }
 
@@ -713,7 +688,6 @@ fn transformOptionsFromJSC(ctx: JSC.C.JSContextRef, temp_allocator: std.mem.Allo
 
                             if (!JSLexer.isIdentifier(replacement_name)) {
                                 JSC.throwInvalidArguments("\"{s}\" is not a valid ECMAScript identifier", .{replacement_name}, ctx, exception);
-                                total_name_buf.deinit();
                                 slice.deinit();
                                 return transpiler;
                             }

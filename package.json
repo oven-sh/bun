@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "bun-types": "^0.1.5",
     "mitata": "^0.1.3",
     "peechy": "0.4.32",
     "react": "^18.2.0",

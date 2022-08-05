@@ -1,5 +1,7 @@
 - name: 'bug'
   color: 'd73a4a'
+- name: 'segfault'
+  color: 'b60205'
 - name: 'documentation'
   color: '0075ca'
 - name: 'duplicate'

@@ -1,4 +1,4 @@
-import { describe, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 it("process", () => {
   // this property isn't implemented yet but it should at least return a string
@@ -51,4 +51,18 @@ it("process", () => {
   console.log("CWD", process.cwd());
   console.log("SET CWD", process.chdir("../"));
   console.log("CWD", process.cwd());
+});
+
+it("process.hrtime()", () => {
+  const start = process.hrtime();
+  const end = process.hrtime(start);
+  const end2 = process.hrtime();
+  expect(end[0]).toBe(0);
+  expect(end2[1] > start[1]).toBe(true);
+});
+
+it("process.hrtime.bigint()", () => {
+  const start = process.hrtime.bigint();
+  const end = process.hrtime.bigint();
+  expect(end > start).toBe(true);
 });

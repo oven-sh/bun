@@ -29,7 +29,7 @@ if [[ -t 1 ]]; then
 
     # Bold
     Bold_Green='\033[1;32m' # Bold Green
-    Bold_White='\033[1m' # Bold White
+    Bold_White='\033[1m'    # Bold White
 fi
 
 error() {
@@ -79,9 +79,21 @@ if [[ $target = darwin-x64 ]]; then
     fi
 fi
 
-
 github_repo="https://github.com/oven-sh/bun"
 
+if [[ $target = darwin-x64 ]]; then
+    # If AVX2 isn't supported, use the -baseline build
+    if [[ $(sysctl -n machdep.cpu.features) != *avx2* ]]; then
+        target=darwin-x64-baseline
+    fi
+fi
+
+if [[ $target = linux-x64 ]]; then
+    # If AVX2 isn't supported, use the -baseline build
+    if [[ $(cat /proc/cpuinfo | grep avx2) = '' ]]; then
+        target=linux-x64-baseline
+    fi
+fi
 
 if [[ $# = 0 ]]; then
     bun_uri=$github_repo/releases/latest/download/bun-$target.zip

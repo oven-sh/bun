@@ -2242,13 +2242,10 @@ pub const Timer = struct {
                 this,
                 onCallback,
                 &this.completion,
-                std.time.ns_per_ms * @intCast(
+                if (this.interval > 0) std.time.ns_per_ms * @intCast(
                     u63,
-                    @maximum(
-                        this.interval,
-                        1,
-                    ),
-                ),
+                    this.interval,
+                ) else 1,
             );
         }
 

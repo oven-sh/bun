@@ -204,7 +204,7 @@ pub const RunCommand = struct {
     }
 
     pub fn runPackageScript(
-        ctx: Command.Context,
+        allocator: std.mem.Allocator,
         original_script: string,
         name: string,
         cwd: string,
@@ -215,7 +215,7 @@ pub const RunCommand = struct {
         const shell_bin = findShell(env.map.get("PATH") orelse "", cwd) orelse return error.MissingShell;
 
         var script = original_script;
-        var copy_script = try std.ArrayList(u8).initCapacity(ctx.allocator, script.len);
+        var copy_script = try std.ArrayList(u8).initCapacity(allocator, script.len);
 
         // We're going to do this slowly.
         // Find exact matches of yarn, pnpm, npm
@@ -228,7 +228,7 @@ pub const RunCommand = struct {
             for (passthrough) |p| {
                 combined_script_len += p.len + 1;
             }
-            var combined_script_buf = try ctx.allocator.alloc(u8, combined_script_len);
+            var combined_script_buf = try allocator.alloc(u8, combined_script_len);
             std.mem.copy(u8, combined_script_buf, script);
             var remaining_script_buf = combined_script_buf[script.len..];
             for (passthrough) |p| {
@@ -240,14 +240,14 @@ pub const RunCommand = struct {
         }
 
         var argv = [_]string{ shell_bin, "-c", combined_script };
-        var child_process = std.ChildProcess.init(&argv, ctx.allocator);
+        var child_process = std.ChildProcess.init(&argv, allocator);
 
         if (!silent) {
             Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{combined_script});
             Output.flush();
         }
 
-        var buf_map = try env.map.cloneToEnvMap(ctx.allocator);
+        var buf_map = try env.map.cloneToEnvMap(allocator);
 
         child_process.env_map = &buf_map;
         child_process.cwd = cwd;
@@ -337,6 +337,168 @@ pub const RunCommand = struct {
     }
 
     pub const Filter = enum { script, bin, all, bun_js, all_plus_bun_js, script_and_descriptions, script_exclude };
+    const DirInfo = @import("../resolver/dir_info.zig");
+    pub fn configureEnvForRun(
+        ctx: Command.Context,
+        this_bundler: *bundler.Bundler,
+        env: ?*DotEnv.Loader,
+        ORIGINAL_PATH: *string,
+        log_errors: bool,
+    ) !*DirInfo {
+        var args = ctx.args;
+        args.node_modules_bundle_path = null;
+        args.node_modules_bundle_path_server = null;
+        args.generate_node_module_bundle = false;
+
+        this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null, env);
+        this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_bundler.options.env.prefix = "";
+
+        this_bundler.resolver.care_about_bin_folder = true;
+        this_bundler.resolver.care_about_scripts = true;
+        this_bundler.configureLinker();
+
+        var root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
+            if (!log_errors) return error.CouldntReadCurrentDirectory;
+            if (Output.enable_ansi_colors) {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+            Output.prettyErrorln("Error loading directory: \"{s}\"", .{@errorName(err)});
+            Output.flush();
+            return err;
+        } orelse {
+            if (Output.enable_ansi_colors) {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+            Output.prettyErrorln("Error loading current directory", .{});
+            Output.flush();
+            return error.CouldntReadCurrentDirectory;
+        };
+
+        var package_json_dir: string = "";
+
+        if (env == null) {
+            this_bundler.env.loadProcess();
+
+            if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
+                if (strings.eqlComptime(node_env, "production")) {
+                    this_bundler.options.production = true;
+                }
+            }
+
+            // Run .env in the root dir
+            this_bundler.runEnvLoader() catch {};
+
+            if (root_dir_info.getEntries()) |dir| {
+
+                // Run .env again if it exists in a parent dir
+                if (this_bundler.options.production) {
+                    this_bundler.env.load(&this_bundler.fs.fs, dir, false) catch {};
+                } else {
+                    this_bundler.env.load(&this_bundler.fs.fs, dir, true) catch {};
+                }
+            }
+        }
+
+        var bin_dirs = this_bundler.resolver.binDirs();
+
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (root_dir_info.package_json == null) {
+                // no trailing slash
+                package_json_dir = std.mem.trimRight(u8, package_json.source.path.name.dir, "/");
+            }
+        }
+
+        var PATH = this_bundler.env.map.get("PATH") orelse "";
+        ORIGINAL_PATH.* = PATH;
+
+        if (bin_dirs.len > 0 or package_json_dir.len > 0) {
+            var new_path_len: usize = PATH.len + 2;
+            for (bin_dirs) |bin| {
+                new_path_len += bin.len + 1;
+            }
+
+            if (package_json_dir.len > 0) {
+                new_path_len += package_json_dir.len + 1;
+            }
+
+            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
+
+            {
+                var needs_colon = false;
+                if (package_json_dir.len > 0) {
+                    defer needs_colon = true;
+                    if (needs_colon) {
+                        try new_path.append(':');
+                    }
+                    try new_path.appendSlice(package_json_dir);
+                }
+
+                var bin_dir_i: i32 = @intCast(i32, bin_dirs.len) - 1;
+                // Iterate in reverse order
+                // Directories are added to bin_dirs in top-down order
+                // That means the parent-most node_modules/.bin will be first
+                while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
+                    defer needs_colon = true;
+                    if (needs_colon) {
+                        try new_path.append(':');
+                    }
+                    try new_path.appendSlice(bin_dirs[@intCast(usize, bin_dir_i)]);
+                }
+
+                if (needs_colon) {
+                    try new_path.append(':');
+                }
+                try new_path.appendSlice(PATH);
+            }
+
+            this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
+            PATH = new_path.items;
+        }
+
+        this_bundler.env.loadNodeJSConfig(this_bundler.fs) catch {};
+        this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
+
+        // we have no way of knowing what version they're expecting without running the node executable
+        // running the node executable is too slow
+        // so we will just hardcode it to LTS
+        this_bundler.env.map.putDefault(
+            "npm_config_user_agent",
+            // the use of npm/? is copying yarn
+            // e.g.
+            // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
+            "bun/" ++ Global.package_json_version ++ " npm/? node/v16.14.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
+        ) catch unreachable;
+
+        if (this_bundler.env.get("npm_execpath") == null) {
+            // we don't care if this fails
+            if (std.fs.selfExePathAlloc(ctx.allocator)) |self_exe_path| {
+                this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
+            } else |_| {}
+        }
+
+        if (root_dir_info.enclosing_package_json) |package_json| {
+            if (package_json.name.len > 0) {
+                if (this_bundler.env.map.get(NpmArgs.package_name) == null) {
+                    this_bundler.env.map.put(NpmArgs.package_name, package_json.name) catch unreachable;
+                }
+            }
+
+            this_bundler.env.map.putDefault("npm_package_json", package_json.source.path.text) catch unreachable;
+
+            if (package_json.version.len > 0) {
+                if (this_bundler.env.map.get(NpmArgs.package_version) == null) {
+                    this_bundler.env.map.put(NpmArgs.package_version, package_json.version) catch unreachable;
+                }
+            }
+        }
+
+        return root_dir_info;
+    }
 
     pub fn completions(ctx: Command.Context, default_completions: ?[]const string, reject_list: []const string, comptime filter: Filter) !ShellCompletions {
         var shell_out = ShellCompletions{};
@@ -664,164 +826,11 @@ pub const RunCommand = struct {
 
         Global.configureAllocator(.{ .long_running = false });
 
-        var args = ctx.args;
-        args.node_modules_bundle_path = null;
-        args.node_modules_bundle_path_server = null;
-        args.generate_node_module_bundle = false;
-
-        var this_bundler = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null, null);
-        this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
-        this_bundler.options.env.prefix = "";
-        this_bundler.env.quiet = true;
-
-        this_bundler.resolver.care_about_bin_folder = true;
-        this_bundler.resolver.care_about_scripts = true;
-        defer {
-            this_bundler.resolver.care_about_bin_folder = false;
-            this_bundler.resolver.care_about_scripts = false;
-        }
-        this_bundler.configureLinker();
-
-        var root_dir_info = this_bundler.resolver.readDirInfo(this_bundler.fs.top_level_dir) catch |err| {
-            if (!log_errors) return false;
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("Error loading directory: \"{s}\"", .{@errorName(err)});
-            Output.flush();
-            return err;
-        } orelse {
-            if (Output.enable_ansi_colors) {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-            } else {
-                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-            }
-            Output.prettyErrorln("Error loading current directory", .{});
-            Output.flush();
-            return error.CouldntReadCurrentDirectory;
-        };
-
-        var package_json_dir: string = "";
-
-        {
-            this_bundler.env.loadProcess();
-
-            if (this_bundler.env.map.get("NODE_ENV")) |node_env| {
-                if (strings.eqlComptime(node_env, "production")) {
-                    this_bundler.options.production = true;
-                }
-            }
-
-            // Run .env in the root dir
-            this_bundler.runEnvLoader() catch {};
-
-            if (root_dir_info.getEntries()) |dir| {
-
-                // Run .env again if it exists in a parent dir
-                if (this_bundler.options.production) {
-                    this_bundler.env.load(&this_bundler.fs.fs, dir, false) catch {};
-                } else {
-                    this_bundler.env.load(&this_bundler.fs.fs, dir, true) catch {};
-                }
-            }
-        }
-
-        var bin_dirs = this_bundler.resolver.binDirs();
-
-        if (root_dir_info.enclosing_package_json) |package_json| {
-            if (root_dir_info.package_json == null) {
-                // no trailing slash
-                package_json_dir = std.mem.trimRight(u8, package_json.source.path.name.dir, "/");
-            }
-        }
-
-        var PATH = this_bundler.env.map.get("PATH") orelse "";
-
-        var ORIGINAL_PATH = PATH;
-
-        if (bin_dirs.len > 0 or package_json_dir.len > 0) {
-            var new_path_len: usize = PATH.len + 2;
-            for (bin_dirs) |bin| {
-                new_path_len += bin.len + 1;
-            }
-
-            if (package_json_dir.len > 0) {
-                new_path_len += package_json_dir.len + 1;
-            }
-
-            var new_path = try std.ArrayList(u8).initCapacity(ctx.allocator, new_path_len);
-
-            {
-                var needs_colon = false;
-                if (package_json_dir.len > 0) {
-                    defer needs_colon = true;
-                    if (needs_colon) {
-                        try new_path.append(':');
-                    }
-                    try new_path.appendSlice(package_json_dir);
-                }
-
-                var bin_dir_i: i32 = @intCast(i32, bin_dirs.len) - 1;
-                // Iterate in reverse order
-                // Directories are added to bin_dirs in top-down order
-                // That means the parent-most node_modules/.bin will be first
-                while (bin_dir_i >= 0) : (bin_dir_i -= 1) {
-                    defer needs_colon = true;
-                    if (needs_colon) {
-                        try new_path.append(':');
-                    }
-                    try new_path.appendSlice(bin_dirs[@intCast(usize, bin_dir_i)]);
-                }
-
-                if (needs_colon) {
-                    try new_path.append(':');
-                }
-                try new_path.appendSlice(PATH);
-            }
-
-            this_bundler.env.map.put("PATH", new_path.items) catch unreachable;
-            PATH = new_path.items;
-        }
-
-        this_bundler.env.loadNodeJSConfig(this_bundler.fs) catch {};
-        this_bundler.env.map.putDefault("npm_config_local_prefix", this_bundler.fs.top_level_dir) catch unreachable;
-
-        // we have no way of knowing what version they're expecting without running the node executable
-        // running the node executable is too slow
-        // so we will just hardcode it to LTS
-        this_bundler.env.map.putDefault(
-            "npm_config_user_agent",
-            // the use of npm/? is copying yarn
-            // e.g.
-            // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-            "bun/" ++ Global.package_json_version ++ " npm/? node/v16.14.0 " ++ Global.os_name ++ " " ++ Global.arch_name,
-        ) catch unreachable;
-
-        if (this_bundler.env.get("npm_execpath") == null) {
-            // we don't care if this fails
-            if (std.fs.selfExePathAlloc(ctx.allocator)) |self_exe_path| {
-                this_bundler.env.map.putDefault("npm_execpath", self_exe_path) catch unreachable;
-            } else |_| {}
-        }
-
         var did_print = false;
+        var ORIGINAL_PATH: string = "";
+        var this_bundler: bundler.Bundler = undefined;
+        var root_dir_info = try configureEnvForRun(ctx, &this_bundler, null, &ORIGINAL_PATH, log_errors);
         if (root_dir_info.enclosing_package_json) |package_json| {
-            if (package_json.name.len > 0) {
-                if (this_bundler.env.map.get(NpmArgs.package_name) == null) {
-                    this_bundler.env.map.put(NpmArgs.package_name, package_json.name) catch unreachable;
-                }
-            }
-
-            this_bundler.env.map.putDefault("npm_package_json", package_json.source.path.text) catch unreachable;
-
-            if (package_json.version.len > 0) {
-                if (this_bundler.env.map.get(NpmArgs.package_version) == null) {
-                    this_bundler.env.map.put(NpmArgs.package_version, package_json.version) catch unreachable;
-                }
-            }
-
             if (package_json.scripts) |scripts| {
                 switch (script_name_to_search.len) {
                     0 => {
@@ -861,7 +870,7 @@ pub const RunCommand = struct {
 
                             if (scripts.get(temp_script_buffer[1..])) |prescript| {
                                 if (!try runPackageScript(
-                                    ctx,
+                                    ctx.allocator,
                                     prescript,
                                     temp_script_buffer[1..],
                                     this_bundler.fs.top_level_dir,
@@ -874,7 +883,7 @@ pub const RunCommand = struct {
                             }
 
                             if (!try runPackageScript(
-                                ctx,
+                                ctx.allocator,
                                 script_content,
                                 script_name_to_search,
                                 this_bundler.fs.top_level_dir,
@@ -887,7 +896,7 @@ pub const RunCommand = struct {
 
                             if (scripts.get(temp_script_buffer)) |postscript| {
                                 if (!try runPackageScript(
-                                    ctx,
+                                    ctx.allocator,
                                     postscript,
                                     temp_script_buffer,
                                     this_bundler.fs.top_level_dir,
@@ -915,6 +924,7 @@ pub const RunCommand = struct {
             return false;
         }
 
+        const PATH = this_bundler.env.map.get("PATH") orelse "";
         var path_for_which = PATH;
         if (comptime bin_dirs_only) {
             path_for_which = "";

@@ -83,7 +83,7 @@ github_repo="https://github.com/oven-sh/bun"
 
 if [[ $target = darwin-x64 ]]; then
     # If AVX2 isn't supported, use the -baseline build
-    if [[ $(sysctl -n machdep.cpu.features) != *avx2* ]]; then
+    if [[ $(sysctl -a | grep machdep.cpu | grep AVX2) == '' ]]; then
         target=darwin-x64-baseline
     fi
 fi

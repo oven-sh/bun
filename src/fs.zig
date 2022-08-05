@@ -93,6 +93,14 @@ pub const FileSystem = struct {
 
     threadlocal var tmpdir_handle: ?std.fs.Dir = null;
 
+    pub fn topLevelDirWithoutTrailingSlash(this: *const FileSystem) []const u8 {
+        if (this.top_level_dir.len > 1 and this.top_level_dir[this.top_level_dir.len - 1] == std.fs.path.sep) {
+            return this.top_level_dir[0 .. this.top_level_dir.len - 1];
+        } else {
+            return this.top_level_dir;
+        }
+    }
+
     pub fn tmpdir(fs: *FileSystem) std.fs.Dir {
         if (tmpdir_handle == null) {
             tmpdir_handle = fs.fs.openTmpDir() catch unreachable;

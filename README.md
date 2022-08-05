@@ -19,7 +19,6 @@ All in one fast &amp; easy-to-use tool. Instead of 1,000 node_modules for develo
 
 **bun is experimental software**. Join [bun’s Discord](https://bun.sh/discord) for help and have a look at [things that don’t work yet](#not-implemented-yet).
 
-
 Today, bun's primary focus is bun.js: bun's JavaScript runtime.
 
 ## Install
@@ -98,6 +97,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
     - [Testing your new template](#testing-your-new-template)
     - [Config](#config)
     - [How `bun create` works](#how-bun-create-works)
+  - [`bun init`](#bun-init)
   - [`bun bun`](#bun-bun)
     - [Why bundle?](#why-bundle)
     - [What is `.bun`?](#what-is-bun)
@@ -1586,7 +1586,7 @@ bun is distributed as a single binary file, so you can also do this manually:
 
 ### Canary builds
 
-[Canary](https://github.com/oven-sh/bun/releases/tag/canary) builds are generated on every commit. At the time of writing, only Linux x64 &amp; Linux arm64 are generated.
+[Canary](https://github.com/oven-sh/bun/releases/tag/canary) builds are generated on every commit.
 
 To install a [canary](https://github.com/oven-sh/bun/releases/tag/canary) build of bun, run:
 
@@ -1603,6 +1603,29 @@ To revert to the latest published version of bun, run:
 ```bash
 bun upgrade
 ```
+
+### `bun init`
+
+`bun init` is a quick way to start a blank project with Bun. It guesses with sane defaults and is non-destructive when run multiple times.
+
+![Demo](https://user-images.githubusercontent.com/709451/182999974-926a67d6-c03e-4311-8b0a-4ebebf0b4884.gif)
+
+It creates:
+
+- a `package.json` file with a name that defaults to the current directory name
+- a `tsconfig.json` file or a `jsconfig.json` file, depending if the entry point is a TypeScript file or not
+- an entry point which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
+- a `README.md` file
+
+If you pass `-y` or `--yes`, it will assume you want to continue without asking questions.
+
+At the end, it runs `bun install` to install `bun-types`.
+
+Added in Bun v0.1.7.
+
+#### How is `bun init` different than `bun create`?
+
+`bun init` is for blank projects. `bun create` applies templates.
 
 ### `bun completions`
 

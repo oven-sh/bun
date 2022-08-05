@@ -1335,6 +1335,21 @@ pub const E = struct {
             return if (asProperty(self, key)) |query| query.expr else @as(?Expr, null);
         }
 
+        pub fn put(self: *Object, allocator: std.mem.Allocator, key: string, expr: Expr) !void {
+            if (asProperty(self, key)) |query| {
+                self.properties.ptr[query.i].value = expr;
+            } else {
+                try self.properties.push(allocator, .{
+                    .key = Expr.init(E.String, E.String.init(key), expr.loc),
+                    .value = expr,
+                });
+            }
+        }
+
+        pub fn putString(self: *Object, allocator: std.mem.Allocator, key: string, value: string) !void {
+            return try put(self, allocator, key, Expr.init(E.String, E.String.init(value), logger.Loc.Empty));
+        }
+
         pub const SetError = error{ OutOfMemory, Clobber };
 
         pub fn set(self: *const Object, key: Expr, allocator: std.mem.Allocator, value: Expr) SetError!void {
@@ -1502,7 +1517,7 @@ pub const E = struct {
             for (obj.properties.slice()) |prop| {
                 const key = prop.key orelse continue;
                 if (std.meta.activeTag(key.data) != .e_string) continue;
-                if (key.eql(string, name)) return true;
+                if (key.data.e_string.eql(string, name)) return true;
             }
             return false;
         }

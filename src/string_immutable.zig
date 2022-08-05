@@ -78,7 +78,7 @@ pub inline fn containsComptime(self: string, comptime str: string) bool {
 pub const includes = contains;
 
 pub inline fn containsAny(in: anytype, target: string) bool {
-    for (in) |str| if (contains(bun.span(str), target)) return true;
+    for (in) |str| if (contains(if (@TypeOf(str) == u8) &[1]u8{str} else bun.span(str), target)) return true;
     return false;
 }
 

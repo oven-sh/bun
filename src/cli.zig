@@ -645,9 +645,8 @@ const AutoCommand = struct {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
 };
-const InitCommand = struct {
-    pub fn exec(_: std.mem.Allocator) !void {}
-};
+const InitCommand = @import("./cli/init_command.zig").InitCommand;
+
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
         @setCold(true);
@@ -909,7 +908,7 @@ pub const Command = struct {
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator),
+            .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
             else => {},
         }
 

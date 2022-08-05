@@ -510,12 +510,12 @@ pub const Response = struct {
             } else {
                 if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
                     response.body.init = _init;
+                    response.body.init.status_code = 302;
                 }
             }
         }
 
         response.body.init.headers = response.getOrCreateHeaders();
-        response.body.init.status_code = 302;
         var headers_ref = response.body.init.headers.?;
         headers_ref.put("location", url_string_slice.slice());
         var ptr = response.allocator.create(Response) catch unreachable;

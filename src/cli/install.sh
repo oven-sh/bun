@@ -73,7 +73,8 @@ esac
 
 if [[ $target = darwin-x64 ]]; then
     # Is this process running in Rosetta?
-    if [[ $(sysctl -n sysctl.proc_translated) = 1 ]]; then
+    # redirect stderr to devnull to avoid error message when not running in Rosetta
+    if [[ $(sysctl -n sysctl.proc_translated 2>/dev/null) = 1 ]]; then
         target=darwin-aarch64
         info "Your shell is running in Rosetta 2. Downloading bun for $target instead"
     fi

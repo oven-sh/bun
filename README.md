@@ -3201,23 +3201,21 @@ For compatibility reasons, these NPM packages are embedded into bun’s binary a
 
 Estimated: 30-90 minutes :(
 
-### Prerequisites 
-
-- On all systems, [Docker](https://www.docker.com) is required. If using WSL on Windows, it is recommended to use [Docker Desktop](https://docs.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers) for its WSL2 integration.
-
 ### VSCode Dev Container (Linux)
 
 The VSCode Dev Container in this repository is the easiest way to get started. It comes with Zig, JavaScriptCore, Zig Language Server, vscode-zig, and more pre-installed on an instance of Ubuntu.
 
 <img src="https://user-images.githubusercontent.com/709451/147319227-6446589c-a4d9-480d-bd5b-43037a9e56fd.png" />
 
-To get started, install the devcontainer cli:
+#### Prerequisites 
 
-```bash
-npm install -g @devcontainers/cli
-```
+To develop on Linux, the following is required:
 
-Then, in the `bun` repository locally run:
+- [Visual Studio Code](https://code.visualstudio.com/)
+- [Docker](https://www.docker.com). If using WSL on Windows, it is recommended to use [Docker Desktop](https://docs.microsoft.com/en-us/windows/wsl/tutorials/wsl-containers) for its WSL2 integration.
+- [Dev Container CLI](https://www.npmjs.com/package/@devcontainers/cli): `npm install -g @devcontainers/cli`
+
+To get started, in the `bun` repository, locally run:
 
 ```bash
 # devcontainer-build just sets the architecture so if you're on ARM64, it'll do the right thing.

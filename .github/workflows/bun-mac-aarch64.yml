@@ -62,9 +62,9 @@ jobs:
         with:
           context: .
           push: false
-          tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{github.sha}}
-          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-3--${{matrix.cpu}}-${{matrix.arch}}-macos
-          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-3--${{matrix.cpu}}-${{matrix.arch}}-macos,mode=max
+          tags: ghcr.io/oven-sh/bun-obj:${{github.sha}}-${{matrix.cpu}}-${{matrix.arch}}-macos
+          cache-from: type=registry,ref=ghcr.io/oven-sh/bun-obj:buildcache-bust-3--${{matrix.cpu}}-${{matrix.arch}}-macos
+          cache-to: type=registry,ref=ghcr.io/oven-sh/bun-obj:buildcache-bust-3--${{matrix.cpu}}-${{matrix.arch}}-macos,mode=max
           build-args: |
             ARCH=${{ matrix.arch }}
             BUILDARCH=amd64
@@ -158,6 +158,9 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          BUN_RELEASE_DIR: ${{ runner.temp }}/release
+          WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+          WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
           rm -rf $JSC_BASE_DIR
           mkdir -p $JSC_BASE_DIR
@@ -171,6 +174,9 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          BUN_RELEASE_DIR: ${{ runner.temp }}/release
+          WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+          WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
           mkdir -p $BUN_DEPS_OUT_DIR
           make vendor-without-check
@@ -183,6 +189,9 @@ jobs:
           BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+          BUN_RELEASE_DIR: ${{ runner.temp }}/release
+          WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+          WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
           mkdir -p $OBJ_DIR
           make -j $(sysctl -n hw.ncpu) release-bindings
@@ -287,6 +296,8 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
           BUN_RELEASE_DIR: ${{ runner.temp }}/release
+          WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+          WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
           rm -rf packages/${{ matrix.package }}
           mkdir -p packages/${{ matrix.package }}
@@ -301,6 +312,8 @@ jobs:
           OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
           BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
           BUN_RELEASE_DIR: ${{ runner.temp }}/release
+          WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+          WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
           cd ${{runner.temp}}/release
           chmod +x bun-profile bun

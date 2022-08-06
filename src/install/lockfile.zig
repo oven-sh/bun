@@ -1779,9 +1779,13 @@ pub const PackageIndex = struct {
 
 pub const FormatVersion = enum(u32) {
     v0,
+    // bun v0.0.x - bun v0.1.6
     v1,
+    // bun v0.1.7+
+    // This change added tarball URLs to npm-resolved packages
+    v2,
     _,
-    pub const current = FormatVersion.v1;
+    pub const current = FormatVersion.v2;
 };
 
 pub const DependencySlice = ExternalSlice(Dependency);

@@ -365,6 +365,16 @@ pub const Expect = struct {
             );
             return js.JSValueMakeUndefined(ctx);
         }
+        if (this.scope.tests.items.len <= this.test_id) {
+            JSC.JSError(
+                getAllocator(ctx),
+                ".toBe() called in wrong scope",
+                .{},
+                ctx,
+                exception,
+            );
+            return js.JSValueMakeUndefined(ctx);
+        }
         this.scope.tests.items[this.test_id].counter.actual += 1;
         const left = JSValue.fromRef(arguments[0]);
         left.ensureStillAlive();
@@ -412,6 +422,16 @@ pub const Expect = struct {
             JSC.JSError(
                 getAllocator(ctx),
                 ".toHaveLength() takes 1 argument",
+                .{},
+                ctx,
+                exception,
+            );
+            return js.JSValueMakeUndefined(ctx);
+        }
+        if (this.scope.tests.items.len <= this.test_id) {
+            JSC.JSError(
+                getAllocator(ctx),
+                ".toHaveLength() called in wrong scope",
                 .{},
                 ctx,
                 exception,

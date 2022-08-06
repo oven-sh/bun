@@ -68,7 +68,7 @@ pub const InitCommand = struct {
         // toLowerCase
         const needs_normalize = brk: {
             for (input) |c| {
-                if ((c >= 'A' and c <= 'Z') or c == ' ' or c == '"' or c == '\'') {
+                if ((std.ascii.isUpper(c)) or c == ' ' or c == '"' or c == '\'') {
                     break :brk true;
                 }
             }
@@ -80,13 +80,11 @@ pub const InitCommand = struct {
         }
 
         var new = try allocator.alloc(u8, input.len);
-        for (new) |c, i| {
-            if (c >= 'A' and c <= 'Z') {
-                new[i] = c + ('a' - 'A');
-            } else if (c == ' ' or c == '"' or c == '\'') {
+        for (input) |c, i| {
+            if (c == ' ' or c == '"' or c == '\'') {
                 new[i] = '-';
             } else {
-                new[i] = c;
+                new[i] = std.ascii.toLower(c);
             }
         }
 

@@ -77,7 +77,7 @@ pub const Registry = struct {
 
             if (registry.token.len == 0) {
                 outer: {
-                    if (registry.username.len == 0 and registry.password.len == 0) {
+                    if (registry.password.len == 0) {
                         var pathname = url.pathname;
                         defer {
                             url.pathname = pathname;
@@ -85,7 +85,7 @@ pub const Registry = struct {
                         }
 
                         while (std.mem.lastIndexOfScalar(u8, pathname, ':')) |colon| {
-                            const segment = pathname[colon..];
+                            var segment = pathname[colon + 1 ..];
                             pathname = pathname[0..colon];
                             if (pathname.len > 1 and pathname[pathname.len - 1] == '/') {
                                 pathname = pathname[0 .. pathname.len - 1];
@@ -93,7 +93,10 @@ pub const Registry = struct {
 
                             const eql_i = std.mem.indexOfScalar(u8, segment, '=') orelse continue;
                             var value = segment[eql_i + 1 ..];
+                            segment = segment[0..eql_i];
 
+                            // https://github.com/yarnpkg/yarn/blob/6db39cf0ff684ce4e7de29669046afb8103fce3d/src/registries/npm-registry.js#L364
+                            // Bearer Token
                             if (strings.eqlComptime(segment, "_authToken")) {
                                 registry.token = value;
                                 break :outer;
@@ -119,7 +122,7 @@ pub const Registry = struct {
                     registry.username = env.getAuto(registry.username);
                     registry.password = env.getAuto(registry.password);
 
-                    if (registry.username.len > 0 and registry.password.len > 0) {
+                    if (registry.username.len > 0 and registry.password.len > 0 and auth.len == 0) {
                         var output_buf = try allocator.alloc(u8, registry.username.len + registry.password.len + 1 + std.base64.standard.Encoder.calcSize(registry.username.len + registry.password.len + 1));
                         var input_buf = output_buf[0 .. registry.username.len + registry.password.len + 1];
                         @memcpy(input_buf.ptr, registry.username.ptr, registry.username.len);
@@ -411,7 +414,6 @@ pub const PackageVersion = extern struct {
 };
 
 pub const NpmPackage = extern struct {
-
     /// HTTP response headers
     last_modified: String = String{},
     etag: String = String{},

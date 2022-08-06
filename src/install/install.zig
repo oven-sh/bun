@@ -358,12 +358,16 @@ const NetworkTask = struct {
         tarball: ExtractTarball,
         scope: *const Npm.Registry.Scope,
     ) !void {
-        this.url_buf = try ExtractTarball.buildURL(
-            scope.url.href,
-            tarball.name,
-            tarball.resolution.value.npm,
-            PackageManager.instance.lockfile.buffers.string_bytes.items,
-        );
+        if (tarball.url.len == 0) {
+            this.url_buf = try ExtractTarball.buildURL(
+                scope.url.href,
+                tarball.name,
+                tarball.resolution.value.npm.version,
+                PackageManager.instance.lockfile.buffers.string_bytes.items,
+            );
+        } else {
+            this.url_buf = tarball.url;
+        }
 
         this.request_buffer = try MutableString.init(allocator, 0);
         this.response_buffer = try MutableString.init(allocator, 0);
@@ -379,7 +383,6 @@ const NetworkTask = struct {
             header_builder.content.cap += "Basic ".len + scope.auth.len;
         }
 
-        var header_entries = header_builder.entries;
         var header_buf: string = "";
         if (header_builder.header_count > 0) {
             try header_builder.allocate(allocator);
@@ -389,13 +392,15 @@ const NetworkTask = struct {
             } else if (scope.auth.len > 0) {
                 header_builder.appendFmt("Authorization", "Basic {s}", .{scope.auth});
             }
+
+            header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }
 
         this.http = try AsyncHTTP.init(
             allocator,
             .GET,
             URL.parse(this.url_buf),
-            header_entries,
+            header_builder.entries,
             header_buf,
             &this.response_buffer,
             &this.request_buffer,
@@ -444,6 +449,8 @@ pub const Features = struct {
     pub const npm = Features{
         .optional_dependencies = true,
     };
+
+    pub const tarball = npm;
 
     pub const npm_manifest = Features{
         .optional_dependencies = true,
@@ -1300,7 +1307,7 @@ pub const PackageManager = struct {
                     return .done;
                 }
 
-                const folder_path = manager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.resolution.value.npm);
+                const folder_path = manager.cachedNPMPackageFolderName(this.name.slice(lockfile.buffers.string_bytes.items), this.resolution.value.npm.version);
                 if (manager.isFolderInCache(folder_path)) {
                     manager.setPreinstallState(this.meta.id, lockfile, .done);
                     return .done;
@@ -1556,7 +1563,12 @@ pub const PackageManager = struct {
             if (behavior.isPeer()) version else null,
             .{
                 .tag = .npm,
-                .value = .{ .npm = find_result.version },
+                .value = .{
+                    .npm = .{
+                        .version = find_result.version,
+                        .url = find_result.package.tarball_url.value,
+                    },
+                },
             },
         )) |id| {
             this.lockfile.buffers.resolutions.items[dependency_id] = id;
@@ -1606,10 +1618,10 @@ pub const PackageManager = struct {
                 const task_id = Task.Id.forNPMPackage(
                     Task.Tag.extract,
                     name.slice(this.lockfile.buffers.string_bytes.items),
-                    package.resolution.value.npm,
+                    package.resolution.value.npm.version,
                 );
 
-                var network_task = (try this.generateNetworkTaskForTarball(task_id, package)).?;
+                var network_task = (try this.generateNetworkTaskForTarball(task_id, manifest.str(find_result.package.tarball_url), package)).?;
 
                 return ResolvedPackageResult{
                     .package = package,
@@ -1623,7 +1635,7 @@ pub const PackageManager = struct {
         return ResolvedPackageResult{ .package = package };
     }
 
-    pub fn generateNetworkTaskForTarball(this: *PackageManager, task_id: u64, package: Lockfile.Package) !?*NetworkTask {
+    pub fn generateNetworkTaskForTarball(this: *PackageManager, task_id: u64, url: string, package: Lockfile.Package) !?*NetworkTask {
         const dedupe_entry = try this.network_dedupe_map.getOrPut(this.allocator, task_id);
         if (dedupe_entry.found_existing) return null;
 
@@ -1656,6 +1668,7 @@ pub const PackageManager = struct {
                 .registry = scope.url.href,
                 .package_id = package.meta.id,
                 .integrity = package.meta.integrity,
+                .url = url,
             },
             scope,
         );
@@ -4171,7 +4184,7 @@ pub const PackageManager = struct {
             if (this.manager.task_queue.fetchRemove(Task.Id.forNPMPackage(
                 Task.Tag.extract,
                 name,
-                resolution.value.npm,
+                resolution.value.npm.version,
             ))) |removed| {
                 var callbacks = removed.value;
                 defer callbacks.deinit(this.manager.allocator);
@@ -4214,7 +4227,7 @@ pub const PackageManager = struct {
 
             switch (resolution.tag) {
                 .npm => {
-                    installer.cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm);
+                    installer.cache_dir_subpath = this.manager.cachedNPMPackageFolderName(name, resolution.value.npm.version);
                     installer.cache_dir = this.manager.getCacheDirectory();
                 },
                 .folder => {
@@ -4304,7 +4317,10 @@ pub const PackageManager = struct {
                     },
                     .fail => |cause| {
                         if (cause.isPackageMissingFromCache()) {
-                            const task_id = Task.Id.forNPMPackage(Task.Tag.extract, name, resolution.value.npm);
+                            std.debug.assert(resolution.tag == .npm);
+                            std.debug.assert(resolution.value.npm.url.len() > 0);
+
+                            const task_id = Task.Id.forNPMPackage(Task.Tag.extract, name, resolution.value.npm.version);
                             var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, task_id) catch unreachable;
                             if (!task_queue.found_existing) {
                                 task_queue.value_ptr.* = .{};
@@ -4317,10 +4333,12 @@ pub const PackageManager = struct {
                                 },
                             ) catch unreachable;
 
-                            if (this.manager.generateNetworkTaskForTarball(task_id, this.lockfile.packages.get(package_id)) catch unreachable) |task| {
-                                task.schedule(&this.manager.network_tarball_batch);
-                                if (this.manager.network_tarball_batch.len > 0) {
-                                    _ = this.manager.scheduleNetworkTasks();
+                            if (!task_queue.found_existing) {
+                                if (this.manager.generateNetworkTaskForTarball(task_id, resolution.value.npm.url.slice(buf), this.lockfile.packages.get(package_id)) catch unreachable) |task| {
+                                    task.schedule(&this.manager.network_tarball_batch);
+                                    if (this.manager.network_tarball_batch.len > 0) {
+                                        _ = this.manager.scheduleNetworkTasks();
+                                    }
                                 }
                             }
                         } else {

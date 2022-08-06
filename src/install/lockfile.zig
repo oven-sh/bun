@@ -1503,7 +1503,7 @@ pub fn getPackageID(
                 switch (version_.tag) {
                     .npm => {
                         // is it a peerDependency satisfied by a parent package?
-                        if (version_.value.npm.satisfies(resolutions[id].value.npm)) {
+                        if (version_.value.npm.satisfies(resolutions[id].value.npm.version)) {
                             return id;
                         }
                     },
@@ -1527,7 +1527,7 @@ pub fn getPackageID(
                     return id;
                 }
 
-                if (can_satisfy and version.?.value.npm.satisfies(resolutions[id].value.npm)) {
+                if (can_satisfy and version.?.value.npm.satisfies(resolutions[id].value.npm.version)) {
                     return id;
                 }
             }
@@ -2002,6 +2002,8 @@ pub const Package = extern struct {
             bin_extern_strings_count = package_version.bin.count(string_buf, manifest.extern_strings_bin_entries, @TypeOf(&string_builder), &string_builder);
         }
 
+        string_builder.count(manifest.str(package_version_ptr.tarball_url));
+
         try string_builder.allocate();
         defer string_builder.clamp();
         var extern_strings_list = &lockfile.buffers.extern_strings;
@@ -2020,11 +2022,14 @@ pub const Package = extern struct {
             package.name = package_name.value;
             package.resolution = Resolution{
                 .value = .{
-                    .npm = version.clone(
-                        manifest.string_buf,
-                        @TypeOf(&string_builder),
-                        &string_builder,
-                    ),
+                    .npm = .{
+                        .version = version.clone(
+                            manifest.string_buf,
+                            @TypeOf(&string_builder),
+                            &string_builder,
+                        ),
+                        .url = string_builder.append(String, manifest.str(package_version_ptr.tarball_url)),
+                    },
                 },
                 .tag = .npm,
             };

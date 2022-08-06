@@ -25,7 +25,7 @@ const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityCon
 const SlicedString = Semver.SlicedString;
 const FileSystem = @import("../fs.zig").FileSystem;
 const Dependency = @import("./dependency.zig");
-
+const VersionedURL = @import("./versioned_url.zig");
 const VersionSlice = @import("./install.zig").VersionSlice;
 const ObjectPool = @import("../pool.zig").ObjectPool;
 const Api = @import("../api/schema.zig").Api;
@@ -822,6 +822,7 @@ pub const PackageManifest = struct {
         var dependency_sum: usize = 0;
         var extern_string_count: usize = 0;
         var extern_string_count_bin: usize = 0;
+        var tarball_urls_count: usize = 0;
         get_versions: {
             if (json.asProperty("versions")) |versions_q| {
                 if (versions_q.expr.data != .e_object) break :get_versions;
@@ -839,6 +840,16 @@ pub const PackageManifest = struct {
                     }
 
                     string_builder.count(version_name);
+
+                    if (prop.value.?.asProperty("dist")) |dist_q| {
+                        if (dist_q.expr.get("tarball")) |tarball_prop| {
+                            if (tarball_prop.data == .e_string) {
+                                const tarball = tarball_prop.data.e_string.slice(allocator);
+                                string_builder.count(tarball);
+                                tarball_urls_count += @as(usize, @boolToInt(tarball.len > 0));
+                            }
+                        }
+                    }
 
                     bin: {
                         if (prop.value.?.asProperty("bin")) |bin| {
@@ -925,10 +936,12 @@ pub const PackageManifest = struct {
 
         var versioned_packages = try allocator.allocAdvanced(PackageVersion, null, release_versions_len + pre_versions_len, .exact);
         var all_semver_versions = try allocator.allocAdvanced(Semver.Version, null, release_versions_len + pre_versions_len + dist_tags_count, .exact);
-        var all_extern_strings = try allocator.allocAdvanced(ExternalString, null, extern_string_count, .exact);
+        var all_extern_strings = try allocator.allocAdvanced(ExternalString, null, extern_string_count + tarball_urls_count, .exact);
         var version_extern_strings = try allocator.allocAdvanced(ExternalString, null, dependency_sum, .exact);
         var extern_strings_bin_entries = try allocator.allocAdvanced(ExternalString, null, extern_string_count_bin, .exact);
         var all_extern_strings_bin_entries = extern_strings_bin_entries;
+        var all_tarball_url_strings = try allocator.allocAdvanced(ExternalString, null, tarball_urls_count, .exact);
+        var tarball_url_strings = all_tarball_url_strings;
 
         if (versioned_packages.len > 0) {
             var versioned_packages_bytes = std.mem.sliceAsBytes(versioned_packages);
@@ -1159,6 +1172,14 @@ pub const PackageManifest = struct {
                     integrity: {
                         if (prop.value.?.asProperty("dist")) |dist| {
                             if (dist.expr.data == .e_object) {
+                                if (dist.expr.asProperty("tarball")) |tarball_q| {
+                                    if (tarball_q.expr.data == .e_string and tarball_q.expr.data.e_string.len() > 0) {
+                                        package_version.tarball_url = string_builder.append(ExternalString, tarball_q.expr.data.e_string.slice(allocator));
+                                        tarball_url_strings[0] = package_version.tarball_url;
+                                        tarball_url_strings = tarball_url_strings[1..];
+                                    }
+                                }
+
                                 if (dist.expr.asProperty("fileCount")) |file_count_| {
                                     if (file_count_.expr.data == .e_number) {
                                         package_version.file_count = file_count_.expr.data.e_number.toU32();
@@ -1175,6 +1196,12 @@ pub const PackageManifest = struct {
                                     if (shasum.expr.asString(allocator)) |shasum_str| {
                                         package_version.integrity = Integrity.parse(shasum_str) catch Integrity{};
                                         if (package_version.integrity.tag.isSupported()) break :integrity;
+                                    }
+                                }
+
+                                if (dist.expr.asProperty("shasum")) |shasum| {
+                                    if (shasum.expr.asString(allocator)) |shasum_str| {
+                                        package_version.integrity = Integrity.parseSHASum(shasum_str) catch Integrity{};
                                     }
                                 }
 
@@ -1435,7 +1462,14 @@ pub const PackageManifest = struct {
         result.pkg.prereleases.keys = VersionSlice.init(all_semver_versions, all_prerelease_versions);
         result.pkg.prereleases.values = PackageVersionList.init(versioned_packages, all_versioned_package_prereleases);
 
-        if (extern_strings.len > 0) {
+        if (extern_strings.len + tarball_urls_count > 0) {
+            var src = std.mem.sliceAsBytes(all_tarball_url_strings[0 .. all_tarball_url_strings.len - tarball_url_strings.len]);
+            if (src.len > 0) {
+                var dst = std.mem.sliceAsBytes(all_extern_strings[all_extern_strings.len - extern_strings.len ..]);
+                std.debug.assert(dst.len >= src.len);
+                @memcpy(dst.ptr, src.ptr, src.len);
+            }
+
             all_extern_strings = all_extern_strings[0 .. all_extern_strings.len - extern_strings.len];
         }
 

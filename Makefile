@@ -1650,9 +1650,11 @@ help: ## to print this help
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {gsub("\\\\n",sprintf("\n%22c",""), $$2);printf "\033[36m%-20s\033[0m \t\t%s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 QUICK_TEST_PKG = \
+	--pkg-begin build_options $(BUN_DIR)/src/__test_build_options.zig --pkg-end \
 	--pkg-begin javascript_core $(BUN_DIR)/src/__jsc_stub.zig --pkg-end \
 	--pkg-begin js_ast $(BUN_DIR)/src/__js_ast_stub.zig --pkg-end \
 	--pkg-begin global $(BUN_DIR)/src/__global_stub.zig \
+		--pkg-begin build_options $(BUN_DIR)/src/__test_build_options.zig --pkg-end \
 		--pkg-begin global $(BUN_DIR)/src/__global_stub.zig --pkg-end \
 	--pkg-end \
 	--pkg-begin logger $(BUN_DIR)/src/__logger_stub.zig \

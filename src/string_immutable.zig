@@ -23,11 +23,26 @@ pub inline fn contains(self: string, str: string) bool {
     return std.mem.indexOf(u8, self, str) != null;
 }
 
+fn toUTF16LiteralUnsafe(comptime str: []const u8) []const u16 {
+    comptime {
+        comptime var output: [str.len]u16 = undefined;
+
+        for (str) |c, i| {
+            output[i] = c;
+        }
+
+        return output[0..];
+    }
+}
+
 pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
     comptime {
         comptime var output: [str.len]u16 = undefined;
 
         for (str) |c, i| {
+            if (c >= 0x80) {
+                @compileError("Unexpected non-ascii character found in string");
+            }
             output[i] = c;
         }
 
@@ -3153,27 +3168,27 @@ test "firstNonASCII" {
 
 test "firstNonASCII16" {
     @setEvalBranchQuota(99999);
-    const yes = std.mem.span(toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+    const yes = std.mem.span(toUTF16LiteralUnsafe("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
     try std.testing.expectEqual(true, firstNonASCII16(@TypeOf(yes), yes) == null);
 
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.span(toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        const no = std.mem.span(toUTF16LiteralUnsafe("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdoka🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
         try std.testing.expectEqual(@as(u32, 50), firstNonASCII16(@TypeOf(no), no).?);
     }
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.span(toUTF16Literal("🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        const no = std.mem.span(toUTF16LiteralUnsafe("🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
         try std.testing.expectEqual(@as(u32, 0), firstNonASCII16(@TypeOf(no), no).?);
     }
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.span(toUTF16Literal("a🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
+        const no = std.mem.span(toUTF16LiteralUnsafe("a🙂sdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123"));
         try std.testing.expectEqual(@as(u32, 1), firstNonASCII16(@TypeOf(no), no).?);
     }
     {
         @setEvalBranchQuota(99999);
-        const no = std.mem.span(toUTF16Literal("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
+        const no = std.mem.span(toUTF16LiteralUnsafe("aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3"));
         try std.testing.expectEqual(@as(u32, 366), firstNonASCII16(@TypeOf(no), no).?);
     }
 }
@@ -3218,12 +3233,12 @@ pub fn formatLatin1(slice_: []const u8, writer: anytype) !void {
 }
 
 test "print UTF16" {
-    var err = std.io.getStdErr();
-    const utf16 = comptime toUTF16Literal("❌ ✅ opkay ");
-    try formatUTF16(utf16, err.writer());
-    // std.unicode.fmtUtf16le(utf16le: []const u16)
+    var buffer: [1024]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&buffer);
+    const utf16 = comptime toUTF16Literal("This text should stay the same.");
+    try formatUTF16(utf16, stream.writer());
+    try std.testing.expectEqual(@as([31]u8, "This text should stay the same.".*), buffer[0..31].*);
 }
-
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
 /// - Invalid codepoints are replaced with `zero` parameter
 /// - Null bytes return 0

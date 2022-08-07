@@ -66,6 +66,35 @@ pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
                         \\
                     , .{});
                     break :log;
+                } else if (err == error.SystemResources) {
+                    Output.prettyErrorln(
+                        \\<red>error<r>: memlock limit exceeded
+                        \\
+                        \\To fix this error: <b>please increase the memlock limit<r> or upgrade to Linux kernel 5.11+
+                        \\
+                        \\If Bun is running inside Docker, make sure to set the memlock limit to unlimited (-1)
+                        \\ 
+                        \\    docker run --rm --init --ulimit memlock=-1:-1 jarredsumner/bun:edge
+                        \\
+                        \\To bump the memlock limit, check one of the following:
+                        \\    /etc/security/limits.conf
+                        \\    /etc/systemd/user.conf
+                        \\    /etc/systemd/system.conf
+                        \\
+                        \\You can also try running bun as root.
+                        \\
+                        \\If running many copies of Bun via exec or spawn, be sure that O_CLOEXEC is set so
+                        \\that resources are not leaked when the child process exits.
+                        \\
+                        \\Why does this happen?
+                        \\
+                        \\Bun uses io_uring and io_uring accounts memory it
+                        \\needs under the rlimit memlocked option, which can be
+                        \\quite low on some setups (64K).
+                        \\
+                        \\
+                    , .{});
+                    break :log;
                 }
             }
 

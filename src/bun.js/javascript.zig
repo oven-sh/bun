@@ -352,6 +352,8 @@ pub const VirtualMachine = struct {
     disable_run_us_loop: bool = false,
     is_us_loop_entered: bool = false,
 
+    unhandled_rejected_promises: std.ArrayListUnmanaged(*JSPromise) = .{},
+
     pub fn io(this: *VirtualMachine) *IO {
         if (this.io_ == null) {
             this.io_ = IO.init(this) catch @panic("Failed to initialize IO");
@@ -1394,15 +1396,24 @@ pub const VirtualMachine = struct {
         return slice;
     }
 
-    // // This double prints
-    // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
-    //     const result = promise.result(global.vm());
-    //     if (@enumToInt(VirtualMachine.vm.last_error_jsvalue) != @enumToInt(result)) {
-    //         VirtualMachine.vm.runErrorHandler(result, null);
-    //     }
+    pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, operation: JSPromiseRejectionOperation) callconv(.C) JSValue {
+        switch (operation) {
+            .Reject => {
+                vm.unhandled_rejected_promises.append(vm.bundler.allocator, promise) catch unreachable;
+            },
+            .Handle => {
+                var i: usize = 0;
+                while (i < vm.unhandled_rejected_promises.items.len) : (i += 1) {
+                    if (vm.unhandled_rejected_promises.items[i].asValue(global) == promise.asValue(global)) {
+                        _ = vm.unhandled_rejected_promises.swapRemove(i);
+                        break;
+                    }
+                }
+            },
+        }
 
-    //     return JSValue.jsUndefined();
-    // }
+        return JSValue.jsUndefined();
+    }
 
     const main_file_name: string = "bun:main";
 

@@ -2261,6 +2261,9 @@ pub const Timer = struct {
                 if (this.repeat) {
                     this.io_task.?.deinit();
                     var task = Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, global, this) catch unreachable;
+                    VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, this.id, this) catch unreachable;
+                    VirtualMachine.vm.timer.active +|= 1;
+                    VirtualMachine.vm.active_tasks +|= 1;
                     this.io_task = task;
                     task.schedule();
                 }

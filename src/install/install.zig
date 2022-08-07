@@ -715,32 +715,46 @@ const PackageInstall = struct {
     pub const Method = enum {
         clonefile,
 
-        // Slower than clonefile
+        /// Slower than clonefile
         clonefile_each_dir,
 
-        // On macOS, slow.
-        // On Linux, fast.
+        /// On macOS, slow.
+        /// On Linux, fast.
         hardlink,
 
-        // Slowest if single-threaded
-        // Note that copyfile does technically support recursion
-        // But I suspect it is slower in practice than manually doing it because:
-        // - it adds syscalls
-        // - it runs in userspace
+        /// Slowest if single-threaded
+        /// Note that copyfile does technically support recursion
+        /// But I suspect it is slower in practice than manually doing it because:
+        /// - it adds syscalls
+        /// - it runs in userspace
+        /// - it reads each dir twice incase the first pass modifies it
         copyfile,
 
+        /// Used for file: when file: points to a parent directory
+        /// example: "file:../"
+        symlink,
+
         const BackendSupport = std.EnumArray(Method, bool);
+        pub const map = std.ComptimeStringMap(Method, .{
+            .{ "clonefile", Method.clonefile },
+            .{ "clonefile_each_dir", Method.clonefile_each_dir },
+            .{ "hardlink", Method.hardlink },
+            .{ "copyfile", Method.copyfile },
+            .{ "symlink", Method.symlink },
+        });
 
         pub const macOS = BackendSupport.initDefault(false, .{
             .clonefile = true,
             .clonefile_each_dir = true,
             .hardlink = true,
             .copyfile = true,
+            .symlink = true,
         });
 
         pub const linux = BackendSupport.initDefault(false, .{
             .hardlink = true,
             .copyfile = true,
+            .symlink = true,
         });
 
         pub inline fn isSupported(this: Method) bool {
@@ -880,7 +894,9 @@ const PackageInstall = struct {
                 var stackpath: [bun.MAX_PATH_BYTES]u8 = undefined;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
-                        .Directory => std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {},
+                        .Directory => {
+                            std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {};
+                        },
                         .File => {
                             std.mem.copy(u8, &stackpath, entry.path);
                             stackpath[entry.path.len] = 0;
@@ -1059,7 +1075,7 @@ const PackageInstall = struct {
             cached_package_dir,
             this.allocator,
             &[_]string{},
-            &[_]string{},
+            &[_]string{"node_modules"},
         ) catch |err| return Result{
             .fail = .{ .err = err, .step = .opening_cache_dir },
         };
@@ -1073,7 +1089,9 @@ const PackageInstall = struct {
                 var real_file_count: u32 = 0;
                 while (try walker.next()) |entry| {
                     switch (entry.kind) {
-                        .Directory => std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {},
+                        .Directory => {
+                            std.os.mkdirat(destination_dir_.fd, entry.path, 0o755) catch {};
+                        },
                         .File => {
                             try std.os.linkat(entry.dir.fd, entry.basename, destination_dir_.fd, entry.path, 0);
                             real_file_count += 1;
@@ -1107,6 +1125,103 @@ const PackageInstall = struct {
         };
     }
 
+    fn installWithSymlink(this: *PackageInstall) !Result {
+        const Walker = @import("../walker_skippable.zig");
+
+        var cached_package_dir = this.cache_dir.openDirZ(this.cache_dir_subpath, .{
+            .iterate = true,
+        }) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+        defer cached_package_dir.close();
+        var walker_ = Walker.walk(
+            cached_package_dir,
+            this.allocator,
+            &[_]string{},
+            &[_]string{ "node_modules", ".git" },
+        ) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+        defer walker_.deinit();
+
+        const FileCopier = struct {
+            pub fn copy(
+                dest_dir_fd: std.os.fd_t,
+                cache_dir_fd: std.os.fd_t,
+                walker: *Walker,
+            ) !u32 {
+                var real_file_count: u32 = 0;
+                var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var cache_dir_path = try std.os.getFdPath(cache_dir_fd, &buf);
+
+                var remain = buf[cache_dir_path.len..];
+                var cache_dir_offset = cache_dir_path.len;
+                if (cache_dir_path.len > 0 and cache_dir_path[cache_dir_path.len - 1] != std.fs.path.sep) {
+                    remain[0] = std.fs.path.sep;
+                    cache_dir_offset += 1;
+                    remain = remain[1..];
+                }
+                var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var dest_base = try std.os.getFdPath(dest_dir_fd, &dest_buf);
+                var dest_remaining = dest_buf[dest_base.len..];
+                var dest_dir_offset = dest_base.len;
+                if (dest_base.len > 0 and dest_buf[dest_base.len - 1] != std.fs.path.sep) {
+                    dest_remaining[0] = std.fs.path.sep;
+                    dest_remaining = dest_remaining[1..];
+                    dest_dir_offset += 1;
+                }
+
+                while (try walker.next()) |entry| {
+                    switch (entry.kind) {
+                        // directories are created
+                        .Directory => {
+                            std.os.mkdirat(dest_dir_fd, entry.path, 0o755) catch {};
+                        },
+                        // but each file in the directory is a symlink
+                        .File => {
+                            @memcpy(remain.ptr, entry.path.ptr, entry.path.len);
+                            remain[entry.path.len] = 0;
+                            var from_path = buf[0 .. cache_dir_offset + entry.path.len :0];
+
+                            @memcpy(dest_remaining.ptr, entry.path.ptr, entry.path.len);
+                            dest_remaining[entry.path.len] = 0;
+                            var to_path = dest_buf[0 .. dest_dir_offset + entry.path.len :0];
+
+                            try std.os.symlinkZ(from_path, to_path);
+
+                            real_file_count += 1;
+                        },
+                        else => {},
+                    }
+                }
+
+                return real_file_count;
+            }
+        };
+
+        var subdir = this.destination_dir.makeOpenPath(std.mem.span(this.destination_dir_subpath), .{ .iterate = true }) catch |err| return Result{
+            .fail = .{ .err = err, .step = .opening_cache_dir },
+        };
+
+        defer subdir.close();
+
+        this.file_count = FileCopier.copy(
+            subdir.fd,
+            cached_package_dir.fd,
+            &walker_,
+        ) catch |err|
+            return Result{
+            .fail = .{
+                .err = err,
+                .step = .copying_files,
+            },
+        };
+
+        return Result{
+            .success = void{},
+        };
+    }
+
     pub fn uninstall(this: *PackageInstall) !void {
         try this.destination_dir.deleteTree(std.mem.span(this.destination_dir_subpath));
     }
@@ -1114,11 +1229,17 @@ const PackageInstall = struct {
 
         // If this fails, we don't care.
         // we'll catch it the next error
-        if (!skip_delete) this.uninstall() catch {};
+        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstall() catch {};
 
-        switch (supported_method) {
+        const supported_method_to_use = if (strings.eqlComptime(this.cache_dir_subpath, ".") or strings.hasPrefixComptime(this.cache_dir_subpath, ".."))
+            Method.symlink
+        else
+            supported_method;
+
+        switch (supported_method_to_use) {
             .clonefile => {
                 if (comptime Environment.isMac) {
+
                     // First, attempt to use clonefile
                     // if that fails due to ENOTSUP, mark it as unsupported and then fall back to copyfile
                     if (this.installWithClonefile()) |result| {
@@ -1174,10 +1295,24 @@ const PackageInstall = struct {
                     }
                 }
             },
+            .symlink => {
+                if (this.installWithSymlink()) |result| {
+                    return result;
+                } else |err| {
+                    switch (err) {
+                        error.FileNotFound => return Result{
+                            .fail = .{ .err = error.FileNotFound, .step = .opening_cache_dir },
+                        },
+                        else => return Result{
+                            .fail = .{ .err = err, .step = .copying_files },
+                        },
+                    }
+                }
+            },
             else => {},
         }
 
-        if (supported_method != .copyfile) return Result{
+        if (supported_method_to_use != .copyfile) return Result{
             .success = void{},
         };
 
@@ -2054,6 +2189,7 @@ pub const PackageManager = struct {
                 }
                 return;
             },
+
             else => {},
         }
     }
@@ -3410,6 +3546,11 @@ pub const PackageManager = struct {
     }
 
     const ParamType = clap.Param(clap.Help);
+    const platform_specific_backend_label = if (Environment.isMac)
+        "Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""
+    else
+        "Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\"";
+
     pub const install_params_ = [_]ParamType{
         clap.parseParam("-c, --config <STR>?               Load config (bunfig.toml)") catch unreachable,
         clap.parseParam("-y, --yarn                        Write a yarn.lock file (yarn v1)") catch unreachable,
@@ -3427,7 +3568,7 @@ pub const PackageManager = struct {
         clap.parseParam("--ignore-scripts                  Skip lifecycle scripts in the project's package.json (dependency scripts are never run)") catch unreachable,
         clap.parseParam("-g, --global                      Install globally") catch unreachable,
         clap.parseParam("--cwd <STR>                       Set a specific cwd") catch unreachable,
-        clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. For macOS, \"clonefile\" (default), \"copyfile\"") catch unreachable,
+        clap.parseParam("--backend <STR>                   Platform-specific optimizations for installing dependencies. " ++ platform_specific_backend_label) catch unreachable,
         clap.parseParam("--link-native-bins <STR>...       Link \"bin\" from a matching platform-specific \"optionalDependencies\" instead. Default: esbuild, turbo") catch unreachable,
 
         // clap.parseParam("--omit <STR>...                   Skip installing dependencies of a certain type. \"dev\", \"optional\", or \"peer\"") catch unreachable,
@@ -3588,15 +3729,7 @@ pub const PackageManager = struct {
 
             const specified_backend: ?PackageInstall.Method = brk: {
                 if (args.option("--backend")) |backend_| {
-                    if (strings.eqlComptime(backend_, "clonefile")) {
-                        break :brk PackageInstall.Method.clonefile;
-                    } else if (strings.eqlComptime(backend_, "clonefile_each_dir")) {
-                        break :brk PackageInstall.Method.clonefile_each_dir;
-                    } else if (strings.eqlComptime(backend_, "hardlink")) {
-                        break :brk PackageInstall.Method.hardlink;
-                    } else if (strings.eqlComptime(backend_, "copyfile")) {
-                        break :brk PackageInstall.Method.copyfile;
-                    }
+                    break :brk PackageInstall.Method.map.get(backend_);
                 }
                 break :brk null;
             };
@@ -4232,10 +4365,18 @@ pub const PackageManager = struct {
                 },
                 .folder => {
                     const folder = resolution.value.folder.slice(buf);
-                    @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
-                    this.folder_path_buf[folder.len] = 0;
-                    installer.cache_dir_subpath = std.meta.assumeSentinel(this.folder_path_buf[0..folder.len], 0);
-                    installer.cache_dir = std.fs.cwd();
+                    // Handle when a package depends on itself via file:
+                    // example:
+                    //   "mineflayer": "file:."
+                    if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                        installer.cache_dir_subpath = ".";
+                        installer.cache_dir = std.fs.cwd();
+                    } else {
+                        @memcpy(&this.folder_path_buf, folder.ptr, folder.len);
+                        this.folder_path_buf[folder.len] = 0;
+                        installer.cache_dir_subpath = std.meta.assumeSentinel(this.folder_path_buf[0..folder.len], 0);
+                        installer.cache_dir = std.fs.cwd();
+                    }
                 },
                 else => return,
             }
@@ -4317,29 +4458,39 @@ pub const PackageManager = struct {
                     },
                     .fail => |cause| {
                         if (cause.isPackageMissingFromCache()) {
-                            std.debug.assert(resolution.tag == .npm);
-                            std.debug.assert(resolution.value.npm.url.len() > 0);
+                            switch (resolution.tag) {
+                                .npm => {
+                                    std.debug.assert(resolution.value.npm.url.len() > 0);
 
-                            const task_id = Task.Id.forNPMPackage(Task.Tag.extract, name, resolution.value.npm.version);
-                            var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, task_id) catch unreachable;
-                            if (!task_queue.found_existing) {
-                                task_queue.value_ptr.* = .{};
-                            }
-
-                            task_queue.value_ptr.append(
-                                this.manager.allocator,
-                                .{
-                                    .node_modules_folder = @intCast(u32, this.node_modules_folder.fd),
-                                },
-                            ) catch unreachable;
-
-                            if (!task_queue.found_existing) {
-                                if (this.manager.generateNetworkTaskForTarball(task_id, resolution.value.npm.url.slice(buf), this.lockfile.packages.get(package_id)) catch unreachable) |task| {
-                                    task.schedule(&this.manager.network_tarball_batch);
-                                    if (this.manager.network_tarball_batch.len > 0) {
-                                        _ = this.manager.scheduleNetworkTasks();
+                                    const task_id = Task.Id.forNPMPackage(Task.Tag.extract, name, resolution.value.npm.version);
+                                    var task_queue = this.manager.task_queue.getOrPut(this.manager.allocator, task_id) catch unreachable;
+                                    if (!task_queue.found_existing) {
+                                        task_queue.value_ptr.* = .{};
                                     }
-                                }
+
+                                    task_queue.value_ptr.append(
+                                        this.manager.allocator,
+                                        .{
+                                            .node_modules_folder = @intCast(u32, this.node_modules_folder.fd),
+                                        },
+                                    ) catch unreachable;
+
+                                    if (!task_queue.found_existing) {
+                                        if (this.manager.generateNetworkTaskForTarball(task_id, resolution.value.npm.url.slice(buf), this.lockfile.packages.get(package_id)) catch unreachable) |task| {
+                                            task.schedule(&this.manager.network_tarball_batch);
+                                            if (this.manager.network_tarball_batch.len > 0) {
+                                                _ = this.manager.scheduleNetworkTasks();
+                                            }
+                                        }
+                                    }
+                                },
+                                else => {
+                                    Output.prettyErrorln(
+                                        "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
+                                        .{ @errorName(cause.err), this.names[package_id].slice(buf) },
+                                    );
+                                    this.summary.fail += 1;
+                                },
                             }
                         } else {
                             Output.prettyErrorln(

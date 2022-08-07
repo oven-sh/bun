@@ -1177,6 +1177,53 @@ To delete the cache:
 rm -rf ~/.bun/install/cache
 ```
 
+#### Platform-specific backends
+
+`bun install` uses different system calls to install dependencies depending on the platform. This is a performance optimization. You can force a specific backend with the `--backend` flag.
+
+**`hardlink`** is the default backend on Linux. Benchmarking showed it to be the fastest on Linux.
+
+```bash
+rm -rf node_modules
+bun install --backend hardlink
+```
+
+**`clonefile`** is the default backend on macOS. Benchmarking showed it to be the fastest on macOS. It is only available on macOS.
+
+```bash
+rm -rf node_modules
+bun install --backend clonefile
+```
+
+**`clonefile_each_dir`** is similar to `clonefile`, except it clones each file individually per directory. It is only available on macOS and tends to perform slower than `clonefile`. Unlike `clonefile`, this does not recursively clone subdirectories in one system call.
+
+```bash
+rm -rf node_modules
+bun install --backend clonefile_each_dir
+```
+
+**`copyfile`** is the fallback used when any of the above fail, and is the slowest. on macOS, it uses `fcopyfile()` and on linux it uses `copy_file_range()`.
+
+```bash
+rm -rf node_modules
+bun install --backend copyfile
+```
+
+**`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder. 
+
+
+If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has it's own node_modules folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
+
+```bash
+rm -rf node_modules
+bun install --backend symlink
+
+# https://nodejs.org/api/cli.html#--preserve-symlinks
+node --preserve-symlinks ./my-file.js
+```
+
+bun's runtime does not currently expose an equivalent of `--preserve-symlinks`, though the code for it does exist.
+
 #### npm registry metadata
 
 bun uses a binary format for caching NPM registry responses. This loads much faster than JSON and tends to be smaller on disk.

@@ -361,11 +361,24 @@ void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObje
     Zig__GlobalObject__reportUncaughtException(globalObject, exception);
 }
 
-void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* prom,
-    JSC::JSPromiseRejectionOperation reject)
+void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
+    JSC::JSPromiseRejectionOperation operation)
 {
-    Zig__GlobalObject__promiseRejectionTracker(
-        obj, prom, reject == JSC::JSPromiseRejectionOperation::Reject ? 0 : 1);
+    // Zig__GlobalObject__promiseRejectionTracker(
+    //     obj, prom, reject == JSC::JSPromiseRejectionOperation::Reject ? 0 : 1);
+
+    // Do this in C++ for now
+    auto* globalObj = reinterpret_cast<GlobalObject*>(obj);
+    switch (operation) {
+    case JSPromiseRejectionOperation::Reject:
+        globalObj->m_aboutToBeNotifiedRejectedPromises.append(JSC::Strong<JSPromise>(obj->vm(), promise));
+        break;
+    case JSPromiseRejectionOperation::Handle:
+        globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching([&] (Strong<JSPromise>& unhandledPromise) {
+          return unhandledPromise.get() == promise;
+        });
+        break;
+    }
 }
 
 static Zig::ConsoleClient* m_console;
@@ -2233,6 +2246,22 @@ extern "C" void Bun__performTask(Zig::GlobalObject* globalObject, WebCore::Event
 void GlobalObject::queueTask(WebCore::EventLoopTask* task)
 {
     Bun__queueMicrotask(this, task);
+}
+
+extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
+
+void GlobalObject::handleRejectedPromises()
+{
+    JSC::VM& virtual_machine = vm();
+    do {
+        auto unhandledRejections = WTFMove(m_aboutToBeNotifiedRejectedPromises);
+        for (auto& promise : unhandledRejections) {
+            if (promise->isHandled(virtual_machine))
+                continue;
+
+            Bun__handleRejectedPromise(this, promise.get());
+        }
+    } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);

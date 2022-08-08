@@ -272,12 +272,18 @@ comptime {
         _ = Bun__getVM;
         _ = Bun__drainMicrotasks;
         _ = Bun__queueMicrotask;
+        _ = Bun__handleRejectedPromise;
         _ = Bun__readOriginTimer;
     }
 }
 
 pub export fn Bun__queueMicrotask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
+}
+
+pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+    const result = promise.result(global.vm());
+    global.bunVM().runErrorHandler(result, null);
 }
 
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
@@ -351,8 +357,6 @@ pub const VirtualMachine = struct {
     us_loop_reference_count: usize = 0,
     disable_run_us_loop: bool = false,
     is_us_loop_entered: bool = false,
-
-    unhandled_rejected_promises: std.ArrayListUnmanaged(*JSPromise) = .{},
 
     pub fn io(this: *VirtualMachine) *IO {
         if (this.io_ == null) {
@@ -1396,24 +1400,15 @@ pub const VirtualMachine = struct {
         return slice;
     }
 
-    pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, operation: JSPromiseRejectionOperation) callconv(.C) JSValue {
-        switch (operation) {
-            .Reject => {
-                vm.unhandled_rejected_promises.append(vm.bundler.allocator, promise) catch unreachable;
-            },
-            .Handle => {
-                var i: usize = 0;
-                while (i < vm.unhandled_rejected_promises.items.len) : (i += 1) {
-                    if (vm.unhandled_rejected_promises.items[i].asValue(global) == promise.asValue(global)) {
-                        _ = vm.unhandled_rejected_promises.swapRemove(i);
-                        break;
-                    }
-                }
-            },
-        }
+    // // This double prints
+    // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
+    //     const result = promise.result(global.vm());
+    //     if (@enumToInt(VirtualMachine.vm.last_error_jsvalue) != @enumToInt(result)) {
+    //         VirtualMachine.vm.runErrorHandler(result, null);
+    //     }
 
-        return JSValue.jsUndefined();
-    }
+    //     return JSValue.jsUndefined();
+    // }
 
     const main_file_name: string = "bun:main";
 

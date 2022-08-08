@@ -437,16 +437,7 @@ pub const EventLoop = struct {
             ctx.is_us_loop_entered = false;
         }
 
-        // Deal with unhandled rejected promises.
-        var i: usize = 0;
-        while (i < ctx.unhandled_rejected_promises.items.len) : (i += 1) {
-            var promise = ctx.unhandled_rejected_promises.items[i];
-            if (promise.isHandled(this.global.vm())) {
-                continue;
-            }
-            const result = promise.result(this.global.vm());
-            ctx.runErrorHandler(result, null);
-        }
+        this.global.handleRejectedPromises();
     }
 
     // TODO: fix this technical debt

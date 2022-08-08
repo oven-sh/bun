@@ -1693,6 +1693,10 @@ pub const JSGlobalObject = extern struct {
         return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));
     }
 
+    pub fn handleRejectedPromises(this: *JSGlobalObject) void {
+        return cppFn("handleRejectedPromises", .{this});
+    }
+
     pub fn startRemoteInspector(this: *JSGlobalObject, host: [:0]const u8, port: u16) bool {
         return cppFn("startRemoteInspector", .{ this, host, port });
     }
@@ -1755,6 +1759,7 @@ pub const JSGlobalObject = extern struct {
         "vm",
         "generateHeapSnapshot",
         "startRemoteInspector",
+        "handleRejectedPromises",
         // "createError",
         // "throwError",
     };

@@ -4,17 +4,11 @@ import packagejson from "next/package.json";
 
 const version = packagejson.version;
 
-if (
-  (!version.startsWith("11.1") &&
-    !version.startsWith("12.0") &&
-    !version.startsWith("12.1")) ||
-  version === "11.1.0" ||
-  version === "11.1.1"
-) {
+if (!version.startsWith("12.2")) {
   console.warn(
     "Possibly incompatible Next.js version: ",
     version,
-    ". Please upgrade to Next.js 11.1.2 or Next.js 12.0.2+.\n"
+    ". Please upgrade to Next.js 12.2.0+.\n"
   );
 }
 

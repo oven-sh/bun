@@ -1,4 +1,3 @@
-import "./server-polyfills";
 import { render } from "./renderDocument";
 import packagejson from "next/package.json";
 

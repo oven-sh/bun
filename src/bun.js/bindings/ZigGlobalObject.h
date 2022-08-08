@@ -201,6 +201,8 @@ public:
         return m_processEnvObject.getInitializedOnMainThread(this);
     }
 
+    void handleRejectedPromises();
+
     void* bunVM() { return m_bunVM; }
     bool isThreadLocalDefaultGlobalObject = false;
 
@@ -242,6 +244,7 @@ private:
 
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;
+    WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
 };
 
 class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {

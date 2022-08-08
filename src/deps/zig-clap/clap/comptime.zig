@@ -130,6 +130,23 @@ pub fn ComptimeClap(
             return parser.pos;
         }
 
+        pub fn hasFlag(comptime name: []const u8) bool {
+            comptime {
+                for (converted_params) |param| {
+                    if (param.names.short) |s| {
+                        if (mem.eql(u8, name, "-" ++ [_]u8{s}))
+                            return true;
+                    }
+                    if (param.names.long) |l| {
+                        if (mem.eql(u8, name, "--" ++ l))
+                            return true;
+                    }
+                }
+
+                return false;
+            }
+        }
+
         fn findParam(comptime name: []const u8) clap.Param(usize) {
             comptime {
                 for (converted_params) |param| {

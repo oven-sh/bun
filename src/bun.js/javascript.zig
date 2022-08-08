@@ -272,12 +272,18 @@ comptime {
         _ = Bun__getVM;
         _ = Bun__drainMicrotasks;
         _ = Bun__queueMicrotask;
+        _ = Bun__handleRejectedPromise;
         _ = Bun__readOriginTimer;
     }
 }
 
 pub export fn Bun__queueMicrotask(global: *JSGlobalObject, task: *JSC.CppTask) void {
     global.bunVM().eventLoop().enqueueTask(Task.init(task));
+}
+
+pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
+    const result = promise.result(global.vm());
+    global.bunVM().runErrorHandler(result, null);
 }
 
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101

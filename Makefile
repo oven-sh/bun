@@ -14,7 +14,7 @@ endif
 
 CPU_TARGET ?= native
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
-NATIVE_OR_OLD_MARCH = 
+NATIVE_OR_OLD_MARCH =
 
 ARCH_NAME :=
 DOCKER_BUILDARCH =
@@ -171,7 +171,7 @@ ZLIB_INCLUDE_DIR ?= $(BUN_DEPS_DIR)/zlib
 ZLIB_LIB_DIR ?= $(BUN_DEPS_DIR)/zlib
 
 JSC_FILES := $(JSC_LIB)/libJavaScriptCore.a $(JSC_LIB)/libWTF.a  $(JSC_LIB)/libbmalloc.a
-JSC_FILES_DEBUG := $(JSC_LIB_DEBUG)/libJavaScriptCore.a $(JSC_LIB_DEBUG)/libWTF.a  $(JSC_LIB_DEBUG)/libbmalloc.a 
+JSC_FILES_DEBUG := $(JSC_LIB_DEBUG)/libJavaScriptCore.a $(JSC_LIB_DEBUG)/libWTF.a  $(JSC_LIB_DEBUG)/libbmalloc.a
 
 
 ENABLE_MIMALLOC ?= 1
@@ -223,7 +223,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(which llvm-strip || which llvm-strip-13 || echo "Missing strip")
+STRIP=$(which llvm-strip || which llvm-strip-13 || which strip || echo "Missing strip")
 endif
 
 
@@ -232,16 +232,27 @@ HOMEBREW_PREFIX ?= $(BREW_PREFIX_PATH)
 
 SRC_DIR := src/bun.js/bindings
 OBJ_DIR ?= src/bun.js/bindings-obj
+DEBUG_OBJ_DIR := src/bun.js/debug-bindings-obj
+
 SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp)
 SRC_SQLITE_FILES := $(wildcard $(SRC_DIR)/sqlite/*.cpp)
 SRC_BUILTINS_FILES := $(wildcard  src/bun.js/builtins/*.cpp)
+
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
 SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
 BUILTINS_OBJ_FILES := $(patsubst src/bun.js/builtins/%.cpp,$(OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
+
+DEBUG_OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_FILES))
+DEBUG_WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
+DEBUG_SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
+DEBUG_BUILTINS_OBJ_FILES := $(patsubst src/bun.js/builtins/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
+
 BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+DEBUG_BINDINGS_OBJ := $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES)
+
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
 		-I$(WEBKIT_RELEASE_DIR)/ICU/Headers \
@@ -345,7 +356,7 @@ endif
 SHARED_LIB_EXTENSION = .so
 
 JSC_BINDINGS = $(BINDINGS_OBJ) $(JSC_FILES)
-JSC_BINDINGS_DEBUG = $(BINDINGS_OBJ) $(JSC_FILES_DEBUG)
+JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG)
 
 RELEASE_FLAGS=
 DEBUG_FLAGS=
@@ -369,7 +380,7 @@ ARCHIVE_FILES_WITHOUT_LIBCRYPTO = \
 		$(BUN_DEPS_OUT_DIR)/libuwsockets.o \
 		$(_MIMALLOC_LINK)
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto 
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
 STATIC_MUSL_FLAG ?=
 
 ifeq ($(OS_NAME), linux)
@@ -404,9 +415,8 @@ BUN_LLD_FLAGS_WITHOUT_JSC = $(ARCHIVE_FILES) \
 
 
 BUN_LLD_FLAGS = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES) $(BINDINGS_OBJ)
-BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_WITHOUT_JSC)  $(JSC_FILES_DEBUG) $(BINDINGS_OBJ)
-
-BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(BINDINGS_OBJ)
+BUN_LLD_FLAGS_DEBUG = $(BUN_LLD_FLAGS_WITHOUT_JSC) $(JSC_FILES_DEBUG) $(DEBUG_BINDINGS_OBJ)
+BUN_LLD_FLAGS_FAST = $(BUN_LLD_FLAGS_DEBUG)
 
 CLANG_VERSION = $(shell $(CC) --version | awk '/version/ {for(i=1; i<=NF; i++){if($$i=="version"){split($$(i+1),v,".");print v[1]}}}')
 
@@ -664,7 +674,7 @@ ensure-package-dir:
 .PHONY: prerelease
 prerelease: npm-install api analytics all-js ensure-package-dir
 .PHONY: release-only
-release-only: bindings build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
+release-only: release-bindings build-obj cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release-safe-only
 release-safe-only: all-js bindings build-obj-safe cls bun-link-lld-release bun-link-lld-release-dsym release-bin-entitlements
 .PHONY: release
@@ -791,11 +801,11 @@ clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 .PHONY: devcontainer
-devcontainer: clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks headers api analytics bun_error fallback_decoder bindings dev runtime_js_dev libarchive libbacktrace lolhtml usockets uws base64 tinycc
+devcontainer: clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets base64 tinycc runtime_js_dev sqlite dev
 
 .PHONY: devcontainer-build
 devcontainer-build:
-	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer build
+	DOCKER_BUILDARCH="$(DOCKER_BUILDARCH)" devcontainer build --workspace-folder .
 
 .PHONY: devcontainer-open
 devcontainer-open:
@@ -807,7 +817,6 @@ CLANG_FORMAT := $(shell command -v clang-format 2> /dev/null)
 headers:
 	rm -f /tmp/build-jsc-headers src/bun.js/bindings/headers.zig
 	touch src/bun.js/bindings/headers.zig
-	mkdir -p src/bun.js/bindings-obj/
 	$(ZIG) build headers-obj
 	$(CXX) $(PLATFORM_LINKER_FLAGS) $(JSC_FILES_DEBUG) ${ICU_FLAGS} $(BUN_LLD_FLAGS_WITHOUT_JSC)  -g $(DEBUG_BIN)/headers.o -W -o /tmp/build-jsc-headers -lc;
 	/tmp/build-jsc-headers
@@ -997,12 +1006,20 @@ test-dev-bun-snapshot:
 	touch test/bun.js/snapshots.debug.js
 	$(foreach i,$(wildcard test/bun.js/*.snapshot.*),echo "" >> test/bun.js/snapshots.debug.js; echo "// $i" >> test/bun.js/snapshots.debug.js; $(DEBUG_BUN) build $i --platform=bun >> test/bun.js/snapshots.debug.js;)
 
+.PHONY: test-bun-init
+test-bun-init:
+	BUN_BIN=$(RELEASE_BUN) bash test/apps/bun-init-check.sh
+
+.PHONY: test-dev-bun-init
+test-dev-bun-init:
+	BUN_BIN=$(DEBUG_BUN) bash test/apps/bun-init-check.sh
+
 .PHONY: test-bun-wiptest
 test-bun-wiptest: test/wiptest/run
 	cd test/wiptest && BUN_BIN=$(DEBUG_BUN) ./run ./fixtures
 
 .PHONY: test-all
-test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev
+test-all: test-install test-bun-snapshot test-with-hmr test-no-hmr test-create-next test-create-react test-bun-run test-bun-install test-bun-dev test-bun-init
 
 .PHONY: copy-test-node-modules
 copy-test-node-modules:
@@ -1075,7 +1092,7 @@ test-dev-bun-run:
 	cd test/apps && BUN_BIN=$(DEBUG_BUN) bash bun-run-check.sh
 
 .PHONY: test-dev-all
-test-dev-all: test-install test-dev-bun-snapshot test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev
+test-dev-all: test-install test-dev-bun-snapshot test-dev-with-hmr test-dev-no-hmr test-dev-create-next test-dev-create-react test-dev-bun-run test-dev-bun-install test-dev-bun-dev test-dev-bun-init
 test-dev-bunjs:
 
 test-dev: test-dev-with-hmr
@@ -1251,8 +1268,8 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
-.PHONY: bindings
-bindings: $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES)
 
 .PHONY: jsc-bindings-mac
 jsc-bindings-mac: bindings
@@ -1358,7 +1375,7 @@ bun-link-lld-release-no-lto:
 ifeq ($(OS_NAME),darwin)
 bun-link-lld-release-dsym: bun-release-copy-obj
 	$(DSYMUTIL) -o $(BUN_RELEASE_BIN).dSYM $(BUN_RELEASE_BIN)
-	-$(STRIP) $(BUN_RELEASE_BIN) 
+	-$(STRIP) $(BUN_RELEASE_BIN)
 
 copy-to-bun-release-dir-dsym:
 	gzip --keep -c $(PACKAGE_DIR)/bun.dSYM > $(BUN_RELEASE_DIR)/bun.dSYM.gz
@@ -1391,6 +1408,12 @@ EMIT_LLVM=$(EMIT_LLVM_FOR_RELEASE)
 
 # We do this outside of build.zig for performance reasons
 # The C compilation stuff with build.zig is really slow and we don't need to run this as often as the rest
+$(OBJ_DIR):
+	mkdir -p $(OBJ_DIR)
+
+$(DEBUG_OBJ_DIR):
+	mkdir -p $(DEBUG_OBJ_DIR)
+
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
@@ -1429,6 +1452,54 @@ $(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM) \
+		-g3 -c -o $@ $<
+
+# $(DEBUG_OBJ_DIR) is not included here because it breaks
+# detecting if a file needs to be rebuilt
+$(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
+	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
+		-g3 -c -o $@ $<
+
+# $(DEBUG_OBJ_DIR) is not included here because it breaks
+# detecting if a file needs to be rebuilt
+$(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
+		-g3 -c -o $@ $<
+
+# $(DEBUG_OBJ_DIR) is not included here because it breaks
+# detecting if a file needs to be rebuilt
+$(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
+		-g3 -c -o $@ $<
+
+# $(DEBUG_OBJ_DIR) is not included here because it breaks
+# detecting if a file needs to be rebuilt
+$(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
 		-g3 -c -o $@ $<
 
 sizegen:

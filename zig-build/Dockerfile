@@ -47,7 +47,7 @@ ARG TAG "jul7"
 RUN --mount=type=tmpfs,target=/zig-build \
     cd /zig-build && \
     mkdir -p /zig-build; \
-    git clone https://github.com/jarred-sumner/zig.git --depth=1; \
+    git clone https://github.com/oven-sh/zig.git --depth=1; \
     cd /zig-build/zig; \
     cmake . -DCMAKE_BUILD_TYPE=Release && \
     make -j$(nproc) && \

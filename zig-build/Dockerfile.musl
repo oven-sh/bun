@@ -15,7 +15,7 @@ FROM base as zig
 RUN --mount=type=tmpfs,target=/zig-build mkdir /zig; \
     cd /zig-build && \
     mkdir -p /zig-build; \
-    git clone -b jarred/zig-sloppy-with-small-structs --single-branch --depth=1 https://github.com/jarred-sumner/zig.git .; \
+    git clone -b jarred/zig-sloppy-with-small-structs --single-branch --depth=1 https://github.com/oven-sh/zig.git .; \
     cd /zig-build; \
     cmake . -DZIG_STATIC_LLVM=ON -DLLVM_INCLUDE_DIRS=$LLVM_INCLUDE_DIRS -DCMAKE_BUILD_TYPE=Release && \
     make -j$(nproc) && make install && \

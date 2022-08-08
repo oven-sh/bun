@@ -2242,13 +2242,10 @@ pub const Timer = struct {
                 this,
                 onCallback,
                 &this.completion,
-                std.time.ns_per_ms * @intCast(
+                if (this.interval > 0) std.time.ns_per_ms * @intCast(
                     u63,
-                    @maximum(
-                        this.interval,
-                        1,
-                    ),
-                ),
+                    this.interval,
+                ) else 1,
             );
         }
 
@@ -2264,6 +2261,9 @@ pub const Timer = struct {
                 if (this.repeat) {
                     this.io_task.?.deinit();
                     var task = Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, global, this) catch unreachable;
+                    VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, this.id, this) catch unreachable;
+                    VirtualMachine.vm.timer.active +|= 1;
+                    VirtualMachine.vm.active_tasks +|= 1;
                     this.io_task = task;
                     task.schedule();
                 }

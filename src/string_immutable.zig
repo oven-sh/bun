@@ -78,8 +78,46 @@ pub inline fn containsComptime(self: string, comptime str: string) bool {
 pub const includes = contains;
 
 pub inline fn containsAny(in: anytype, target: string) bool {
-    for (in) |str| if (contains(bun.span(str), target)) return true;
+    for (in) |str| if (contains(if (@TypeOf(str) == u8) &[1]u8{str} else bun.span(str), target)) return true;
     return false;
+}
+
+/// https://docs.npmjs.com/cli/v8/configuring-npm/package-json
+/// - The name must be less than or equal to 214 characters. This includes the scope for scoped packages.
+/// - The names of scoped packages can begin with a dot or an underscore. This is not permitted without a scope.
+/// - New packages must not have uppercase letters in the name.
+/// - The name ends up being part of a URL, an argument on the command line, and
+///   a folder name. Therefore, the name can't contain any non-URL-safe
+///   characters.
+pub inline fn isNPMPackageName(target: string) bool {
+    if (target.len >= 215) return false;
+    switch (target[0]) {
+        'a'...'z',
+        '0'...'9',
+        '$',
+        '@',
+        '-',
+        => {},
+        else => return false,
+    }
+    if (target.len == 1) return true;
+
+    var slash_count: usize = 0;
+
+    for (target[1..]) |c| {
+        switch (c) {
+            'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
+            '/' => {
+                if (slash_count > 0) {
+                    return false;
+                }
+                slash_count += 1;
+            },
+            else => return false,
+        }
+    }
+
+    return true;
 }
 
 pub inline fn indexAny(in: anytype, target: string) ?usize {
@@ -1655,7 +1693,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
                 .allocator = allocator,
             };
 
-            if (comptime Environment.isAarch64 or Environment.isX64) {
+            if (comptime Environment.enableSIMD) {
                 // pass #1: scan for any characters that need escaping
                 // assume most strings won't need any escaping, so don't actually allocate the buffer
                 scan_and_allocate_lazily: while (remaining.len >= ascii_vector_size) {
@@ -1902,7 +1940,7 @@ pub fn escapeHTMLForUTF16Input(allocator: std.mem.Allocator, utf16: []const u16)
             var any_needs_escape = false;
             var buf: std.ArrayList(u16) = undefined;
 
-            if (comptime Environment.isAarch64 or Environment.isX64) {
+            if (comptime Environment.enableSIMD) {
                 const vec_chars = "\"&'<>";
                 const vecs: [vec_chars.len]AsciiU16Vector = brk: {
                     var _vecs: [vec_chars.len]AsciiU16Vector = undefined;
@@ -2435,7 +2473,7 @@ pub fn isAllASCII(slice: []const u8) bool {
     var remaining = slice;
 
     // The NEON SIMD unit is 128-bit wide and includes 16 128-bit registers that can be used as 32 64-bit registers
-    if (comptime Environment.isAarch64 or Environment.isX64) {
+    if (comptime Environment.enableSIMD) {
         const remaining_end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_vector_size);
         while (remaining.ptr != remaining_end_ptr) : (remaining.ptr += ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
@@ -2503,7 +2541,7 @@ pub fn firstNonASCII(slice: []const u8) ?u32 {
 pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
     var remaining = slice;
 
-    if (comptime Environment.isAarch64 or Environment.isX64) {
+    if (comptime Environment.enableSIMD) {
         if (remaining.len >= ascii_vector_size) {
             const remaining_start = remaining.ptr;
             const remaining_end = remaining.ptr + remaining.len - (remaining.len % ascii_vector_size);
@@ -2571,7 +2609,7 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
         const remaining_start = remaining.ptr;
         const remaining_end = remaining.ptr + remaining.len - (remaining.len % size);
 
-        if (comptime Environment.isAarch64 or Environment.isX64) {
+        if (comptime Environment.enableSIMD) {
             // these assertions exist more so for LLVM
             assert(remaining.len < ascii_vector_size);
             assert(@ptrToInt(remaining.ptr + ascii_vector_size) > @ptrToInt(remaining_end));
@@ -2633,7 +2671,7 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
         }
     }
 
-    if (comptime Environment.isAarch64 or Environment.isX64) {
+    if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
@@ -2672,7 +2710,7 @@ pub fn indexOfNeedsEscape(slice: []const u8) ?u32 {
         return 0;
     }
 
-    if (comptime Environment.isAarch64 or Environment.isX64) {
+    if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = @bitCast(AsciiVectorU1, (vec > max_16_ascii)) | @bitCast(AsciiVectorU1, (vec < min_16_ascii)) |
@@ -2716,7 +2754,7 @@ pub fn indexOfChar(slice: []const u8, char: u8) ?u32 {
     if (remaining[0] == char)
         return 0;
 
-    if (comptime Environment.isAarch64 or Environment.isX64) {
+    if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = vec == @splat(ascii_vector_size, char);
@@ -2782,7 +2820,7 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
     if (remaining[0] != char)
         return 0;
 
-    if (comptime Environment.isAarch64 or Environment.isX64) {
+    if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = @splat(ascii_vector_size, char) != vec;
@@ -2968,7 +3006,7 @@ pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: us
 pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
     var remaining = slice;
 
-    if (comptime Environment.isAarch64 or Environment.isX64) {
+    if (comptime Environment.enableSIMD) {
         const end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_u16_vector_size);
         if (remaining.len > ascii_u16_vector_size) {
             const remaining_start = remaining.ptr;
@@ -3038,7 +3076,7 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
 ) ?u32 {
     var remaining = slice;
 
-    if (comptime Environment.isAarch64 or Environment.isX64) {
+    if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_u16_vector_size) {
             const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
 

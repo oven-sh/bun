@@ -44,6 +44,8 @@ const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateList
 const DevCommand = @import("./cli/dev_command.zig").DevCommand;
 const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
 const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
+const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
+const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
 const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
 const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
 const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
@@ -645,9 +647,8 @@ const AutoCommand = struct {
         try HelpCommand.execWithReason(allocator, .invalid_command);
     }
 };
-const InitCommand = struct {
-    pub fn exec(_: std.mem.Allocator) !void {}
-};
+const InitCommand = @import("./cli/init_command.zig").InitCommand;
+
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
         @setCold(true);
@@ -690,7 +691,8 @@ pub const HelpCommand = struct {
             \\> <r> <b><green>dev     <r><d>  ./a.ts ./b.jsx<r>        Start a bun Dev Server
             \\> <r> <b><magenta>bun     <r><d>  ./a.ts ./b.jsx<r>        Bundle dependencies of input files into a <r><magenta>.bun<r>
             \\
-            \\> <r> <b><cyan>create    <r><d>next ./app<r>            Start a new project from a template <d>(bun c)<r>
+            \\> <r> <b><cyan>init<r>                            Start an empty Bun project from a blank template<r>
+            \\> <r> <b><cyan>create    <r><d>next ./app<r>            Create a new project from a template <d>(bun c)<r>
             \\> <r> <b><magenta>run     <r><d>  test        <r>          Run JavaScript with bun, a package.json script, or a bin<r>
             \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
             \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
@@ -854,6 +856,8 @@ pub const Command = struct {
             RootCommandMatcher.case("upgrade") => .UpgradeCommand,
             RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
             RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
+            RootCommandMatcher.case("link") => .LinkCommand,
+            RootCommandMatcher.case("unlink") => .UnlinkCommand,
 
             RootCommandMatcher.case("i"), RootCommandMatcher.case("install") => brk: {
                 for (args_iter.buf) |arg| {
@@ -909,7 +913,7 @@ pub const Command = struct {
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator),
+            .InitCommand => return try InitCommand.exec(allocator, std.os.argv),
             else => {},
         }
 
@@ -949,6 +953,18 @@ pub const Command = struct {
                 const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
 
                 try RemoveCommand.exec(ctx);
+                return;
+            },
+            .LinkCommand => {
+                const ctx = try Command.Context.create(allocator, log, .LinkCommand);
+
+                try LinkCommand.exec(ctx);
+                return;
+            },
+            .UnlinkCommand => {
+                const ctx = try Command.Context.create(allocator, log, .UnlinkCommand);
+
+                try UnlinkCommand.exec(ctx);
                 return;
             },
             .PackageManagerCommand => {
@@ -1244,6 +1260,8 @@ pub const Command = struct {
         UpgradeCommand,
         PackageManagerCommand,
         TestCommand,
+        LinkCommand,
+        UnlinkCommand,
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
             return &comptime switch (cmd) {
@@ -1261,7 +1279,7 @@ pub const Command = struct {
 
         pub fn isNPMRelated(this: Tag) bool {
             return switch (this) {
-                .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
+                .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand => true,
                 else => false,
             };
         }
@@ -1273,12 +1291,17 @@ pub const Command = struct {
             .DevCommand = true,
             .RunCommand = true,
             .TestCommand = true,
-            .InstallCommand = true,
-            .AddCommand = true,
-            .RemoveCommand = true,
         });
 
-        pub const loads_config = cares_about_bun_file;
+        pub const loads_config = brk: {
+            var cares = cares_about_bun_file;
+            cares.set(.InstallCommand, true);
+            cares.set(.AddCommand, true);
+            cares.set(.RemoveCommand, true);
+            cares.set(.LinkCommand, true);
+            cares.set(.UnlinkCommand, true);
+            break :brk cares;
+        };
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
             .BuildCommand = true,
             .BunCommand = true,
@@ -1296,6 +1319,8 @@ pub const Command = struct {
             .AddCommand = false,
             .RemoveCommand = false,
             .PackageManagerCommand = false,
+            .LinkCommand = false,
+            .UnlinkCommand = false,
         });
     };
 };

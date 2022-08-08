@@ -1,9 +1,20 @@
 {
+  "scripts": {
+    "dev": "next",
+    "build": "next build",
+    "start": "next start"
+  },
   "dependencies": {
-    "bun-livereload": "1.0.2",
-    "bun-types": "latest",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "shiki": "^0.10.1"
+    "next": "12.2.3",
+    "react": "^18",
+    "react-dom": "^18",
+    "react-is": "^17.0.2",
+    "shiki": "0.10.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18",
+    "@types/node": "latest",
+    "bun-framework-next": "^12",
+    "typescript": "latest"
   }
 }

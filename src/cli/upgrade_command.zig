@@ -376,9 +376,16 @@ pub const UpgradeCommand = struct {
         env_loader.loadProcess();
 
         var version: Version = undefined;
-        const use_canary = strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
-            // TODO: add separate args just for "bun upgrade"?
-            strings.containsAny(bun.span(std.os.argv), "--canary");
+
+        const use_canary = brk: {
+            const default_use_canary = Environment.is_canary;
+
+            if (default_use_canary and strings.containsAny(bun.span(std.os.argv), "--stable"))
+                break :brk false;
+
+            break :brk strings.eqlComptime(env_loader.map.get("BUN_CANARY") orelse "0", "1") or
+                strings.containsAny(bun.span(std.os.argv), "--canary") or default_use_canary;
+        };
 
         if (!use_canary) {
             var refresher = std.Progress{};
@@ -557,7 +564,7 @@ pub const UpgradeCommand = struct {
                     .allocator = ctx.allocator,
                     .argv = &verify_argv,
                     .cwd = tmpdir_path,
-                    .max_output_bytes = 128,
+                    .max_output_bytes = 512,
                 }) catch |err| {
                     save_dir_.deleteTree(version_name) catch {};
                     Output.prettyErrorln("<r><red>error<r> Failed to verify bun {s}<r>)", .{@errorName(err)});
@@ -573,13 +580,18 @@ pub const UpgradeCommand = struct {
                 // It should run successfully
                 // but we don't care about the version number if we're doing a canary build
                 if (!use_canary) {
-                    if (!strings.eql(std.mem.trim(u8, result.stdout, " \n\r\t"), version_name)) {
+                    var version_string = result.stdout;
+                    if (strings.indexOfChar(version_string, ' ')) |i| {
+                        version_string = version_string[0..i];
+                    }
+
+                    if (!strings.eql(std.mem.trim(u8, version_string, " \n\r\t"), version_name)) {
                         save_dir_.deleteTree(version_name) catch {};
 
                         Output.prettyErrorln(
                             "<r><red>error<r>: The downloaded version of bun (<red>{s}<r>) doesn't match the expected version (<b>{s}<r>)<r>. Cancelled upgrade",
                             .{
-                                result.stdout[0..@minimum(result.stdout.len, 128)],
+                                version_string[0..@minimum(version_string.len, 512)],
                                 version_name,
                             },
                         );

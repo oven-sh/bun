@@ -38,15 +38,30 @@ pub fn next(self: *Walker) !?WalkerEntry {
         if (try top.iter.next()) |base| {
             switch (base.kind) {
                 .Directory => {
-                    if (std.mem.indexOfScalar(u64, self.skip_dirnames, std.hash.Wyhash.hash(self.seed, base.name)) != null) continue;
+                    if (std.mem.indexOfScalar(
+                        u64,
+                        self.skip_dirnames,
+                        // avoid hashing if there will be 0 results
+                        if (self.skip_dirnames.len > 0) std.hash.Wyhash.hash(self.seed, base.name) else 0,
+                    ) != null) continue;
                 },
                 .File => {
-                    if (std.mem.indexOfScalar(u64, self.skip_filenames, std.hash.Wyhash.hash(self.seed, base.name)) != null) continue;
+                    if (std.mem.indexOfScalar(
+                        u64,
+                        self.skip_filenames,
+                        // avoid hashing if there will be 0 results
+                        if (self.skip_filenames.len > 0) std.hash.Wyhash.hash(self.seed, base.name) else 0,
+                    ) != null) continue;
                 },
 
                 // we don't know what it is for a symlink
                 .SymLink => {
-                    if (std.mem.indexOfScalar(u64, self.skip_all, std.hash.Wyhash.hash(self.seed, base.name)) != null) continue;
+                    if (std.mem.indexOfScalar(
+                        u64,
+                        self.skip_all,
+                        // avoid hashing if there will be 0 results
+                        if (self.skip_all.len > 0) std.hash.Wyhash.hash(self.seed, base.name) else 0,
+                    ) != null) continue;
                 },
 
                 else => {},

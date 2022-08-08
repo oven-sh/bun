@@ -2,12 +2,16 @@
   "name": "bun-framework-next",
   "version": "12.2.3",
   "main": "empty.js",
+  "repository": "https://github.com/oven-sh/bun",
   "module": "empty.js",
   "description": "bun compatibility layer for Next.js >= v12.2.3",
+  "homepage": "https://bun.sh",
+  "bugs": {
+    "url": "https://github.com/oven-sh/bun/issues"
+  },
   "scripts": {
     "check": "tsc --noEmit"
   },
-  "author": "",
   "license": "MIT",
   "dependencies": {
     "react-is": "^17.0.2"

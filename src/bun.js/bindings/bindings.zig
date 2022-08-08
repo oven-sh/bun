@@ -101,6 +101,33 @@ pub const ZigString = extern struct {
         return this;
     }
 
+    pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) ![]u8 {
+        return try std.fmt.allocPrint(allocator, "{any}", .{this});
+    }
+
+    pub fn toOwnedSliceZ(this: ZigString, allocator: std.mem.Allocator) ![:0]u8 {
+        return try std.fmt.allocPrintZ(allocator, "{any}", .{this});
+    }
+
+    pub fn trunc(this: ZigString, len: usize) ZigString {
+        return .{ .ptr = this.ptr, .len = @minimum(len, this.len) };
+    }
+
+    pub fn eqlComptime(this: ZigString, comptime other: []const u8) bool {
+        if (this.len != other.len)
+            return false;
+
+        if (this.is16Bit()) {
+            return strings.eqlComptimeUTF16(this.utf16SliceAligned(), other);
+        }
+
+        if (comptime strings.isAllASCIISimple(other)) {
+            return strings.eqlComptimeIgnoreLen(this.slice(), other);
+        }
+
+        @compileError("Not implemented yet for latin1");
+    }
+
     pub const shim = Shimmer("", "ZigString", @This());
 
     pub const Slice = struct {
@@ -1455,6 +1482,19 @@ pub const SourceCode = extern struct {
 
 pub const Thenables = opaque {};
 
+pub const StrongValue = opaque {
+    pub const shim = Shimmer("JSC", "JSFunction", @This());
+
+    const cppFn = shim.cppFn;
+    pub const include = "JavaScriptCore/JSFunction.h";
+    pub const name = "JSC::JSFunction";
+    pub const namespace = "JSC";
+
+    pub fn get(this: *StrongValue) JSValue {
+        return cppFn("get", .{this});
+    }
+};
+
 pub const JSFunction = extern struct {
     pub const shim = Shimmer("JSC", "JSFunction", @This());
     bytes: shim.Bytes,
@@ -1653,6 +1693,10 @@ pub const JSGlobalObject = extern struct {
         return @ptrCast(*JSC.VirtualMachine, @alignCast(std.meta.alignment(JSC.VirtualMachine), this.bunVM_()));
     }
 
+    pub fn handleRejectedPromises(this: *JSGlobalObject) void {
+        return cppFn("handleRejectedPromises", .{this});
+    }
+
     pub fn startRemoteInspector(this: *JSGlobalObject, host: [:0]const u8, port: u16) bool {
         return cppFn("startRemoteInspector", .{ this, host, port });
     }
@@ -1715,6 +1759,7 @@ pub const JSGlobalObject = extern struct {
         "vm",
         "generateHeapSnapshot",
         "startRemoteInspector",
+        "handleRejectedPromises",
         // "createError",
         // "throwError",
     };
@@ -2378,7 +2423,7 @@ pub const JSValue = enum(JSValueReprInt) {
             i64 => jsNumberFromInt64(@intCast(i64, number)),
             c_uint => jsNumberFromUint64(@intCast(u64, number)),
             u64 => jsNumberFromUint64(@intCast(u64, number)),
-            u32 => jsNumberFromInt32(@intCast(i32, number)),
+            u32 => jsNumberFromInt64(@intCast(i64, number)),
             u52 => jsNumberFromUint64(@as(u64, number)),
             usize => jsNumberFromUint64(@as(u64, number)),
             comptime_int => switch (number) {
@@ -3661,6 +3706,93 @@ pub fn Thenable(comptime Then: type, comptime onResolve: fn (*Then, globalThis: 
 
         pub fn then(ctx: *Then, this: JSValue, globalThis: *JSGlobalObject) void {
             this._then(globalThis, ctx, resolve, reject);
+        }
+    };
+}
+
+pub const JSPropertyIteratorOptions = struct {
+    skip_empty_name: bool,
+    include_value: bool,
+};
+
+pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
+    return struct {
+        /// Position in the property list array
+        /// Update is deferred until the next iteration
+        i: u32 = 0,
+
+        iter_i: u32 = 0,
+        len: u32,
+        array_ref: JSC.C.JSPropertyNameArrayRef,
+
+        /// The `JSValue` of the current property.
+        ///
+        /// Invokes undefined behavior if an iteration has not yet occurred and
+        /// zero-sized when `options.include_value` is not enabled.
+        value: if (options.include_value) JSC.JSValue else void,
+        /// Zero-sized when `options.include_value` is not enabled.
+        object: if (options.include_value) JSC.C.JSObjectRef else void,
+        /// Zero-sized when `options.include_value` is not enabled.
+        global: if (options.include_value) JSC.C.JSContextRef else void,
+
+        const Self = @This();
+
+        inline fn initInternal(global: JSC.C.JSContextRef, object: JSC.C.JSObjectRef) Self {
+            const array_ref = JSC.C.JSObjectCopyPropertyNames(global, object);
+            return .{
+                .array_ref = array_ref,
+                .len = @truncate(u32, JSC.C.JSPropertyNameArrayGetCount(array_ref)),
+                .object = if (comptime options.include_value) object else .{},
+                .global = if (comptime options.include_value) global else .{},
+                .value = undefined,
+            };
+        }
+
+        /// Initializes the iterator. Make sure you `deinit()` it!
+        ///
+        /// Not recommended for use when using the CString buffer mode as the
+        /// buffer must be manually initialized. Instead, see
+        /// `JSPropertyIterator.initCStringBuffer()`.
+        pub inline fn init(global: JSC.C.JSContextRef, object: JSC.C.JSObjectRef) Self {
+            return Self.initInternal(global, object);
+        }
+
+        /// Deinitializes the property name array and all of the string
+        /// references constructed by the copy.
+        pub inline fn deinit(self: *Self) void {
+            JSC.C.JSPropertyNameArrayRelease(self.array_ref);
+        }
+
+        /// Finds the next property string and, if `options.include_value` is
+        /// enabled, updates the `iter.value` to respect the latest property's
+        /// value. Also note the behavior of the other options.
+        pub fn next(self: *Self) ?ZigString {
+            if (self.iter_i >= self.len) {
+                self.i = self.iter_i;
+                return null;
+            }
+            self.i = self.iter_i;
+            var property_name_ref = JSC.C.JSPropertyNameArrayGetNameAtIndex(self.array_ref, self.iter_i);
+            self.iter_i += 1;
+
+            const len = JSC.C.JSStringGetLength(property_name_ref);
+
+            if (comptime options.skip_empty_name) {
+                if (len == 0) return self.next();
+            }
+
+            const prop = switch (JSC.C.JSStringEncoding(property_name_ref)) {
+                .empty => ZigString.Empty,
+                // latin1
+                .char8 => ZigString.init((JSC.C.JSStringGetCharacters8Ptr(property_name_ref))[0..len]),
+                .char16 => ZigString.init16(JSC.C.JSStringGetCharactersPtr(property_name_ref)[0..len]),
+            };
+
+            if (comptime options.include_value) {
+                self.value = JSC.JSValue.fromRef(JSC.C.JSObjectGetProperty(self.global, self.object, property_name_ref, null));
+            }
+
+            return prop;
         }
     };
 }

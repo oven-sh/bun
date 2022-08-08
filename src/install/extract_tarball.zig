@@ -20,8 +20,8 @@ cache_dir: std.fs.Dir,
 temp_dir: std.fs.Dir,
 package_id: PackageID,
 skip_verify: bool = false,
-
 integrity: Integrity = Integrity{},
+url: string = "",
 
 pub inline fn run(this: ExtractTarball, bytes: []const u8) !string {
     if (!this.skip_verify and this.integrity.tag.isSupported()) {
@@ -220,7 +220,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
             Output.flush();
         }
     }
-    var folder_name = PackageManager.instance.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm);
+    var folder_name = PackageManager.instance.cachedNPMPackageFolderNamePrint(&abs_buf2, name, this.resolution.value.npm.version);
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
     var cache_dir = this.cache_dir;
     cache_dir.deleteTree(folder_name) catch {};

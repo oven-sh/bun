@@ -886,10 +886,17 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     int count = columnNames.size();
     auto& vm = lexicalGlobalObject->vm();
 
+    // 64 is the maximum we can preallocate here
+    // see https://github.com/oven-sh/bun/issues/987
 #if SQL_USE_PROTOTYPE == 1
-    JSC::JSObject* result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
+    JSC::JSObject* result;
+    if (count <= 64) {
+        result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
+    } else {
+        result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));
+    }
 #else
-    JSC::JSObject* result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), count));
+    JSC::JSObject* result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));
 #endif
     auto* stmt = castedThis->stmt;
 
@@ -1000,7 +1007,10 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     if (count == 0)
         return;
     JSC::ObjectInitializationScope initializationScope(vm);
-    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), count);
+
+    // 64 is the maximum we can preallocate here
+    // see https://github.com/oven-sh/bun/issues/987
+    JSC::JSObject* object = JSC::constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64));
 
     for (int i = 0; i < count; i++) {
         const char* name = sqlite3_column_name(stmt, i);

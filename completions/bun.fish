@@ -53,14 +53,14 @@ end
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
 set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't install devDependencies" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependenices" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l bun_builtin_cmds dev create help bun upgrade discord run install remove add
-set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add
-set -l bun_builtin_cmds_without_bun dev create help upgrade run discord install remove add
-set -l bun_builtin_cmds_without_create dev help bun upgrade discord run install remove add
-set -l bun_builtin_cmds_without_install create dev help bun upgrade discord run remove add
-set -l bun_builtin_cmds_without_remove create dev help bun upgrade discord run install add
-set -l bun_builtin_cmds_without_add create dev help bun upgrade discord run remove install
-set -l bun_builtin_cmds_without_pm create dev help bun upgrade discord run
+set -l bun_builtin_cmds dev create help bun upgrade discord run install remove add init
+set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add init
+set -l bun_builtin_cmds_without_bun dev create help upgrade run discord install remove add init
+set -l bun_builtin_cmds_without_create dev help bun upgrade discord run install remove add init
+set -l bun_builtin_cmds_without_install create dev help bun upgrade discord run remove add init
+set -l bun_builtin_cmds_without_remove create dev help bun upgrade discord run install add init
+set -l bun_builtin_cmds_without_add create dev help bun upgrade discord run remove install init
+set -l bun_builtin_cmds_without_pm create dev help bun upgrade discord run init
 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_run; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_use_subcommand" -a '(__fish__get_bun_scripts)' -d 'script'
@@ -85,7 +85,7 @@ complete -c bun \
 complete -c bun \
 	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __fish_use_subcommand" -a 'dev' -d 'Start dev server'
 complete -c bun \
-	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'create' -f -d 'Create a new project' 
+	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'create' -f -d 'Create a new project from a template' 
 
 complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_create next react; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts); and __fish_seen_subcommand_from create;" -a 'next' -d 'new Next.js project'
@@ -115,6 +115,8 @@ complete -c bun \
 	-n "not __fish_seen_subcommand_from $bun_builtin_cmds_without_create; and not __fish_seen_subcommand_from (__fish__get_bun_bins); and not __fish_seen_subcommand_from (__fish__get_bun_scripts); and __fish_seen_subcommand_from react; or __fish_seen_subcommand_from next" -F -d "Create in directory"
 
 
+complete -c bun \
+	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'init' -F -d 'Start an empty Bun project' 
 
 complete -c bun \
 	-n "bun_fish_is_nth_token 1; and not __fish_seen_subcommand_from $bun_builtin_cmds; and not __fish_seen_subcommand_from (__fish__get_bun_bins) (__fish__get_bun_scripts) and __bun_command_count 1 and __fish_use_subcommand" -a 'install' -f -d 'Install packages from package.json' 

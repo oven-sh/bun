@@ -106,8 +106,39 @@ string_pool: StringPool,
 allocator: std.mem.Allocator,
 scratch: Scratch = Scratch{},
 
+scripts: Scripts = .{},
+
 const Stream = std.io.FixedBufferStream([]u8);
 pub const default_filename = "bun.lockb";
+
+pub const Scripts = struct {
+    const StringArrayList = std.ArrayListUnmanaged(string);
+    const RunCommand = @import("../cli/run_command.zig").RunCommand;
+
+    preinstall: StringArrayList = .{},
+    install: StringArrayList = .{},
+    postinstall: StringArrayList = .{},
+    preprepare: StringArrayList = .{},
+    prepare: StringArrayList = .{},
+    postprepare: StringArrayList = .{},
+
+    pub fn hasAny(this: Scripts) bool {
+        return (this.preinstall.items.len +
+            this.install.items.len +
+            this.postinstall.items.len +
+            this.preprepare.items.len +
+            this.prepare.items.len +
+            this.postprepare.items.len) > 0;
+    }
+
+    pub fn run(this: Scripts, allocator: std.mem.Allocator, env: *DotEnv.Loader, silent: bool, comptime hook: []const u8) !void {
+        for (@field(this, hook).items) |script| {
+            std.debug.assert(Fs.FileSystem.instance_loaded);
+            const cwd = Fs.FileSystem.instance.top_level_dir;
+            _ = try RunCommand.runPackageScript(allocator, script, hook, cwd, env, &.{}, silent);
+        }
+    }
+};
 
 pub fn isEmpty(this: *const Lockfile) bool {
     return this.packages.len == 0 or this.packages.len == 1 or this.packages.get(0).resolutions.len == 0;
@@ -155,6 +186,7 @@ pub fn loadFromBytes(this: *Lockfile, buf: []u8, allocator: std.mem.Allocator, l
 
     this.workspace_path = "";
     this.format = FormatVersion.current;
+    this.scripts = .{};
 
     Lockfile.Serializer.load(this, &stream, allocator, log) catch |err| {
         return LoadFromDiskResult{ .err = .{ .step = .parse_file, .value = err } };
@@ -547,7 +579,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
 }
 
 pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile {
-
+    const old_scripts = old.scripts;
     // We will only shrink the number of packages here.
     // never grow
 
@@ -649,7 +681,7 @@ pub fn clean(old: *Lockfile, updates: []PackageManager.UpdateRequest) !*Lockfile
             }
         }
     }
-
+    new.scripts = old_scripts;
     return new;
 }
 
@@ -1441,13 +1473,14 @@ pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
         .string_pool = StringPool.init(allocator),
         .allocator = allocator,
         .scratch = Scratch.init(allocator),
+        .scripts = .{},
     };
 }
 
 pub fn getPackageID(
     this: *Lockfile,
     name_hash: u64,
-    // if it's a peer dependency
+    // if it's a peer dependency, a folder, or a symlink
     version: ?Dependency.Version,
     resolution: Resolution,
 ) ?PackageID {
@@ -1470,7 +1503,7 @@ pub fn getPackageID(
                 switch (version_.tag) {
                     .npm => {
                         // is it a peerDependency satisfied by a parent package?
-                        if (version_.value.npm.satisfies(resolutions[id].value.npm)) {
+                        if (version_.value.npm.satisfies(resolutions[id].value.npm.version)) {
                             return id;
                         }
                     },
@@ -1494,7 +1527,7 @@ pub fn getPackageID(
                     return id;
                 }
 
-                if (can_satisfy and version.?.value.npm.satisfies(resolutions[id].value.npm)) {
+                if (can_satisfy and version.?.value.npm.satisfies(resolutions[id].value.npm.version)) {
                     return id;
                 }
             }
@@ -1568,7 +1601,6 @@ pub fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: Pack
     defer {
         if (comptime Environment.isDebug) {
             std.debug.assert(this.getPackageID(package_.name_hash, null, package_.resolution) != null);
-            std.debug.assert(this.getPackageID(package_.name_hash, null, package_.resolution).? == id);
         }
     }
     var package = package_;
@@ -1746,9 +1778,13 @@ pub const PackageIndex = struct {
 
 pub const FormatVersion = enum(u32) {
     v0,
+    // bun v0.0.x - bun v0.1.6
     v1,
+    // bun v0.1.7+
+    // This change added tarball URLs to npm-resolved packages
+    v2,
     _,
-    pub const current = FormatVersion.v1;
+    pub const current = FormatVersion.v2;
 };
 
 pub const DependencySlice = ExternalSlice(Dependency);
@@ -1969,6 +2005,8 @@ pub const Package = extern struct {
             bin_extern_strings_count = package_version.bin.count(string_buf, manifest.extern_strings_bin_entries, @TypeOf(&string_builder), &string_builder);
         }
 
+        string_builder.count(manifest.str(package_version_ptr.tarball_url));
+
         try string_builder.allocate();
         defer string_builder.clamp();
         var extern_strings_list = &lockfile.buffers.extern_strings;
@@ -1987,11 +2025,14 @@ pub const Package = extern struct {
             package.name = package_name.value;
             package.resolution = Resolution{
                 .value = .{
-                    .npm = version.clone(
-                        manifest.string_buf,
-                        @TypeOf(&string_builder),
-                        &string_builder,
-                    ),
+                    .npm = .{
+                        .version = version.clone(
+                            manifest.string_buf,
+                            @TypeOf(&string_builder),
+                            &string_builder,
+                        ),
+                        .url = string_builder.append(String, manifest.str(package_version_ptr.tarball_url)),
+                    },
                 },
                 .tag = .npm,
             };
@@ -2095,6 +2136,8 @@ pub const Package = extern struct {
             add,
             remove,
             update,
+            unlink,
+            link,
         };
 
         pub const Summary = struct {
@@ -2225,6 +2268,38 @@ pub const Package = extern struct {
             if (json.asProperty("version")) |version_q| {
                 if (version_q.expr.asString(allocator)) |version_str| {
                     string_builder.count(version_str);
+                }
+            }
+        }
+
+        if (comptime features.scripts) {
+            if (json.asProperty("scripts")) |scripts_prop| {
+                if (scripts_prop.expr.data == .e_object) {
+                    const scripts = .{
+                        "install",
+                        "postinstall",
+                        "postprepare",
+                        "preinstall",
+                        "prepare",
+                        "preprepare",
+                    };
+
+                    inline for (scripts) |script_name| {
+                        if (scripts_prop.expr.get(script_name)) |script| {
+                            if (script.asString(allocator)) |input| {
+                                var list = @field(lockfile.scripts, script_name);
+                                if (list.capacity == 0) {
+                                    list.capacity = 1;
+                                    list.items = try allocator.alloc(string, 1);
+                                    list.items[0] = input;
+                                } else {
+                                    try list.append(allocator, input);
+                                }
+
+                                @field(lockfile.scripts, script_name) = list;
+                            }
+                        }
+                    }
                 }
             }
         }

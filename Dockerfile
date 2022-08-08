@@ -11,7 +11,9 @@ ARG TRIPLET=${ARCH}-linux-gnu
 ARG BUILDARCH=amd64
 ARG WEBKIT_TAG=jul27-2
 ARG ZIG_TAG=jul1
-ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/bun-webkit-linux-$BUILDARCH.tar.gz"
+ARG WEBKIT_BASENAME="bun-webkit-linux-$BUILDARCH"
+ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/${WEBKIT_BASENAME}.tar.gz"
+
 ARG ZIG_URL="https://github.com/oven-sh/zig/releases/download/$ZIG_TAG/zig-linux-$BUILDARCH.zip"
 ARG GIT_SHA=""
 
@@ -90,11 +92,12 @@ ARG BUILDARCH
 ARG ZIG_PATH
 ARG WEBKIT_URL
 ARG ZIG_URL
+ARG WEBKIT_BASENAME
 
 ADD ${WEBKIT_URL} .
 
 RUN mkdir -p ${WEBKIT_DIR} && cd ${GITHUB_WORKSPACE} && \
-    gunzip bun-webkit-linux-$BUILDARCH.tar.gz && tar -xf bun-webkit-linux-$BUILDARCH.tar && \
+    gunzip ${WEBKIT_BASENAME}.tar.gz && tar -xf ${WEBKIT_BASENAME}.tar && \
     cat ${WEBKIT_DIR}/include/cmakeconfig.h > /dev/null
 
 LABEL org.opencontainers.image.title="bun base image with zig & webkit ${BUILDARCH} (glibc)"
@@ -409,7 +412,7 @@ ARG BUN_BASE_VERSION=0.1
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
     mkdir -p $BUN_RELEASE_DIR && \
     OUTPUT_DIR=/tmp $ZIG_PATH/zig build obj -Drelease-fast -Dtarget="${TRIPLET}" -Dcpu="${CPU_TARGET}" && \
-    cp /tmp/bun.o /tmp/bun-${BUN_BASE_VERSION}.$(cat ${BUN_DIR}/build-id).o
+    cp /tmp/bun.o /tmp/bun-${BUN_BASE_VERSION}.$(cat ${BUN_DIR}/build-id).o && cd / && rm -rf $BUN_DIR
 
 FROM scratch as build_release_obj
 
@@ -460,7 +463,7 @@ COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 COPY --from=base64 ${BUN_DEPS_OUT_DIR}/*.a ${BUN_DEPS_OUT_DIR}/
 
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && mkdir -p $BUN_RELEASE_DIR && \
-    make bindings -j10 && mv src/bun.js/bindings-obj/* /tmp
+    make release-bindings -j10 && mv src/bun.js/bindings-obj/* /tmp
 
 FROM prepare_release as sqlite
 

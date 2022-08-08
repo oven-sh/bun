@@ -5,8 +5,7 @@
     "target": "esnext",
     "noEmit": true,
     "allowJs": true,
-    "typeRoots": ["../../types"],
-    "types": ["bun"],
+    "types": ["bun-types"],
     "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
     "paths": {

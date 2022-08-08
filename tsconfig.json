@@ -4,7 +4,8 @@
     "module": "esnext",
     "target": "esnext",
     "typeRoots": ["./types"],
-    "types": ["bun"]
+    "types": ["bun-types"],
+    "allowJs": true
   },
   "exclude": ["src"]
 }

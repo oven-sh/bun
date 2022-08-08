@@ -83,12 +83,12 @@ RUN cd / && mkdir -p $BUN_RELEASE_DIR $BUN_DEPS_OUT_DIR ${BUN_DIR} ${BUN_DEPS_OU
 WORKDIR $GITHUB_WORKSPACE
 
 RUN cd $GITHUB_WORKSPACE && \
-    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/Jarred-Sumner/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
+    curl -o zig-linux-$BUILDARCH.zip -L https://github.com/oven-sh/zig/releases/download/jul1/zig-linux-$BUILDARCH.zip && \
     unzip -q zig-linux-$BUILDARCH.zip && \
     rm zig-linux-$BUILDARCH.zip;
 
 RUN cd $GITHUB_WORKSPACE && \
-    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/Jarred-Sumner/WebKit/releases/download/jul27-2/bun-webkit-linux-$BUILDARCH.tar.gz && \
+    curl -o bun-webkit-linux-$BUILDARCH.tar.gz -L https://github.com/oven-sh/WebKit/releases/download/jul31/bun-webkit-linux-$BUILDARCH.tar.gz && \
     tar -xzf bun-webkit-linux-$BUILDARCH.tar.gz && \
     rm bun-webkit-linux-$BUILDARCH.tar.gz && \
     cat $WEBKIT_OUT_DIR/include/cmakeconfig.h > /dev/null

@@ -1927,29 +1927,27 @@ pub const ZigConsoleClient = struct {
                         const prev_quote_strings = this.quote_strings;
                         this.quote_strings = true;
                         defer this.quote_strings = prev_quote_strings;
-                        var array = CAPI.JSObjectCopyPropertyNames(this.globalThis.ref(), props.asObjectRef());
-                        defer CAPI.JSPropertyNameArrayRelease(array);
-                        const count_ = CAPI.JSPropertyNameArrayGetCount(array);
+
+                        var props_iter = JSC.JSPropertyIterator(.{
+                            .skip_empty_name = true,
+
+                            .include_value = true,
+                        }).init(this.globalThis.ref(), props.asObjectRef());
+                        defer props_iter.deinit();
+
                         var children_prop = props.get(this.globalThis, "children");
-                        if (count_ > 0) {
+                        if (props_iter.len > 0) {
                             {
-                                var i: usize = 0;
                                 this.indent += 1;
                                 defer this.indent -|= 1;
-                                const count_without_children = count_ - @as(usize, @boolToInt(children_prop != null));
+                                const count_without_children = props_iter.len - @as(usize, @boolToInt(children_prop != null));
 
-                                while (i < count_) : (i += 1) {
-                                    // no need to free because we free the name array at once
-                                    var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
-
-                                    const prop_len = CAPI.JSStringGetLength(property_name_ref);
-                                    if (prop_len == 0) continue;
-                                    var prop = CAPI.JSStringGetCharacters8Ptr(property_name_ref)[0..prop_len];
-                                    if (strings.eqlComptime(prop, "children"))
+                                while (props_iter.next()) |prop| {
+                                    if (prop.eqlComptime("children"))
                                         continue;
 
-                                    var property_value = CAPI.JSObjectGetProperty(this.globalThis.ref(), props.asObjectRef(), property_name_ref, null);
-                                    const tag = Tag.get(JSValue.fromRef(property_value), this.globalThis);
+                                    var property_value = props_iter.value;
+                                    const tag = Tag.get(property_value, this.globalThis);
 
                                     if (tag.cell.isHidden()) continue;
 
@@ -1958,7 +1956,7 @@ pub const ZigConsoleClient = struct {
 
                                     writer.print(
                                         comptime Output.prettyFmt("<r><blue>{s}<d>=<r>", enable_ansi_colors),
-                                        .{prop[0..@minimum(prop.len, 128)]},
+                                        .{prop.trunc(128)},
                                     );
 
                                     if (tag.cell.isStringLike()) {
@@ -1967,7 +1965,7 @@ pub const ZigConsoleClient = struct {
                                         }
                                     }
 
-                                    this.format(tag, Writer, writer_, JSValue.fromRef(property_value), this.globalThis, enable_ansi_colors);
+                                    this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
 
                                     if (tag.cell.isStringLike()) {
                                         if (comptime enable_ansi_colors) {
@@ -1978,17 +1976,17 @@ pub const ZigConsoleClient = struct {
                                     if (
                                     // count_without_children is necessary to prevent printing an extra newline
                                     // if there are children and one prop and the child prop is the last prop
-                                    i + 1 < count_without_children and
+                                    props_iter.i + 1 < count_without_children and
                                         // 3 is arbitrary but basically
                                         //  <input type="text" value="foo" />
                                         //  ^ should be one line
                                         // <input type="text" value="foo" bar="true" baz={false} />
                                         //  ^ should be multiple lines
-                                        i > 3)
+                                        props_iter.i > 3)
                                     {
                                         writer.writeAll("\n");
                                         this.writeIndent(Writer, writer_) catch unreachable;
-                                    } else if (i + 1 < count_without_children) {
+                                    } else if (props_iter.i + 1 < count_without_children) {
                                         writer.writeAll(" ");
                                     }
                                 }
@@ -2089,10 +2087,11 @@ pub const ZigConsoleClient = struct {
                     var object = value.asObjectRef();
 
                     {
-                        var array = CAPI.JSObjectCopyPropertyNames(this.globalThis.ref(), object);
-                        defer CAPI.JSPropertyNameArrayRelease(array);
-                        const count_ = CAPI.JSPropertyNameArrayGetCount(array);
-                        var i: usize = 0;
+                        var props_iter = JSC.JSPropertyIterator(.{
+                            .skip_empty_name = true,
+                            .include_value = true,
+                        }).init(this.globalThis.ref(), object);
+                        defer props_iter.deinit();
 
                         const prev_quote_strings = this.quote_strings;
                         this.quote_strings = true;
@@ -2110,28 +2109,18 @@ pub const ZigConsoleClient = struct {
                             }
                         }
 
-                        if (count_ == 0) {
+                        if (props_iter.len == 0) {
                             writer.writeAll("{ }");
                             return;
                         }
 
                         writer.writeAll("{ ");
 
-                        while (i < count_) : (i += 1) {
-                            var property_name_ref = CAPI.JSPropertyNameArrayGetNameAtIndex(array, i);
-                            const len = CAPI.JSStringGetLength(property_name_ref);
-                            if (len == 0) continue;
-                            const encoding = CAPI.JSStringEncoding(property_name_ref);
-
-                            var property_value = CAPI.JSObjectGetProperty(this.globalThis.ref(), object, property_name_ref, null);
-                            const tag = Tag.get(JSValue.fromRef(property_value), this.globalThis);
+                        while (props_iter.next()) |key| {
+                            var property_value = props_iter.value;
+                            const tag = Tag.get(JSValue.fromRef(property_value.asObjectRef()), this.globalThis);
 
                             if (tag.cell.isHidden()) continue;
-
-                            const key: ZigString = if (encoding == .char8)
-                                ZigString.init((JSC.C.JSStringGetCharacters8Ptr(property_name_ref))[0..@minimum(len, 128)])
-                            else
-                                ZigString.init16(JSC.C.JSStringGetCharactersPtr(property_name_ref)[0..@minimum(len, 128)]);
 
                             // TODO: make this one pass?
                             if (!key.is16Bit() and JSLexer.isLatin1Identifier(@TypeOf(key.slice()), key.slice())) {
@@ -2167,7 +2156,7 @@ pub const ZigConsoleClient = struct {
                                 }
                             }
 
-                            this.format(tag, Writer, writer_, JSValue.fromRef(property_value), this.globalThis, enable_ansi_colors);
+                            this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
 
                             if (tag.cell.isStringLike()) {
                                 if (comptime enable_ansi_colors) {
@@ -2175,7 +2164,7 @@ pub const ZigConsoleClient = struct {
                                 }
                             }
 
-                            if (i + 1 < count_) {
+                            if (props_iter.i + 1 < props_iter.len) {
                                 this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                                 writer.writeAll(" ");
                             }

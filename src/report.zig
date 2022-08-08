@@ -117,8 +117,8 @@ pub fn printMetadata() void {
 
     crash_report_writer.print(
         \\
-        \\<r>–––– bun meta ––––
-    ++ "\nBun v" ++ Global.package_json_version ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
+        \\<r>----- bun meta -----
+    ++ "\nBun v" ++ Global.package_json_version_with_sha ++ " " ++ platform ++ " " ++ arch ++ " {s}\n" ++
         \\{s}: {}
         \\
     , .{
@@ -165,7 +165,7 @@ pub fn printMetadata() void {
         });
     }
 
-    crash_report_writer.print("–––– bun meta ––––\n", .{});
+    crash_report_writer.print("----- bun meta -----\n", .{});
 }
 var has_printed_fatal = false;
 var has_printed_crash = false;
@@ -237,7 +237,7 @@ pub fn fatal(err_: ?anyerror, msg_: ?string) void {
     }
 
     if (!had_printed_fatal) {
-        crash_report_writer.print("\nAsk for #help in https://bun.sh/discord or go to https://bun.sh/issues\n\n", .{});
+        crash_report_writer.print("\nSearch GitHub issues https://bun.sh/issues or ask for #help in https://bun.sh/discord\n\n", .{});
         crash_report_writer.flush();
     }
 }

@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events";
-import { Readable, Writable } from "node:stream";
+const { EventEmitter } = import.meta.require("node:events");
+const { Readable, Writable } = import.meta.require("node:stream");
 
 export function createServer(options, callback) {
   return new Server(options, callback);

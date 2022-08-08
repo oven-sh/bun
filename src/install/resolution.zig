@@ -7,6 +7,7 @@ const Repository = @import("./repository.zig").Repository;
 const string = @import("../string_types.zig").string;
 const ExtractTarball = @import("./extract_tarball.zig");
 const strings = @import("../string_immutable.zig");
+const VersionedURL = @import("./versioned_url.zig");
 
 pub const Resolution = extern struct {
     tag: Tag = Tag.uninitialized,
@@ -180,14 +181,7 @@ pub const Resolution = extern struct {
 
         pub fn format(formatter: URLFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             switch (formatter.resolution.tag) {
-                .npm => try ExtractTarball.buildURLWithWriter(
-                    @TypeOf(writer),
-                    writer,
-                    formatter.options.scope.url.href,
-                    strings.StringOrTinyString.init(formatter.package_name),
-                    formatter.resolution.value.npm,
-                    formatter.buf,
-                ),
+                .npm => try writer.writeAll(formatter.resolution.value.npm.url.slice(formatter.buf)),
                 .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
                 .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
                 .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
@@ -209,7 +203,7 @@ pub const Resolution = extern struct {
 
         pub fn format(formatter: Formatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             switch (formatter.resolution.tag) {
-                .npm => try formatter.resolution.value.npm.fmt(formatter.buf).format(layout, opts, writer),
+                .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
                 .local_tarball => try writer.writeAll(formatter.resolution.value.local_tarball.slice(formatter.buf)),
                 .git_ssh => try std.fmt.format(writer, "git+ssh://{s}", .{formatter.resolution.value.git_ssh.slice(formatter.buf)}),
                 .git_http => try std.fmt.format(writer, "https://{s}", .{formatter.resolution.value.git_http.slice(formatter.buf)}),
@@ -218,7 +212,7 @@ pub const Resolution = extern struct {
                 .github => try formatter.resolution.value.github.formatAs("github", formatter.buf, layout, opts, writer),
                 .gitlab => try formatter.resolution.value.gitlab.formatAs("gitlab", formatter.buf, layout, opts, writer),
                 .workspace => try std.fmt.format(writer, "workspace://{s}", .{formatter.resolution.value.workspace.slice(formatter.buf)}),
-                .symlink => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
+                .symlink => try std.fmt.format(writer, "link:{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
                 .single_file_module => try std.fmt.format(writer, "link://{s}", .{formatter.resolution.value.symlink.slice(formatter.buf)}),
                 else => {},
             }
@@ -229,7 +223,7 @@ pub const Resolution = extern struct {
         uninitialized: void,
         root: void,
 
-        npm: Semver.Version,
+        npm: VersionedURL,
 
         /// File path to a tarball relative to the package root
         local_tarball: String,
@@ -248,7 +242,6 @@ pub const Resolution = extern struct {
         workspace: String,
 
         /// global link
-        /// not implemented yet
         symlink: String,
 
         single_file_module: String,
@@ -258,7 +251,6 @@ pub const Resolution = extern struct {
         uninitialized = 0,
         root = 1,
         npm = 2,
-
         folder = 4,
 
         local_tarball = 8,

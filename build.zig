@@ -304,10 +304,10 @@ pub fn build(b: *std.build.Builder) !void {
 
     var obj_step = b.step("obj", "Build bun as a .o file");
     var obj = b.addObject(bun_executable_name, exe.root_src.?.path);
-    var opts = b.addOptions();
 
-    const is_baseline = arch.isX86() and (obj.target.cpu_model == .baseline or
-        !std.Target.x86.featureSetHas(obj.target.getCpuFeatures(), .avx2));
+    const is_baseline = arch.isX86() and (target.cpu_model == .baseline or
+        !std.Target.x86.featureSetHas(target.getCpuFeatures(), .avx2));
+
     var git_sha: [:0]const u8 = "";
     if (std.os.getenvZ("GITHUB_SHA") orelse std.os.getenvZ("GIT_SHA")) |sha| {
         git_sha = std.heap.page_allocator.dupeZ(u8, sha) catch unreachable;
@@ -338,7 +338,7 @@ pub fn build(b: *std.build.Builder) !void {
         obj.setTarget(target);
         addPicoHTTP(obj, false);
         obj.setMainPkgPath(b.pathFromRoot("."));
-
+        var opts = b.addOptions();
         opts.addOption(
             bool,
             "bindgen",
@@ -352,7 +352,6 @@ pub fn build(b: *std.build.Builder) !void {
         );
         opts.addOption([:0]const u8, "sha", git_sha);
         opts.addOption(bool, "is_canary", is_canary);
-        obj.addOptions("build_options", opts);
 
         try addInternalPackages(
             obj,
@@ -372,11 +371,12 @@ pub fn build(b: *std.build.Builder) !void {
 
         {
             obj_step.dependOn(&b.addLog(
-                "Build {s} v{} - v{}\n",
+                "Build {s} v{} - v{} ({s})\n",
                 .{
                     triplet,
                     min_version,
                     max_version,
+                    obj.target.getCpuModel().name,
                 },
             ).step);
         }
@@ -386,15 +386,13 @@ pub fn build(b: *std.build.Builder) !void {
         obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
 
+        obj.addOptions("build_options", opts);
+
         obj.linkLibC();
-        if (mode == std.builtin.Mode.Debug)
-            obj.emit_llvm_ir = .{
-                .emit_to = try std.fmt.allocPrint(b.allocator, "{s}/{s}.ll", .{ output_dir, bun_executable_name }),
-            };
 
         obj.strip = false;
         obj.bundle_compiler_rt = true;
-        obj.omit_frame_pointer = false;
+        obj.omit_frame_pointer = mode == .Debug;
 
         b.default_step.dependOn(&obj.step);
 
@@ -448,6 +446,20 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("httpbench", "misctools/http_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            false,
+        );
+
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
         headers_obj.addOptions("build_options", opts);
     }
 
@@ -456,6 +468,20 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            false,
+        );
+
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
         headers_obj.addOptions("build_options", opts);
     }
 
@@ -464,6 +490,20 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("string-bench", "src/bench/string-handling.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            false,
+        );
+
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
         headers_obj.addOptions("build_options", opts);
     }
 
@@ -472,6 +512,20 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("sha", "src/sha.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            false,
+        );
+
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
         headers_obj.addOptions("build_options", opts);
     }
 
@@ -480,6 +534,20 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addExecutable("vlq-bench", "src/sourcemap/vlq_bench.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            false,
+        );
+
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
         headers_obj.addOptions("build_options", opts);
     }
 
@@ -488,6 +556,20 @@ pub fn build(b: *std.build.Builder) !void {
         var headers_obj: *std.build.LibExeObjStep = b.addObject("tgz", "misctools/tgz.zig");
         defer headers_step.dependOn(&headers_obj.step);
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            false,
+        );
+
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
         headers_obj.addOptions("build_options", opts);
     }
 

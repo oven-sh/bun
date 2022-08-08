@@ -1664,7 +1664,7 @@ pub const PackageManager = struct {
         }
         if (this.options.log_level != .silent) {
             const elapsed = timer.read();
-            if (elapsed > std.time.ns_per_ms * 10) {
+            if (elapsed > std.time.ns_per_ms * 100) {
                 var cache_dir_path = std.os.getFdPath(cache_directory.fd, &path_buf) catch "it's";
                 Output.prettyErrorln(
                     "<r><yellow>warn<r>: Slow filesystem detected. If {s} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",

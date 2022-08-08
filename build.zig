@@ -360,7 +360,7 @@ pub fn build(b: *std.build.Builder) !void {
         );
 
         if (is_baseline) {
-            obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.westmere };
+            obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v2 };
         } else if (arch.isX86()) {
             obj.target.cpu_model = .{ .explicit = &std.Target.x86.cpu.haswell };
         } else if (arch.isAARCH64() and target.isDarwin()) {
@@ -392,7 +392,7 @@ pub fn build(b: *std.build.Builder) !void {
 
         obj.strip = false;
         obj.bundle_compiler_rt = true;
-        obj.omit_frame_pointer = mode == .Debug;
+        obj.omit_frame_pointer = mode != .Debug;
 
         b.default_step.dependOn(&obj.step);
 

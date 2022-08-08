@@ -102,7 +102,7 @@ pub extern fn JSValueToNumber(ctx: JSContextRef, value: JSValueRef, exception: E
 pub extern fn JSValueToStringCopy(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSStringRef;
 pub extern fn JSValueToObject(ctx: JSContextRef, value: JSValueRef, exception: ExceptionRef) JSObjectRef;
 
-const log_protection = @import("../global.zig").Environment.allow_assert;
+const log_protection = @import("../global.zig").Environment.allow_assert and false;
 pub inline fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void {
     const Wrapped = struct {
         pub extern fn JSValueUnprotect(ctx: JSContextRef, value: JSValueRef) void;

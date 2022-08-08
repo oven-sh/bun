@@ -186,7 +186,7 @@ const NetworkTask = struct {
         PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
     }
 
-    // We must use a less restrictive Acccept header value
+    // We must use a less restrictive Accept header value
     // https://github.com/oven-sh/bun/issues/341
     // https://www.jfrog.com/jira/browse/RTFACT-18398
     const accept_header_value = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
@@ -1416,7 +1416,7 @@ pub const CacheLevel = struct {
 
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:
-// 1. Download all packages, parsing their dependencies and enqueuing all dependnecies for resolution
+// 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
 // 2.
 pub const PackageManager = struct {
     cache_directory_: ?std.fs.Dir = null,
@@ -2865,7 +2865,7 @@ pub const PackageManager = struct {
         // 3. The real one we want to link is in another package
         // 4. Therefore, we remap the "bin" specified in the real package
         //    to the target package which is the one which is:
-        //      1. In optionalDepenencies
+        //      1. In optionalDependencies
         //      2. Has a platform and/or os specified, which evaluates to not disabled
         native_bin_link_allowlist: []const PackageNameHash = &default_native_bin_link_allowlist,
         max_retry_count: u16 = 5,
@@ -3914,7 +3914,7 @@ pub const PackageManager = struct {
         clap.parseParam("--no-save                         Don't save a lockfile") catch unreachable,
         clap.parseParam("--dry-run                         Don't install anything") catch unreachable,
         clap.parseParam("--lockfile <PATH>                  Store & load a lockfile at a specific filepath") catch unreachable,
-        clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependenices") catch unreachable,
+        clap.parseParam("-f, --force                       Always request the latest versions from the registry & reinstall all dependencies") catch unreachable,
         clap.parseParam("--cache-dir <PATH>                 Store & load cached data from a specific directory path") catch unreachable,
         clap.parseParam("--no-cache                        Ignore manifest cache entirely") catch unreachable,
         clap.parseParam("--silent                          Don't log anything") catch unreachable,
@@ -3938,8 +3938,8 @@ pub const PackageManager = struct {
     };
 
     pub const add_params = install_params_ ++ [_]ParamType{
-        clap.parseParam("-d, --development                 Add depenedency to \"devDependencies\"") catch unreachable,
-        clap.parseParam("--optional                        Add depenedency to \"optionalDependencies\"") catch unreachable,
+        clap.parseParam("-d, --development                 Add dependency to \"devDependencies\"") catch unreachable,
+        clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of packages to install") catch unreachable,
     };
 

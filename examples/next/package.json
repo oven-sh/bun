@@ -2,14 +2,14 @@
   "name": "@bun-examples/next",
   "version": "0.0.57",
   "dependencies": {
-    "next": "^12.1.0",
+    "next": "^12.2.0",
     "react": "^18",
     "react-dom": "^18",
     "react-is": "^17.0.2"
   },
   "devDependencies": {
     "@types/react": "^18",
-    "bun-framework-next": "^12",
+    "bun-framework-next": "^12.2",
     "typescript": "latest"
   },
   "bun-create": {

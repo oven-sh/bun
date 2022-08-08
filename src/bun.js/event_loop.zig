@@ -436,6 +436,8 @@ pub const EventLoop = struct {
             ctx.enterUWSLoop();
             ctx.is_us_loop_entered = false;
         }
+
+        this.global.handleRejectedPromises();
     }
 
     // TODO: fix this technical debt

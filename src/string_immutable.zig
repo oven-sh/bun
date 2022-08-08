@@ -82,6 +82,44 @@ pub inline fn containsAny(in: anytype, target: string) bool {
     return false;
 }
 
+/// https://docs.npmjs.com/cli/v8/configuring-npm/package-json
+/// - The name must be less than or equal to 214 characters. This includes the scope for scoped packages.
+/// - The names of scoped packages can begin with a dot or an underscore. This is not permitted without a scope.
+/// - New packages must not have uppercase letters in the name.
+/// - The name ends up being part of a URL, an argument on the command line, and
+///   a folder name. Therefore, the name can't contain any non-URL-safe
+///   characters.
+pub inline fn isNPMPackageName(target: string) bool {
+    if (target.len >= 215) return false;
+    switch (target[0]) {
+        'a'...'z',
+        '0'...'9',
+        '$',
+        '@',
+        '-',
+        => {},
+        else => return false,
+    }
+    if (target.len == 1) return true;
+
+    var slash_count: usize = 0;
+
+    for (target[1..]) |c| {
+        switch (c) {
+            'A'...'Z', 'a'...'z', '0'...'9', '$', '-', '_', '.' => {},
+            '/' => {
+                if (slash_count > 0) {
+                    return false;
+                }
+                slash_count += 1;
+            },
+            else => return false,
+        }
+    }
+
+    return true;
+}
+
 pub inline fn indexAny(in: anytype, target: string) ?usize {
     for (in) |str, i| if (indexOf(str, target) != null) return i;
     return null;

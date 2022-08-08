@@ -190,6 +190,7 @@ pub const Version = struct {
                 lhs.value.npm.eql(rhs.value.npm),
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
             .tarball => lhs.value.tarball.eql(rhs.value.tarball, lhs_buf, rhs_buf),
+            .symlink => lhs.value.symlink.eql(rhs.value.symlink, lhs_buf, rhs_buf),
             else => true,
         };
     }
@@ -209,8 +210,11 @@ pub const Version = struct {
         /// Local folder
         folder = 4,
 
-        /// TODO:
+        /// link:path
+        /// https://docs.npmjs.com/cli/v8/commands/npm-link#synopsis
+        /// https://stackoverflow.com/questions/51954956/whats-the-difference-between-yarn-link-and-npm-link
         symlink = 5,
+
         /// TODO:
         workspace = 6,
         /// TODO:
@@ -448,8 +452,9 @@ pub const Version = struct {
         tarball: URI,
         folder: String,
 
-        /// Unsupported, but still parsed so an error can be thrown
-        symlink: void,
+        /// Equivalent to npm link
+        symlink: String,
+
         /// Unsupported, but still parsed so an error can be thrown
         workspace: void,
         /// Unsupported, but still parsed so an error can be thrown
@@ -588,7 +593,22 @@ pub fn parseWithTag(
             };
         },
         .uninitialized => return null,
-        .symlink, .workspace, .git, .github => {
+        .symlink => {
+            if (strings.indexOfChar(dependency, ':')) |colon| {
+                return Version{
+                    .value = .{ .symlink = sliced.sub(dependency[colon + 1 ..]).value() },
+                    .tag = .symlink,
+                    .literal = sliced.value(),
+                };
+            }
+
+            return Version{
+                .value = .{ .symlink = sliced.value() },
+                .tag = .symlink,
+                .literal = sliced.value(),
+            };
+        },
+        .workspace, .git, .github => {
             if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported dependency type {s} for \"{s}\"", .{ @tagName(tag), dependency }) catch unreachable;
             return null;
         },

@@ -47,6 +47,7 @@ const ExtractTarball = @import("./extract_tarball.zig");
 const Npm = @import("./npm.zig");
 const Bitset = @import("./bit_set.zig").DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
+const Syscall = @import("javascript_core").Node.Syscall;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
 threadlocal var initialized_store = false;
 
@@ -444,6 +445,15 @@ pub const Features = struct {
         .peer_dependencies = true,
         .is_main = false,
         .dependencies = true,
+    };
+
+    pub const link = Features{
+        .optional_dependencies = false,
+        .dev_dependencies = false,
+        .scripts = false,
+        .peer_dependencies = false,
+        .is_main = false,
+        .dependencies = false,
     };
 
     pub const npm = Features{
@@ -853,6 +863,7 @@ const PackageInstall = struct {
         copyfile,
         opening_cache_dir,
         copying_files,
+        linking,
     };
 
     const CloneFileError = error{
@@ -1225,6 +1236,61 @@ const PackageInstall = struct {
     pub fn uninstall(this: *PackageInstall) !void {
         try this.destination_dir.deleteTree(std.mem.span(this.destination_dir_subpath));
     }
+
+    fn isDanglingSymlink(path: [:0]const u8) bool {
+        if (comptime Environment.isLinux) {
+            const rc = Syscall.system.open(path, @as(u31, std.os.O.PATH | 0), @as(u31, 0));
+            switch (Syscall.getErrno(rc)) {
+                .SUCCESS => {
+                    _ = Syscall.system.close(rc);
+                    return false;
+                },
+                else => return true,
+            }
+        } else {
+            const rc = Syscall.system.open(path, @as(u31, 0), @as(u31, 0));
+            switch (Syscall.getErrno(rc)) {
+                .SUCCESS => {
+                    _ = Syscall.system.close(rc);
+                    return false;
+                },
+                else => return true,
+            }
+        }
+    }
+
+    pub fn installFromLink(this: *PackageInstall, skip_delete: bool) Result {
+
+        // If this fails, we don't care.
+        // we'll catch it the next error
+        if (!skip_delete and !strings.eqlComptime(this.destination_dir_subpath, ".")) this.uninstall() catch {};
+
+        // cache_dir_subpath in here is actually the full path to the symlink pointing to the linked package
+        const symlinked_path = this.cache_dir_subpath;
+
+        std.os.symlinkatZ(symlinked_path, this.destination_dir.fd, this.destination_dir_subpath) catch |err| {
+            return Result{
+                .fail = .{
+                    .err = err,
+                    .step = .linking,
+                },
+            };
+        };
+
+        if (isDanglingSymlink(symlinked_path)) {
+            return Result{
+                .fail = .{
+                    .err = error.DanglingSymlink,
+                    .step = .linking,
+                },
+            };
+        }
+
+        return Result{
+            .success = void{},
+        };
+    }
+
     pub fn install(this: *PackageInstall, skip_delete: bool) Result {
 
         // If this fails, we don't care.
@@ -1381,7 +1447,6 @@ pub const PackageManager = struct {
 
     manifests: PackageManifestMap = PackageManifestMap{},
     folders: FolderResolution.Map = FolderResolution.Map{},
-    resolved_package_index: PackageIndex = PackageIndex{},
 
     task_queue: TaskDependencyQueue = .{},
     network_dedupe_map: NetworkTaskQueue = .{},
@@ -1398,6 +1463,10 @@ pub const PackageManager = struct {
     options: Options = Options{},
     preinstall_state: std.ArrayListUnmanaged(PreinstallState) = std.ArrayListUnmanaged(PreinstallState){},
 
+    global_link_dir: ?std.fs.Dir = null,
+    global_dir: ?std.fs.Dir = null,
+    global_link_dir_path: string = "",
+
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
@@ -1409,6 +1478,23 @@ pub const PackageManager = struct {
         IdentityContext(u32),
         80,
     );
+
+    pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
+        return this.global_link_dir orelse brk: {
+            var global_dir = try Options.openGlobalDir(this.options.explicit_global_directory);
+            this.global_dir = global_dir;
+            this.global_link_dir = try global_dir.makeOpenPath("node_modules", .{ .iterate = true });
+            var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            const _path = try std.os.getFdPath(this.global_link_dir.?.fd, &buf);
+            this.global_link_dir_path = try Fs.FileSystem.DirnameStore.instance.append([]const u8, _path);
+            break :brk this.global_link_dir.?;
+        };
+    }
+
+    pub fn globalLinkDirPath(this: *PackageManager) ![]const u8 {
+        _ = try this.globalLinkDir();
+        return this.global_link_dir_path;
+    }
 
     fn ensurePreinstallStateListCapacity(this: *PackageManager, count: usize) !void {
         if (this.preinstall_state.items.len >= count) {
@@ -1907,7 +1993,24 @@ pub const PackageManager = struct {
             },
 
             .folder => {
-                const res = FolderResolution.getOrPut(version.value.folder.slice(this.lockfile.buffers.string_bytes.items), this);
+                // relative to cwd
+                const res = FolderResolution.getOrPut(.{ .relative = void{} }, version, version.value.folder.slice(this.lockfile.buffers.string_bytes.items), this);
+
+                switch (res) {
+                    .err => |err| return err,
+                    .package_id => |package_id| {
+                        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id) };
+                    },
+
+                    .new_package_id => |package_id| {
+                        this.lockfile.buffers.resolutions.items[dependency_id] = package_id;
+                        return ResolvedPackageResult{ .package = this.lockfile.packages.get(package_id), .is_first_time = true };
+                    },
+                }
+            },
+            .symlink => {
+                const res = FolderResolution.getOrPut(.{ .global = try this.globalLinkDirPath() }, version, version.value.symlink.slice(this.lockfile.buffers.string_bytes.items), this);
 
                 switch (res) {
                     .err => |err| return err,
@@ -2177,6 +2280,8 @@ pub const PackageManager = struct {
                                 this.enqueueNetworkTask(network_task);
                             }
 
+                            std.debug.assert(task_id != 0);
+
                             var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
                             if (!manifest_entry_parse.found_existing) {
                                 manifest_entry_parse.value_ptr.* = TaskCallbackList{};
@@ -2188,6 +2293,74 @@ pub const PackageManager = struct {
                     }
                 }
                 return;
+            },
+            .symlink => {
+                const _result = this.getOrPutResolvedPackage(
+                    name_hash,
+                    name,
+                    version,
+                    dependency.behavior,
+                    id,
+                    resolution,
+                ) catch |err| brk: {
+                    if (err == error.MissingPackageJSON) {
+                        break :brk null;
+                    }
+
+                    return err;
+                };
+
+                const not_found_fmt =
+                    \\package \"{[name]s}\" is not linked
+                    \\
+                    \\To install a linked package:
+                    \\   <cyan>bun link my-pkg-name-from-package-json<r>
+                    \\
+                    \\Tip: the package name is from package.json, which can differ from the folder name.
+                    \\
+                ;
+                if (_result) |result| {
+                    // First time?
+                    if (result.is_first_time) {
+                        if (PackageManager.verbose_install) {
+                            const label: string = this.lockfile.str(version.literal);
+
+                            Output.prettyErrorln("   -> \"{s}\": \"{s}\" -> {s}@{}", .{
+                                this.lockfile.str(result.package.name),
+                                label,
+                                this.lockfile.str(result.package.name),
+                                result.package.resolution.fmt(this.lockfile.buffers.string_bytes.items),
+                            });
+                        }
+                        // We shouldn't see any dependencies
+                        if (result.package.dependencies.len > 0) {
+                            try this.lockfile.scratch.dependency_list_queue.writeItem(result.package.dependencies);
+                        }
+                    }
+
+                    // should not trigger a network call
+                    std.debug.assert(result.network_task == null);
+                } else if (dependency.behavior.isRequired()) {
+                    this.log.addErrorFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.allocator,
+                        not_found_fmt,
+                        .{
+                            .name = this.lockfile.str(name),
+                        },
+                    ) catch unreachable;
+                } else if (this.options.log_level.isVerbose()) {
+                    this.log.addWarningFmt(
+                        null,
+                        logger.Loc.Empty,
+                        this.allocator,
+                        not_found_fmt,
+                        .{
+                            .name = this.lockfile.str(name),
+                        },
+                    ) catch unreachable;
+                }
             },
 
             else => {},
@@ -2662,6 +2835,7 @@ pub const PackageManager = struct {
         global: bool = false,
 
         global_bin_dir: std.fs.Dir = std.fs.Dir{ .fd = std.math.maxInt(std.os.fd_t) },
+        explicit_global_directory: string = "",
         /// destination directory to link bins into
         // must be a variable due to global installs and bunx
         bin_path: stringZ = "node_modules/.bin",
@@ -2751,17 +2925,13 @@ pub const PackageManager = struct {
             optional: bool = false,
         };
 
-        pub fn openGlobalDir(opts_: ?*Api.BunInstall) !std.fs.Dir {
+        pub fn openGlobalDir(explicit_global_dir: string) !std.fs.Dir {
             if (std.os.getenvZ("BUN_INSTALL_GLOBAL_DIR")) |home_dir| {
                 return try std.fs.cwd().makeOpenPath(home_dir, .{ .iterate = true });
             }
 
-            if (opts_) |opts| {
-                if (opts.global_dir) |home_dir| {
-                    if (home_dir.len > 0) {
-                        return try std.fs.cwd().makeOpenPath(home_dir, .{ .iterate = true });
-                    }
-                }
+            if (explicit_global_dir.len > 0) {
+                return try std.fs.cwd().makeOpenPath(explicit_global_dir, .{ .iterate = true });
             }
 
             if (std.os.getenvZ("BUN_INSTALL")) |home_dir| {
@@ -2908,6 +3078,8 @@ pub const PackageManager = struct {
                         this.save_lockfile_path = try allocator.dupeZ(u8, save);
                     }
                 }
+
+                this.explicit_global_directory = bun_install.global_dir orelse this.explicit_global_directory;
             }
 
             const default_disable_progress_bar: bool = brk: {
@@ -3070,11 +3242,14 @@ pub const PackageManager = struct {
             if (cli_) |cli| {
                 if (cli.no_save) {
                     this.do.save_lockfile = false;
+                    this.do.write_package_json = false;
                 }
 
                 if (cli.dry_run) {
                     this.do.install_packages = false;
                     this.dry_run = true;
+                    this.do.write_package_json = false;
+                    this.do.save_lockfile = false;
                 }
 
                 if (cli.no_cache) {
@@ -3159,6 +3334,7 @@ pub const PackageManager = struct {
             save_lockfile: bool = true,
             load_lockfile: bool = true,
             install_packages: bool = true,
+            write_package_json: bool = true,
             run_scripts: bool = true,
             save_yarn_lock: bool = false,
             print_meta_hash_string: bool = false,
@@ -3393,7 +3569,11 @@ pub const PackageManager = struct {
         try NetworkThread.warmup();
 
         if (cli.global) {
-            var global_dir = try Options.openGlobalDir(ctx.install);
+            var explicit_global_dir: string = "";
+            if (ctx.install) |opts| {
+                explicit_global_dir = opts.global_dir orelse explicit_global_dir;
+            }
+            var global_dir = try Options.openGlobalDir(explicit_global_dir);
             try global_dir.setAsCwd();
         }
 
@@ -3545,6 +3725,182 @@ pub const PackageManager = struct {
         try updatePackageJSONAndInstall(ctx, .remove, &remove_params);
     }
 
+    pub inline fn link(
+        ctx: Command.Context,
+    ) !void {
+        var manager = PackageManager.init(ctx, null, &link_params) catch |err| brk: {
+            switch (err) {
+                error.MissingPackageJSON => {
+                    var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err2| {
+                        Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err2)});
+                        Global.crash();
+                    };
+                    try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
+
+                    break :brk try PackageManager.init(ctx, package_json_file, &link_params);
+                },
+                else => return err,
+            }
+
+            unreachable;
+        };
+
+        if (manager.options.log_level != .silent) {
+            Output.prettyErrorln("<r><b>bun link <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
+            Output.flush();
+        }
+
+        if (manager.options.positionals.len == 1) {
+            // bun link
+
+            var lockfile: Lockfile = undefined;
+            var name: string = "";
+            var package: Lockfile.Package = Lockfile.Package{};
+
+            // Step 1. parse the nearest package.json file
+            {
+                var current_package_json_stat = try manager.root_package_json_file.stat();
+                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat.size + 64);
+                const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
+                    current_package_json_buf,
+                    0,
+                );
+
+                const package_json_source = logger.Source.initPathString(
+                    package_json_cwd_buf[0 .. FileSystem.instance.top_level_dir.len + "package.json".len],
+                    current_package_json_buf[0..current_package_json_contents_len],
+                );
+                try lockfile.initEmpty(ctx.allocator);
+
+                try Lockfile.Package.parseMain(&lockfile, &package, ctx.allocator, manager.log, package_json_source, Features.folder);
+                name = lockfile.str(package.name);
+                if (name.len == 0) {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
+                    Global.crash();
+                } else if (!strings.isNPMPackageName(name)) {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
+                            name,
+                            package_json_source.path.text,
+                        });
+                    Global.crash();
+                }
+            }
+
+            // Step 2. Setup the global directory
+            var node_modules: std.fs.Dir = brk: {
+                Bin.Linker.umask = C.umask(0);
+                var explicit_global_dir: string = "";
+                if (ctx.install) |install_| {
+                    explicit_global_dir = install_.global_dir orelse explicit_global_dir;
+                }
+                manager.global_dir = try Options.openGlobalDir(explicit_global_dir);
+
+                try manager.setupGlobalDir(&ctx);
+
+                break :brk manager.global_dir.?.makeOpenPath("node_modules", .{ .iterate = true }) catch |err| {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
+                    Global.crash();
+                };
+            };
+
+            // Step 3a. symlink to the node_modules folder
+            {
+                // delete it if it exists
+                node_modules.deleteTree(name) catch {};
+
+                // create the symlink
+                node_modules.symLink(Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), name, .{ .is_directory = true }) catch |err| {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {s}", .{@errorName(err)});
+                    Global.crash();
+                };
+            }
+
+            // Step 3b. Link any global bins
+            if (package.bin.tag != .none) {
+                var bin_linker = Bin.Linker{
+                    .bin = package.bin,
+                    .package_installed_node_modules = node_modules.fd,
+                    .global_bin_path = manager.options.bin_path,
+                    .global_bin_dir = manager.options.global_bin_dir,
+
+                    // .destination_dir_subpath = destination_dir_subpath,
+                    .root_node_modules_folder = node_modules.fd,
+                    .package_name = strings.StringOrTinyString.init(name),
+                    .string_buf = lockfile.buffers.string_bytes.items,
+                    .extern_string_buf = lockfile.buffers.extern_strings.items,
+                };
+                bin_linker.link(true);
+
+                if (bin_linker.err) |err| {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> failed to link bin due to error {s}", .{@errorName(err)});
+                    Global.crash();
+                }
+            }
+
+            Output.flush();
+
+            // Done
+            if (manager.options.log_level != .silent)
+                Output.prettyln(
+                    \\<r><green>Success!<r> Registered \"{[name]s}\"
+                    \\
+                    \\To use {[name]s} in a project, run:
+                    \\  <cyan>bun link {[name]s}<r>
+                    \\
+                    \\Or add it in dependencies in your package.json file:
+                    \\  <cyan>"{[name]s}": "link:{[name]s}"<r>
+                    \\
+                ,
+                    .{
+                        .name = name,
+                    },
+                );
+
+            Output.flush();
+            Global.exit(0);
+        } else {
+            // bun link lodash
+            switch (manager.options.log_level) {
+                .default => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .default),
+                .verbose => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .verbose),
+                .silent => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .silent),
+                .default_no_progress => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .default_no_progress),
+                .verbose_no_progress => try updatePackageJSONAndInstallWithManager(ctx, manager, .link, .verbose_no_progress),
+            }
+        }
+    }
+
+    pub inline fn unlink(
+        ctx: Command.Context,
+    ) !void {
+        var manager = PackageManager.init(ctx, null, &unlink_params) catch |err| brk: {
+            switch (err) {
+                error.MissingPackageJSON => {
+                    var package_json_file = std.fs.cwd().createFileZ("package.json", .{ .read = true }) catch |err2| {
+                        Output.prettyErrorln("<r><red>error:<r> {s} create package.json", .{@errorName(err2)});
+                        Global.crash();
+                    };
+                    try package_json_file.pwriteAll("{\"dependencies\": {}}", 0);
+
+                    break :brk try PackageManager.init(ctx, package_json_file, &unlink_params);
+                },
+                else => return err,
+            }
+
+            unreachable;
+        };
+
+        if (manager.options.log_level != .silent) {
+            Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
+            Output.flush();
+        }
+    }
+
     const ParamType = clap.Param(clap.Help);
     const platform_specific_backend_label = if (Environment.isMac)
         "Possible values: \"clonefile\" (default), \"hardlink\", \"symlink\", \"copyfile\""
@@ -3589,6 +3945,16 @@ pub const PackageManager = struct {
 
     pub const remove_params = install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of packages to remove from package.json") catch unreachable,
+    };
+
+    pub const link_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("--save                            Save to package.json") catch unreachable,
+        clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
+    };
+
+    pub const unlink_params = install_params_ ++ [_]ParamType{
+        clap.parseParam("--save                            Save to package.json") catch unreachable,
+        clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
     };
 
     pub const CommandLineArguments = struct {
@@ -3678,6 +4044,13 @@ pub const PackageManager = struct {
             cli.silent = args.flag("--silent");
             cli.verbose = args.flag("--verbose");
             cli.ignore_scripts = args.flag("--ignore-scripts");
+            if (comptime @TypeOf(args).hasFlag("--save")) {
+                cli.no_save = true;
+
+                if (args.flag("--save")) {
+                    cli.no_save = false;
+                }
+            }
 
             if (args.option("--config")) |opt| {
                 cli.config = opt;
@@ -3832,6 +4205,10 @@ pub const PackageManager = struct {
                     }
 
                     Global.exit(1);
+                }
+
+                if ((op == .link or op == .unlink) and !strings.hasPrefixComptime(request.version_buf, "link:")) {
+                    request.version_buf = std.fmt.allocPrint(allocator, "link:{s}", .{request.name}) catch unreachable;
                 }
 
                 if (request.version_buf.len == 0) {
@@ -3990,6 +4367,7 @@ pub const PackageManager = struct {
 
                     Global.exit(0);
                 },
+                else => {},
             }
         }
 
@@ -4115,7 +4493,7 @@ pub const PackageManager = struct {
                 }
                 manager.to_remove = updates;
             },
-            .add, .update => {
+            .link, .unlink, .add, .update => {
                 try PackageJSONEditor.edit(ctx.allocator, updates, &current_package_json, dependency_list);
                 manager.package_json_updates = updates;
             },
@@ -4147,7 +4525,7 @@ pub const PackageManager = struct {
 
         try installWithManager(ctx, manager, new_package_json_source, log_level);
 
-        if (op == .update or op == .add) {
+        if (op == .update or op == .add or op == .link or op == .unlink) {
             for (manager.package_json_updates) |update| {
                 if (update.failed) {
                     Global.exit(1);
@@ -4183,7 +4561,7 @@ pub const PackageManager = struct {
             new_package_json_source = try ctx.allocator.dupe(u8, package_json_writer_two.ctx.writtenWithoutTrailingZero());
         }
 
-        if (!manager.options.dry_run) {
+        if (manager.options.do.write_package_json) {
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
             try manager.root_package_json_file.pwriteAll(new_package_json_source, 0);
@@ -4378,13 +4756,69 @@ pub const PackageManager = struct {
                         installer.cache_dir = std.fs.cwd();
                     }
                 },
+                .symlink => {
+                    const directory = this.manager.globalLinkDir() catch |err| {
+                        if (comptime log_level != .silent) {
+                            const fmt = "\n<r><red>error:<r> unable to access global directory while installing <b>{s}<r>: {s}\n";
+                            const args = .{ name, @errorName(err) };
+
+                            if (comptime log_level.showProgress()) {
+                                if (Output.enable_ansi_colors) {
+                                    this.progress.log(comptime Output.prettyFmt(fmt, true), args);
+                                } else {
+                                    this.progress.log(comptime Output.prettyFmt(fmt, false), args);
+                                }
+                            } else {
+                                Output.prettyErrorln(fmt, args);
+                            }
+                        }
+
+                        if (this.manager.options.enable.fail_early) {
+                            Global.exit(1);
+                        }
+
+                        Output.flush();
+                        this.summary.fail += 1;
+                        return;
+                    };
+
+                    const folder = resolution.value.symlink.slice(buf);
+
+                    if (folder.len == 0 or (folder.len == 1 and folder[0] == '.')) {
+                        installer.cache_dir_subpath = ".";
+                        installer.cache_dir = std.fs.cwd();
+                    } else {
+                        const global_link_dir = this.manager.globalLinkDirPath() catch unreachable;
+                        var ptr = &this.folder_path_buf;
+                        var remain: []u8 = this.folder_path_buf[0..];
+                        @memcpy(ptr, global_link_dir.ptr, global_link_dir.len);
+                        remain = remain[global_link_dir.len..];
+                        if (global_link_dir[global_link_dir.len - 1] != std.fs.path.sep) {
+                            remain[0] = std.fs.path.sep;
+                            remain = remain[1..];
+                        }
+                        @memcpy(remain.ptr, folder.ptr, folder.len);
+                        remain = remain[folder.len..];
+                        remain[0] = 0;
+                        const len = @ptrToInt(remain.ptr) - @ptrToInt(ptr);
+                        installer.cache_dir_subpath = std.meta.assumeSentinel(
+                            this.folder_path_buf[0..len :0],
+                            0,
+                        );
+                        installer.cache_dir = directory;
+                    }
+                },
                 else => return,
             }
+
             const needs_install = this.force_install or this.skip_verify_installed_version_number or !installer.verify();
             this.summary.skipped += @as(u32, @boolToInt(!needs_install));
 
             if (needs_install) {
-                const result = installer.install(this.skip_delete);
+                const result: PackageInstall.Result = switch (resolution.tag) {
+                    .symlink => installer.installFromLink(this.skip_delete),
+                    else => installer.install(this.skip_delete),
+                };
                 switch (result) {
                     .success => {
                         const is_duplicate = this.successfully_installed.isSet(package_id);
@@ -4492,6 +4926,12 @@ pub const PackageManager = struct {
                                     this.summary.fail += 1;
                                 },
                             }
+                        } else if (cause.err == error.DanglingSymlink) {
+                            Output.prettyErrorln(
+                                "<r><red>error<r>: <b>{s}<r> \"link:{s}\" not found (try running 'bun link' in the intended package's folder)<r>",
+                                .{ @errorName(cause.err), this.names[package_id].slice(buf) },
+                            );
+                            this.summary.fail += 1;
                         } else {
                             Output.prettyErrorln(
                                 "<r><red>error<r>: <b><red>{s}<r> installing <b>{s}<r>",
@@ -5300,7 +5740,8 @@ pub const PackageManager = struct {
             }
 
             if (install_summary.fail > 0) {
-                Output.prettyln("<r> Failed to install <red><b>{d}<r> packages\n", .{install_summary.fail});
+                Output.prettyln("<r>Failed to install <red><b>{d}<r> packages\n", .{install_summary.fail});
+                Output.flush();
             }
 
             if (run_lifecycle_scripts and install_summary.fail == 0) {

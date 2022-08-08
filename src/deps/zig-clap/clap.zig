@@ -264,6 +264,10 @@ pub fn Args(comptime Id: type, comptime params: []const Param(Id)) type {
         pub fn positionals(a: @This()) []const []const u8 {
             return a.clap.positionals();
         }
+
+        pub fn hasFlag(comptime name: []const u8) bool {
+            return ComptimeClap(Id, params).hasFlag(name);
+        }
     };
 }
 

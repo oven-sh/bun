@@ -484,5 +484,159 @@ pub const Bin = extern struct {
                 },
             }
         }
+
+        pub fn unlink(this: *Linker, link_global: bool) void {
+            var target_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var dest_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var from_remain: []u8 = &target_buf;
+            var remain: []u8 = &dest_buf;
+
+            if (!link_global) {
+                target_buf[0..".bin/".len].* = ".bin/".*;
+                from_remain = target_buf[".bin/".len..];
+                dest_buf[0.."../".len].* = "../".*;
+                remain = dest_buf["../".len..];
+            } else {
+                if (this.global_bin_dir.fd >= std.math.maxInt(std.os.fd_t)) {
+                    this.err = error.MissingGlobalBinDir;
+                    return;
+                }
+
+                @memcpy(&target_buf, this.global_bin_path.ptr, this.global_bin_path.len);
+                from_remain = target_buf[this.global_bin_path.len..];
+                from_remain[0] = std.fs.path.sep;
+                from_remain = from_remain[1..];
+                const abs = std.os.getFdPath(this.root_node_modules_folder, &dest_buf) catch |err| {
+                    this.err = err;
+                    return;
+                };
+                remain = remain[abs.len..];
+                remain[0] = std.fs.path.sep;
+                remain = remain[1..];
+
+                this.root_node_modules_folder = this.global_bin_dir.fd;
+            }
+
+            const name = this.package_name.slice();
+            std.mem.copy(u8, remain, name);
+            remain = remain[name.len..];
+            remain[0] = std.fs.path.sep;
+            remain = remain[1..];
+
+            if (comptime Environment.isWindows) {
+                @compileError("Bin.Linker.unlink() needs to be updated to generate .cmd files on Windows");
+            }
+
+            switch (this.bin.tag) {
+                .none => {
+                    if (comptime Environment.isDebug) {
+                        unreachable;
+                    }
+                },
+                .file => {
+                    // we need to use the unscoped package name here
+                    // this is why @babel/parser would fail to link
+                    const unscoped_name = unscopedPackageName(name);
+                    std.mem.copy(u8, from_remain, unscoped_name);
+                    from_remain = from_remain[unscoped_name.len..];
+                    from_remain[0] = 0;
+                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+
+                    std.os.unlinkatZ(this.root_node_modules_folder.fd, dest_path, 0) catch {};
+                },
+                .named_file => {
+                    var name_to_use = this.bin.value.named_file[0].slice(this.string_buf);
+                    std.mem.copy(u8, from_remain, name_to_use);
+                    from_remain = from_remain[name_to_use.len..];
+                    from_remain[0] = 0;
+                    var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+
+                    std.os.unlinkatZ(this.root_node_modules_folder.fd, dest_path, 0) catch {};
+                },
+                .map => {
+                    var extern_string_i: u32 = this.bin.value.map.off;
+                    const end = this.bin.value.map.len + extern_string_i;
+                    const _from_remain = from_remain;
+                    const _remain = remain;
+                    while (extern_string_i < end) : (extern_string_i += 2) {
+                        from_remain = _from_remain;
+                        remain = _remain;
+                        const name_in_terminal = this.extern_string_buf[extern_string_i];
+                        const name_in_filesystem = this.extern_string_buf[extern_string_i + 1];
+
+                        var target = name_in_filesystem.slice(this.string_buf);
+                        if (strings.hasPrefix(target, "./")) {
+                            target = target[2..];
+                        }
+                        std.mem.copy(u8, remain, target);
+                        remain = remain[target.len..];
+                        remain[0] = 0;
+                        remain = remain[1..];
+
+                        var name_to_use = name_in_terminal.slice(this.string_buf);
+                        std.mem.copy(u8, from_remain, name_to_use);
+                        from_remain = from_remain[name_to_use.len..];
+                        from_remain[0] = 0;
+                        var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
+
+                        std.os.unlinkatZ(this.root_node_modules_folder.fd, dest_path, 0) catch {};
+                    }
+                },
+                .dir => {
+                    var target = this.bin.value.dir.slice(this.string_buf);
+                    if (strings.hasPrefix(target, "./")) {
+                        target = target[2..];
+                    }
+
+                    var parts = [_][]const u8{ name, target };
+
+                    std.mem.copy(u8, remain, target);
+                    remain = remain[target.len..];
+
+                    var dir = std.fs.Dir{ .fd = this.package_installed_node_modules };
+
+                    var joined = Path.joinStringBuf(&target_buf, &parts, .auto);
+                    @intToPtr([*]u8, @ptrToInt(joined.ptr))[joined.len] = 0;
+                    var joined_: [:0]const u8 = joined.ptr[0..joined.len :0];
+                    var child_dir = dir.openDirZ(joined_, .{ .iterate = true }) catch |err| {
+                        this.err = err;
+                        return;
+                    };
+                    defer child_dir.close();
+
+                    var iter = child_dir.iterate();
+
+                    var basedir_path = std.os.getFdPath(child_dir.fd, &target_buf) catch |err| {
+                        this.err = err;
+                        return;
+                    };
+                    target_buf[basedir_path.len] = std.fs.path.sep;
+                    var target_buf_remain = target_buf[basedir_path.len + 1 ..];
+                    var prev_target_buf_remain = target_buf_remain;
+
+                    while (iter.next() catch null) |entry_| {
+                        const entry: std.fs.Dir.Entry = entry_;
+                        switch (entry.kind) {
+                            std.fs.Dir.Entry.Kind.SymLink, std.fs.Dir.Entry.Kind.File => {
+                                target_buf_remain = prev_target_buf_remain;
+                                std.mem.copy(u8, target_buf_remain, entry.name);
+                                target_buf_remain = target_buf_remain[entry.name.len..];
+                                target_buf_remain[0] = 0;
+                                var to_path = if (!link_global)
+                                    std.fmt.bufPrintZ(&dest_buf, ".bin/{s}", .{entry.name}) catch continue
+                                else
+                                    std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
+
+                                std.os.unlinkatZ(
+                                    this.root_node_modules_folder.fd,
+                                    to_path,
+                                ) catch continue;
+                            },
+                            else => {},
+                        }
+                    }
+                },
+            }
+        }
     };
 };

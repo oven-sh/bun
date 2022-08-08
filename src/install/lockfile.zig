@@ -1480,7 +1480,7 @@ pub fn initEmpty(this: *Lockfile, allocator: std.mem.Allocator) !void {
 pub fn getPackageID(
     this: *Lockfile,
     name_hash: u64,
-    // if it's a peer dependency
+    // if it's a peer dependency, a folder, or a symlink
     version: ?Dependency.Version,
     resolution: Resolution,
 ) ?PackageID {
@@ -1601,7 +1601,6 @@ pub fn appendPackageWithID(this: *Lockfile, package_: Lockfile.Package, id: Pack
     defer {
         if (comptime Environment.isDebug) {
             std.debug.assert(this.getPackageID(package_.name_hash, null, package_.resolution) != null);
-            std.debug.assert(this.getPackageID(package_.name_hash, null, package_.resolution).? == id);
         }
     }
     var package = package_;
@@ -2137,6 +2136,8 @@ pub const Package = extern struct {
             add,
             remove,
             update,
+            unlink,
+            link,
         };
 
         pub const Summary = struct {

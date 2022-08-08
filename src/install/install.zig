@@ -1242,7 +1242,8 @@ const PackageInstall = struct {
             const rc = Syscall.system.open(path, @as(u31, std.os.O.PATH | 0), @as(u31, 0));
             switch (Syscall.getErrno(rc)) {
                 .SUCCESS => {
-                    _ = Syscall.system.close(rc);
+                    const fd = @intCast(std.os.fd_t, rc);
+                    _ = Syscall.system.close(fd);
                     return false;
                 },
                 else => return true,

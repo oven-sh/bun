@@ -886,10 +886,17 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     int count = columnNames.size();
     auto& vm = lexicalGlobalObject->vm();
 
+    // 64 is the maximum we can preallocate here
+    // see https://github.com/oven-sh/bun/issues/987
 #if SQL_USE_PROTOTYPE == 1
-    JSC::JSObject* result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
+    JSC::JSObject* result;
+    if (count <= 64) {
+      result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
+    } else {
+      result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), count));
+    }
 #else
-    JSC::JSObject* result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), count));
+    JSC::JSObject* result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));
 #endif
     auto* stmt = castedThis->stmt;
 

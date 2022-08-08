@@ -891,9 +891,9 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
 #if SQL_USE_PROTOTYPE == 1
     JSC::JSObject* result;
     if (count <= 64) {
-      result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
+        result = JSC::JSFinalObject::create(vm, castedThis->_prototype.get()->structure());
     } else {
-      result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), count));
+        result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));
     }
 #else
     JSC::JSObject* result = JSC::JSFinalObject::create(vm, JSC::JSFinalObject::createStructure(vm, lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), std::min(count, 64)));

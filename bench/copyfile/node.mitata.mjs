@@ -1,23 +1,40 @@
-import { copyFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { bench, run } from "mitata";
 
-const size = parseInt(process.env.FILE_SIZE, 10) || 1024 * 16;
-const rand = new Float64Array(size);
-for (let i = 0; i < size; i++) {
-  rand[i] = Math.random();
+function runner(ready) {
+  for (let size of [1, 10, 100, 1000, 10000, 100000, 1000000, 10000000]) {
+    const rand = new Int32Array(size);
+    for (let i = 0; i < size; i++) {
+      rand[i] = (Math.random() * 1024 * 1024) | 0;
+    }
+    const dest = `/tmp/fs-test-copy-file-${(
+      (Math.random() * 10000000 + 100) |
+      0
+    ).toString(32)}`;
+    const src = `/tmp/fs-test-copy-file-${(
+      (Math.random() * 10000000 + 100) |
+      0
+    ).toString(32)}`;
+    writeFileSync(src, Buffer.from(rand.buffer), { encoding: "buffer" });
+    const { size: fileSize } = statSync(src);
+    if (fileSize !== rand.byteLength) {
+      throw new Error("size mismatch");
+    }
+    ready(src, dest, new Uint8Array(rand.buffer));
+  }
 }
-const dest = `/tmp/fs-test-copy-file-${(Math.random() * 100000 + 100).toString(
-  32
-)}`;
-const src = `/tmp/fs-test-copy-file-${(Math.random() * 100000 + 100).toString(
-  32
-)}`;
-writeFileSync(src, new Buffer(rand.buffer));
+runner((src, dest, rand) =>
+  bench(`copyFileSync(${rand.buffer.byteLength} bytes)`, () => {
+    copyFileSync(src, dest);
+    // const output = readFileSync(dest).buffer;
 
-const srcBuf = new TextEncoder().encode(src);
-const destBuf = new TextEncoder().encode(dest);
-bench(`copyFileSync(${rand.buffer.byteLength} bytes)`, () =>
-  copyFileSync(srcBuf, destBuf)
+    // for (let i = 0; i < output.length; i++) {
+    //   if (output[i] !== rand[i]) {
+    //     throw new Error(
+    //       "Files are not equal" + " " + output[i] + " " + rand[i] + " " + i
+    //     );
+    //   }
+    // }
+  })
 );
-
 await run();

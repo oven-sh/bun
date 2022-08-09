@@ -419,7 +419,7 @@ pub fn fcopyfile(fd_in: std.os.fd_t, fd_out: std.os.fd_t, flags: u32) Maybe(void
 
 pub fn unlink(from: [:0]const u8) Maybe(void) {
     while (true) {
-        if (Maybe(void).errno(sys.unlink(from), .unlink)) |err| {
+        if (Maybe(void).errnoSys(sys.unlink(from), .unlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }

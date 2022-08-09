@@ -2419,6 +2419,98 @@ pub const NodeFS = struct {
                     if (args.mode.isForceClone()) {
                         // https://www.manpagez.com/man/2/clonefile/
                         return ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) orelse ret.success;
+                    } else {
+                        const stat_ = switch (Syscall.stat(src)) {
+                            .result => |result| result,
+                            .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
+                        };
+
+                        if (!os.S.ISREG(stat_.mode)) {
+                            return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(C.SystemErrno.ENOTSUP) } };
+                        }
+
+                        if (stat_.size > 128 * 1024) {
+                            if (!args.mode.shouldntOverwrite()) {
+                                // clonefile() will fail if it already exists
+                                _ = Syscall.unlink(dest);
+                            }
+
+                            if (ret.errnoSysP(C.clonefile(src, dest, 0), .clonefile, src) == null) {
+                                _ = C.chmod(dest, stat_.mode);
+                                return ret.success;
+                            }
+                        } else {
+                            const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0644)) {
+                                .result => |result| result,
+                                .err => |err| return .{ .err = err.withPath(args.src.slice()) },
+                            };
+                            defer {
+                                _ = Syscall.close(src_fd);
+                            }
+
+                            var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+                            var wrote: usize = 0;
+                            if (args.mode.shouldntOverwrite()) {
+                                flags |= std.os.O.EXCL;
+                            }
+
+                            const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
+                                .result => |result| result,
+                                .err => |err| return Maybe(Return.CopyFile){ .err = err },
+                            };
+                            defer {
+                                _ = std.c.ftruncate(dest_fd, @intCast(std.c.off_t, @truncate(u63, wrote)));
+
+                                _ = Syscall.close(dest_fd);
+                            }
+
+                            var buf: [16384]u8 = undefined;
+                            var remain = @intCast(u64, @maximum(stat_.size, 0));
+                            toplevel: while (remain > 0) {
+                                const amt = switch (Syscall.read(src_fd, buf[0..@minimum(buf.len, remain)])) {
+                                    .result => |result| result,
+                                    .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
+                                };
+                                if (amt == 0) {
+                                    break :toplevel;
+                                }
+                                wrote += amt;
+                                remain -|= amt;
+
+                                var slice = buf[0..amt];
+                                while (slice.len > 0) {
+                                    const written = switch (Syscall.write(dest_fd, slice)) {
+                                        .result => |result| result,
+                                        .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(dest) },
+                                    };
+                                    if (written == 0) break :toplevel;
+                                    slice = slice[written..];
+                                }
+                            } else {
+                                outer: while (true) {
+                                    const amt = switch (Syscall.read(src_fd, &buf)) {
+                                        .result => |result| result,
+                                        .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
+                                    };
+                                    if (amt == 0) {
+                                        break;
+                                    }
+                                    wrote += amt;
+
+                                    var slice = buf[0..amt];
+                                    while (slice.len > 0) {
+                                        const written = switch (Syscall.write(dest_fd, slice)) {
+                                            .result => |result| result,
+                                            .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(dest) },
+                                        };
+                                        slice = slice[written..];
+                                        if (written == 0) break :outer;
+                                    }
+                                }
+                            }
+                            _ = C.fchmod(dest_fd, stat_.mode);
+                            return ret.success;
+                        }
                     }
 
                     var mode: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA;

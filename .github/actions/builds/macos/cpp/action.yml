@@ -51,6 +51,9 @@ runs:
         BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
         BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+        BUN_RELEASE_DIR: ${{ runner.temp }}/release
+        WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+        WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
       run: |
         rm -rf $JSC_BASE_DIR
         mkdir -p $JSC_BASE_DIR
@@ -64,6 +67,9 @@ runs:
         BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
         BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
+        BUN_RELEASE_DIR: ${{ runner.temp }}/release
+        WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+        WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
       run: |
         mkdir -p $BUN_DEPS_OUT_DIR
         make vendor-without-check
@@ -76,6 +82,9 @@ runs:
         BUN_DEPLOY_DIR: ${{ runner.temp }}/release/bun
         OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
         BUN_DEPS_OUT_DIR: ${{ runner.temp }}/bun-deps
+        BUN_RELEASE_DIR: ${{ runner.temp }}/release
+        WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+        WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
       run: |
         mkdir -p $OBJ_DIR
         make -j $(sysctl -n hw.ncpu) release-bindings

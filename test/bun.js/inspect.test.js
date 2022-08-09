@@ -117,6 +117,9 @@ it("inspect", () => {
   );
   expect("hi").toBe("hi");
   expect(Bun.inspect(1)).toBe("1");
+  expect(Bun.inspect(NaN)).toBe("NaN");
+  expect(Bun.inspect(Infinity)).toBe("Infinity");
+  expect(Bun.inspect(-Infinity)).toBe("-Infinity");
   expect(Bun.inspect(1, "hi")).toBe("1 hi");
   expect(Bun.inspect([])).toBe("[]");
   expect(Bun.inspect({})).toBe("{ }");

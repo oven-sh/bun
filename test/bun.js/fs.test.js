@@ -13,6 +13,7 @@ import {
   writeSync,
   statSync,
   lstatSync,
+  copyFileSync,
 } from "node:fs";
 
 const Buffer = globalThis.Buffer || Uint8Array;
@@ -20,6 +21,65 @@ const Buffer = globalThis.Buffer || Uint8Array;
 if (!import.meta.dir) {
   import.meta.dir = ".";
 }
+
+describe("copyFileSync", () => {
+  it("should work for files < 128 KB", () => {
+    const tempdir = `/tmp/fs.test.js/${Date.now()}/1234/hi`;
+    expect(existsSync(tempdir)).toBe(false);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(
+      true
+    );
+
+    // that don't exist
+    copyFileSync(import.meta.path, tempdir + "/copyFileSync.js");
+    expect(existsSync(tempdir + "/copyFileSync.js")).toBe(true);
+    expect(readFileSync(tempdir + "/copyFileSync.js", "utf-8")).toBe(
+      readFileSync(import.meta.path, "utf-8")
+    );
+
+    // that do exist
+    copyFileSync(tempdir + "/copyFileSync.js", tempdir + "/copyFileSync.js1");
+    writeFileSync(tempdir + "/copyFileSync.js1", "hello");
+    copyFileSync(tempdir + "/copyFileSync.js1", tempdir + "/copyFileSync.js");
+
+    expect(readFileSync(tempdir + "/copyFileSync.js", "utf-8")).toBe("hello");
+  });
+
+  it("should work for files > 128 KB ", () => {
+    const tempdir = `/tmp/fs.test.js/${Date.now()}-1/1234/hi`;
+    expect(existsSync(tempdir)).toBe(false);
+    expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(
+      true
+    );
+    var buffer = new Int32Array(128 * 1024);
+    for (let i = 0; i < buffer.length; i++) {
+      buffer[i] = i % 256;
+    }
+
+    const hash = Bun.hash(buffer.buffer);
+    writeFileSync(tempdir + "/copyFileSync.src.blob", buffer.buffer);
+
+    expect(existsSync(tempdir + "/copyFileSync.dest.blob")).toBe(false);
+    expect(existsSync(tempdir + "/copyFileSync.src.blob")).toBe(true);
+    copyFileSync(
+      tempdir + "/copyFileSync.src.blob",
+      tempdir + "/copyFileSync.dest.blob"
+    );
+
+    expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(
+      hash
+    );
+    buffer[0] = 255;
+    writeFileSync(tempdir + "/copyFileSync.src.blob", buffer.buffer);
+    copyFileSync(
+      tempdir + "/copyFileSync.src.blob",
+      tempdir + "/copyFileSync.dest.blob"
+    );
+    expect(Bun.hash(readFileSync(tempdir + "/copyFileSync.dest.blob"))).toBe(
+      Bun.hash(buffer.buffer)
+    );
+  });
+});
 
 describe("mkdirSync", () => {
   it("should create a directory", () => {

@@ -2468,7 +2468,7 @@ pub const NodeFS = struct {
 
                     defer {
                         if (original_size > wrote)
-                            _ = linux.ftruncate(dest_fd, wrote);
+                            _ = linux.ftruncate(dest_fd, @intCast(i64, @truncate(u63, wrote)));
                         _ = Syscall.close(dest_fd);
                     }
 

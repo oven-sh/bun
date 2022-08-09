@@ -98,7 +98,7 @@ const char* const s_importMetaObjectRequireCode =
 const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectLoadModuleCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectLoadModuleCodeLength = 2834;
+const int s_importMetaObjectLoadModuleCodeLength = 2932;
 static const JSC::Intrinsic s_importMetaObjectLoadModuleCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectLoadModuleCode =
     "(function (meta, resolvedSpecifier) {\n" \
@@ -189,6 +189,9 @@ const char* const s_importMetaObjectLoadModuleCode =
     "    }\n" \
     "\n" \
     "    entry.dependencies = dependencies;\n" \
+    "    //\n" \
+    "    entry.instantiate = Promise.resolve(entry)\n" \
+    "    entry.satisfy = Promise.resolve(entry);\n" \
     "    key = queue.shift();\n" \
     "    while (key && (Loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {\n" \
     "      key = queue.shift();\n" \

@@ -2466,23 +2466,31 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     }
     RETURN_IF_EXCEPTION(scope, nullptr);
 
+    auto& builtinNames = clientData->builtinNames();
+
     auto view = keyString->value(globalObject);
     auto index = view.reverseFind('/', view.length());
     if (index != WTF::notFound) {
-        metaProperties->putDirect(vm, clientData->builtinNames().dirPublicName(),
+        metaProperties->putDirect(vm, builtinNames.dirPublicName(),
             JSC::jsSubstring(globalObject, keyString, 0, index));
         metaProperties->putDirect(
-            vm, clientData->builtinNames().filePublicName(),
+            vm, builtinNames.filePublicName(),
             JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));
     } else {
-        metaProperties->putDirect(vm, clientData->builtinNames().filePublicName(), keyString);
+        metaProperties->putDirect(vm, builtinNames.filePublicName(), keyString);
     }
 
-    metaProperties->putDirect(vm, clientData->builtinNames().pathPublicName(), keyString);
+    metaProperties->putDirect(vm, builtinNames.pathPublicName(), keyString);
+    metaProperties->putDirect(
+        vm,
+        builtinNames.requirePublicName(),
+        Zig::ImportMetaObject::createRequireFunction(vm, globalObject, view),
+        PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
+
     if (view.startsWith('/')) {
-        metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), JSC::JSValue(JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string())));
+        metaProperties->putDirect(vm, builtinNames.urlPublicName(), JSC::JSValue(JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string())));
     } else {
-        metaProperties->putDirect(vm, clientData->builtinNames().urlPublicName(), keyString);
+        metaProperties->putDirect(vm, builtinNames.urlPublicName(), keyString);
     }
 
     RELEASE_AND_RETURN(scope, metaProperties);

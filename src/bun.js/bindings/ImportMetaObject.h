@@ -40,6 +40,8 @@ public:
     static JSObject* createPrototype(VM& vm, JSDOMGlobalObject& globalObject);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
+    static JSObject* createRequireFunction(VM& vm, JSGlobalObject* globalObject, WTF::String& pathString);
+
 private:
     ImportMetaObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
         : Base(vm, structure)

@@ -24,6 +24,22 @@ it("import.meta.require (json)", () => {
   expect(require("./require-json.json").hello).toBe(sync.hello);
 });
 
+it("Module.createRequire().resolve", () => {
+  const expected = Bun.resolveSync("./require-json.json", import.meta.dir);
+
+  const createdRequire = Module.createRequire(import.meta.path);
+  const result = createdRequire.resolve("./require-json.json");
+
+  expect(result).toBe(expected);
+});
+
+it("import.meta.require.resolve", () => {
+  const expected = Bun.resolveSync("./require-json.json", import.meta.dir);
+  var { resolve } = import.meta.require;
+  const result = resolve("./require-json.json");
+  expect(result).toBe(expected);
+});
+
 it("import.meta.require (javascript)", () => {
   expect(import.meta.require("./require-js.js").hello).toBe(sync.hello);
   const require = Module.createRequire(import.meta.path);

@@ -1,5 +1,5 @@
 import { run, bench } from "mitata";
-import { gzipSync, gunzipSync } from "bun";
+import { gzipSync, gunzipSync } from "./bun";
 
 const data = new TextEncoder().encode("Hello World!".repeat(9999));
 

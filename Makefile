@@ -364,6 +364,7 @@ JSC_BINDINGS_DEBUG = $(DEBUG_BINDINGS_OBJ) $(JSC_FILES_DEBUG)
 RELEASE_FLAGS=
 DEBUG_FLAGS=
 
+
 ifeq ($(OS_NAME), darwin)
 	RELEASE_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs
 	DEBUG_FLAGS += -Wl,-dead_strip -Wl,-dead_strip_dylibs
@@ -377,7 +378,8 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	$(_MIMALLOC_LINK) \
 	-lssl \
 	-lcrypto \
-	-llolhtml
+	-llolhtml \
+	$(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
@@ -406,8 +408,8 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fno-semantic-interposition \
 		-flto \
 		-Wl,--allow-multiple-definition \
-		-rdynamic \
-		$(BUN_DEPS_OUT_DIR)/libbacktrace.a
+		-rdynamic
+		
 
  
 endif
@@ -504,7 +506,7 @@ lolhtml:
 
 .PHONY: boringssl-build
 boringssl-build:
-	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS) -GNinja .. && ninja
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS) -flto" cmake $(CMAKE_FLAGS) -DOPENSSL_NO_ASM=1 -GNinja .. && ninja
 
 .PHONY: boringssl-build-debug
 boringssl-build-debug:

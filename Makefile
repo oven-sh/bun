@@ -504,9 +504,10 @@ format: ## to format the code
 lolhtml:
 	cd $(BUN_DEPS_DIR)/lol-html/ && cd $(BUN_DEPS_DIR)/lol-html/c-api && cargo build --release && cp target/release/liblolhtml.a $(BUN_DEPS_OUT_DIR)
 
+# no asm is not worth it!!
 .PHONY: boringssl-build
 boringssl-build:
-	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS) -flto" cmake $(CMAKE_FLAGS) -DOPENSSL_NO_ASM=1 -GNinja .. && ninja
+	cd $(BUN_DEPS_DIR)/boringssl && mkdir -p build && cd build && CFLAGS="$(CFLAGS)" cmake $(CMAKE_FLAGS)  -GNinja .. && ninja
 
 .PHONY: boringssl-build-debug
 boringssl-build-debug:

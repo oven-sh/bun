@@ -96,3 +96,5 @@ pub const simd = true;
 pub const latin1_is_now_ascii = false;
 
 pub const http_buffer_pooling = true;
+
+pub const disable_lolhtml = false;

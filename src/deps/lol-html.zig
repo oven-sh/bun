@@ -6,12 +6,18 @@ pub const MemorySettings = extern struct {
     max_allowed_memory_usage: usize,
 };
 
+inline fn auto_disable() void {
+    if (comptime @import("../feature_flags.zig").disable_lolhtml)
+        unreachable;
+}
+
 pub const HTMLRewriter = opaque {
     extern fn lol_html_rewriter_write(rewriter: *HTMLRewriter, chunk: [*]const u8, chunk_len: usize) c_int;
     extern fn lol_html_rewriter_end(rewriter: *HTMLRewriter) c_int;
     extern fn lol_html_rewriter_free(rewriter: *HTMLRewriter) void;
 
     pub fn write(rewriter: *HTMLRewriter, chunk: []const u8) Error!void {
+        auto_disable();
         if (rewriter.lol_html_rewriter_write(chunk.ptr, chunk.len) < 0)
             return error.Fail;
     }
@@ -24,11 +30,14 @@ pub const HTMLRewriter = opaque {
     /// WARNING: after calling this function, further attempts to use the rewriter
     /// (other than `lol_html_rewriter_free`) will cause a thread panic.
     pub fn end(rewriter: *HTMLRewriter) Error!void {
+        auto_disable();
+
         if (rewriter.lol_html_rewriter_end() < 0)
             return error.Fail;
     }
 
     pub fn deinit(this: *HTMLRewriter) void {
+        auto_disable();
         this.lol_html_rewriter_free();
     }
 
@@ -76,7 +85,10 @@ pub const HTMLRewriter = opaque {
             doc_end_user_data: ?*anyopaque,
         ) c_int;
 
-        pub const init = lol_html_rewriter_builder_new;
+        pub fn init() *HTMLRewriter.Builder {
+            auto_disable();
+            return lol_html_rewriter_builder_new();
+        }
 
         /// Adds document-level content handlers to the builder.
         ///
@@ -110,6 +122,8 @@ pub const HTMLRewriter = opaque {
             comptime end_tag_handler: ?DirectiveFunctionTypeForHandler(DocEnd, DocEndHandler),
             end_tag_handler_data: ?*DocEndHandler,
         ) Error!void {
+            auto_disable();
+
             return switch (builder.lol_html_rewriter_builder_add_document_content_handlers(
                 if (doctype_handler_data != null)
                     DirectiveHandler(DocType, DocTypeHandler, doctype_handler.?)
@@ -174,6 +188,7 @@ pub const HTMLRewriter = opaque {
             comptime text_chunk_handler: ?DirectiveFunctionTypeForHandler(TextChunk, TextChunkHandler),
             text_chunk_handler_data: ?*TextChunkHandler,
         ) Error!void {
+            auto_disable();
             return switch (builder.lol_html_rewriter_builder_add_element_content_handlers(
                 selector,
                 if (element_handler_data != null)
@@ -208,6 +223,8 @@ pub const HTMLRewriter = opaque {
             comptime Writer: (fn (*OutputSink, bytes: []const u8) void),
             comptime Done: (fn (*OutputSink) void),
         ) Error!*HTMLRewriter {
+            auto_disable();
+
             const encoding_ = Encoding.label.getAssertContains(encoding);
             return builder.lol_html_rewriter_build(
                 encoding_.ptr,
@@ -226,6 +243,8 @@ pub const HTMLRewriter = opaque {
         ) (fn ([*]const u8, usize, *anyopaque) callconv(.C) void) {
             return struct {
                 fn writeChunk(ptr: [*]const u8, len: usize, user_data: *anyopaque) callconv(.C) void {
+                    auto_disable();
+
                     @setRuntimeSafety(false);
                     var this = @ptrCast(*OutputSinkType, @alignCast(@alignOf(*OutputSinkType), user_data));
                     switch (len) {
@@ -244,6 +263,7 @@ pub const HTMLSelector = opaque {
 
     /// Frees the memory held by the parsed selector object.
     pub fn deinit(selector: *HTMLSelector) void {
+        auto_disable();
         selector.lol_html_selector_free();
     }
 
@@ -257,6 +277,8 @@ pub const HTMLSelector = opaque {
     /// method. Deallocate all dependant rewriter builders first and then
     /// use `lol_html_selector_free` function to free the selector.
     pub fn parse(selector: []const u8) Error!*HTMLSelector {
+        auto_disable();
+
         if (lol_html_selector_parse(selector.ptr, selector.len)) |ptr|
             return ptr
         else
@@ -279,14 +301,17 @@ pub const TextChunk = opaque {
         len: usize,
 
         pub fn slice(this: Content) []const u8 {
+            auto_disable();
             return this.ptr[0..this.len];
         }
     };
 
     pub fn getContent(this: *const TextChunk) TextChunk.Content {
+        auto_disable();
         return this.lol_html_text_chunk_content_get();
     }
     pub fn isLastInTextNode(this: *const TextChunk) bool {
+        auto_disable();
         return this.lol_html_text_chunk_is_last_in_text_node();
     }
     /// Inserts the content string before the text chunk either as raw text or as HTML.
@@ -296,6 +321,7 @@ pub const TextChunk = opaque {
     /// Returns 0 in case of success and -1 otherwise. The actual error message
     /// can be obtained using `lol_html_take_last_error` function.
     pub fn before(this: *TextChunk, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         if (this.lol_html_text_chunk_before(content.ptr, content.len, is_html) < 0)
             return error.Fail;
     }
@@ -306,6 +332,7 @@ pub const TextChunk = opaque {
     /// Returns 0 in case of success and -1 otherwise. The actual error message
     /// can be obtained using `lol_html_take_last_error` function.
     pub fn after(this: *TextChunk, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         if (this.lol_html_text_chunk_after(content.ptr, content.len, is_html) < 0)
             return error.Fail;
     }
@@ -317,20 +344,25 @@ pub const TextChunk = opaque {
     // Returns 0 in case of success and -1 otherwise. The actual error message
     // can be obtained using `lol_html_take_last_error` function.
     pub fn replace(this: *TextChunk, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         if (this.lol_html_text_chunk_replace(content.ptr, content.len, is_html) < 0)
             return error.Fail;
     }
     /// Removes the text chunk.
     pub fn remove(this: *TextChunk) void {
+        auto_disable();
         return this.lol_html_text_chunk_remove();
     }
     pub fn isRemoved(this: *const TextChunk) bool {
+        auto_disable();
         return this.lol_html_text_chunk_is_removed();
     }
     pub fn setUserData(this: *const TextChunk, comptime Type: type, value: ?*Type) void {
+        auto_disable();
         return this.lol_html_text_chunk_user_data_set(value);
     }
     pub fn getUserData(this: *const TextChunk, comptime Type: type) ?*Type {
+        auto_disable();
         return @ptrCast(?*Type, @alignCast(@alignOf(?*Type), this.lol_html_text_chunk_user_data_get()));
     }
 };
@@ -353,9 +385,11 @@ pub const Element = opaque {
     extern fn lol_html_element_on_end_tag(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) c_int;
 
     pub fn getAttribute(element: *const Element, name: []const u8) HTMLString {
+        auto_disable();
         return lol_html_element_get_attribute(element, name.ptr, name.len);
     }
     pub fn hasAttribute(element: *const Element, name: []const u8) Error!bool {
+        auto_disable();
         return switch (lol_html_element_has_attribute(element, name.ptr, name.len)) {
             0 => false,
             1 => true,
@@ -364,6 +398,7 @@ pub const Element = opaque {
         };
     }
     pub fn setAttribute(element: *Element, name: []const u8, value: []const u8) Error!void {
+        auto_disable();
         return switch (lol_html_element_set_attribute(element, name.ptr, name.len, value.ptr, value.len)) {
             0 => void{},
             -1 => error.Fail,
@@ -371,6 +406,7 @@ pub const Element = opaque {
         };
     }
     pub fn removeAttribute(element: *Element, name: []const u8) Error!void {
+        auto_disable();
         return switch (lol_html_element_remove_attribute(element, name.ptr, name.len)) {
             0 => void{},
             -1 => error.Fail,
@@ -378,6 +414,7 @@ pub const Element = opaque {
         };
     }
     pub fn before(element: *Element, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_element_before(element, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -385,6 +422,7 @@ pub const Element = opaque {
         };
     }
     pub fn prepend(element: *Element, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_element_prepend(element, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -392,6 +430,7 @@ pub const Element = opaque {
         };
     }
     pub fn append(element: *Element, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_element_append(element, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -399,6 +438,7 @@ pub const Element = opaque {
         };
     }
     pub fn after(element: *Element, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_element_after(element, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -406,6 +446,7 @@ pub const Element = opaque {
         };
     }
     pub fn setInnerContent(element: *Element, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_element_set_inner_content(element, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -419,6 +460,7 @@ pub const Element = opaque {
     /// Returns 0 in case of success and -1 otherwise. The actual error message
     /// can be obtained using `lol_html_take_last_error` function.
     pub fn replace(element: *Element, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_element_replace(element, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -426,22 +468,28 @@ pub const Element = opaque {
         };
     }
     pub fn remove(element: *const Element) void {
+        auto_disable();
         lol_html_element_remove(element);
     }
     // Removes the element, but leaves its inner content intact.
     pub fn removeAndKeepContent(element: *const Element) void {
+        auto_disable();
         lol_html_element_remove_and_keep_content(element);
     }
     pub fn isRemoved(element: *const Element) bool {
+        auto_disable();
         return lol_html_element_is_removed(element);
     }
     pub fn setUserData(element: *const Element, user_data: ?*anyopaque) void {
+        auto_disable();
         lol_html_element_user_data_set(element, user_data);
     }
     pub fn getUserData(element: *const Element, comptime Type: type) ?*Type {
+        auto_disable();
         return @ptrCast(?*Element, @alignCast(@alignOf(?*Element), lol_html_element_user_data_get(element)));
     }
     pub fn onEndTag(element: *Element, end_tag_handler: lol_html_end_tag_handler_t, user_data: ?*anyopaque) Error!void {
+        auto_disable();
         return switch (lol_html_element_on_end_tag(element, end_tag_handler, user_data)) {
             0 => void{},
             -1 => error.Fail,
@@ -481,6 +529,7 @@ pub const HTMLString = extern struct {
 
     extern fn lol_html_str_free(str: HTMLString) void;
     pub fn deinit(this: HTMLString) void {
+        auto_disable();
         // if (this.len > 0) {
         lol_html_str_free(this);
         // }
@@ -489,10 +538,12 @@ pub const HTMLString = extern struct {
     pub extern fn lol_html_take_last_error(...) HTMLString;
 
     pub fn lastError() HTMLString {
+        auto_disable();
         return lol_html_take_last_error();
     }
 
     pub fn slice(this: HTMLString) []const u8 {
+        auto_disable();
         @setRuntimeSafety(false);
         return this.ptr[0..this.len];
     }
@@ -506,6 +557,7 @@ pub const EndTag = opaque {
     extern fn lol_html_end_tag_name_set(end_tag: *EndTag, name: [*]const u8, name_len: usize) c_int;
 
     pub fn before(end_tag: *EndTag, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_end_tag_before(end_tag, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -514,6 +566,7 @@ pub const EndTag = opaque {
     }
 
     pub fn after(end_tag: *EndTag, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_end_tag_after(end_tag, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -521,14 +574,17 @@ pub const EndTag = opaque {
         };
     }
     pub fn remove(end_tag: *EndTag) void {
+        auto_disable();
         lol_html_end_tag_remove(end_tag);
     }
 
     pub fn getName(end_tag: *const EndTag) HTMLString {
+        auto_disable();
         return lol_html_end_tag_name_get(end_tag);
     }
 
     pub fn setName(end_tag: *EndTag, name: []const u8) Error!void {
+        auto_disable();
         return switch (lol_html_end_tag_name_set(end_tag, name.ptr, name.len)) {
             0 => void{},
             -1 => error.Fail,
@@ -541,9 +597,11 @@ pub const Attribute = opaque {
     extern fn lol_html_attribute_name_get(attribute: *const Attribute) HTMLString;
     extern fn lol_html_attribute_value_get(attribute: *const Attribute) HTMLString;
     pub fn name(this: *const Attribute) HTMLString {
+        auto_disable();
         return this.lol_html_attribute_name_get();
     }
     pub fn value(this: *const Attribute) HTMLString {
+        auto_disable();
         return this.lol_html_attribute_value_get();
     }
 
@@ -552,10 +610,12 @@ pub const Attribute = opaque {
         extern fn lol_html_attributes_iterator_next(iterator: *Attribute.Iterator) ?*const Attribute;
 
         pub fn next(this: *Iterator) ?*const Attribute {
+            auto_disable();
             return lol_html_attributes_iterator_next(this);
         }
 
         pub fn deinit(this: *Iterator) void {
+            auto_disable();
             lol_html_attributes_iterator_free(this);
         }
     };
@@ -573,10 +633,12 @@ pub const Comment = opaque {
     extern fn lol_html_comment_user_data_get(comment: *const Comment) ?*anyopaque;
 
     pub fn getText(comment: *const Comment) HTMLString {
+        auto_disable();
         return lol_html_comment_text_get(comment);
     }
 
     pub fn setText(comment: *Comment, text: []const u8) Error!void {
+        auto_disable();
         return switch (lol_html_comment_text_set(comment, text.ptr, text.len)) {
             0 => void{},
             -1 => error.Fail,
@@ -585,6 +647,7 @@ pub const Comment = opaque {
     }
 
     pub fn before(comment: *Comment, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_comment_before(comment, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -593,6 +656,7 @@ pub const Comment = opaque {
     }
 
     pub fn replace(comment: *Comment, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_comment_before(comment, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -601,6 +665,7 @@ pub const Comment = opaque {
     }
 
     pub fn after(comment: *Comment, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_comment_after(comment, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -625,6 +690,7 @@ pub const DocEnd = opaque {
     extern fn lol_html_doc_end_append(doc_end: ?*DocEnd, content: [*]const u8, content_len: usize, is_html: bool) c_int;
 
     pub fn append(this: *DocEnd, content: []const u8, is_html: bool) Error!void {
+        auto_disable();
         return switch (lol_html_doc_end_append(this, content.ptr, content.len, is_html)) {
             0 => void{},
             -1 => error.Fail,
@@ -648,6 +714,7 @@ fn DocTypeHandlerCallback(comptime UserDataType: type) type {
 pub fn DirectiveHandler(comptime Container: type, comptime UserDataType: type, comptime Callback: (fn (this: *UserDataType, container: *Container) bool)) DirectiveFunctionType(Container) {
     return struct {
         pub fn callback(this: *Container, user_data: ?*anyopaque) callconv(.C) Directive {
+            auto_disable();
             return @intToEnum(
                 Directive,
                 @as(
@@ -680,12 +747,15 @@ pub const DocType = opaque {
     pub const Callback = fn (*DocType, ?*anyopaque) callconv(.C) Directive;
 
     pub fn getName(this: *const DocType) HTMLString {
+        auto_disable();
         return this.lol_html_doctype_name_get();
     }
     pub fn getPublicId(this: *const DocType) HTMLString {
+        auto_disable();
         return this.lol_html_doctype_public_id_get();
     }
     pub fn getSystemId(this: *const DocType) HTMLString {
+        auto_disable();
         return this.lol_html_doctype_system_id_get();
     }
 };

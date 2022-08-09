@@ -152,6 +152,9 @@ function loadModule(meta, resolvedSpecifier) {
     }
 
     entry.dependencies = dependencies;
+    // All dependencies resolved, set instantiate and satisfy field directly.
+    entry.instantiate = Promise.resolve(entry)
+    entry.satisfy = Promise.resolve(entry);
     key = queue.shift();
     while (key && (Loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {
       key = queue.shift();

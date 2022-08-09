@@ -2458,17 +2458,15 @@ pub const NodeFS = struct {
                         flags |= std.os.O.EXCL;
                     }
 
-                    const dest_fd = switch (Syscall.open(dest, flags, flags)) {
+                    const dest_fd = switch (Syscall.open(dest, flags, JSC.Node.default_permission)) {
                         .result => |result| result,
                         .err => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
 
                     var size = @intCast(usize, @maximum(stat_.size, 0));
-                    const original_size = size;
 
                     defer {
-                        if (original_size > wrote)
-                            _ = linux.ftruncate(dest_fd, @intCast(i64, @truncate(u63, wrote)));
+                        _ = linux.ftruncate(dest_fd, @intCast(i64, @truncate(u63, wrote)));
                         _ = Syscall.close(dest_fd);
                     }
 
@@ -2507,7 +2505,7 @@ pub const NodeFS = struct {
                             size -|= written;
                         }
                     }
-
+                    _ = linux.fchmod(dest_fd, stat_.mode);
                     return ret.success;
                 }
             },

@@ -2553,18 +2553,62 @@ pub const FFI = struct {
         return .{ .slice = bun.span(@intToPtr([*:0]u8, addr)) };
     }
 
+    fn getCPtr(value: JSValue) ?usize {
+        // pointer to C function
+        if (value.isNumber()) {
+            const addr = @bitCast(u64, value.asNumber());
+            if (addr > 0) {
+                return addr;
+            }
+            // pointer to C function as a BigInt
+        } else if (value.isBigInt()) {
+            const addr = @bitCast(u64, value.toUInt64NoTruncate());
+            if (addr > 0) {
+                return addr;
+            }
+        }
+
+        return null;
+    }
+
     pub fn toArrayBuffer(
         globalThis: *JSGlobalObject,
         value: JSValue,
         byteOffset: ?JSValue,
         valueLength: ?JSValue,
+        finalizationCtxOrPtr: ?JSValue,
+        finalizationCallback: ?JSValue,
     ) JSC.JSValue {
         switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
             .err => |erro| {
                 return erro;
             },
             .slice => |slice| {
-                return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis.ref(), null, null, null);
+                var callback: JSC.C.JSTypedArrayBytesDeallocator = null;
+                var ctx: ?*anyopaque = null;
+                if (finalizationCallback) |callback_value| {
+                    if (getCPtr(callback_value)) |callback_ptr| {
+                        callback = @intToPtr(JSC.C.JSTypedArrayBytesDeallocator, callback_ptr);
+
+                        if (finalizationCtxOrPtr) |ctx_value| {
+                            if (getCPtr(ctx_value)) |ctx_ptr| {
+                                ctx = @intToPtr(*anyopaque, ctx_ptr);
+                            } else if (!ctx_value.isUndefinedOrNull()) {
+                                return JSC.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{}, globalThis);
+                            }
+                        }
+                    } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
+                        return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    }
+                } else if (finalizationCtxOrPtr) |callback_value| {
+                    if (getCPtr(callback_value)) |callback_ptr| {
+                        callback = @intToPtr(JSC.C.JSTypedArrayBytesDeallocator, callback_ptr);
+                    } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
+                        return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    }
+                }
+
+                return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis.ref(), ctx, callback, null);
             },
         }
     }
@@ -2574,12 +2618,42 @@ pub const FFI = struct {
         value: JSValue,
         byteOffset: ?JSValue,
         valueLength: ?JSValue,
+        finalizationCtxOrPtr: ?JSValue,
+        finalizationCallback: ?JSValue,
     ) JSC.JSValue {
         switch (getPtrSlice(globalThis, value, byteOffset, valueLength)) {
             .err => |erro| {
                 return erro;
             },
             .slice => |slice| {
+                var callback: JSC.C.JSTypedArrayBytesDeallocator = null;
+                var ctx: ?*anyopaque = null;
+                if (finalizationCallback) |callback_value| {
+                    if (getCPtr(callback_value)) |callback_ptr| {
+                        callback = @intToPtr(JSC.C.JSTypedArrayBytesDeallocator, callback_ptr);
+
+                        if (finalizationCtxOrPtr) |ctx_value| {
+                            if (getCPtr(ctx_value)) |ctx_ptr| {
+                                ctx = @intToPtr(*anyopaque, ctx_ptr);
+                            } else if (!ctx_value.isEmptyOrUndefinedOrNull()) {
+                                return JSC.toInvalidArguments("Expected user data to be a C pointer (number or BigInt)", .{}, globalThis);
+                            }
+                        }
+                    } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
+                        return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    }
+                } else if (finalizationCtxOrPtr) |callback_value| {
+                    if (getCPtr(callback_value)) |callback_ptr| {
+                        callback = @intToPtr(JSC.C.JSTypedArrayBytesDeallocator, callback_ptr);
+                    } else if (!callback_value.isEmptyOrUndefinedOrNull()) {
+                        return JSC.toInvalidArguments("Expected callback to be a C pointer (number or BigInt)", .{}, globalThis);
+                    }
+                }
+
+                if (callback != null or ctx != null) {
+                    return JSC.JSValue.createBufferWithCtx(globalThis, slice, ctx, callback);
+                }
+
                 return JSC.JSValue.createBuffer(globalThis, slice, null);
             },
         }

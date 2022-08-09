@@ -1209,8 +1209,7 @@ rm -rf node_modules
 bun install --backend copyfile
 ```
 
-**`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder. 
-
+**`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder.
 
 If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has it's own node_modules folder or you pass `--preserve-symlinks` to `node`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
@@ -2832,6 +2831,55 @@ const myPtr = ptr(myTypedArray);
 myTypedArray = new Uint8Array(toArrayBuffer(myPtr, 0, 32), 0, 32);
 ```
 
+**Memory management with pointers**:
+
+`bun:ffi` does not manage memory for you because it doesn't have the information necessary. You must free the memory when you're done with it.
+
+**From JavaScript**:
+
+If you want to track when a TypedArray is no longer in use from JavaScript, you can use a [FinalizationRegistry](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry).
+
+**From FFI (C, Rust, Zig, etc)**:
+
+<sup>Available in Bun v0.1.8 and later.</sup>
+
+If you want to track when a TypedArray is no longer in use from C or FFI, you can pass a callback and an optional context pointer to `toArrayBuffer` or `toBuffer`. This function is called at some point later, once the garbage collector frees the underlying `ArrayBuffer` JavaScript object.
+
+The expected signature is the same as in [JavaScriptCore's C API](https://developer.apple.com/documentation/javascriptcore/jstypedarraybytesdeallocator?language=objc):
+
+```c
+typedef void (*JSTypedArrayBytesDeallocator)(void *bytes, void *deallocatorContext);
+```
+
+```ts
+import { toArrayBuffer } from "bun:ffi";
+
+// with a deallocatorContext:
+toArrayBuffer(
+  bytes,
+  byteOffset,
+
+  byteLength,
+
+  // this is an optional pointer to a callback
+  deallocatorContext,
+
+  // this is a pointer to a function
+  jsTypedArrayBytesDeallocator
+);
+
+// without a deallocatorContext:
+toArrayBuffer(
+  bytes,
+  byteOffset,
+
+  byteLength,
+
+  // this is a pointer to a function
+  jsTypedArrayBytesDeallocator
+);
+```
+
 **Pointers & memory safety**
 
 Using raw pointers outside of FFI is extremely not recommended.
@@ -3292,7 +3340,7 @@ To get started, in the `bun` repository, locally run:
 make devcontainer-build
 ```
 
-Next, open VS Code in the `bun` repository. 
+Next, open VS Code in the `bun` repository.
 To open the dev container, open the command palette (Ctrl + Shift + P) and run: `Remote-Containers: Reopen in Container`.
 
 You will then need to clone the GitHub repository inside that container.
@@ -3317,7 +3365,6 @@ bun-debug
 ```
 
 It is very similar to my own development environment (except I use macOS)
-
 
 ### MacOS
 

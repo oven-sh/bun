@@ -68,6 +68,7 @@ DEFINE_VISIT_CHILDREN(JSFFIFunction);
 void JSFFIFunction::finishCreation(VM& vm, NativeExecutable* executable, unsigned length, const String& name)
 {
     Base::finishCreation(vm, executable, length, name);
+    this->putDirect(vm, JSC::Identifier::fromString(vm, String(MAKE_STATIC_STRING_IMPL("ptr"))), jsNumber(bitwise_cast<double>(this->m_function)), JSC::PropertyAttribute::ReadOnly | 0);
     ASSERT(inherits(info()));
 }
 

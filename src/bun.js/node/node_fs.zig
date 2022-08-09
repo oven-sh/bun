@@ -783,7 +783,7 @@ const Arguments = struct {
         /// @default false
         recursive: bool = false,
         /// A file mode. If a string is passed, it is parsed as an octal integer. If not specified
-        /// @default 
+        /// @default
         mode: Mode = 0o777,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Mkdir {
@@ -1136,28 +1136,28 @@ const Arguments = struct {
 
     /// Write `buffer` to the file specified by `fd`. If `buffer` is a normal object, it
     /// must have an own `toString` function property.
-    /// 
+    ///
     /// `offset` determines the part of the buffer to be written, and `length` is
     /// an integer specifying the number of bytes to write.
-    /// 
+    ///
     /// `position` refers to the offset from the beginning of the file where this data
     /// should be written. If `typeof position !== 'number'`, the data will be written
     /// at the current position. See [`pwrite(2)`](http://man7.org/linux/man-pages/man2/pwrite.2.html).
-    /// 
+    ///
     /// The callback will be given three arguments `(err, bytesWritten, buffer)` where`bytesWritten` specifies how many _bytes_ were written from `buffer`.
-    /// 
+    ///
     /// If this method is invoked as its `util.promisify()` ed version, it returns
     /// a promise for an `Object` with `bytesWritten` and `buffer` properties.
-    /// 
+    ///
     /// It is unsafe to use `fs.write()` multiple times on the same file without waiting
     /// for the callback. For this scenario, {@link createWriteStream} is
     /// recommended.
-    /// 
+    ///
     /// On Linux, positional writes don't work when the file is opened in append mode.
     /// The kernel ignores the position argument and always appends the data to
     /// the end of the file.
     /// @since v0.0.2
-    /// 
+    ///
     pub const Write = struct {
         fd: FileDescriptor,
         buffer: StringOrBuffer,
@@ -2430,6 +2430,11 @@ pub const NodeFS = struct {
                 }
 
                 if (comptime Environment.isLinux) {
+                    // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
+                    if (args.mode.isForceClone()) {
+                        return Maybe(Return.CopyFile).todo;
+                    }
+
                     const src_fd = switch (Syscall.open(src, std.os.O.RDONLY, 0644)) {
                         .result => |result| result,
                         .err => |err| return .{ .err = err },
@@ -2447,7 +2452,8 @@ pub const NodeFS = struct {
                         return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(C.SystemErrno.ENOTSUP) } };
                     }
 
-                    var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC;
+                    var flags: Mode = std.os.O.CREAT | std.os.O.WRONLY;
+                    var wrote: usize = 0;
                     if (args.mode.shouldntOverwrite()) {
                         flags |= std.os.O.EXCL;
                     }
@@ -2456,38 +2462,48 @@ pub const NodeFS = struct {
                         .result => |result| result,
                         .err => |err| return Maybe(Return.CopyFile){ .err = err },
                     };
+
+                    var size = @intCast(usize, @maximum(stat_.size, 0));
+                    const original_size = size;
+
                     defer {
+                        if (original_size > wrote)
+                            _ = linux.ftruncate(dest_fd, wrote);
                         _ = Syscall.close(dest_fd);
                     }
 
                     var off_in_copy = @bitCast(i64, @as(u64, 0));
                     var off_out_copy = @bitCast(i64, @as(u64, 0));
 
-                    // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
-                    if (args.mode.isForceClone()) {
-                        return Maybe(Return.CopyFile).todo;
-                    }
-
-                    var size = @intCast(usize, @maximum(stat_.size, 0));
-
                     if (size == 0) {
                         // copy until EOF
-                        size = std.mem.page_size;
                         while (true) {
+
                             // Linux Kernel 5.3 or later
-                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
-                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| return err;
+                            const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, std.mem.page_size, 0);
+                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
+                                // TODO: handle EXDEV
+                                // seems like zfs does not support copy_file_range across devices
+                                // see https://discord.com/channels/876711213126520882/876711213126520885/1006465112707698770
+                                return err;
+                            }
                             // wrote zero bytes means EOF
                             if (written == 0) break;
-                            size -|= written;
+                            wrote +|= written;
                         }
                     } else {
                         while (size > 0) {
                             // Linux Kernel 5.3 or later
                             const written = linux.copy_file_range(src_fd, &off_in_copy, dest_fd, &off_out_copy, size, 0);
-                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| return err;
+                            if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
+                                // TODO: handle EXDEV
+                                // seems like zfs does not support copy_file_range across devices
+                                // see https://discord.com/channels/876711213126520882/876711213126520885/1006465112707698770
+                                return err;
+                            }
                             // wrote zero bytes means EOF
                             if (written == 0) break;
+                            wrote +|= written;
                             size -|= written;
                         }
                     }

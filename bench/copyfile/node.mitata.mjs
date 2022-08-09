@@ -1,7 +1,7 @@
 import { copyFileSync, writeFileSync } from "node:fs";
 import { bench, run } from "mitata";
 
-const size = parseInt(process.env.FILE_SIZE, 10) || 1024 * 4;
+const size = parseInt(process.env.FILE_SIZE, 10) || 1024 * 16;
 const rand = new Float64Array(size);
 for (let i = 0; i < size; i++) {
   rand[i] = Math.random();
@@ -14,8 +14,10 @@ const src = `/tmp/fs-test-copy-file-${(Math.random() * 100000 + 100).toString(
 )}`;
 writeFileSync(src, new Buffer(rand.buffer));
 
+const srcBuf = new TextEncoder().encode(src);
+const destBuf = new TextEncoder().encode(dest);
 bench(`copyFileSync(${rand.buffer.byteLength} bytes)`, () =>
-  copyFileSync(src, dest)
+  copyFileSync(srcBuf, destBuf)
 );
 
 await run();

@@ -76,6 +76,8 @@ runs:
         OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
         BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         BUN_RELEASE_DIR: ${{ runner.temp }}/release
+        WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+        WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
       run: |
         rm -rf packages/${{ inputs.package }}
         mkdir -p packages/${{ inputs.package }}
@@ -90,6 +92,8 @@ runs:
         OBJ_DIR: ${{ runner.temp }}/bun-cpp-obj
         BUN_DEPS_OUT_DIR: ${{runner.temp}}/bun-deps
         BUN_RELEASE_DIR: ${{ runner.temp }}/release
+        WEBKIT_RELEASE_DIR: ${{ runner.temp }}/bun-webkit
+        WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
       run: |
         cd ${{runner.temp}}/release
         chmod +x bun-profile bun

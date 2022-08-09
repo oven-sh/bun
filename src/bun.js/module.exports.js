@@ -1,75 +1,53 @@
-function resolve(request, args) {
-  if (typeof args === "object" && args?.paths?.length) {
-    return this.resolveSync(request, args);
-  }
+var fileURLToPath;
 
-  return this.resolveSync(request);
-}
-
-// not implemented
-resolve.paths = () => [];
-
-function require(pathString) {
-  // this refers to an ImportMeta instance
-  const resolved = this.resolveSync(pathString);
-  return this.require(resolved);
-}
-
-const main = {
-  get() {
-    return Bun.main;
-  },
-  set() {
-    return false;
-  },
-  configurable: false,
+var pathsFunction = function paths() {
+  return [];
 };
 
 export function createRequire(filename) {
   var filenameString = filename;
   const isURL =
     typeof filename === "object" && filename && filename instanceof URL;
-  if (isURL) {
-    filenameString = filename.pathname;
-  }
-
-  var lastSlash = filenameString.lastIndexOf(
-    // TODO: WINDOWS
-    // windows is more complicated here
-    // but we don't support windows yet
-    process.platform !== "win32" ? "/" : "\\"
-  );
-
-  var customImportMeta = Object.create(import.meta);
-  customImportMeta.path = filenameString;
-  customImportMeta.file =
-    lastSlash > -1 ? filenameString.substring(lastSlash + 1) : filenameString;
-  customImportMeta.dir =
-    lastSlash > -1 ? filenameString.substring(0, lastSlash) : "";
 
   if (isURL) {
-    customImportMeta.url = filename;
-  } else {
-    // lazy because URL is slow and also can throw
-    Object.defineProperty(customImportMeta, "url", {
-      get() {
-        const value = new URL("file://" + customImportMeta.path).href;
-        Object.defineProperty(customImportMeta, "url", {
-          value,
-        });
-        return value;
-      },
-      configurable: true,
-    });
+    fileURLToPath ||= globalThis[Symbol.for("Bun.lazy")]("fileURLToPath");
+    filenameString = fileURLToPath(filename);
   }
 
-  var bound = require.bind(customImportMeta);
-  bound.resolve = resolve.bind(customImportMeta);
+  var pathObject = {
+    path: filenameString,
+    resolveSync,
+  };
+  var bunResolveSync = import.meta.resolveSync;
+  var realRequire = import.meta.require;
 
-  // do this one lazily
-  Object.defineProperty(bound, "main", main);
+  function resolveSync(id) {
+    return arguments.length <= 1
+      ? bunResolveSync.call(pathObject, id)
+      : bunResolveSync.call(pathObject, id, arguments[1]);
+  }
 
-  return bound;
+  var requireFunction = function require(id) {
+    return realRequire.call(
+      pathObject,
+      bunResolveSync.call(pathObject, id, filenameString)
+    );
+  };
+
+  requireFunction.resolve = function resolve(id, pathsArg) {
+    if (arguments.length > 1 && pathsArg && typeof pathsArg === "object") {
+      var { paths } = pathsArg;
+      if (paths && Array.isArray(paths) && paths.length > 0) {
+        return bunResolveSync.call(pathObject, id, paths[0]);
+      }
+    }
+
+    return bunResolveSync.call(pathObject, id);
+  };
+  requireFunction.resolve.paths = pathsFunction;
+  requireFunction.main = undefined;
+
+  return requireFunction;
 }
 
 // this isn't exhaustive

@@ -16,22 +16,25 @@ CPU_TARGET ?= native
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
 NATIVE_OR_OLD_MARCH =
 
+DEFAULT_MIN_MACOS_VERSION=
 ARCH_NAME :=
 DOCKER_BUILDARCH =
 ifeq ($(ARCH_NAME_RAW),arm64)
-	ARCH_NAME = aarch64
-	DOCKER_BUILDARCH = arm64
-	BREW_PREFIX_PATH = /opt/homebrew
-	MIN_MACOS_VERSION ?= 11.0
-	MARCH_NATIVE = -mtune=$(CPU_TARGET)
+ARCH_NAME = aarch64
+DOCKER_BUILDARCH = arm64
+BREW_PREFIX_PATH = /opt/homebrew
+DEFAULT_MIN_MACOS_VERSION = 11.0
+MARCH_NATIVE = -mtune=$(CPU_TARGET)
 else
-	ARCH_NAME = x64
-	DOCKER_BUILDARCH = amd64
-	BREW_PREFIX_PATH = /usr/local
-	MIN_MACOS_VERSION ?= 10.14
-	MARCH_NATIVE = -march=$(CPU_TARGET) -mtune=$(CPU_TARGET)
-	NATIVE_OR_OLD_MARCH = -march=westmere
+ARCH_NAME = x64
+DOCKER_BUILDARCH = amd64
+BREW_PREFIX_PATH = /usr/local
+DEFAULT_MIN_MACOS_VERSION = 10.14
+MARCH_NATIVE = -march=$(CPU_TARGET) -mtune=$(CPU_TARGET)
+NATIVE_OR_OLD_MARCH = -march=westmere
 endif
+
+MIN_MACOS_VERSION ?= $(DEFAULT_MIN_MACOS_VERSION)
 
 AR=
 
@@ -123,7 +126,7 @@ CMAKE_FLAGS = $(CMAKE_FLAGS_WITHOUT_RELEASE) -DCMAKE_BUILD_TYPE=Release
 SQLITE_OBJECT =
 
 
-BITCODE_OR_SECTIONS=-fdata-sections -ffunction-sections
+BITCODE_OR_SECTIONS= -flto
 EMBED_OR_EMIT_BITCODE=
 LIBTOOL=libtoolize
 ifeq ($(OS_NAME),darwin)
@@ -367,20 +370,24 @@ ifeq ($(OS_NAME), darwin)
 	SHARED_LIB_EXTENSION = .dylib
 endif
 
-ARCHIVE_FILES_WITHOUT_LIBCRYPTO = \
-		$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
-		-L$(BUN_DEPS_OUT_DIR) \
-		-llolhtml \
-		-lz \
+MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
+	-larchive \
+	-lz \
+	$(BUN_DEPS_OUT_DIR)/picohttpparser.o \
+	$(_MIMALLOC_LINK) \
+	-lssl \
+	-lcrypto \
+	-llolhtml
+
+ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
-		-lssl \
 		-lbase64 \
 		-ltcc \
 		-lusockets \
-		$(BUN_DEPS_OUT_DIR)/libuwsockets.o \
-		$(_MIMALLOC_LINK)
+		$(BUN_DEPS_OUT_DIR)/libuwsockets.o
 
-ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) -lcrypto
+ARCHIVE_FILES = $(ARCHIVE_FILES_WITHOUT_LIBCRYPTO) 
+
 STATIC_MUSL_FLAG ?=
 
 ifeq ($(OS_NAME), linux)
@@ -399,9 +406,10 @@ PLATFORM_LINKER_FLAGS = $(BUN_CFLAGS) \
 		-fno-semantic-interposition \
 		-flto \
 		-Wl,--allow-multiple-definition \
-		-rdynamic
+		-rdynamic \
+		$(BUN_DEPS_OUT_DIR)/libbacktrace.a
 
-ARCHIVE_FILES_WITHOUT_LIBCRYPTO += $(BUN_DEPS_OUT_DIR)/libbacktrace.a
+ 
 endif
 
 
@@ -735,29 +743,29 @@ generate-install-script:
 .PHONY: fetch
 fetch:
 	$(ZIG) build -Drelease-fast fetch-obj
-	$(CXX) $(PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/fetch.o
 
 .PHONY: sha
 sha:
 	$(ZIG) build -Drelease-fast sha-bench-obj
-	$(CXX) $(PACKAGE_DIR)/sha.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/sha.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/sha $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/sha.o
 
 .PHONY: fetch-debug
 fetch-debug:
 	$(ZIG) build fetch-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
+	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 
 .PHONY: httpbench-debug
 httpbench-debug:
 	$(ZIG) build httpbench-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
+	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 
 .PHONY: httpbench-release
 httpbench-release:
 	$(ZIG) build -Drelease-fast httpbench-obj
-	$(CXX) $(PACKAGE_DIR)/httpbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/httpbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/httpbench.o
 
 .PHONY: check-glibc-version-dependency

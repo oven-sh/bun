@@ -105,6 +105,19 @@ void *ptr_should_point_to_42_as_int32_t() {
   return ptr;
 }
 
+static uint8_t buffer_with_deallocator[128];
+static int deallocatorCalled;
+void deallocator(void *ptr, void *userData) { deallocatorCalled++; }
+void *getDeallocatorCallback() {
+  deallocatorCalled = 0;
+  return &deallocator;
+}
+void *getDeallocatorBuffer() {
+  deallocatorCalled = 0;
+  return &buffer_with_deallocator;
+}
+int getDeallocatorCalledCount() { return deallocatorCalled; }
+
 bool does_pointer_equal_42_as_int32_t(int32_t *ptr);
 bool does_pointer_equal_42_as_int32_t(int32_t *ptr) { return *ptr == 42; }
 

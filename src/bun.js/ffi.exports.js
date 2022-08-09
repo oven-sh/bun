@@ -226,9 +226,66 @@ function FFIBuilder(params, returnType, functionToCall, name) {
   Object.defineProperty(func, "name", {
     value: name,
   });
-  const wrap = (...args) => func(functionToCall, ...args);
-  wrap.native = functionToCall;
 
+  // variadic arguments can be expensive
+  // most FFI functions are going to be < 5 arguments
+  // so we just inline it
+  var wrap;
+  switch (paramNames.length) {
+    case 0:
+      wrap = () => func(functionToCall);
+      break;
+    case 1:
+      wrap = (arg1) => func(functionToCall, arg1);
+      break;
+    case 2:
+      wrap = (arg1, arg2) => func(functionToCall, arg1, arg2);
+      break;
+    case 3:
+      wrap = (arg1, arg2, arg3) => func(functionToCall, arg1, arg2, arg3);
+      break;
+    case 4:
+      wrap = (arg1, arg2, arg3, arg4) =>
+        func(functionToCall, arg1, arg2, arg3, arg4);
+      break;
+    case 5:
+      wrap = (arg1, arg2, arg3, arg4, arg5) =>
+        func(functionToCall, arg1, arg2, arg3, arg4, arg5);
+    case 6:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6) =>
+        func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6);
+      break;
+    case 7:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7) =>
+        func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+      break;
+    case 8:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8) =>
+        func(functionToCall, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8);
+      break;
+    case 9:
+      wrap = (arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9) =>
+        func(
+          functionToCall,
+          arg1,
+          arg2,
+          arg3,
+          arg4,
+          arg5,
+          arg6,
+          arg7,
+          arg8,
+          arg9
+        );
+      break;
+    default: {
+      wrap = (...args) => func(functionToCall, ...args);
+      break;
+    }
+  }
+
+  wrap.native = functionToCall;
+  wrap.ptr = functionToCall.ptr;
   return wrap;
 }
 

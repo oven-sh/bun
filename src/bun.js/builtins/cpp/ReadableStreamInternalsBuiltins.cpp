@@ -1488,7 +1488,7 @@ const char* const s_readableStreamInternalsOnFlushDirectStreamCode =
 const JSC::ConstructAbility s_readableStreamInternalsCreateTextStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsCreateTextStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsCreateTextStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsCreateTextStreamCodeLength = 2393;
+const int s_readableStreamInternalsCreateTextStreamCodeLength = 2373;
 static const JSC::Intrinsic s_readableStreamInternalsCreateTextStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsCreateTextStreamCode =
     "(function (highWaterMark) {\n" \
@@ -1569,13 +1569,13 @@ const char* const s_readableStreamInternalsCreateTextStreamCode =
     "\n" \
     "      if (hasBuffer && !hasString) {\n" \
     "        return new globalThis.TextDecoder().decode(\n" \
-    "          globalThis.Bun.concatArrayBuffers(array)\n" \
+    "          @Bun.concatArrayBuffers(array)\n" \
     "        );\n" \
     "      }\n" \
     "\n" \
     "      //\n" \
     "\n" \
-    "      var arrayBufferSink = new globalThis.Bun.ArrayBufferSink();\n" \
+    "      var arrayBufferSink = new @Bun.ArrayBufferSink();\n" \
     "      arrayBufferSink.start({\n" \
     "        highWaterMark: estimatedLength,\n" \
     "        asUint8Array: true,\n" \
@@ -1714,7 +1714,7 @@ const char* const s_readableStreamInternalsInitializeArrayStreamCode =
 const JSC::ConstructAbility s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsInitializeArrayBufferStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsInitializeArrayBufferStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsInitializeArrayBufferStreamCodeLength = 1005;
+const int s_readableStreamInternalsInitializeArrayBufferStreamCodeLength = 995;
 static const JSC::Intrinsic s_readableStreamInternalsInitializeArrayBufferStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode =
     "(function (underlyingSource, highWaterMark) {\n" \
@@ -1728,7 +1728,7 @@ const char* const s_readableStreamInternalsInitializeArrayBufferStreamCode =
     "    highWaterMark && typeof highWaterMark === \"number\"\n" \
     "      ? { highWaterMark, stream: true, asUint8Array: true }\n" \
     "      : { stream: true, asUint8Array: true };\n" \
-    "  var sink = new globalThis.Bun.ArrayBufferSink();\n" \
+    "  var sink = new @Bun.ArrayBufferSink();\n" \
     "  sink.start(opts);\n" \
     "\n" \
     "  var controller = {\n" \
@@ -2408,13 +2408,13 @@ const char* const s_readableStreamInternalsReadableStreamIntoTextCode =
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeLength = 1543;
+const int s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeLength = 1533;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamToArrayBufferDirectCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamToArrayBufferDirectCode =
     "(function (stream, underlyingSource) {\n" \
     "  \"use strict\";\n" \
     "\n" \
-    "  var sink = new globalThis.Bun.ArrayBufferSink();\n" \
+    "  var sink = new @Bun.ArrayBufferSink();\n" \
     "  @putByIdDirectPrivate(stream, \"underlyingSource\", @undefined);\n" \
     "  var highWaterMark = @getByIdDirectPrivate(stream, \"highWaterMark\");\n" \
     "  sink.start(highWaterMark ? { highWaterMark } : {});\n" \

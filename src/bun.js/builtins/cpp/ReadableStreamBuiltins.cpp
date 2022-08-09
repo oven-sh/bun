@@ -168,7 +168,7 @@ const char* const s_readableStreamReadableStreamToTextCode =
 const JSC::ConstructAbility s_readableStreamReadableStreamToArrayBufferCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToArrayBufferCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToArrayBufferCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamReadableStreamToArrayBufferCodeLength = 354;
+const int s_readableStreamReadableStreamToArrayBufferCodeLength = 334;
 static const JSC::Intrinsic s_readableStreamReadableStreamToArrayBufferCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToArrayBufferCode =
     "(function (stream) {\n" \
@@ -181,32 +181,32 @@ const char* const s_readableStreamReadableStreamToArrayBufferCode =
     "        return @readableStreamToArrayBufferDirect(stream, underlyingSource);\n" \
     "    }\n" \
     "\n" \
-    "    return globalThis.Bun.readableStreamToArray(stream).@then(globalThis.Bun.concatArrayBuffers);\n" \
+    "    return @Bun.readableStreamToArray(stream).@then(@Bun.concatArrayBuffers);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToJSONCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToJSONCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToJSONCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamReadableStreamToJSONCodeLength = 128;
+const int s_readableStreamReadableStreamToJSONCodeLength = 118;
 static const JSC::Intrinsic s_readableStreamReadableStreamToJSONCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToJSONCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
     "\n" \
-    "    return globalThis.Bun.readableStreamToText(stream).@then(globalThis.JSON.parse);\n" \
+    "    return @Bun.readableStreamToText(stream).@then(globalThis.JSON.parse);\n" \
     "})\n" \
 ;
 
 const JSC::ConstructAbility s_readableStreamReadableStreamToBlobCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamReadableStreamToBlobCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamReadableStreamToBlobCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamReadableStreamToBlobCodeLength = 149;
+const int s_readableStreamReadableStreamToBlobCodeLength = 139;
 static const JSC::Intrinsic s_readableStreamReadableStreamToBlobCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamReadableStreamToBlobCode =
     "(function (stream) {\n" \
     "    \"use strict\";\n" \
-    "    return @Promise.resolve(globalThis.Bun.readableStreamToArray(stream)).@then(array => new Blob(array));\n" \
+    "    return @Promise.resolve(@Bun.readableStreamToArray(stream)).@then(array => new Blob(array));\n" \
     "})\n" \
 ;
 

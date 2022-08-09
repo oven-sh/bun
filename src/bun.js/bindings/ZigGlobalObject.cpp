@@ -2052,7 +2052,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
     auto& builtinNames = clientData->builtinNames();
     JSC__JSValue const* constructors = Zig__getAPIConstructors(&constructor_count, this);
     WTF::Vector<GlobalPropertyInfo> extraStaticGlobals;
-    extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 1);
+    extraStaticGlobals.reserveCapacity((size_t)count + constructor_count + 3 + 1 + 1);
     int i = 0;
     for (; i < constructor_count; i++) {
         auto* object = JSC::jsDynamicCast<JSC::JSCallbackConstructor*>(JSC::JSValue::decode(constructors[i]).asCell()->getObject());
@@ -2145,7 +2145,10 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
         }
 
         extraStaticGlobals.uncheckedAppend(
-            GlobalPropertyInfo { JSC::Identifier::fromString(vm, jsClass->className()),
+            GlobalPropertyInfo { builtinNames.BunPublicName(),
+                JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
+        extraStaticGlobals.uncheckedAppend(
+            GlobalPropertyInfo { builtinNames.BunPrivateName(),
                 JSC::JSValue(object), JSC::PropertyAttribute::DontDelete | 0 });
     }
 

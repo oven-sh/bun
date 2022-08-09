@@ -135,20 +135,20 @@ function readableStreamToArrayBuffer(stream) {
         return @readableStreamToArrayBufferDirect(stream, underlyingSource);
     }
 
-    return globalThis.Bun.readableStreamToArray(stream).@then(globalThis.Bun.concatArrayBuffers);
+    return @Bun.readableStreamToArray(stream).@then(@Bun.concatArrayBuffers);
 }
 
 @globalPrivate
 function readableStreamToJSON(stream) {
     "use strict";
 
-    return globalThis.Bun.readableStreamToText(stream).@then(globalThis.JSON.parse);
+    return @Bun.readableStreamToText(stream).@then(globalThis.JSON.parse);
 }
 
 @globalPrivate
 function readableStreamToBlob(stream) {
     "use strict";
-    return @Promise.resolve(globalThis.Bun.readableStreamToArray(stream)).@then(array => new Blob(array));
+    return @Promise.resolve(@Bun.readableStreamToArray(stream)).@then(array => new Blob(array));
 }
 
 @globalPrivate

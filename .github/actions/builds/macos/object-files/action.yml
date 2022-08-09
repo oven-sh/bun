@@ -32,9 +32,9 @@ runs:
       with:
         context: .
         push: false
-        tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{ github.sha }}
-        cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-3--${{ inputs.cpu }}-${{ inputs.arch }}-macos
-        cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-3--${{ inputs.cpu }}-${{ inputs.arch }}-macos,mode=max
+        tags: ghcr.io/oven-sh/bun-obj:${{github.sha}}-${{inputs.cpu}}-${{inputs.arch}}-macos
+        cache-from: type=registry,ref=ghcr.io/oven-sh/bun-obj:buildcache-bust-3--${{inputs.cpu}}-${{inputs.arch}}-macos
+        cache-to: type=registry,ref=ghcr.io/oven-sh/bun-obj:buildcache-bust-3--${{inputs.cpu}}-${{inputs.arch}}-macos,mode=max
         build-args: |
           ARCH=${{ inputs.arch }}
           BUILDARCH=amd64

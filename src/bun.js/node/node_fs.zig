@@ -2415,6 +2415,7 @@ pub const NodeFS = struct {
                 var src = args.src.sliceZ(&src_buf);
                 var dest = args.dest.sliceZ(&dest_buf);
 
+                // TODO: do we need to fchown?
                 if (comptime Environment.isMac) {
                     if (args.mode.isForceClone()) {
                         // https://www.manpagez.com/man/2/clonefile/
@@ -2429,6 +2430,8 @@ pub const NodeFS = struct {
                             return Maybe(Return.CopyFile){ .err = .{ .errno = @enumToInt(C.SystemErrno.ENOTSUP) } };
                         }
 
+                        // 64 KB is about the break-even point for clonefile() to be worth it
+                        // at least, on an M1 with an NVME SSD.
                         if (stat_.size > 128 * 1024) {
                             if (!args.mode.shouldntOverwrite()) {
                                 // clonefile() will fail if it already exists
@@ -2460,10 +2463,14 @@ pub const NodeFS = struct {
                             };
                             defer {
                                 _ = std.c.ftruncate(dest_fd, @intCast(std.c.off_t, @truncate(u63, wrote)));
-
                                 _ = Syscall.close(dest_fd);
                             }
 
+                            // stack buffer of 16 KB
+                            // this code path isn't hit unless the buffer is < 128 KB
+                            // 16 writes is ok
+                            // 16 KB is high end of what is okay to use for stack space
+                            // good thing we ask for absurdly large stack sizes
                             var buf: [16384]u8 = undefined;
                             var remain = @intCast(u64, @maximum(stat_.size, 0));
                             toplevel: while (remain > 0) {
@@ -2471,6 +2478,7 @@ pub const NodeFS = struct {
                                     .result => |result| result,
                                     .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
                                 };
+                                // 0 == EOF
                                 if (amt == 0) {
                                     break :toplevel;
                                 }
@@ -2492,6 +2500,8 @@ pub const NodeFS = struct {
                                         .result => |result| result,
                                         .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(src) },
                                     };
+                                    // we don't know the size
+                                    // so we just go forever until we get an EOF
                                     if (amt == 0) {
                                         break;
                                     }
@@ -2508,11 +2518,16 @@ pub const NodeFS = struct {
                                     }
                                 }
                             }
+                            // can't really do anything with this error
                             _ = C.fchmod(dest_fd, stat_.mode);
+
                             return ret.success;
                         }
                     }
 
+                    // we fallback to copyfile() when the file is > 128 KB and clonefile fails
+                    // clonefile() isn't supported on all devices
+                    // nor is it supported across devices
                     var mode: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA;
                     if (args.mode.shouldntOverwrite()) {
                         mode |= C.darwin.COPYFILE_EXCL;

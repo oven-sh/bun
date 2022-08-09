@@ -1255,9 +1255,7 @@ jsc-build-mac-copy:
 clean-jsc:
 	cd src/bun.js/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/bun.js/WebKit/WebKitBuild
 clean-bindings:
-	rm -rf $(OBJ_DIR)/*.o
-	rm -rf $(OBJ_DIR)/webcore/*.o
-	rm -rf $(BINDINGS_OBJ)
+	rm -rf $(OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/*.o $(DEBUG_OBJ_DIR)/webcore/*.o $(DEBUG_BINDINGS_OBJ) $(OBJ_DIR)/webcore/*.o $(BINDINGS_OBJ)
 
 .PHONY: clean
 clean: clean-bindings

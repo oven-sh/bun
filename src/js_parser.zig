@@ -15718,7 +15718,7 @@ fn NewParser_(
 
         pub fn ignoreUsage(p: *P, ref: Ref) void {
             if (!p.is_control_flow_dead) {
-                assert(@as(usize, ref.innerIndex()) < p.symbols.items.len);
+                if (comptime Environment.allow_assert) assert(@as(usize, ref.innerIndex()) < p.symbols.items.len);
                 p.symbols.items[ref.innerIndex()].use_count_estimate -|= 1;
                 var use = p.symbol_uses.get(ref) orelse return;
                 use.count_estimate -|= 1;

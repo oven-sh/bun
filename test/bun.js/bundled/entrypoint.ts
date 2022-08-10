@@ -7,7 +7,7 @@ import "./always-bundled-module/cjs";
 import { foo } from "i-am-bundled/esm";
 import { foo as foo2 } from "always-bundled-module/esm";
 import cJS from "always-bundled-module/cjs";
-import { foo as foo2 } from "./always-bundled-module/esm";
+import { foo as foo2 } from "always-bundled-module/esm";
 import cJS from "./always-bundled-module/cjs";
 
 foo();

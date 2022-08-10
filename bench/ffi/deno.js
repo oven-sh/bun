@@ -1,4 +1,4 @@
- import { run, bench, group } from "../node_modules/mitata/src/cli.mjs";
+import { run, bench, group } from "../node_modules/mitata/src/cli.mjs";
 
 
 const extension = "darwin" !== Deno.build.os ? "so" : "dylib";

@@ -1,6 +1,5 @@
 import { run, bench, group } from "../node_modules/mitata/src/cli.mjs";
 
-
 const extension = "darwin" !== Deno.build.os ? "so" : "dylib";
 const path = new URL(
   "src/target/release/libffi_napi_bench." + extension,

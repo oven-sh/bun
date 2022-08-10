@@ -1631,6 +1631,14 @@ bun is distributed as a single binary file, so you can also do this manually:
 - Unzip the folder
 - Move the `bun` binary to `~/.bun/bin` (or anywhere)
 
+### `bun build`
+
+To view the output of Bun's built-in transpiler, use `bun build`. For example:
+
+```bash
+bun build file.js --platform=bun
+```
+
 ### Canary builds
 
 [Canary](https://github.com/oven-sh/bun/releases/tag/canary) builds are generated on every commit.

@@ -12,3 +12,6 @@ import cJS from "always-bundled-module/cjs";
 
 foo();
 foo2();
+cJS();
+
+export default cJS();

@@ -1,4 +1,4 @@
-import { bench, run } from "../node_modules/mitata/src/cli.mjs.js";
+import { run, bench } from "../node_modules/mitata/src/cli.mjs";
 
 bench("sync", () => {});
 bench("async", async () => {});

@@ -975,7 +975,7 @@ const char* const s_readableStreamInternalsIsReadableStreamDefaultControllerCode
 const JSC::ConstructAbility s_readableStreamInternalsReadDirectStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadDirectStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadDirectStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadDirectStreamCodeLength = 1534;
+const int s_readableStreamInternalsReadDirectStreamCodeLength = 1582;
 static const JSC::Intrinsic s_readableStreamInternalsReadDirectStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadDirectStreamCode =
     "(function (stream, sink, underlyingSource) {\n" \
@@ -991,7 +991,8 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
     "  function close(stream, reason) {\n" \
     "    if (reason && underlyingSource?.cancel) {\n" \
     "      try {\n" \
-    "        underlyingSource.cancel(reason);\n" \
+    "        var prom = underlyingSource.cancel(reason);\n" \
+    "        @markPromiseAsHandled(prom);\n" \
     "      } catch (e) {\n" \
     "      }\n" \
     "\n" \
@@ -1081,7 +1082,7 @@ const char* const s_readableStreamInternalsAssignToStreamCode =
 const JSC::ConstructAbility s_readableStreamInternalsReadStreamIntoSinkCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadStreamIntoSinkCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadStreamIntoSinkCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadStreamIntoSinkCodeLength = 2795;
+const int s_readableStreamInternalsReadStreamIntoSinkCodeLength = 2868;
 static const JSC::Intrinsic s_readableStreamInternalsReadStreamIntoSinkCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadStreamIntoSinkCode =
     "(async function (stream, sink, isNative) {\n" \
@@ -1101,7 +1102,7 @@ const char* const s_readableStreamInternalsReadStreamIntoSinkCode =
     "    }\n" \
     "    var wroteCount = many.value.length;\n" \
     "    const highWaterMark = @getByIdDirectPrivate(stream, \"highWaterMark\");\n" \
-    "    if (isNative) @startDirectStream.@call(sink, stream, @undefined, () => !didThrow && stream.cancel());\n" \
+    "    if (isNative) @startDirectStream.@call(sink, stream, @undefined, () => !didThrow && @markPromiseAsHandled(stream.cancel()));\n" \
     "\n" \
     "    if (highWaterMark) sink.start({ highWaterMark });\n" \
     "    \n" \
@@ -1135,7 +1136,8 @@ const char* const s_readableStreamInternalsReadStreamIntoSinkCode =
     "\n" \
     "    try {\n" \
     "        reader = @undefined;\n" \
-    "        stream.cancel(e);\n" \
+    "        const prom = stream.cancel(e);\n" \
+    "        @markPromiseAsHandled(prom);\n" \
     "    } catch (j) {}\n" \
     "\n" \
     "    if (sink && !didClose) {\n" \

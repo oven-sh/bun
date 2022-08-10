@@ -2,13 +2,15 @@
   "version": "1.0.4",
   "name": "@bun-examples/hono",
   "devDependencies": {
-    "bun-types": "latest"
+    "bun-types": "latest",
+    "nodemon": "latest"
   },
   "dependencies": {
     "hono": "^2.0.0"
   },
   "scripts": {
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "nodemon": "bun run nodemon"
   },
   "module": "src/index.js"
 }

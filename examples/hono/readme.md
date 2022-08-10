@@ -14,6 +14,12 @@ bun create hono ./NAME_HERE
 bun run start
 ```
 
+### Auto refresh server with nodemon
+
+```
+bun run dev
+```
+
 Open http://localhost:3000 with your browser to see the result.
 
 ### For more information

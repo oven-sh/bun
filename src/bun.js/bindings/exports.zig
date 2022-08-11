@@ -1204,6 +1204,7 @@ pub const ZigConsoleClient = struct {
             ArrayBuffer,
 
             JSX,
+            Event,
 
             pub inline fn canHaveCircularReferences(tag: Tag) bool {
                 return tag == .Array or tag == .Object or tag == .Map or tag == .Set;
@@ -1369,6 +1370,8 @@ pub const ZigConsoleClient = struct {
                         .StrictEvalActivation,
                         .WithScope,
                         => .NativeCode,
+
+                        .Event => .Event,
 
                         else => .JSON,
                     },
@@ -1871,6 +1874,54 @@ pub const ZigConsoleClient = struct {
 
                     writer.print("{}", .{str});
                 },
+                .Event => {
+                    var className: ZigString = ZigString.init("");
+                    value.getClassName(this.globalThis, &className);
+                    if (className.eqlComptime("Event")) {
+                        return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+                    }
+
+                    writer.print("{any} {{\n", .{className});
+                    {
+                        this.indent += 1;
+                        defer this.indent -|= 1;
+                        if (className.eqlComptime("MessageEvent")) {
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                            writer.print(
+                                comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
+                                .{},
+                            );
+                            const data = value.get(this.globalThis, "data").?;
+                            const tag = Tag.get(data, this.globalThis);
+                            if (tag.cell.isStringLike()) {
+                                this.printAs(.String, Writer, writer_, data, tag.cell, enable_ansi_colors);
+                            } else {
+                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                            }
+                        } else if (className.eqlComptime("CustomEvent")) {
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                            writer.print(
+                                comptime Output.prettyFmt("<r><blue>detail<d>:<r>", enable_ansi_colors),
+                                .{},
+                            );
+                            const data = value.get(this.globalThis, "detail").?;
+                            const tag = Tag.get(data, this.globalThis);
+                            this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                        } else if (className.eqlComptime("ErrorEvent")) {
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                            writer.print(
+                                comptime Output.prettyFmt("<r><blue>error<d>:<r>", enable_ansi_colors),
+                                .{},
+                            );
+                            const data = value.get(this.globalThis, "error").?;
+                            const tag = Tag.get(data, this.globalThis);
+                            this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                        } else {}
+                    }
+                    writer.writeAll("\n");
+                    this.writeIndent(Writer, writer_) catch unreachable;
+                    writer.print("}}\n", .{});
+                },
                 .JSX => {
                     writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
 
@@ -2249,6 +2300,7 @@ pub const ZigConsoleClient = struct {
                 .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
                 .ArrayBuffer => this.printAs(.ArrayBuffer, Writer, writer, value, result.cell, enable_ansi_colors),
                 .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Event => this.printAs(.Event, Writer, writer, value, result.cell, enable_ansi_colors),
             };
         }
     };

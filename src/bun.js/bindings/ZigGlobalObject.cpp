@@ -259,6 +259,8 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
     return true;
 }
 
+extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
+
 namespace Zig {
 
 using namespace WebCore;
@@ -358,7 +360,7 @@ WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
     JSC::Exception* exception)
 {
-    Zig__GlobalObject__reportUncaughtException(globalObject, exception);
+    Bun__reportError(globalObject, JSValue::encode(JSValue(exception)));
 }
 
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,

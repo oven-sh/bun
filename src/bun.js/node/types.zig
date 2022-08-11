@@ -682,7 +682,7 @@ pub const PathOrFileDescriptor = union(Tag) {
 
 pub const FileSystemFlags = enum(Mode) {
     /// Open file for appending. The file is created if it does not exist.
-    @"a" = std.os.O.APPEND,
+    @"a" = std.os.O.APPEND | std.os.O.WRONLY | std.os.O.CREAT,
     /// Like 'a' but fails if the path exists.
     // @"ax" = std.os.O.APPEND | std.os.O.EXCL,
     /// Open file for reading and appending. The file is created if it does not exist.

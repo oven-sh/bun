@@ -1885,6 +1885,9 @@ pub const ZigConsoleClient = struct {
                     {
                         this.indent += 1;
                         defer this.indent -|= 1;
+                        const old_quote_strings = this.quote_strings;
+                        this.quote_strings = true;
+                        defer this.quote_strings = old_quote_strings;
                         if (className.eqlComptime("MessageEvent")) {
                             this.writeIndent(Writer, writer_) catch unreachable;
                             writer.print(
@@ -1894,7 +1897,7 @@ pub const ZigConsoleClient = struct {
                             const data = value.get(this.globalThis, "data").?;
                             const tag = Tag.get(data, this.globalThis);
                             if (tag.cell.isStringLike()) {
-                                this.printAs(.String, Writer, writer_, data, tag.cell, enable_ansi_colors);
+                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
                             } else {
                                 this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
                             }

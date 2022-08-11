@@ -2141,6 +2141,7 @@ pub const JSValue = enum(JSValueReprInt) {
         // End StringObject s.
 
         MaxJS = 0b11111111,
+        Event = 0b11101111,
         _,
 
         pub fn isObject(this: JSType) bool {

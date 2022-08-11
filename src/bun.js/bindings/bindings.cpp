@@ -977,6 +977,7 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         arg2->offset = 0;
         arg2->cell_type = JSC::JSType::ArrayBufferType;
         arg2->ptr = (char*)typedArray->data();
+        arg2->shared = typedArray->isShared();
         return true;
     }
     case JSC::JSType::Int8ArrayType: {
@@ -1697,10 +1698,10 @@ JSC__JSObject* JSC__JSGlobalObject__symbolPrototype(JSC__JSGlobalObject* arg0)
 };
 
 JSC__VM* JSC__JSGlobalObject__vm(JSC__JSGlobalObject* arg0) { return &arg0->vm(); };
-    // JSC__JSObject* JSC__JSGlobalObject__createError(JSC__JSGlobalObject* arg0,
-    // unsigned char ErrorType1, WTF__String* arg2) {}; JSC__JSObject*
-    // JSC__JSGlobalObject__throwError(JSC__JSGlobalObject* arg0, JSC__JSObject*
-    // arg1) {};
+// JSC__JSObject* JSC__JSGlobalObject__createError(JSC__JSGlobalObject* arg0,
+// unsigned char ErrorType1, WTF__String* arg2) {}; JSC__JSObject*
+// JSC__JSGlobalObject__throwError(JSC__JSGlobalObject* arg0, JSC__JSObject*
+// arg1) {};
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC__JSGlobalObject* arg0)
 {

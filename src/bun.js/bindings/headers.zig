@@ -198,6 +198,7 @@ pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: ?*JSC__JSGlobalObj
 pub extern fn JSC__JSGlobalObject__generatorFunctionPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.GeneratorFunctionPrototype;
 pub extern fn JSC__JSGlobalObject__generatorPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.GeneratorPrototype;
 pub extern fn JSC__JSGlobalObject__getCachedObject(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const ZigString) JSC__JSValue;
+pub extern fn JSC__JSGlobalObject__handleRejectedPromises(arg0: ?*JSC__JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__iteratorPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.IteratorPrototype;
 pub extern fn JSC__JSGlobalObject__jsSetPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__mapIteratorPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.MapIteratorPrototype;
@@ -212,7 +213,6 @@ pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: ?*JSC__JSGlobalObj
 pub extern fn JSC__JSGlobalObject__stringPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.StringPrototype;
 pub extern fn JSC__JSGlobalObject__symbolPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__vm(arg0: ?*JSC__JSGlobalObject) [*c]JSC__VM;
-pub extern fn JSC__JSGlobalObject__handleRejectedPromises(arg0: ?*JSC__JSGlobalObject) void;
 pub extern fn WTF__URL__encodedPassword(arg0: [*c]WTF__URL) bWTF__StringView;
 pub extern fn WTF__URL__encodedUser(arg0: [*c]WTF__URL) bWTF__StringView;
 pub extern fn WTF__URL__fileSystemPath(arg0: [*c]WTF__URL) bWTF__String;

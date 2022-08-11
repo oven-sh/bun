@@ -3555,8 +3555,23 @@ pub const PackageManager = struct {
         package_json_file_: ?std.fs.File,
         comptime params: []const ParamType,
     ) !*PackageManager {
+        return initMaybeInstall(ctx, package_json_file_, params, false);
+    }
+
+    pub fn initMaybeInstall(
+        ctx: Command.Context,
+        package_json_file_: ?std.fs.File,
+        comptime params: []const ParamType,
+        comptime is_install: bool,
+    ) !*PackageManager {
         var _ctx = ctx;
         var cli = try CommandLineArguments.parse(ctx.allocator, params, &_ctx);
+
+        if (comptime is_install) {
+            if (cli.positionals.len > 1) {
+                return error.SwitchToBunAdd;
+            }
+        }
 
         return try initWithCLI(_ctx, package_json_file_, cli);
     }
@@ -3899,6 +3914,106 @@ pub const PackageManager = struct {
         if (manager.options.log_level != .silent) {
             Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
             Output.flush();
+        }
+
+        if (manager.options.positionals.len == 1) {
+            // bun unlink
+
+            var lockfile: Lockfile = undefined;
+            var name: string = "";
+            var package: Lockfile.Package = Lockfile.Package{};
+
+            // Step 1. parse the nearest package.json file
+            {
+                var current_package_json_stat = try manager.root_package_json_file.stat();
+                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat.size + 64);
+                const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
+                    current_package_json_buf,
+                    0,
+                );
+
+                const package_json_source = logger.Source.initPathString(
+                    package_json_cwd_buf[0 .. FileSystem.instance.top_level_dir.len + "package.json".len],
+                    current_package_json_buf[0..current_package_json_contents_len],
+                );
+                try lockfile.initEmpty(ctx.allocator);
+
+                try Lockfile.Package.parseMain(&lockfile, &package, ctx.allocator, manager.log, package_json_source, Features.folder);
+                name = lockfile.str(package.name);
+                if (name.len == 0) {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
+                    Global.crash();
+                } else if (!strings.isNPMPackageName(name)) {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
+                            name,
+                            package_json_source.path.text,
+                        });
+                    Global.crash();
+                }
+            }
+
+            switch (Syscall.lstat(Path.joinAbsStringZ(try manager.globalLinkDirPath(), &.{name}, .auto))) {
+                .result => |stat| {
+                    if (!std.os.S.ISLNK(stat.mode)) {
+                        Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});
+                        Global.exit(0);
+                    }
+                },
+                .err => {
+                    Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});
+                    Global.exit(0);
+                },
+            }
+
+            // Step 2. Setup the global directory
+            var node_modules: std.fs.Dir = brk: {
+                Bin.Linker.umask = C.umask(0);
+                var explicit_global_dir: string = "";
+                if (ctx.install) |install_| {
+                    explicit_global_dir = install_.global_dir orelse explicit_global_dir;
+                }
+                manager.global_dir = try Options.openGlobalDir(explicit_global_dir);
+
+                try manager.setupGlobalDir(&ctx);
+
+                break :brk manager.global_dir.?.makeOpenPath("node_modules", .{ .iterate = true }) catch |err| {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
+                    Global.crash();
+                };
+            };
+
+            // Step 3b. Link any global bins
+            if (package.bin.tag != .none) {
+                var bin_linker = Bin.Linker{
+                    .bin = package.bin,
+                    .package_installed_node_modules = node_modules.fd,
+                    .global_bin_path = manager.options.bin_path,
+                    .global_bin_dir = manager.options.global_bin_dir,
+
+                    // .destination_dir_subpath = destination_dir_subpath,
+                    .root_node_modules_folder = node_modules.fd,
+                    .package_name = strings.StringOrTinyString.init(name),
+                    .string_buf = lockfile.buffers.string_bytes.items,
+                    .extern_string_buf = lockfile.buffers.extern_strings.items,
+                };
+                bin_linker.unlink(true);
+            }
+
+            // delete it if it exists
+            node_modules.deleteTree(name) catch |err| {
+                if (manager.options.log_level != .silent)
+                    Output.prettyErrorln("<r><red>error:<r> failed to unlink package in global dir due to error {s}", .{@errorName(err)});
+                Global.crash();
+            };
+
+            Output.prettyln("<r><green>success:<r> unlinked package \"{s}\"", .{name});
+            Global.exit(0);
+        } else {
+            Output.prettyln("<r><red>error:<r> bun unlink {{packageName}} not implemented yet", .{});
+            Global.exit(1);
         }
     }
 
@@ -4494,10 +4609,11 @@ pub const PackageManager = struct {
                 }
                 manager.to_remove = updates;
             },
-            .link, .unlink, .add, .update => {
+            .link, .add, .update => {
                 try PackageJSONEditor.edit(ctx.allocator, updates, &current_package_json, dependency_list);
                 manager.package_json_updates = updates;
             },
+            else => {},
         }
 
         var buffer_writer = try JSPrinter.BufferWriter.init(ctx.allocator);
@@ -4526,7 +4642,7 @@ pub const PackageManager = struct {
 
         try installWithManager(ctx, manager, new_package_json_source, log_level);
 
-        if (op == .update or op == .add or op == .link or op == .unlink) {
+        if (op == .update or op == .add or op == .link) {
             for (manager.package_json_updates) |update| {
                 if (update.failed) {
                     Global.exit(1);
@@ -4625,7 +4741,13 @@ pub const PackageManager = struct {
     pub inline fn install(
         ctx: Command.Context,
     ) !void {
-        var manager = try PackageManager.init(ctx, null, &install_params);
+        var manager = PackageManager.initMaybeInstall(ctx, null, &install_params, true) catch |err| {
+            if (err == error.SwitchToBunAdd) {
+                return add(ctx);
+            }
+
+            return err;
+        };
 
         if (manager.options.log_level != .silent) {
             Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});

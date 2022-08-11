@@ -351,14 +351,15 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |compiled| {
-                    var cb = JSC.NewFunctionPtr(
+                    const str = ZigString.init(std.mem.span(function_name));
+                    const cb = JSC.NewFunction(
                         global,
-                        &ZigString.init(std.mem.span(function_name)),
+                        &str,
                         @intCast(u32, function.arg_types.items.len),
                         compiled.ptr,
                     );
 
-                    obj.put(global, &ZigString.init(std.mem.span(function_name)), JSC.JSValue.cast(cb));
+                    obj.put(global, &str, cb);
                 },
             }
         }
@@ -443,14 +444,14 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |compiled| {
-                    var cb = JSC.NewFunctionPtr(
+                    const cb = JSC.NewFunction(
                         global,
                         &ZigString.init(std.mem.span(function_name)),
                         @intCast(u32, function.arg_types.items.len),
                         compiled.ptr,
                     );
 
-                    obj.put(global, &ZigString.init(std.mem.span(function_name)), JSC.JSValue.cast(cb));
+                    obj.put(global, &ZigString.init(std.mem.span(function_name)), cb);
                 },
             }
         }
@@ -561,7 +562,7 @@ pub const FFI = struct {
 
         var symbols_iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = true,
-            
+
             .include_value = true,
         }).init(global.ref(), object.asObjectRef());
         defer symbols_iter.deinit();

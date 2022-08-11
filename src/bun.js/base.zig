@@ -2236,6 +2236,7 @@ pub const ArrayBuffer = extern struct {
     byte_len: u32,
     typed_array_type: JSC.JSValue.JSType,
     value: JSC.JSValue = JSC.JSValue.zero,
+    shared: bool = false,
 
     pub const name = "Bun__ArrayBuffer";
     pub const Stream = std.io.FixedBufferStream([]u8);

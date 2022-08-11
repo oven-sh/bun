@@ -101,12 +101,43 @@ pub const ZigString = extern struct {
         return this;
     }
 
+    pub fn utf8ByteLength(this: ZigString) usize {
+        if (this.isUTF8()) {
+            return this.len;
+        }
+
+        if (this.is16Bit()) {
+            return JSC.WebCore.Encoder.byteLengthU16(this.utf16SliceAligned().ptr, this.utf16Slice().len, .utf8);
+        }
+
+        return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);
+    }
+
     pub fn toOwnedSlice(this: ZigString, allocator: std.mem.Allocator) ![]u8 {
-        return try std.fmt.allocPrint(allocator, "{any}", .{this});
+        if (this.isUTF8())
+            return try allocator.dupeZ(u8, this.slice());
+
+        var list = std.ArrayList(u8).init(allocator);
+        list = if (this.is16Bit())
+            try strings.toUTF8ListWithType(list, []const u16, this.utf16SliceAligned())
+        else
+            try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
+
+        return list.items;
     }
 
     pub fn toOwnedSliceZ(this: ZigString, allocator: std.mem.Allocator) ![:0]u8 {
-        return try std.fmt.allocPrintZ(allocator, "{any}", .{this});
+        if (this.isUTF8())
+            return allocator.dupeZ(u8, this.slice());
+
+        var list = std.ArrayList(u8).init(allocator);
+        list = if (this.is16Bit())
+            try strings.toUTF8ListWithType(list, []const u16, this.utf16SliceAligned())
+        else
+            try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
+
+        try list.append(0);
+        return list.items[0 .. list.items.len - 1 :0];
     }
 
     pub fn trunc(this: ZigString, len: usize) ZigString {
@@ -341,9 +372,8 @@ pub const ZigString = extern struct {
     pub fn toSlice(this: ZigString, allocator: std.mem.Allocator) Slice {
         if (this.len == 0)
             return Slice{ .ptr = "", .len = 0, .allocator = allocator, .allocated = false };
-
         if (is16Bit(&this)) {
-            var buffer = std.fmt.allocPrint(allocator, "{}", .{this}) catch unreachable;
+            var buffer = this.toOwnedSlice(allocator) catch unreachable;
             return Slice{
                 .ptr = buffer.ptr,
                 .len = @truncate(u32, buffer.len),
@@ -365,7 +395,7 @@ pub const ZigString = extern struct {
             return Slice{ .ptr = "", .len = 0, .allocator = allocator, .allocated = false };
 
         if (is16Bit(&this)) {
-            var buffer = std.fmt.allocPrintZ(allocator, "{}", .{this}) catch unreachable;
+            var buffer = this.toOwnedSliceZ(allocator) catch unreachable;
             return Slice{
                 .ptr = buffer.ptr,
                 .len = @truncate(u32, buffer.len),
@@ -2424,7 +2454,7 @@ pub const JSValue = enum(JSValueReprInt) {
             i64 => jsNumberFromInt64(@intCast(i64, number)),
             c_uint => jsNumberFromUint64(@intCast(u64, number)),
             u64 => jsNumberFromUint64(@intCast(u64, number)),
-            u32 => jsNumberFromInt64(@intCast(i64, number)),
+            u32 => if (number <= std.math.maxInt(i32)) jsNumberFromInt32(@intCast(i32, number)) else jsNumberFromUint64(@as(u64, number)),
             u52 => jsNumberFromUint64(@as(u64, number)),
             usize => jsNumberFromUint64(@as(u64, number)),
             comptime_int => switch (number) {
@@ -2475,6 +2505,12 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("jsDoubleNumber", .{i});
     }
 
+    pub fn className(this: JSValue, globalThis: *JSGlobalObject) ZigString {
+        var str = ZigString.init("");
+        this.getClassName(globalThis, &str);
+        return str;
+    }
+
     pub fn createStringArray(globalThis: *JSGlobalObject, str: [*c]ZigString, strings_count: usize, clone: bool) JSValue {
         return cppFn("createStringArray", .{
             globalThis,
@@ -2516,11 +2552,7 @@ pub const JSValue = enum(JSValueReprInt) {
             return jsNumberFromInt32(@intCast(i32, i));
         }
 
-        if (i <= std.math.maxInt(i52)) {
-            return jsNumberFromDouble(@intToFloat(f64, @intCast(i52, i)));
-        }
-
-        return cppFn("jsNumberFromInt64", .{i});
+        return jsNumberFromDouble(@intToFloat(f64, @truncate(i52, i)));
     }
 
     pub inline fn toJS(this: JSValue, _: *const JSGlobalObject) JSValue {
@@ -2528,7 +2560,11 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn jsNumberFromUint64(i: u64) JSValue {
-        return FFI.UINT64_TO_JSVALUE(JSC.VirtualMachine.vm.global, i).asJSValue;
+        if (i <= std.math.maxInt(i32)) {
+            return jsNumberFromInt32(@intCast(i32, i));
+        }
+
+        return jsNumberFromDouble(@intToFloat(f64, @intCast(i52, @truncate(u51, i))));
     }
 
     pub fn toInt64(this: JSValue) i64 {
@@ -2631,6 +2667,12 @@ pub const JSValue = enum(JSValueReprInt) {
         cppFn("getNameProperty", .{ this, global, ret });
     }
 
+    pub fn getName(this: JSValue, global: *JSGlobalObject) ZigString {
+        var ret = ZigString.init("");
+        getNameProperty(this, global, &ret);
+        return ret;
+    }
+
     pub fn getClassName(this: JSValue, global: *JSGlobalObject, ret: *ZigString) void {
         cppFn("getClassName", .{ this, global, ret });
     }
@@ -2668,11 +2710,19 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn asArrayBuffer(this: JSValue, global: *JSGlobalObject) ?ArrayBuffer {
-        var out: ArrayBuffer = undefined;
+        var out: ArrayBuffer = .{
+            .offset = 0,
+            .len = 0,
+            .byte_len = 0,
+            .shared = false,
+            .typed_array_type = .Uint8Array,
+        };
+
         if (this.asArrayBuffer_(global, &out)) {
             out.value = this;
             return out;
         }
+
         return null;
     }
 

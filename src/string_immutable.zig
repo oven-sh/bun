@@ -1014,7 +1014,13 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
-    var list = std.ArrayList(u8).initCapacity(allocator, utf16.len) catch unreachable;
+    var list = try std.ArrayList(u8).initCapacity(allocator, utf16.len);
+    list = try toUTF8ListWithType(list, Type, utf16);
+    return list.items;
+}
+
+pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+    var list = list_;
     var utf16_remaining = utf16;
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
@@ -1048,8 +1054,7 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
     list.items.len += utf16_remaining.len;
     copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
 
-    // don't call toOwnedSlice() because our
-    return list.items;
+    return list;
 }
 
 pub const EncodeIntoResult = struct {

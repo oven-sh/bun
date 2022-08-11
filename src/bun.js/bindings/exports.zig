@@ -297,6 +297,34 @@ pub const JSErrorCode = enum(u8) {
     _,
 };
 
+pub const EventType = enum(u8) {
+    Event,
+    MessageEvent,
+    CloseEvent,
+    ErrorEvent,
+    OpenEvent,
+    unknown = 254,
+    _,
+
+    pub const map = bun.ComptimeStringMap(EventType, .{
+        .{ EventType.Event.label(), EventType.Event },
+        .{ EventType.MessageEvent.label(), EventType.MessageEvent },
+        .{ EventType.CloseEvent.label(), EventType.CloseEvent },
+        .{ EventType.ErrorEvent.label(), EventType.ErrorEvent },
+        .{ EventType.OpenEvent.label(), EventType.OpenEvent },
+    });
+
+    pub fn label(this: EventType) string {
+        return switch (this) {
+            .Event => "event",
+            .MessageEvent => "message",
+            .CloseEvent => "close",
+            .ErrorEvent => "error",
+            .OpenEvent => "open",
+            else => "event",
+        };
+    }
+};
 pub const JSRuntimeType = enum(u16) {
     Nothing = 0x0,
     Function = 0x1,
@@ -1204,6 +1232,7 @@ pub const ZigConsoleClient = struct {
             ArrayBuffer,
 
             JSX,
+            Event,
 
             pub inline fn canHaveCircularReferences(tag: Tag) bool {
                 return tag == .Array or tag == .Object or tag == .Map or tag == .Set;
@@ -1325,7 +1354,7 @@ pub const ZigConsoleClient = struct {
                         JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => .Set,
                         JSValue.JSType.JSDate => .JSON,
                         JSValue.JSType.JSPromise => .Promise,
-                        JSValue.JSType.Object, JSValue.JSType.FinalObject => .Object,
+                        .ArrayBuffer, JSValue.JSType.Object, JSValue.JSType.FinalObject => .Object,
 
                         JSValue.JSType.Int8Array,
                         JSValue.JSType.Uint8Array,
@@ -1369,6 +1398,8 @@ pub const ZigConsoleClient = struct {
                         .StrictEvalActivation,
                         .WithScope,
                         => .NativeCode,
+
+                        .Event => .Event,
 
                         else => .JSON,
                     },
@@ -1871,6 +1902,66 @@ pub const ZigConsoleClient = struct {
 
                     writer.print("{}", .{str});
                 },
+                .Event => {
+                    const event_type = EventType.map.getWithEql(value.get(this.globalThis, "type").?.getZigString(this.globalThis), ZigString.eqlComptime) orelse EventType.unknown;
+                    if (event_type != .MessageEvent and event_type != .ErrorEvent) {
+                        return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+                    }
+
+                    writer.print(
+                        comptime Output.prettyFmt("<r><cyan>{s}<r> {{\n", enable_ansi_colors),
+                        .{
+                            @tagName(event_type),
+                        },
+                    );
+                    {
+                        this.indent += 1;
+                        defer this.indent -|= 1;
+                        const old_quote_strings = this.quote_strings;
+                        this.quote_strings = true;
+                        defer this.quote_strings = old_quote_strings;
+                        this.writeIndent(Writer, writer_) catch unreachable;
+
+                        writer.print(
+                            comptime Output.prettyFmt("<r>type: <green>\"{s}\"<r><d>,<r>\n", enable_ansi_colors),
+                            .{
+                                event_type.label(),
+                            },
+                        );
+                        this.writeIndent(Writer, writer_) catch unreachable;
+
+                        switch (event_type) {
+                            .MessageEvent => {
+                                writer.print(
+                                    comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
+                                    .{},
+                                );
+                                const data = value.get(this.globalThis, "data").?;
+                                const tag = Tag.get(data, this.globalThis);
+                                if (tag.cell.isStringLike()) {
+                                    this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                                } else {
+                                    this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                                }
+                            },
+                            .ErrorEvent => {
+                                writer.print(
+                                    comptime Output.prettyFmt("<r><blue>error<d>:<r>\n", enable_ansi_colors),
+                                    .{},
+                                );
+
+                                const data = value.get(this.globalThis, "error").?;
+                                const tag = Tag.get(data, this.globalThis);
+                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                            },
+                            else => unreachable,
+                        }
+                        writer.writeAll("\n");
+                    }
+
+                    this.writeIndent(Writer, writer_) catch unreachable;
+                    writer.writeAll("}");
+                },
                 .JSX => {
                     writer.writeAll(comptime Output.prettyFmt("<r>", enable_ansi_colors));
 
@@ -2184,31 +2275,110 @@ pub const ZigConsoleClient = struct {
                 .TypedArray => {
                     const arrayBuffer = value.asArrayBuffer(this.globalThis).?;
 
+                    const slice = arrayBuffer.byteSlice();
                     writer.writeAll(std.mem.span(@tagName(arrayBuffer.typed_array_type)));
-                    const slice = arrayBuffer.slice();
 
-                    writer.print("({d}) [ ", .{slice.len});
-
+                    writer.print("({d}) [ ", .{arrayBuffer.len});
                     if (slice.len > 0) {
-                        writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{slice[0]});
-                        var leftover = slice[1..];
-                        const max = 512;
-                        leftover = leftover[0..@minimum(leftover.len, max)];
-                        for (leftover) |el| {
-                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
-                            writer.writeAll(" ");
+                        switch (jsType) {
+                            .Int8Array => writeTypedArray(
+                                *@TypeOf(writer),
+                                &writer,
+                                i8,
+                                @alignCast(std.meta.alignment([]i8), std.mem.bytesAsSlice(i8, slice)),
+                                enable_ansi_colors,
+                            ),
+                            .Int16Array => writeTypedArray(
+                                *@TypeOf(writer),
+                                &writer,
+                                i16,
+                                @alignCast(std.meta.alignment([]i16), std.mem.bytesAsSlice(i16, slice)),
+                                enable_ansi_colors,
+                            ),
+                            .Uint16Array => writeTypedArray(
+                                *@TypeOf(writer),
+                                &writer,
+                                u16,
+                                @alignCast(std.meta.alignment([]u16), std.mem.bytesAsSlice(u16, slice)),
+                                enable_ansi_colors,
+                            ),
+                            .Int32Array => writeTypedArray(
+                                *@TypeOf(writer),
+                                &writer,
+                                i32,
+                                @alignCast(std.meta.alignment([]i32), std.mem.bytesAsSlice(i32, slice)),
+                                enable_ansi_colors,
+                            ),
+                            .Uint32Array => writeTypedArray(
+                                *@TypeOf(writer),
+                                &writer,
+                                u32,
+                                @alignCast(std.meta.alignment([]u32), std.mem.bytesAsSlice(u32, slice)),
+                                enable_ansi_colors,
+                            ),
+                            .Float32Array => writeTypedArray(
+                                *@TypeOf(writer),
+                                &writer,
+                                f32,
+                                @alignCast(std.meta.alignment([]f32), std.mem.bytesAsSlice(f32, slice)),
+                                enable_ansi_colors,
+                            ),
+                            .Float64Array => writeTypedArray(
+                                *@TypeOf(writer),
+                                &writer,
+                                f64,
+                                @alignCast(std.meta.alignment([]f64), std.mem.bytesAsSlice(f64, slice)),
+                                enable_ansi_colors,
+                            ),
+                            .BigInt64Array => writeTypedArray(
+                                *@TypeOf(writer),
+                                &writer,
+                                i64,
+                                @alignCast(std.meta.alignment([]i64), std.mem.bytesAsSlice(i64, slice)),
+                                enable_ansi_colors,
+                            ),
+                            .BigUint64Array => writeTypedArray(
+                                *@TypeOf(writer),
+                                &writer,
+                                u64,
+                                @alignCast(std.meta.alignment([]u64), std.mem.bytesAsSlice(u64, slice)),
+                                enable_ansi_colors,
+                            ),
 
-                            writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{el});
-                        }
-
-                        if (slice.len > max + 1) {
-                            writer.print(comptime Output.prettyFmt("<r><d>, ... {d} more<r>", enable_ansi_colors), .{slice.len - max - 1});
+                            // Uint8Array, Uint8ClampedArray, DataView
+                            else => writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
                         }
                     }
 
                     writer.writeAll(" ]");
                 },
                 else => {},
+            }
+        }
+
+        fn writeTypedArray(comptime Writer: type, writer: Writer, comptime Number: type, slice: []const Number, comptime enable_ansi_colors: bool) void {
+            const fmt_ = if (Number == i64 or Number == u64)
+                "<r><yellow>{d}n<r>"
+            else
+                "<r><yellow>{d}<r>";
+            const more = if (Number == i64 or Number == u64)
+                "<r><d>n, ... {d} more<r>"
+            else
+                "<r><d>, ... {d} more<r>";
+
+            writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{slice[0]});
+            var leftover = slice[1..];
+            const max = 512;
+            leftover = leftover[0..@minimum(leftover.len, max)];
+            for (leftover) |el| {
+                printComma(undefined, @TypeOf(&writer.ctx), &writer.ctx, enable_ansi_colors) catch unreachable;
+                writer.writeAll(" ");
+
+                writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{el});
+            }
+
+            if (slice.len > max + 1) {
+                writer.print(comptime Output.prettyFmt(more, enable_ansi_colors), .{slice.len - max - 1});
             }
         }
 
@@ -2249,6 +2419,7 @@ pub const ZigConsoleClient = struct {
                 .NativeCode => this.printAs(.NativeCode, Writer, writer, value, result.cell, enable_ansi_colors),
                 .ArrayBuffer => this.printAs(.ArrayBuffer, Writer, writer, value, result.cell, enable_ansi_colors),
                 .JSX => this.printAs(.JSX, Writer, writer, value, result.cell, enable_ansi_colors),
+                .Event => this.printAs(.Event, Writer, writer, value, result.cell, enable_ansi_colors),
             };
         }
     };

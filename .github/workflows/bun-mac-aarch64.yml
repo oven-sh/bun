@@ -194,6 +194,7 @@ jobs:
           WEBKIT_RELEASE_DIR_LTO: ${{ runner.temp }}/bun-webkit
         run: |
           mkdir -p $OBJ_DIR
+          make clean-bindings
           make -j $(sysctl -n hw.ncpu) release-bindings
       - name: Upload C++
         if: matrix.compile_obj

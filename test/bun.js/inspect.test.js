@@ -57,23 +57,79 @@ Request (0 KB) {
   );
 });
 
+it("MessageEvent", () => {
+  expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
+    `MessageEvent {
+  type: "message",
+  data: 123
+}`
+  );
+});
+
 // https://github.com/oven-sh/bun/issues/561
 it("TypedArray prints", () => {
-  // TODO: add tests for all variants of typed arrays
-  // even if the code is the same for each implementation, we should test it
-  const buffer = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  for (let TypedArray of [
+    Uint8Array,
+    Uint16Array,
+    Uint32Array,
+    Uint8ClampedArray,
+    Int8Array,
+    Int16Array,
+    Int32Array,
+    Float32Array,
+    Float64Array,
+  ]) {
+    const buffer = new TypedArray([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    const input = Bun.inspect(buffer);
 
-  const input = Bun.inspect(buffer);
-
-  expect(input).toBe(
-    `Uint8Array(${buffer.length}) [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]`
-  );
-  for (let i = 1; i < buffer.length + 1; i++) {
-    expect(Bun.inspect(buffer.subarray(i))).toBe(
-      `Uint8Array(${buffer.length - i}) [ ` +
-        [...buffer.subarray(i)].join(", ") +
-        " ]"
+    expect(input).toBe(
+      `${TypedArray.name}(${buffer.length}) [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]`
     );
+    for (let i = 1; i < buffer.length + 1; i++) {
+      expect(Bun.inspect(buffer.subarray(i))).toBe(
+        `${TypedArray.name}(${buffer.length - i}) [ ` +
+          [...buffer.subarray(i)].join(", ") +
+          " ]"
+      );
+    }
+  }
+});
+
+it("BigIntArray", () => {
+  for (let TypedArray of [BigInt64Array, BigUint64Array]) {
+    const buffer = new TypedArray([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n]);
+    const input = Bun.inspect(buffer);
+
+    expect(input).toBe(
+      `${TypedArray.name}(${buffer.length}) [ 1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n ]`
+    );
+    for (let i = 1; i < buffer.length + 1; i++) {
+      expect(Bun.inspect(buffer.subarray(i))).toBe(
+        `${TypedArray.name}(${buffer.length - i}) [ ` +
+          [...buffer.subarray(i)].map((a) => a.toString(10) + "n").join(", ") +
+          " ]"
+      );
+    }
+  }
+});
+
+it("FloatArray", () => {
+  for (let TypedArray of [Float32Array, Float64Array]) {
+    const buffer = new TypedArray([Math.fround(42.68)]);
+    const input = Bun.inspect(buffer);
+
+    expect(input).toBe(
+      `${TypedArray.name}(${buffer.length}) [ ${[Math.fround(42.68)].join(
+        ", "
+      )} ]`
+    );
+    for (let i = 1; i < buffer.length + 1; i++) {
+      expect(Bun.inspect(buffer.subarray(i))).toBe(
+        `${TypedArray.name}(${buffer.length - i}) [ ` +
+          [...buffer.subarray(i)].join(", ") +
+          " ]"
+      );
+    }
   }
 });
 

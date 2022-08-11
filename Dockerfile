@@ -16,6 +16,8 @@ ARG WEBKIT_URL="https://github.com/oven-sh/WebKit/releases/download/$WEBKIT_TAG/
 
 ARG ZIG_URL="https://github.com/oven-sh/zig/releases/download/$ZIG_TAG/zig-linux-$BUILDARCH.zip"
 ARG GIT_SHA=""
+ARG BUN_BASE_VERSION=0.1
+
 
 FROM bitnami/minideb:bullseye as bun-base
 
@@ -402,12 +404,16 @@ ARG ARCH
 ARG TRIPLET
 ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
+ARG GIT_SHA
+ARG BUN_BASE_VERSION
+
+ENV BUN_BASE_VERSION=${BUN_BASE_VERSION}
+ENV GIT_SHA=${GIT_SHA}
 
 COPY --from=identifier_cache ${BUN_DIR}/src/js_lexer/*.blob ${BUN_DIR}/src/js_lexer/
 COPY --from=node_fallbacks ${BUN_DIR}/src/node-fallbacks/out ${BUN_DIR}/src/node-fallbacks/out
 
 COPY ./build-id ${BUN_DIR}/build-id
-ARG BUN_BASE_VERSION=0.1
 
 RUN cd $BUN_DIR && mkdir -p src/bun.js/bindings-obj &&  rm -rf $HOME/.cache zig-cache && make prerelease && \
     mkdir -p $BUN_RELEASE_DIR && \

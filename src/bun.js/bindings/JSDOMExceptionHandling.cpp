@@ -71,10 +71,10 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     //     exceptionSourceURL = callFrame->sourceURL();
     // }
 
-    auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);
-    Zig__GlobalObject__reportUncaughtException(globalObject, exception);
+    Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
 
     if (exceptionDetails) {
+        auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);
         exceptionDetails->message = errorMessage;
         exceptionDetails->lineNumber = lineNumber;
         exceptionDetails->columnNumber = columnNumber;

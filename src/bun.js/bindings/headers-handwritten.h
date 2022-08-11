@@ -171,6 +171,7 @@ typedef struct {
     uint32_t byte_len;
     uint8_t cell_type;
     uint64_t _value;
+    bool shared;
 } Bun__ArrayBuffer;
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;

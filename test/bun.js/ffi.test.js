@@ -359,9 +359,9 @@ function ffiRunner(types) {
     },
     close,
   } = dlopen("/tmp/bun-ffi-test.dylib", types);
-
+  Bun.gc(true);
   expect(returns_true()).toBe(true);
-
+  Bun.gc(true);
   expect(returns_false()).toBe(false);
 
   expect(returns_42_char()).toBe(42);
@@ -371,7 +371,7 @@ function ffiRunner(types) {
   // returns_42_uint64_t().valueOf() === returns_42_uint64_t()
   //   );
   //   expect(returns_42_uint64_t().valueOf()).toBe(42);
-
+  Bun.gc(true);
   expect(Math.fround(returns_42_float())).toBe(Math.fround(42.41999804973602));
   expect(returns_42_double()).toBe(42.42);
   expect(returns_42_uint8_t()).toBe(42);
@@ -382,6 +382,7 @@ function ffiRunner(types) {
   expect(returns_neg_42_int16_t()).toBe(-42);
   expect(returns_neg_42_int32_t()).toBe(-42);
   expect(identity_int32_t(10)).toBe(10);
+  Bun.gc(true);
   // expect(returns_neg_42_int64_t()).toBe(-42);
 
   expect(identity_char(10)).toBe(10);
@@ -399,8 +400,8 @@ function ffiRunner(types) {
   expect(identity_uint8_t(10)).toBe(10);
   expect(identity_uint16_t(10)).toBe(10);
   expect(identity_uint32_t(10)).toBe(10);
-  //   expect(identity_uint64_t(10)).toBe(10);
-
+  // expect(identity_uint64_t(10)).toBe(10);
+  Bun.gc(true);
   var bigArray = new BigUint64Array(8);
   new Uint8Array(bigArray.buffer).fill(255);
   var bigIntArray = new BigInt64Array(bigArray.buffer);
@@ -420,8 +421,9 @@ function ffiRunner(types) {
   // expect(identity_int64_t(bigIntArray[0] - BigInt(1))).toBe(
   //   bigIntArray[0] - BigInt(1)
   // );
+  Bun.gc(true);
+  expect(add_char.native(1, 1)).toBe(2);
 
-  expect(add_char(1, 1)).toBe(2);
   expect(add_float(2.4, 2.8)).toBe(Math.fround(5.2));
   expect(add_double(4.2, 0.1)).toBe(4.3);
   expect(add_int8_t(1, 1)).toBe(2);
@@ -431,7 +433,7 @@ function ffiRunner(types) {
   expect(add_uint8_t(1, 1)).toBe(2);
   expect(add_uint16_t(1, 1)).toBe(2);
   expect(add_uint32_t(1, 1)).toBe(2);
-
+  Bun.gc(true);
   const cptr = ptr_should_point_to_42_as_int32_t();
   expect(cptr != 0).toBe(true);
   expect(typeof cptr === "number").toBe(true);
@@ -463,20 +465,18 @@ function ffiRunner(types) {
       // callback, no userData
       constructor(bufferPtr, 0, 128, getDeallocatorCallback());
 
-      // callback, userData
+      // callback, userData;
       constructor(bufferPtr, 0, 128, bufferPtr, getDeallocatorCallback());
     }
 
     Bun.gc(true);
     expect(getDeallocatorCalledCount() >= 190).toBe(true);
+    Bun.gc(true);
   }
 
-  // close the library
-  close();
-
-  /* 
-    --- 
-    This style of callback is not implemented yet 
+  /*
+    ---
+    This style of callback is not implemented yet
   */
   // function identityBool() {
   //   return true;
@@ -574,9 +574,9 @@ function ffiRunner(types) {
 }
 
 it("run ffi fast", () => {
-  return ffiRunner(getTypes(true));
+  ffiRunner(getTypes(true));
 });
 
 it("run ffi", () => {
-  return ffiRunner(getTypes(false));
+  ffiRunner(getTypes(false));
 });

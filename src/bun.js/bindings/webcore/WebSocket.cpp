@@ -371,16 +371,19 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
     if (is_secure) {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<true>();
         RELEASE_ASSERT(ctx);
+        this->m_pendingActivityCount++;
         this->m_upgradeClient = Bun__WebSocketHTTPSClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
     } else {
         us_socket_context_t* ctx = scriptExecutionContext()->webSocketContext<false>();
         RELEASE_ASSERT(ctx);
+        this->m_pendingActivityCount++;
         this->m_upgradeClient = Bun__WebSocketHTTPClient__connect(scriptExecutionContext()->jsGlobalObject(), ctx, this, &host, port, &path, &clientProtocolString);
     }
 
     if (this->m_upgradeClient == nullptr) {
         // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
+        this->m_pendingActivityCount--;
         return Exception { SyntaxError, "WebSocket connection failed"_s };
     }
 
@@ -714,6 +717,9 @@ ScriptExecutionContext* WebSocket::scriptExecutionContext() const
 
 void WebSocket::didConnect()
 {
+    // from new WebSocket() -> connect()
+    this->m_pendingActivityCount--;
+
     LOG(Network, "WebSocket %p didConnect()", this);
     // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this] {
     if (m_state == CLOSED)
@@ -725,10 +731,12 @@ void WebSocket::didConnect()
     m_state = OPEN;
 
     if (auto* context = scriptExecutionContext()) {
+
         if (this->hasEventListeners("open"_s)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
         } else {
+            this->m_pendingActivityCount++;
             context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
 
@@ -736,6 +744,7 @@ void WebSocket::didConnect()
                 // m_extensions = m_channel->extensions();
                 protectedThis->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
                 // });
+                protectedThis->m_pendingActivityCount--;
             });
         }
     }
@@ -762,10 +771,11 @@ void WebSocket::didReceiveMessage(String&& message)
     }
 
     if (auto* context = scriptExecutionContext()) {
-
-        context->postTask([this, message_ = message, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        this->m_pendingActivityCount++;
+        context->postTask([this, message_ = WTFMove(message), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(MessageEvent::create(message_, protectedThis->m_url.string()));
+            protectedThis->m_pendingActivityCount--;
         });
     }
 
@@ -797,9 +807,12 @@ void WebSocket::didReceiveBinaryData(Vector<uint8_t>&& binaryData)
         }
 
         if (auto* context = scriptExecutionContext()) {
-            context->postTask([this, binaryData = binaryData, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+            auto arrayBuffer = JSC::ArrayBuffer::create(binaryData.data(), binaryData.size());
+            this->m_pendingActivityCount++;
+            context->postTask([this, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
-                protectedThis->dispatchEvent(MessageEvent::create(ArrayBuffer::create(binaryData.data(), binaryData.size()), m_url.string()));
+                protectedThis->dispatchEvent(MessageEvent::create(buffer, m_url.string()));
+                protectedThis->m_pendingActivityCount--;
             });
         }
 
@@ -817,6 +830,8 @@ void WebSocket::didReceiveMessageError(WTF::StringImpl::StaticStringImpl* reason
         return;
     m_state = CLOSED;
     if (auto* context = scriptExecutionContext()) {
+        this->m_pendingActivityCount++;
+
         context->postTask([this, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
@@ -826,6 +841,7 @@ void WebSocket::didReceiveMessageError(WTF::StringImpl::StaticStringImpl* reason
 
             // FIXME: As per https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
             dispatchEvent(CloseEvent::create(false, 0, WTF::String(reason)));
+            protectedThis->m_pendingActivityCount--;
         });
     }
 }
@@ -874,9 +890,11 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     this->m_upgradeClient = nullptr;
 
     if (auto* context = scriptExecutionContext()) {
+        this->m_pendingActivityCount++;
         context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));
+            protectedThis->m_pendingActivityCount++;
         });
     }
 
@@ -898,9 +916,11 @@ void WebSocket::dispatchErrorEventIfNeeded()
     m_dispatchedErrorEvent = true;
 
     if (auto* context = scriptExecutionContext()) {
+        this->m_pendingActivityCount++;
         context->postTask([this, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+            protectedThis->m_pendingActivityCount--;
         });
     }
 }
@@ -910,11 +930,11 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
     this->m_upgradeClient = nullptr;
     if (m_isSecure) {
         us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<true, false>();
-        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject());
+        this->m_connectedWebSocket.clientSSL = Bun__WebSocketClientTLS__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::ClientSSL;
     } else {
         us_socket_context_t* ctx = (us_socket_context_t*)this->scriptExecutionContext()->connectedWebSocketContext<false, false>();
-        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject());
+        this->m_connectedWebSocket.client = Bun__WebSocketClient__init(this, socket, ctx, this->scriptExecutionContext()->jsGlobalObject(), reinterpret_cast<unsigned char*>(bufferedData), bufferedDataSize);
         this->m_connectedWebSocketKind = ConnectedWebSocketKind::Client;
     }
 
@@ -922,9 +942,11 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
 }
 void WebSocket::didFailWithErrorCode(int32_t code)
 {
+    // from new WebSocket() -> connect()
     if (m_state == CLOSED)
         return;
 
+    this->m_pendingActivityCount = this->m_pendingActivityCount > 0 ? this->m_pendingActivityCount - 1 : 0;
     this->m_upgradeClient = nullptr;
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
     this->m_connectedWebSocket.client = nullptr;

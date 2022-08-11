@@ -1,6 +1,101 @@
 import { expect, it, describe } from "bun:test";
 
 describe("Bun.Transpiler", () => {
+  const transpiler = new Bun.Transpiler({
+    loader: "tsx",
+    define: {
+      "process.env.NODE_ENV": JSON.stringify("development"),
+      user_undefined: "undefined",
+    },
+    macro: {
+      react: {
+        bacon: `${import.meta.dir}/macro-check.js`,
+      },
+    },
+    platform: "browser",
+  });
+
+  const ts = {
+    parsed: (code, trim = true, autoExport = false) => {
+      if (autoExport) {
+        code = "export default (" + code + ")";
+      }
+
+      var out = transpiler.transformSync(code, "ts");
+      if (autoExport && out.startsWith("export default ")) {
+        out = out.substring("export default ".length);
+      }
+
+      if (trim) {
+        out = out.trim();
+
+        if (out.endsWith(";")) {
+          out = out.substring(0, out.length - 1);
+        }
+
+        return out.trim();
+      }
+
+      return out;
+    },
+
+    expectPrinted: (code, out) => {
+      expect(ts.parsed(code, true, true)).toBe(out);
+    },
+
+    expectPrinted_: (code, out) => {
+      expect(ts.parsed(code, !out.endsWith(";\n"), false)).toBe(out);
+    },
+
+    expectParseError: (code, message) => {
+      try {
+        ts.parsed(code, false, false);
+      } catch (er) {
+        var err = er;
+        if (er instanceof AggregateError) {
+          err = err.errors[0];
+        }
+
+        expect(er.message).toBe(message);
+
+        return;
+      }
+
+      throw new Error("Expected parse error for code\n\t" + code);
+    },
+  };
+
+  describe("TypeScript", () => {
+    it("import Foo = Baz.Bar", () => {
+      ts.expectPrinted_(
+        "import Foo = Baz.Bar;\nexport default Foo;",
+        "const Foo = Baz.Bar;\nexport default Foo"
+      );
+    });
+
+    it("import Foo = require('bar')", () => {
+      ts.expectPrinted_(
+        "import React = require('react')",
+        'const React = require("react")'
+      );
+    });
+
+    it("import type Foo = require('bar')", () => {
+      ts.expectPrinted_("import type Foo = require('bar')", "");
+    });
+
+    it("unused import = gets removed", () => {
+      ts.expectPrinted_("import Foo = Baz.Bar;", "");
+    });
+
+    it("export import Foo = Baz.Bar", () => {
+      ts.expectPrinted_(
+        "export import Foo = Baz.Bar;",
+        "export const Foo = Baz.Bar"
+      );
+    });
+  });
+
   describe("exports.replace", () => {
     const transpiler = new Bun.Transpiler({
       exports: {
@@ -111,19 +206,6 @@ describe("Bun.Transpiler", () => {
     });
   });
 
-  const transpiler = new Bun.Transpiler({
-    loader: "tsx",
-    define: {
-      "process.env.NODE_ENV": JSON.stringify("development"),
-      user_undefined: "undefined",
-    },
-    macro: {
-      react: {
-        bacon: `${import.meta.dir}/macro-check.js`,
-      },
-    },
-    platform: "browser",
-  });
   const bunTranspiler = new Bun.Transpiler({
     loader: "tsx",
     define: {
@@ -495,55 +577,6 @@ export var ComponentThatHasSpreadCausesDeopt = jsx(Hello, {
     }
 
     throw new Error("Expected parse error for code\n\t" + code);
-  };
-  const ts = {
-    parsed: (code, trim = true, autoExport = false) => {
-      if (autoExport) {
-        code = "export default (" + code + ")";
-      }
-
-      var out = transpiler.transformSync(code, "ts");
-      if (autoExport && out.startsWith("export default ")) {
-        out = out.substring("export default ".length);
-      }
-
-      if (trim) {
-        out = out.trim();
-
-        if (out.endsWith(";")) {
-          out = out.substring(0, out.length - 1);
-        }
-
-        return out.trim();
-      }
-
-      return out;
-    },
-
-    expectPrinted: (code, out) => {
-      expect(ts.parsed(code, true, true)).toBe(out);
-    },
-
-    expectPrinted_: (code, out) => {
-      expect(ts.parsed(code, !out.endsWith(";\n"), false)).toBe(out);
-    },
-
-    expectParseError: (code, message) => {
-      try {
-        ts.parsed(code, false, false);
-      } catch (er) {
-        var err = er;
-        if (er instanceof AggregateError) {
-          err = err.errors[0];
-        }
-
-        expect(er.message).toBe(message);
-
-        return;
-      }
-
-      throw new Error("Expected parse error for code\n\t" + code);
-    },
   };
 
   describe("parser", () => {

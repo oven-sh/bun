@@ -739,10 +739,10 @@ pub const ImportScanner = struct {
 
                         // Skip to the underlying reference
                         var value = decl.value;
-                        if (decl.value) |val| {
+                        if (decl.value != null) {
                             while (true) {
-                                if (@as(Expr.Tag, val.data) == .e_dot) {
-                                    value = val.data.e_dot.target;
+                                if (@as(Expr.Tag, value.?.data) == .e_dot) {
+                                    value = value.?.data.e_dot.target;
                                 } else {
                                     break;
                                 }
@@ -8097,7 +8097,8 @@ fn NewParser_(
 
             const kind = S.Local.Kind.k_const;
             const name = p.lexer.identifier;
-            var value = p.e(E.Identifier{ .ref = p.storeNameInRef(name) catch unreachable }, p.lexer.loc());
+            const target = p.e(E.Identifier{ .ref = p.storeNameInRef(name) catch unreachable }, p.lexer.loc());
+            var value = target;
             try p.lexer.expect(.t_identifier);
 
             if (strings.eqlComptime(name, "require") and p.lexer.token == .t_open_paren) {
@@ -8106,17 +8107,17 @@ fn NewParser_(
                 const path = p.e(p.lexer.toEString(), p.lexer.loc());
                 try p.lexer.expect(.t_string_literal);
                 try p.lexer.expect(.t_close_paren);
-                const args = try ExprNodeList.one(p.allocator, path);
-                value.data = .{ .e_call = Expr.Data.Store.All.append(E.Call, E.Call{ .target = value, .close_paren_loc = p.lexer.loc(), .args = args }) };
+                if (!opts.is_typescript_declare) {
+                    const args = try ExprNodeList.one(p.allocator, path);
+                    value = p.e(E.Call{ .target = target, .close_paren_loc = p.lexer.loc(), .args = args }, loc);
+                }
             } else {
                 // "import Foo = Bar"
                 // "import Foo = Bar.Baz"
-                while (p.lexer.token == .t_dot) {
+                var prev_value = value;
+                while (p.lexer.token == .t_dot) : (prev_value = value) {
                     try p.lexer.next();
-                    value.data = .{ .e_dot = Expr.Data.Store.All.append(
-                        E.Dot,
-                        E.Dot{ .target = value, .name = p.lexer.identifier, .name_loc = p.lexer.loc() },
-                    ) };
+                    value = p.e(E.Dot{ .target = prev_value, .name = p.lexer.identifier, .name_loc = p.lexer.loc() }, loc);
                     try p.lexer.expect(.t_identifier);
                 }
             }
@@ -15717,8 +15718,9 @@ fn NewParser_(
 
         pub fn ignoreUsage(p: *P, ref: Ref) void {
             if (!p.is_control_flow_dead) {
+                if (comptime Environment.allow_assert) assert(@as(usize, ref.innerIndex()) < p.symbols.items.len);
                 p.symbols.items[ref.innerIndex()].use_count_estimate -|= 1;
-                var use = p.symbol_uses.get(ref) orelse p.panic("Expected symbol_uses to exist {s}\n{s}", .{ ref, p.symbol_uses });
+                var use = p.symbol_uses.get(ref) orelse return;
                 use.count_estimate -|= 1;
                 if (use.count_estimate == 0) {
                     _ = p.symbol_uses.swapRemove(ref);

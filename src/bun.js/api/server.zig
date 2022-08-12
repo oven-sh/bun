@@ -132,9 +132,11 @@ pub const ServerConfig = struct {
             };
 
             inline for (fields) |field| {
-                const slice = std.mem.span(@field(this, field));
-                if (slice.len > 0) {
-                    bun.default_allocator.free(slice);
+                if (@field(this, field) != null) {
+                    const slice = std.mem.span(@field(this, field));
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
                 }
             }
         }

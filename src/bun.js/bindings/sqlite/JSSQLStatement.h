@@ -47,6 +47,13 @@
 
 namespace WebCore {
 
+class VersionSqlite3 {
+public:
+  explicit VersionSqlite3(sqlite3* db) : db(db), version(0) {}
+  sqlite3* db;
+  std::atomic<uint64_t> version;
+};
+
 class JSSQLStatementConstructor final : public JSC::JSFunction {
 public:
     using Base = JSC::JSFunction;
@@ -71,7 +78,8 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    Vector<sqlite3*> databases;
+    Vector<VersionSqlite3*> databases;
+    Vector<std::atomic<uint64_t>> schema_versions;
 
 private:
     JSSQLStatementConstructor(JSC::VM& vm, NativeExecutable* native, JSGlobalObject* globalObject, JSC::Structure* structure)

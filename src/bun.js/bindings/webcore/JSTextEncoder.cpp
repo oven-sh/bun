@@ -43,7 +43,7 @@
 #include "JSDOMAttribute.h"
 // #include "JSDOMBinding.h"
 #include "JSDOMConstructor.h"
-// #include "JSDOMConvertBufferSource.h"
+#include "JSDOMConvertBufferSource.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMConvertStrings.h"
@@ -55,8 +55,27 @@
 // #include "ScriptExecutionContext.h"
 // #include "WebCoreJSClientData.h"
 
+#include <JavaScriptCore/DOMJITAbstractHeap.h>
+#include "DOMJITIDLConvert.h"
+#include "DOMJITIDLType.h"
+#include "DOMJITIDLTypeFilter.h"
+#include "DOMJITHelpers.h"
+#include <JavaScriptCore/DFGAbstractHeap.h>
+
 namespace WebCore {
 using namespace JSC;
+using namespace JSC::DOMJIT;
+
+extern "C" JSC::EncodedJSValue TextEncoder__encode8(JSC::JSGlobalObject* global, const LChar* stringPtr, size_t stringLen);
+extern "C" JSC::EncodedJSValue TextEncoder__encode16(JSC::JSGlobalObject* global, const UChar* stringPtr, size_t stringLen);
+extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t stringLen, void* ptr, size_t len);
+extern "C" size_t TextEncoder__encodeInto16(const UChar* stringPtr, size_t stringLen, void* ptr, size_t len);
+extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
+
+extern "C" {
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSTextEncoder*, DOMJIT::IDLJSArgumentType<IDLDOMString>));
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> source, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination));
+}
 
 template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
@@ -194,14 +213,96 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
     putDirect(vm, vm.propertyNames->prototype, JSTextEncoder::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
+constexpr JSC::DFG::AbstractHeapKind heapKinds[] = { JSC::DFG::HeapObjectCount };
+
+// This is the equivalent of DataView.set
+constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[] = { JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties };
+constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[] = { JSC::DFG::TypedArrayProperties };
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
+    jsTextEncoderEncodeWithoutTypeCheck,
+    JSTextEncoder::info(),
+    JSC::DOMJIT::Effect::forReadWriteDFG<1, 1>(heapKinds, heapKinds),
+    DOMJIT::IDLResultTypeFilter<IDLUint8Array>::value,
+    DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value);
+
+static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck(
+    jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck,
+    JSTextEncoder::info(),
+    // this is slightly incorrect
+    // there could be cases where the object returned by encodeInto will appear to be reused
+    // it impacts HeapObjectCount
+    JSC::DOMJIT::Effect::forReadWriteDFG<2, 1>(encodeIntoRead, encodeIntoWrite),
+    DOMJIT::IDLResultTypeFilter<IDLObject>::value,
+    DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value,
+    DOMJIT::IDLArgumentTypeFilter<IDLUint8Array>::value);
+
 /* Hash table for prototype */
 
 static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsTextEncoderConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
     { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsTextEncoder_encoding), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsTextEncoderPrototypeFunction_encode), (intptr_t)(0) } },
-    { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsTextEncoderPrototypeFunction_encodeInto), (intptr_t)(2) } },
+    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsTextEncoderPrototypeFunction_encode), (intptr_t) static_cast<const JSC::DOMJIT::Signature*>(&DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck) } },
+    { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsTextEncoderPrototypeFunction_encodeInto), (intptr_t) static_cast<const JSC::DOMJIT::Signature*>(&DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck) } },
 };
+
+JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> input))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    EncodedJSValue res;
+    String str;
+    if (input->is8Bit()) {
+        if (input->isRope()) {
+            auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
+            if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
+                RELEASE_AND_RETURN(throwScope, encodedValue);
+            }
+        }
+
+        str = input->value(lexicalGlobalObject);
+        res = TextEncoder__encode8(lexicalGlobalObject, str.characters8(), str.length());
+    } else {
+        str = input->value(lexicalGlobalObject);
+        res = TextEncoder__encode16(lexicalGlobalObject, str.characters16(), str.length());
+    }
+
+    if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
+        throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
+        return encodedJSValue();
+    }
+
+    RELEASE_AND_RETURN(throwScope, res);
+}
+
+JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> sourceStr, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto source = sourceStr->value(lexicalGlobalObject);
+    size_t res = 0;
+    if (!source.is8Bit()) {
+        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->length());
+    } else {
+        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->length());
+    }
+
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto clientData = WebCore::clientData(vm);
+
+    auto* result = JSC::constructEmptyObject(globalObject, globalObject->encodeIntoObjectPrototype(), 2);
+    result->putDirect(vm, clientData->builtinNames().readPublicName(), JSC::jsNumber(static_cast<uint32_t>(res)), 0);
+    result->putDirect(vm, clientData->builtinNames().writtenPublicName(), JSC::jsNumber(static_cast<uint32_t>(res >> 32)), 0);
+
+    return JSValue::encode(result);
+}
 
 const ClassInfo JSTextEncoderPrototype::s_info = { "TextEncoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoderPrototype) };
 
@@ -271,10 +372,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextEncoder_encoding, (JSGlobalObject * lexicalGlobal
     return IDLAttribute<JSTextEncoder>::get<jsTextEncoder_encodingGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
-extern "C" JSC::EncodedJSValue TextEncoder__encode(JSC::JSGlobalObject* lexicalGlobalObject, const ZigString*);
-extern "C" JSC::EncodedJSValue TextEncoder__encodeInto(JSC::JSGlobalObject* lexicalGlobalObject, const ZigString*, void* ptr, size_t len);
-extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
-
 static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSTextEncoder>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -283,19 +380,28 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     UNUSED_PARAM(callFrame);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     JSC::JSString* input = argument0.value().toStringOrNull(lexicalGlobalObject);
-    if (input && input->is8Bit() && input->isRope()) {
-        auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
-        if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
-            RELEASE_AND_RETURN(throwScope, encodedValue);
+    EncodedJSValue res;
+    String str;
+    if (input->is8Bit()) {
+        if (input->isRope()) {
+            auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
+            if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
+                RELEASE_AND_RETURN(throwScope, encodedValue);
+            }
         }
+
+        str = input->value(lexicalGlobalObject);
+        res = TextEncoder__encode8(lexicalGlobalObject, str.characters8(), str.length());
+    } else {
+        str = input->value(lexicalGlobalObject);
+        res = TextEncoder__encode16(lexicalGlobalObject, str.characters16(), str.length());
     }
 
-    auto str = Zig::toZigString(input->tryGetValue(lexicalGlobalObject));
-    auto res = TextEncoder__encode(lexicalGlobalObject, &str);
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
         return encodedJSValue();
     }
+
     RELEASE_AND_RETURN(throwScope, res);
 }
 
@@ -323,15 +429,21 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
         return encodedJSValue();
     }
 
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto str = Zig::toZigString(WTFMove(source));
-    auto res = TextEncoder__encodeInto(lexicalGlobalObject, &str, destination->vector(), destination->length());
-    if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
-        throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
-        return encodedJSValue();
+    size_t res = 0;
+    if (!source.is8Bit()) {
+        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->length());
+    } else {
+        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->length());
     }
 
-    RELEASE_AND_RETURN(throwScope, res);
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto clientData = WebCore::clientData(vm);
+
+    auto* result = JSC::constructEmptyObject(globalObject, globalObject->encodeIntoObjectPrototype(), 2);
+    result->putDirect(vm, clientData->builtinNames().readPublicName(), JSC::jsNumber(static_cast<uint32_t>(res)), 0);
+    result->putDirect(vm, clientData->builtinNames().writtenPublicName(), JSC::jsNumber(static_cast<uint32_t>(res >> 32)), 0);
+
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsTextEncoderPrototypeFunction_encodeInto, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -419,5 +531,4 @@ TextEncoder* JSTextEncoder::toWrapped(JSC::VM&, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
-
 }

@@ -146,7 +146,6 @@ public:
     uint64_t version;
     bool hasExecuted = false;
     std::unique_ptr<PropertyNameArray> columnNames;
-    mutable WriteBarrier<JSC::JSArray> _columnNames;
     mutable WriteBarrier<JSC::JSObject> _prototype;
 
 protected:
@@ -155,7 +154,6 @@ protected:
         , stmt(stmt)
         , version_db(version_db)
         , columnNames(new PropertyNameArray(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
-        , _columnNames(globalObject.vm(), this, nullptr)
         , _prototype(globalObject.vm(), this, nullptr) {}
 
     void finishCreation(JSC::VM&);
@@ -1331,19 +1329,15 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
 
-    auto* array = castedThis->_columnNames.get();
-    if (!castedThis->hasExecuted || castedThis->need_update() || array == nullptr) {
+    if (!castedThis->hasExecuted || castedThis->need_update()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
-
-        if (castedThis->columnNames->size() > 0) {
-            array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude, CachedPropertyNamesKind::Keys);
-        } else {
-            array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
-        }
-
-        castedThis->_columnNames.set(vm, castedThis, array);
     }
-
+    JSC::JSArray* array;
+    if (castedThis->columnNames->size() > 0) {
+        array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude, CachedPropertyNamesKind::Keys);
+    } else {
+        array = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
+    }
     return JSC::JSValue::encode(array);
 }
 
@@ -1431,7 +1425,6 @@ void JSSQLStatement::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSSQLStatement* thisObject = jsCast<JSSQLStatement*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->_columnNames);
     visitor.append(thisObject->_prototype);
 }
 

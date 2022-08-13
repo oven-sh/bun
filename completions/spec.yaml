@@ -117,7 +117,7 @@ subcommands:
       - p -- "Don't install devDependencies"
       - no-save --
       - dry-run -- "Don't install anything"
-      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - name: lockfile
         type: string
         summary: "Store & load a lockfile at a specific filepath"
@@ -154,7 +154,7 @@ subcommands:
       - p -- "Don't install devDependencies"
       - no-save --
       - dry-run -- "Don't install anything"
-      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - no-cache -- "Ignore manifest cache entirely"
       - silent -- "Don't output anything"
       - verbose -- "Excessively verbose logging"
@@ -194,7 +194,7 @@ subcommands:
       - p -- "Don't install devDependencies"
       - no-save --
       - dry-run -- "Don't install anything"
-      - force -- "Always request the latest versions from the registry & reinstall all dependenices"
+      - force -- "Always request the latest versions from the registry & reinstall all dependencies"
       - name: lockfile
         type: string
         summary: "Store & load a lockfile at a specific filepath"

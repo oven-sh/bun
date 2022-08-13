@@ -51,7 +51,7 @@ _bun() {
                 '-p[Don'"'"'t install devDependencies]' \
                 '--no-save[]' \
                 '--dry-run[Don'"'"'t install anything]' \
-                '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
+                '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
                 '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \
@@ -92,7 +92,7 @@ _bun() {
                 '-p[Don'"'"'t install devDependencies]' \
                 '--no-save[]' \
                 '--dry-run[Don'"'"'t install anything]' \
-                '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
+                '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
                 '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \
@@ -127,7 +127,7 @@ _bun() {
                 '-p[Don'"'"'t install devDependencies]' \
                 '--no-save[]' \
                 '--dry-run[Don'"'"'t install anything]' \
-                '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
+                '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
                 '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \
@@ -455,7 +455,7 @@ _bun() {
                 '-p[Don'"'"'t install devDependencies]' \
                 '--no-save[]' \
                 '--dry-run[Don'"'"'t install anything]' \
-                '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
+                '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
                 '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \
@@ -490,7 +490,7 @@ _bun() {
                 '--dry-run[Don'"'"'t install anything]' \
                 '-g[Remove a package globally]' \
                 '--global[Remove a package globally]' \
-                '--force[Always request the latest versions from the registry & reinstall all dependenices]' \
+                '--force[Always request the latest versions from the registry & reinstall all dependencies]' \
                 '--lockfile[Store & load a lockfile at a specific filepath]:lockfile' \
                 '--cache-dir[Store & load cached data from a specific directory path]:cache-dir' \
                 '--no-cache[Ignore manifest cache entirely]' \

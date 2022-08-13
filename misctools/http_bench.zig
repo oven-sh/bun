@@ -231,10 +231,11 @@ pub fn main() anyerror!void {
                     args.timeout,
                 ),
             };
+            ctx.http.client.verbose = args.verbose;
             ctx.http.callback = HTTP.HTTPChannelContext.callback;
             ctx.http.schedule(default_allocator, &batch);
         }
-        NetworkThread.global.pool.schedule(batch);
+        NetworkThread.global.schedule(batch);
 
         var read_count: usize = 0;
         var success_count: usize = 0;

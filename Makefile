@@ -764,12 +764,12 @@ fetch-debug:
 .PHONY: httpbench-debug
 httpbench-debug:
 	$(ZIG) build httpbench-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -fuse-ld=lld -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 
 .PHONY: httpbench-release
 httpbench-release:
 	$(ZIG) build -Drelease-fast httpbench-obj
-	$(CXX) $(PACKAGE_DIR)/httpbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/httpbench.o -march=native -mtune=native -fuse-ld=lld  -g $(OPTIMIZATION_LEVEL) -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/httpbench.o
 
 .PHONY: check-glibc-version-dependency

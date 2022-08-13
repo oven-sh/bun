@@ -213,16 +213,16 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
     putDirect(vm, vm.propertyNames->prototype, JSTextEncoder::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
-constexpr JSC::DFG::AbstractHeapKind heapKinds[] = { JSC::DFG::HeapObjectCount };
+constexpr JSC::DFG::AbstractHeapKind heapKinds[4] = { JSC::DFG::HeapObjectCount };
 
 // This is the equivalent of DataView.set
-constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[] = { JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties };
-constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[] = { JSC::DFG::TypedArrayProperties };
+constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties };
+constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::TypedArrayProperties };
 
 static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
     jsTextEncoderEncodeWithoutTypeCheck,
     JSTextEncoder::info(),
-    JSC::DOMJIT::Effect::forReadWriteDFG<1, 1>(heapKinds, heapKinds),
+    JSC::DOMJIT::Effect::forReadWriteKinds(heapKinds, heapKinds),
     DOMJIT::IDLResultTypeFilter<IDLUint8Array>::value,
     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value);
 
@@ -232,7 +232,7 @@ static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeIntoWit
     // this is slightly incorrect
     // there could be cases where the object returned by encodeInto will appear to be reused
     // it impacts HeapObjectCount
-    JSC::DOMJIT::Effect::forReadWriteDFG<2, 1>(encodeIntoRead, encodeIntoWrite),
+    JSC::DOMJIT::Effect::forReadWriteKinds(encodeIntoRead, encodeIntoWrite),
     DOMJIT::IDLResultTypeFilter<IDLObject>::value,
     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value,
     DOMJIT::IDLArgumentTypeFilter<IDLUint8Array>::value);

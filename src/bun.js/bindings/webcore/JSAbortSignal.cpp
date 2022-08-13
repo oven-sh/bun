@@ -153,7 +153,7 @@ void JSAbortSignalPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
-    putDirect(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().whenSignalAbortedPrivateName(), JSFunction::create(vm, globalObject(), 0, String(), jsAbortSignalConstructorFunction_whenSignalAborted), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+    putDirect(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().whenSignalAbortedPrivateName(), JSFunction::create(vm, globalObject(), 0, String(), jsAbortSignalConstructorFunction_whenSignalAborted, ImplementationVisibility::Public), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

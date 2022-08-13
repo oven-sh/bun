@@ -213,6 +213,11 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
 
+    void trackFFIFunction(JSC::JSFunction* function)
+    {
+        this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
+    }
+
 private:
     void addBuiltinGlobals(JSC::VM&);
     void finishCreation(JSC::VM&);
@@ -249,6 +254,7 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
+    WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
 };
 
 class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {

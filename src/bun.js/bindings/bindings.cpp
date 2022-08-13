@@ -2638,7 +2638,7 @@ void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
     arg1->drainMicrotasks();
     if (JSC::JSObject* obj = JSC::jsDynamicCast<JSC::JSObject*>(globalObject->moduleLoader())) {
         auto id = JSC::Identifier::fromString(globalObject->vm(), "registry"_s);
-        JSC::JSMap* map = JSC::JSMap::create(globalObject, globalObject->vm(), globalObject->mapStructure());
+        JSC::JSMap* map = JSC::JSMap::create(globalObject->vm(), globalObject->mapStructure());
         obj->putDirect(globalObject->vm(), id, map);
     }
     arg1->deleteAllCode(JSC::DeleteAllCodeEffort::PreventCollectionAndDeleteAllCode);

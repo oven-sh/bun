@@ -315,12 +315,14 @@ void ImportMetaObjectPrototype::finishCreation(VM& vm, JSGlobalObject* globalObj
 
     this->putDirectNativeFunction(vm, globalObject, clientData->builtinNames().resolvePublicName(), 1,
         functionImportMeta__resolve,
+        ImplementationVisibility::Public,
         NoIntrinsic,
         JSC::PropertyAttribute::Function | 0);
     this->putDirectNativeFunction(
         vm, globalObject, clientData->builtinNames().resolveSyncPublicName(),
         1,
         functionImportMeta__resolveSync,
+        ImplementationVisibility::Public,
         NoIntrinsic,
         JSC::PropertyAttribute::Function | 0);
 

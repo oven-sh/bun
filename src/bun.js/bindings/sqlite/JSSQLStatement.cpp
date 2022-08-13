@@ -98,7 +98,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsSQLStatementDeserialize);
     }
 
 #define CHECK_PREPARED                                                                                             \
-    if (UNLIKELY(castedThis->stmt == nullptr || castedThis->version_db == nullptr)) {                                      \
+    if (UNLIKELY(castedThis->stmt == nullptr || castedThis->version_db == nullptr)) {                              \
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s)); \
         return JSValue::encode(jsUndefined());                                                                     \
     }
@@ -154,7 +154,9 @@ protected:
         , stmt(stmt)
         , version_db(version_db)
         , columnNames(new PropertyNameArray(globalObject.vm(), PropertyNameMode::Strings, PrivateSymbolMode::Exclude))
-        , _prototype(globalObject.vm(), this, nullptr) {}
+        , _prototype(globalObject.vm(), this, nullptr)
+    {
+    }
 
     void finishCreation(JSC::VM&);
 };
@@ -170,7 +172,7 @@ void JSSQLStatementConstructor::destroy(JSC::JSCell* cell)
 {
     JSSQLStatementConstructor* thisObject = static_cast<JSSQLStatementConstructor*>(cell);
     for (auto version_db : thisObject->databases) {
-      delete version_db;
+        delete version_db;
     }
 }
 
@@ -608,7 +610,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     rc = sqlite3_step(statement);
     if (!sqlite3_stmt_readonly(statement)) {
-      thisObject->databases[handle]->version++;
+        thisObject->databases[handle]->version++;
     }
 
     // we don't care about the results, therefore the row-by-row output doesn't matter
@@ -740,7 +742,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
 
 JSSQLStatementConstructor* JSSQLStatementConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
-    NativeExecutable* executable = vm.getHostFunction(jsSQLStatementPrepareStatementFunction, callHostFunctionAsConstructor, String("SQLStatement"_s));
+    NativeExecutable* executable = vm.getHostFunction(jsSQLStatementPrepareStatementFunction, ImplementationVisibility::Public, callHostFunctionAsConstructor, String("SQLStatement"_s));
     JSSQLStatementConstructor* ptr = new (NotNull, JSC::allocateCell<JSSQLStatementConstructor>(vm)) JSSQLStatementConstructor(vm, executable, globalObject, structure);
     ptr->finishCreation(vm);
 
@@ -1004,14 +1006,13 @@ static inline JSC::JSArray* constructResultRow(JSC::JSGlobalObject* lexicalGloba
 static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQLStatement* castedThis)
 {
     if (!castedThis->hasExecuted) {
-      castedThis->hasExecuted = true;
+        castedThis->hasExecuted = true;
     } else {
-      // reinitialize column
-      castedThis->columnNames.reset(new PropertyNameArray(
-          castedThis->columnNames->vm(),
-          castedThis->columnNames->propertyNameMode(),
-          castedThis->columnNames->privateSymbolMode()
-      ));
+        // reinitialize column
+        castedThis->columnNames.reset(new PropertyNameArray(
+            castedThis->columnNames->vm(),
+            castedThis->columnNames->propertyNameMode(),
+            castedThis->columnNames->privateSymbolMode()));
     }
     castedThis->update_version();
 
@@ -1090,7 +1091,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
 
     int status = sqlite3_step(stmt);
     if (!sqlite3_stmt_readonly(stmt)) {
-      castedThis->version_db->version++;
+        castedThis->version_db->version++;
     }
 
     if (!castedThis->hasExecuted || castedThis->need_update()) {
@@ -1163,7 +1164,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
 
     int status = sqlite3_step(stmt);
     if (!sqlite3_stmt_readonly(stmt)) {
-      castedThis->version_db->version++;
+        castedThis->version_db->version++;
     }
 
     if (!castedThis->hasExecuted || castedThis->need_update()) {
@@ -1211,7 +1212,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
 
     int status = sqlite3_step(stmt);
     if (!sqlite3_stmt_readonly(stmt)) {
-      castedThis->version_db->version++;
+        castedThis->version_db->version++;
     }
 
     if (!castedThis->hasExecuted || castedThis->need_update()) {
@@ -1286,7 +1287,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
 
     int status = sqlite3_step(stmt);
     if (!sqlite3_stmt_readonly(stmt)) {
-      castedThis->version_db->version++;
+        castedThis->version_db->version++;
     }
 
     if (!castedThis->hasExecuted || castedThis->need_update()) {

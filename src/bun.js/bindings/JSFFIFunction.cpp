@@ -34,6 +34,7 @@ extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunction(Zig::GlobalObject* globalO
 {
     JSC::VM& vm = globalObject->vm();
     Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(vm, globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), functionPointer, JSC::NoIntrinsic);
+    // globalObject->trackFFIFunction(function);
     return function;
 }
 extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer);
@@ -75,7 +76,7 @@ void JSFFIFunction::finishCreation(VM& vm, NativeExecutable* executable, unsigne
 JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
 {
 
-    NativeExecutable* executable = vm.getHostFunction(FFIFunction, intrinsic, FFIFunction, nullptr, name);
+    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, FFIFunction, nullptr, name);
 
     Structure* structure = globalObject->FFIFunctionStructure();
     JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, WTFMove(FFIFunction));

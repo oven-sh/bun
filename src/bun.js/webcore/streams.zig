@@ -2491,7 +2491,7 @@ pub const FileBlobLoader = struct {
         std.debug.assert(this.started);
         NetworkThread.init() catch {};
         this.concurrent.chunk_size = chunk_size;
-        NetworkThread.global.pool.schedule(.{ .head = &this.concurrent.task, .tail = &this.concurrent.task, .len = 1 });
+        NetworkThread.global.schedule(.{ .head = &this.concurrent.task, .tail = &this.concurrent.task, .len = 1 });
     }
 
     const default_fifo_chunk_size = 1024;

@@ -2237,7 +2237,7 @@ pub const Timer = struct {
 
         pub fn run(this: *Timeout, _task: *TimeoutTask) void {
             this.io_task = _task;
-            NetworkThread.global.pool.io.?.timeout(
+            NetworkThread.global.io.timeout(
                 *Timeout,
                 this,
                 onCallback,

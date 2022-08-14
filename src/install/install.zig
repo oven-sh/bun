@@ -50,6 +50,7 @@ const z_allocator = @import("../memory_allocator.zig").z_allocator;
 const Syscall = @import("javascript_core").Node.Syscall;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
 threadlocal var initialized_store = false;
+const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
 
@@ -183,6 +184,7 @@ const NetworkTask = struct {
     },
 
     pub fn notify(http: *AsyncHTTP) void {
+        defer PackageManager.instance.wake();
         PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
     }
 
@@ -514,6 +516,8 @@ const Task = struct {
         defer Output.flush();
 
         var this = @fieldParentPtr(Task, "threadpool_task", task);
+
+        defer PackageManager.instance.wake();
 
         switch (this.tag) {
             .package_manifest => {
@@ -1468,6 +1472,9 @@ pub const PackageManager = struct {
     global_dir: ?std.fs.Dir = null,
     global_link_dir_path: string = "",
 
+    sleepy: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    sleep_delay_counter: u32 = 0,
+
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
@@ -1479,6 +1486,14 @@ pub const PackageManager = struct {
         IdentityContext(u32),
         80,
     );
+
+    pub fn wake(this: *PackageManager) void {
+        Futex.wake(&this.sleepy, 1);
+    }
+
+    pub fn sleep(this: *PackageManager) void {
+        Futex.wait(&this.sleepy, 1, std.time.ns_per_ms * 16) catch {};
+    }
 
     pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
         return this.global_link_dir orelse brk: {
@@ -2409,7 +2424,7 @@ pub const PackageManager = struct {
         manager.pending_tasks += @truncate(u32, count);
         manager.total_tasks += @truncate(u32, count);
         manager.network_resolve_batch.push(manager.network_tarball_batch);
-        NetworkThread.global.pool.schedule(manager.network_resolve_batch);
+        NetworkThread.global.schedule(manager.network_resolve_batch);
         manager.network_tarball_batch = .{};
         manager.network_resolve_batch = .{};
         return count;
@@ -2448,7 +2463,7 @@ pub const PackageManager = struct {
         this.pending_tasks += @truncate(u32, count);
         this.total_tasks += @truncate(u32, count);
         this.network_resolve_batch.push(this.network_tarball_batch);
-        NetworkThread.global.pool.schedule(this.network_resolve_batch);
+        NetworkThread.global.schedule(this.network_resolve_batch);
         this.network_tarball_batch = .{};
         this.network_resolve_batch = .{};
     }
@@ -2489,7 +2504,10 @@ pub const PackageManager = struct {
     ) anyerror!void {
         var batch = ThreadPool.Batch{};
         var has_updated_this_run = false;
+        var maybe_sleep = true;
+
         while (manager.network_channel.tryReadItem() catch null) |task_| {
+            maybe_sleep = false;
             var task: *NetworkTask = task_;
             manager.pending_tasks -|= 1;
 
@@ -2704,6 +2722,7 @@ pub const PackageManager = struct {
         }
 
         while (manager.resolve_tasks.tryReadItem() catch null) |task_| {
+            maybe_sleep = false;
             manager.pending_tasks -= 1;
 
             var task: Task = task_;
@@ -2812,7 +2831,7 @@ pub const PackageManager = struct {
             manager.total_tasks += @truncate(u32, count);
             manager.thread_pool.schedule(batch);
             manager.network_resolve_batch.push(manager.network_tarball_batch);
-            NetworkThread.global.pool.schedule(manager.network_resolve_batch);
+            NetworkThread.global.schedule(manager.network_resolve_batch);
             manager.network_tarball_batch = .{};
             manager.network_resolve_batch = .{};
 
@@ -2828,6 +2847,16 @@ pub const PackageManager = struct {
                 manager.downloads_node.?.activate();
                 manager.progress.maybeRefresh();
             }
+        }
+
+        manager.sleep_delay_counter = if (maybe_sleep)
+            manager.sleep_delay_counter + 1
+        else
+            0;
+
+        if (manager.sleep_delay_counter >= 5) {
+            manager.sleep_delay_counter = 0;
+            manager.sleep();
         }
     }
 
@@ -5191,9 +5220,6 @@ pub const PackageManager = struct {
 
             const cwd = std.fs.cwd();
 
-            // sleep goes off, only need to set it once because it will have an impact on the next network request
-            NetworkThread.global.pool.sleep_on_idle_network_thread = false;
-
             while (iterator.nextNodeModulesFolder()) |node_modules| {
                 try cwd.makePath(std.mem.span(node_modules.relative_path));
                 // We deliberately do not close this folder.
@@ -5360,7 +5386,6 @@ pub const PackageManager = struct {
         comptime log_level: Options.LogLevel,
     ) !void {
         // sleep off for maximum network throughput
-        NetworkThread.global.pool.sleep_on_idle_network_thread = false;
 
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
@@ -5617,8 +5642,13 @@ pub const PackageManager = struct {
                 Output.flush();
             }
 
-            while (manager.pending_tasks > 0) {
-                try manager.runTasks(void, void{}, null, log_level);
+            {
+                manager.sleepy.store(1, .Monotonic);
+                defer manager.sleepy.store(0, .Monotonic);
+
+                while (manager.pending_tasks > 0) {
+                    try manager.runTasks(void, void{}, null, log_level);
+                }
             }
 
             if (comptime log_level.showProgress()) {
@@ -5645,7 +5675,6 @@ pub const PackageManager = struct {
         }
 
         // sleep on since we might not need it anymore
-        NetworkThread.global.pool.sleep_on_idle_network_thread = true;
 
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;

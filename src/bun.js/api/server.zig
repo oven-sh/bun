@@ -2164,6 +2164,11 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 ctx.setAbortHandler();
                 ctx.pending_promises_for_abort += 1;
 
+                // we have to clone the request headers here since they will soon belong to a different request
+                if (request_object.headers == null) {
+                    request_object.headers = JSC.FetchHeaders.createFromUWS(this.globalThis, req);
+                }
+
                 RequestContext.PromiseHandler.then(ctx, response_value, this.globalThis);
                 return;
             }

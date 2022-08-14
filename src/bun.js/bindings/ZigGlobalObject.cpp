@@ -37,6 +37,7 @@
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSObject.h"
@@ -148,6 +149,8 @@ using JSBuffer = WebCore::JSBuffer;
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
+
+#include "../modules/Buffer.h"
 
 // #include <iostream>
 static bool has_loaded_jsc = false;
@@ -1761,6 +1764,12 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    // Change prototype from null to object for synthetic modules.
+    m_moduleNamespaceObjectStructure.initLater(
+        [] (const Initializer<Structure>& init) {
+            init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
     m_NapiClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
@@ -2461,20 +2470,9 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     }
 
     if (res.result.value.tag == SyntheticModuleType::Buffer) {
-        auto generateSource = [](JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier moduleKey, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues) {
-            JSC::VM& vm = lexicalGlobalObject->vm();
-            GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
-
-            exportNames.append(JSC::Identifier::fromString(vm, "Buffer"_s));
-            exportValues.append(WebCore::JSBuffer::getConstructor(vm, globalObject));
-
-            exportNames.append(JSC::Identifier::fromString(vm, "Blob"_s));
-            exportValues.append(globalObject->getDirect(vm, JSC::Identifier::fromString(vm, "Blob"_s)));
-        };
-
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(
-                WTFMove(generateSource),
+                generateBufferSourceCode,
                 JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:buffer"_s)), WTFMove(moduleKey)));
 
         globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
@@ -2538,16 +2536,9 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
         globalObject->vm().drainMicrotasks();
         return promise;
-    } else if (res.result.value.tag == 1024) {
-        auto generateSource = [](JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier moduleKey, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues) {
-            JSC::VM& vm = lexicalGlobalObject->vm();
-            GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
-            exportNames.append(JSC::Identifier::fromString(globalObject->vm(), "Buffer"_s));
-            exportValues.append(WebCore::JSBuffer::getConstructor(vm, globalObject));
-        };
-
+    } else if (res.result.value.tag == SyntheticModuleType::Buffer) {
         auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTFMove(generateSource),
+            JSC::SyntheticSourceProvider::create(generateBufferSourceCode,
                 JSC::SourceOrigin(), WTFMove(moduleKey)));
 
         auto sourceCode = JSSourceCode::create(vm, WTFMove(source));

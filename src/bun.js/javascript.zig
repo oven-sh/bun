@@ -2759,6 +2759,7 @@ pub const HardcodedModule = enum {
     pub const Map = bun.ComptimeStringMap(
         HardcodedModule,
         .{
+            .{ "buffer", HardcodedModule.@"node:buffer" },
             .{ "bun:ffi", HardcodedModule.@"bun:ffi" },
             .{ "bun:jsc", HardcodedModule.@"bun:jsc" },
             .{ "bun:main", HardcodedModule.@"bun:main" },
@@ -2791,6 +2792,7 @@ pub const HardcodedModule = enum {
     pub const LinkerMap = bun.ComptimeStringMap(
         string,
         .{
+            .{ "buffer", "node:buffer" },
             .{ "bun", "bun" },
             .{ "bun:ffi", "bun:ffi" },
             .{ "bun:jsc", "bun:jsc" },

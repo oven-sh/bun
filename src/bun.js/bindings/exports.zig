@@ -243,6 +243,8 @@ pub const ResolvedSource = extern struct {
     pub const Tag = enum(u64) {
         javascript = 0,
         wasm = 1,
+
+        @"node:buffer" = 1024,
     };
 };
 

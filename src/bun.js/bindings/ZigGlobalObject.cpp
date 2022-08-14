@@ -2460,6 +2460,28 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         return JSValue::encode(JSC::jsUndefined());
     }
 
+    if (res.result.value.tag == SyntheticModuleType::Buffer) {
+        auto generateSource = [](JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier moduleKey, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues) {
+            JSC::VM& vm = lexicalGlobalObject->vm();
+            GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
+
+            exportNames.append(JSC::Identifier::fromString(vm, "Buffer"_s));
+            exportValues.append(WebCore::JSBuffer::getConstructor(vm, globalObject));
+
+            exportNames.append(JSC::Identifier::fromString(vm, "Blob"_s));
+            exportValues.append(globalObject->getDirect(vm, JSC::Identifier::fromString(vm, "Blob"_s)));
+        };
+
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                WTFMove(generateSource),
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:buffer"_s)), WTFMove(moduleKey)));
+
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
+
     auto provider = Zig::SourceProvider::create(res.result.value);
     globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
@@ -2482,6 +2504,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     auto moduleKey = key.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
     if (moduleKey.endsWith(".node"_s)) {
         return rejectWithError(createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
@@ -2514,6 +2537,24 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         scope.release();
 
         globalObject->vm().drainMicrotasks();
+        return promise;
+    } else if (res.result.value.tag == 1024) {
+        auto generateSource = [](JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier moduleKey, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues) {
+            JSC::VM& vm = lexicalGlobalObject->vm();
+            GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
+            exportNames.append(JSC::Identifier::fromString(globalObject->vm(), "Buffer"_s));
+            exportValues.append(WebCore::JSBuffer::getConstructor(vm, globalObject));
+        };
+
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTFMove(generateSource),
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
         return promise;
     } else {
         auto provider = Zig::SourceProvider::create(res.result.value);

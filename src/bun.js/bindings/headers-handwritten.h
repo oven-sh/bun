@@ -174,6 +174,11 @@ typedef struct {
     bool shared;
 } Bun__ArrayBuffer;
 
+enum SyntheticModuleType : uint64_t {
+    Buffer = 1024,
+    Process = 1025,
+};
+
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);

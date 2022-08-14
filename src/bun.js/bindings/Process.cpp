@@ -10,6 +10,8 @@
 
 namespace Zig {
 
+using namespace JSC;
+
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
@@ -276,28 +278,28 @@ void Process::finishCreation(JSC::VM& vm)
 
     this->putDirect(vm, clientData->builtinNames().nextTickPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-            MAKE_STATIC_STRING_IMPL("nextTick"), Process_functionNextTick),
-        0);
+            MAKE_STATIC_STRING_IMPL("nextTick"), Process_functionNextTick, ImplementationVisibility::Public),
+        PropertyAttribute::Function | 0);
 
     this->putDirect(vm, JSC::Identifier::fromString(vm, "dlopen"_s),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-            MAKE_STATIC_STRING_IMPL("dlopen"), Process_functionDlopen),
-        0);
+            MAKE_STATIC_STRING_IMPL("dlopen"), Process_functionDlopen, ImplementationVisibility::Public),
+        PropertyAttribute::Function | 0);
 
     this->putDirect(vm, clientData->builtinNames().cwdPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-            MAKE_STATIC_STRING_IMPL("cwd"), Process_functionCwd),
-        0);
+            MAKE_STATIC_STRING_IMPL("cwd"), Process_functionCwd, ImplementationVisibility::Public),
+        PropertyAttribute::Function | 0);
 
     this->putDirect(vm, clientData->builtinNames().chdirPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-            MAKE_STATIC_STRING_IMPL("chdir"), Process_functionChdir),
-        0);
+            MAKE_STATIC_STRING_IMPL("chdir"), Process_functionChdir, ImplementationVisibility::Public),
+        PropertyAttribute::Function | 0);
 
     this->putDirect(vm, JSC::Identifier::fromString(vm, "exit"_s),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-            MAKE_STATIC_STRING_IMPL("exit"), Process_functionExit),
-        0);
+            MAKE_STATIC_STRING_IMPL("exit"), Process_functionExit, ImplementationVisibility::Public),
+        PropertyAttribute::Function | 0);
 
     putDirectCustomAccessor(
         vm, clientData->builtinNames().versionsPublicName(),
@@ -339,10 +341,10 @@ void Process::finishCreation(JSC::VM& vm)
 #endif
 
     JSC::JSFunction* hrtime = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-        MAKE_STATIC_STRING_IMPL("hrtime"), Process_functionHRTime);
+        MAKE_STATIC_STRING_IMPL("hrtime"), Process_functionHRTime, ImplementationVisibility::Public);
 
     JSC::JSFunction* hrtimeBigInt = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-        MAKE_STATIC_STRING_IMPL("bigint"), Process_functionHRTimeBigInt);
+        MAKE_STATIC_STRING_IMPL("bigint"), Process_functionHRTimeBigInt, ImplementationVisibility::Public);
 
     hrtime->putDirect(vm, JSC::Identifier::fromString(vm, "bigint"_s), hrtimeBigInt);
     this->putDirect(this->vm(), JSC::Identifier::fromString(this->vm(), "hrtime"_s), hrtime);

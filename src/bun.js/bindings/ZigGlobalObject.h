@@ -188,6 +188,7 @@ public:
 
     JSC::JSMap* readableStreamNativeMap() { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() { return m_requireMap.getInitializedOnMainThread(this); }
+    JSC::JSObject* encodeIntoObjectPrototype() { return m_encodeIntoObjectPrototype.getInitializedOnMainThread(this); }
 
     JSC::JSObject* performanceObject() { return m_performanceObject.getInitializedOnMainThread(this); }
 
@@ -211,6 +212,11 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
+
+    void trackFFIFunction(JSC::JSFunction* function)
+    {
+        this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
+    }
 
 private:
     void addBuiltinGlobals(JSC::VM&);
@@ -238,6 +244,9 @@ private:
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
+
+    LazyProperty<JSGlobalObject, JSObject> m_encodeIntoObjectPrototype;
+
     // LazyProperty<JSGlobalObject, WebCore::JSEventTarget> m_eventTarget;
 
     JSClassRef m_dotEnvClassRef;
@@ -245,6 +254,7 @@ private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
     void* m_bunVM;
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
+    WTF::Vector<JSC::Strong<JSC::JSFunction>> m_ffiFunctions;
 };
 
 class JSMicrotaskCallbackDefaultGlobal final : public RefCounted<JSMicrotaskCallbackDefaultGlobal> {

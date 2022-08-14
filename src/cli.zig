@@ -696,7 +696,9 @@ pub const HelpCommand = struct {
             \\> <r> <b><magenta>run     <r><d>  test        <r>          Run JavaScript with bun, a package.json script, or a bin<r>
             \\> <r> <b><green>install<r>                         Install dependencies for a package.json <d>(bun i)<r>
             \\> <r> <b><blue>add     <r><d>  {s:<16}<r>      Add a dependency to package.json <d>(bun a)<r>
+            \\> <r> <b><blue>link <r>                           Link an npm package globally<r>
             \\> <r> remove  <r><d>  {s:<16}<r>      Remove a dependency from package.json <d>(bun rm)<r>
+            \\> <r> unlink  <r>                        Globally unlink an npm package
             \\
             \\> <r> <b><blue>upgrade <r>                        Get the latest version of bun
             \\> <r> <b><d>completions<r>                     Install shell completions for tab-completion
@@ -891,10 +893,11 @@ pub const Command = struct {
         // "build",
         "install",
         "add",
-        "remove",
         "run",
+        "link",
+        "unlink",
+        "remove",
         "dev",
-        "install",
         "create",
         "bun",
         "upgrade",

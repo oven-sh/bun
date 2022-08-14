@@ -132,9 +132,11 @@ pub const ServerConfig = struct {
             };
 
             inline for (fields) |field| {
-                const slice = std.mem.span(@field(this, field));
-                if (slice.len > 0) {
-                    bun.default_allocator.free(slice);
+                if (@field(this, field) != null) {
+                    const slice = std.mem.span(@field(this, field));
+                    if (slice.len > 0) {
+                        bun.default_allocator.free(slice);
+                    }
                 }
             }
         }
@@ -2161,6 +2163,11 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (wait_for_promise) {
                 ctx.setAbortHandler();
                 ctx.pending_promises_for_abort += 1;
+
+                // we have to clone the request headers here since they will soon belong to a different request
+                if (request_object.headers == null) {
+                    request_object.headers = JSC.FetchHeaders.createFromUWS(this.globalThis, req);
+                }
 
                 RequestContext.PromiseHandler.then(ctx, response_value, this.globalThis);
                 return;

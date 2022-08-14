@@ -826,13 +826,14 @@ pub const Fetch = struct {
             timeout: usize,
             request_body_store: ?*Blob.Store,
         ) !*FetchTasklet.Pool.Node {
+            try NetworkThread.init();
             var node = try get(allocator, method, url, headers, headers_buf, request_body, timeout, request_body_store);
 
             node.data.global_this = global;
             node.data.http.callback = callback;
             var batch = NetworkThread.Batch{};
             node.data.http.schedule(allocator, &batch);
-            NetworkThread.global.pool.schedule(batch);
+            NetworkThread.global.schedule(batch);
             VirtualMachine.vm.active_tasks +|= 1;
             return node;
         }

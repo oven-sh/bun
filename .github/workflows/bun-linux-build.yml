@@ -37,21 +37,21 @@ jobs:
             arch: x86_64
             build_arch: amd64
             runner: linux-amd64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul31/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/aug12/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
           - cpu: westmere
             tag: linux-x64-baseline
             arch: x86_64
             build_arch: amd64
             runner: linux-amd64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul31/bun-webkit-linux-amd64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/aug12/bun-webkit-linux-amd64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-amd64-lto"
           - cpu: native
             tag: linux-aarch64
             arch: aarch64
             build_arch: arm64
             runner: linux-arm64
-            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/jul31/bun-webkit-linux-arm64-lto.tar.gz"
+            webkit_url: "https://github.com/oven-sh/WebKit/releases/download/aug12/bun-webkit-linux-arm64-lto.tar.gz"
             webkit_basename: "bun-webkit-linux-arm64-lto"
 
     steps:
@@ -76,9 +76,8 @@ jobs:
         with:
           context: .
           push: false
-          tags: ghcr.io/oven-sh/bun:canary,ghcr.io/oven-sh/bun:${{github.sha}}
-          cache-from: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-3--${{matrix.cpu}}-${{matrix.build_arch}}
-          cache-to: type=registry,ref=ghcr.io/oven-sh/bun:buildcache-bust-3--${{matrix.cpu}}-${{matrix.build_arch}},mode=max
+          cache-from: type=registry,ref=ghcr.io/oven-sh/bun-obj:buildcache-bust-3--${{matrix.cpu}}-${{matrix.build_arch}}
+          cache-to: type=registry,ref=ghcr.io/oven-sh/bun-obj:buildcache-bust-3--${{matrix.cpu}}-${{matrix.build_arch}},mode=max
           build-args: |
             ARCH=${{matrix.arch}}
             BUILDARCH=${{matrix.build_arch}}

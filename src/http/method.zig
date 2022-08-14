@@ -25,6 +25,8 @@ pub const Method = enum {
         var values = std.enums.EnumSet(Method).initFull();
         values.remove(.HEAD);
         values.remove(.TRACE);
+        values.remove(.OPTIONS);
+        values.remove(.GET);
         break :brk values;
     };
 

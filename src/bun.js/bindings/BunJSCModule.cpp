@@ -209,6 +209,14 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics, (JSGlobalObject * global
     // this is a C API function
     auto* stats = toJS(JSGetMemoryUsageStatistics(toRef(globalObject)));
 
+    if (JSValue heapSizeValue = stats->getDirect(vm, Identifier::fromString(vm, "heapSize"_s))) {
+        ASSERT(heapSizeValue.isNumber());
+        if (heapSizeValue.toInt32(globalObject) == 0) {
+            vm.heap.collectNow(Sync, CollectionScope::Full);
+            stats = toJS(JSGetMemoryUsageStatistics(toRef(globalObject)));
+        }
+    }
+
     // This is missing from the C API
     JSC::JSObject* protectedCounts = constructEmptyObject(globalObject);
     auto typeCounts = *vm.heap.protectedObjectTypeCounts();
@@ -373,29 +381,29 @@ JSC::JSObject* createJSCModule(JSC::JSGlobalObject* globalObject)
     {
         JSC::ObjectInitializationScope initializationScope(vm);
         object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 23);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "callerSourceOrigin"_s), 1, functionCallerSourceOrigin, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "describe"_s), 1, functionDescribe, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "describeArray"_s), 1, functionDescribeArray, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "drainMicrotasks"_s), 1, functionDrainMicrotasks, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "edenGC"_s), 1, functionEdenGC, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "fullGC"_s), 1, functionFullGC, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gcAndSweep"_s), 1, functionGCAndSweep, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getRandomSeed"_s), 1, functionGetRandomSeed, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapSize"_s), 1, functionHeapSize, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapStats"_s), 1, functionMemoryUsageStatistics, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isRope"_s), 1, functionIsRope, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "memoryUsage"_s), 1, functionCreateMemoryFootprint, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "noFTL"_s), 1, functionNoFTL, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "noOSRExitFuzzing"_s), 1, functionNoOSRExitFuzzing, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "numberOfDFGCompiles"_s), 1, functionNumberOfDFGCompiles, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "optimizeNextInvocation"_s), 1, functionOptimizeNextInvocation, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "releaseWeakRefs"_s), 1, functionReleaseWeakRefs, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reoptimizationRetryCount"_s), 1, functionReoptimizationRetryCount, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setRandomSeed"_s), 1, functionSetRandomSeed, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startRemoteDebugger"_s), 2, functionStartRemoteDebugger, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "totalCompileTime"_s), 1, functionTotalCompileTime, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getProtectedObjects"_s), 1, functionGetProtectedObjects, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
-        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), 0, functionGenerateHeapSnapshotForDebugging, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "callerSourceOrigin"_s), 1, functionCallerSourceOrigin, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "describe"_s), 1, functionDescribe, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "describeArray"_s), 1, functionDescribeArray, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "drainMicrotasks"_s), 1, functionDrainMicrotasks, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "edenGC"_s), 1, functionEdenGC, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "fullGC"_s), 1, functionFullGC, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gcAndSweep"_s), 1, functionGCAndSweep, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getRandomSeed"_s), 1, functionGetRandomSeed, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapSize"_s), 1, functionHeapSize, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapStats"_s), 1, functionMemoryUsageStatistics, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isRope"_s), 1, functionIsRope, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "memoryUsage"_s), 1, functionCreateMemoryFootprint, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "noFTL"_s), 1, functionNoFTL, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "noOSRExitFuzzing"_s), 1, functionNoOSRExitFuzzing, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "numberOfDFGCompiles"_s), 1, functionNumberOfDFGCompiles, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "optimizeNextInvocation"_s), 1, functionOptimizeNextInvocation, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "releaseWeakRefs"_s), 1, functionReleaseWeakRefs, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reoptimizationRetryCount"_s), 1, functionReoptimizationRetryCount, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setRandomSeed"_s), 1, functionSetRandomSeed, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startRemoteDebugger"_s), 2, functionStartRemoteDebugger, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "totalCompileTime"_s), 1, functionTotalCompileTime, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getProtectedObjects"_s), 1, functionGetProtectedObjects, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), 0, functionGenerateHeapSnapshotForDebugging, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
     }
 
     return object;

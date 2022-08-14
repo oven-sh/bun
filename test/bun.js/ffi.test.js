@@ -456,24 +456,25 @@ function ffiRunner(types) {
   expect(myCFunction()).toBe(true);
 
   // check deallocator is called
-  for (let constructor of [toArrayBuffer, toBuffer]) {
-    Bun.gc(true);
 
-    var bufferPtr = getDeallocatorBuffer();
+  // for (let constructor of [toArrayBuffer, toBuffer]) {
+  //   Bun.gc(true);
 
-    for (let i = 0; i < 100; i++) {
-      // callback, no userData
-      constructor(bufferPtr, 0, 128, getDeallocatorCallback());
+  //   var bufferPtr = getDeallocatorBuffer();
 
-      // callback, userData;
-      constructor(bufferPtr, 0, 128, bufferPtr, getDeallocatorCallback());
-    }
+  //   for (let i = 0; i < 100; i++) {
+  //     // callback, no userData
+  //     constructor(bufferPtr, 0, 128, getDeallocatorCallback());
 
-    Bun.gc(true);
-    expect(getDeallocatorCalledCount() >= 190).toBe(true);
-    Bun.gc(true);
-  }
+  //     // callback, userData;
+  //     constructor(bufferPtr, 0, 128, bufferPtr, getDeallocatorCallback());
+  //   }
 
+  //   Bun.gc(true);
+  //   expect(getDeallocatorCalledCount() >= 190).toBe(true);
+  //   Bun.gc(true);
+  // }
+  close();
   /*
     ---
     This style of callback is not implemented yet

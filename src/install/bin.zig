@@ -542,7 +542,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
 
-                    std.os.unlinkatZ(this.root_node_modules_folder.fd, dest_path, 0) catch {};
+                    std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
                 },
                 .named_file => {
                     var name_to_use = this.bin.value.named_file[0].slice(this.string_buf);
@@ -551,7 +551,7 @@ pub const Bin = extern struct {
                     from_remain[0] = 0;
                     var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
 
-                    std.os.unlinkatZ(this.root_node_modules_folder.fd, dest_path, 0) catch {};
+                    std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
                 },
                 .map => {
                     var extern_string_i: u32 = this.bin.value.map.off;
@@ -579,7 +579,7 @@ pub const Bin = extern struct {
                         from_remain[0] = 0;
                         var dest_path: [:0]u8 = target_buf[0 .. @ptrToInt(from_remain.ptr) - @ptrToInt(&target_buf) :0];
 
-                        std.os.unlinkatZ(this.root_node_modules_folder.fd, dest_path, 0) catch {};
+                        std.os.unlinkatZ(this.root_node_modules_folder, dest_path, 0) catch {};
                     }
                 },
                 .dir => {
@@ -628,8 +628,9 @@ pub const Bin = extern struct {
                                     std.fmt.bufPrintZ(&dest_buf, "{s}", .{entry.name}) catch continue;
 
                                 std.os.unlinkatZ(
-                                    this.root_node_modules_folder.fd,
+                                    this.root_node_modules_folder,
                                     to_path,
+                                    0,
                                 ) catch continue;
                             },
                             else => {},

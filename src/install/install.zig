@@ -50,6 +50,7 @@ const z_allocator = @import("../memory_allocator.zig").z_allocator;
 const Syscall = @import("javascript_core").Node.Syscall;
 const RunCommand = @import("../cli/run_command.zig").RunCommand;
 threadlocal var initialized_store = false;
+const Futex = @import("../futex.zig");
 
 pub const Lockfile = @import("./lockfile.zig");
 
@@ -183,6 +184,7 @@ const NetworkTask = struct {
     },
 
     pub fn notify(http: *AsyncHTTP) void {
+        defer PackageManager.instance.wake();
         PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
     }
 
@@ -514,6 +516,8 @@ const Task = struct {
         defer Output.flush();
 
         var this = @fieldParentPtr(Task, "threadpool_task", task);
+
+        defer PackageManager.instance.wake();
 
         switch (this.tag) {
             .package_manifest => {
@@ -1468,6 +1472,9 @@ pub const PackageManager = struct {
     global_dir: ?std.fs.Dir = null,
     global_link_dir_path: string = "",
 
+    sleepy: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+    sleep_delay_counter: u32 = 0,
+
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
     const PackageIndex = std.AutoHashMapUnmanaged(u64, *Package);
@@ -1479,6 +1486,14 @@ pub const PackageManager = struct {
         IdentityContext(u32),
         80,
     );
+
+    pub fn wake(this: *PackageManager) void {
+        Futex.wake(&this.sleepy, 1);
+    }
+
+    pub fn sleep(this: *PackageManager) void {
+        Futex.wait(&this.sleepy, 1, std.time.ns_per_ms * 16) catch {};
+    }
 
     pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
         return this.global_link_dir orelse brk: {
@@ -2409,7 +2424,7 @@ pub const PackageManager = struct {
         manager.pending_tasks += @truncate(u32, count);
         manager.total_tasks += @truncate(u32, count);
         manager.network_resolve_batch.push(manager.network_tarball_batch);
-        NetworkThread.global.pool.schedule(manager.network_resolve_batch);
+        NetworkThread.global.schedule(manager.network_resolve_batch);
         manager.network_tarball_batch = .{};
         manager.network_resolve_batch = .{};
         return count;
@@ -2448,7 +2463,7 @@ pub const PackageManager = struct {
         this.pending_tasks += @truncate(u32, count);
         this.total_tasks += @truncate(u32, count);
         this.network_resolve_batch.push(this.network_tarball_batch);
-        NetworkThread.global.pool.schedule(this.network_resolve_batch);
+        NetworkThread.global.schedule(this.network_resolve_batch);
         this.network_tarball_batch = .{};
         this.network_resolve_batch = .{};
     }
@@ -2489,7 +2504,10 @@ pub const PackageManager = struct {
     ) anyerror!void {
         var batch = ThreadPool.Batch{};
         var has_updated_this_run = false;
+        var maybe_sleep = true;
+
         while (manager.network_channel.tryReadItem() catch null) |task_| {
+            maybe_sleep = false;
             var task: *NetworkTask = task_;
             manager.pending_tasks -|= 1;
 
@@ -2704,6 +2722,7 @@ pub const PackageManager = struct {
         }
 
         while (manager.resolve_tasks.tryReadItem() catch null) |task_| {
+            maybe_sleep = false;
             manager.pending_tasks -= 1;
 
             var task: Task = task_;
@@ -2812,7 +2831,7 @@ pub const PackageManager = struct {
             manager.total_tasks += @truncate(u32, count);
             manager.thread_pool.schedule(batch);
             manager.network_resolve_batch.push(manager.network_tarball_batch);
-            NetworkThread.global.pool.schedule(manager.network_resolve_batch);
+            NetworkThread.global.schedule(manager.network_resolve_batch);
             manager.network_tarball_batch = .{};
             manager.network_resolve_batch = .{};
 
@@ -2828,6 +2847,16 @@ pub const PackageManager = struct {
                 manager.downloads_node.?.activate();
                 manager.progress.maybeRefresh();
             }
+        }
+
+        manager.sleep_delay_counter = if (maybe_sleep)
+            manager.sleep_delay_counter + 1
+        else
+            0;
+
+        if (manager.sleep_delay_counter >= 5) {
+            manager.sleep_delay_counter = 0;
+            manager.sleep();
         }
     }
 
@@ -3555,8 +3584,23 @@ pub const PackageManager = struct {
         package_json_file_: ?std.fs.File,
         comptime params: []const ParamType,
     ) !*PackageManager {
+        return initMaybeInstall(ctx, package_json_file_, params, false);
+    }
+
+    pub fn initMaybeInstall(
+        ctx: Command.Context,
+        package_json_file_: ?std.fs.File,
+        comptime params: []const ParamType,
+        comptime is_install: bool,
+    ) !*PackageManager {
         var _ctx = ctx;
         var cli = try CommandLineArguments.parse(ctx.allocator, params, &_ctx);
+
+        if (comptime is_install) {
+            if (cli.positionals.len > 1) {
+                return error.SwitchToBunAdd;
+            }
+        }
 
         return try initWithCLI(_ctx, package_json_file_, cli);
     }
@@ -3899,6 +3943,106 @@ pub const PackageManager = struct {
         if (manager.options.log_level != .silent) {
             Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
             Output.flush();
+        }
+
+        if (manager.options.positionals.len == 1) {
+            // bun unlink
+
+            var lockfile: Lockfile = undefined;
+            var name: string = "";
+            var package: Lockfile.Package = Lockfile.Package{};
+
+            // Step 1. parse the nearest package.json file
+            {
+                var current_package_json_stat = try manager.root_package_json_file.stat();
+                var current_package_json_buf = try ctx.allocator.alloc(u8, current_package_json_stat.size + 64);
+                const current_package_json_contents_len = try manager.root_package_json_file.preadAll(
+                    current_package_json_buf,
+                    0,
+                );
+
+                const package_json_source = logger.Source.initPathString(
+                    package_json_cwd_buf[0 .. FileSystem.instance.top_level_dir.len + "package.json".len],
+                    current_package_json_buf[0..current_package_json_contents_len],
+                );
+                try lockfile.initEmpty(ctx.allocator);
+
+                try Lockfile.Package.parseMain(&lockfile, &package, ctx.allocator, manager.log, package_json_source, Features.folder);
+                name = lockfile.str(package.name);
+                if (name.len == 0) {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> package.json missing \"name\" <d>in \"{s}\"<r>", .{package_json_source.path.text});
+                    Global.crash();
+                } else if (!strings.isNPMPackageName(name)) {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> invalid package.json name \"{s}\" <d>in \"{s}\"<r>", .{
+                            name,
+                            package_json_source.path.text,
+                        });
+                    Global.crash();
+                }
+            }
+
+            switch (Syscall.lstat(Path.joinAbsStringZ(try manager.globalLinkDirPath(), &.{name}, .auto))) {
+                .result => |stat| {
+                    if (!std.os.S.ISLNK(stat.mode)) {
+                        Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});
+                        Global.exit(0);
+                    }
+                },
+                .err => {
+                    Output.prettyErrorln("<r><green>success:<r> package \"{s}\" is not globally linked, so there's nothing to do.", .{name});
+                    Global.exit(0);
+                },
+            }
+
+            // Step 2. Setup the global directory
+            var node_modules: std.fs.Dir = brk: {
+                Bin.Linker.umask = C.umask(0);
+                var explicit_global_dir: string = "";
+                if (ctx.install) |install_| {
+                    explicit_global_dir = install_.global_dir orelse explicit_global_dir;
+                }
+                manager.global_dir = try Options.openGlobalDir(explicit_global_dir);
+
+                try manager.setupGlobalDir(&ctx);
+
+                break :brk manager.global_dir.?.makeOpenPath("node_modules", .{ .iterate = true }) catch |err| {
+                    if (manager.options.log_level != .silent)
+                        Output.prettyErrorln("<r><red>error:<r> failed to create node_modules in global dir due to error {s}", .{@errorName(err)});
+                    Global.crash();
+                };
+            };
+
+            // Step 3b. Link any global bins
+            if (package.bin.tag != .none) {
+                var bin_linker = Bin.Linker{
+                    .bin = package.bin,
+                    .package_installed_node_modules = node_modules.fd,
+                    .global_bin_path = manager.options.bin_path,
+                    .global_bin_dir = manager.options.global_bin_dir,
+
+                    // .destination_dir_subpath = destination_dir_subpath,
+                    .root_node_modules_folder = node_modules.fd,
+                    .package_name = strings.StringOrTinyString.init(name),
+                    .string_buf = lockfile.buffers.string_bytes.items,
+                    .extern_string_buf = lockfile.buffers.extern_strings.items,
+                };
+                bin_linker.unlink(true);
+            }
+
+            // delete it if it exists
+            node_modules.deleteTree(name) catch |err| {
+                if (manager.options.log_level != .silent)
+                    Output.prettyErrorln("<r><red>error:<r> failed to unlink package in global dir due to error {s}", .{@errorName(err)});
+                Global.crash();
+            };
+
+            Output.prettyln("<r><green>success:<r> unlinked package \"{s}\"", .{name});
+            Global.exit(0);
+        } else {
+            Output.prettyln("<r><red>error:<r> bun unlink {{packageName}} not implemented yet", .{});
+            Global.exit(1);
         }
     }
 
@@ -4494,10 +4638,11 @@ pub const PackageManager = struct {
                 }
                 manager.to_remove = updates;
             },
-            .link, .unlink, .add, .update => {
+            .link, .add, .update => {
                 try PackageJSONEditor.edit(ctx.allocator, updates, &current_package_json, dependency_list);
                 manager.package_json_updates = updates;
             },
+            else => {},
         }
 
         var buffer_writer = try JSPrinter.BufferWriter.init(ctx.allocator);
@@ -4526,7 +4671,7 @@ pub const PackageManager = struct {
 
         try installWithManager(ctx, manager, new_package_json_source, log_level);
 
-        if (op == .update or op == .add or op == .link or op == .unlink) {
+        if (op == .update or op == .add or op == .link) {
             for (manager.package_json_updates) |update| {
                 if (update.failed) {
                     Global.exit(1);
@@ -4625,7 +4770,13 @@ pub const PackageManager = struct {
     pub inline fn install(
         ctx: Command.Context,
     ) !void {
-        var manager = try PackageManager.init(ctx, null, &install_params);
+        var manager = PackageManager.initMaybeInstall(ctx, null, &install_params, true) catch |err| {
+            if (err == error.SwitchToBunAdd) {
+                return add(ctx);
+            }
+
+            return err;
+        };
 
         if (manager.options.log_level != .silent) {
             Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version ++ "<r>\n", .{});
@@ -5069,9 +5220,6 @@ pub const PackageManager = struct {
 
             const cwd = std.fs.cwd();
 
-            // sleep goes off, only need to set it once because it will have an impact on the next network request
-            NetworkThread.global.pool.sleep_on_idle_network_thread = false;
-
             while (iterator.nextNodeModulesFolder()) |node_modules| {
                 try cwd.makePath(std.mem.span(node_modules.relative_path));
                 // We deliberately do not close this folder.
@@ -5238,7 +5386,6 @@ pub const PackageManager = struct {
         comptime log_level: Options.LogLevel,
     ) !void {
         // sleep off for maximum network throughput
-        NetworkThread.global.pool.sleep_on_idle_network_thread = false;
 
         var load_lockfile_result: Lockfile.LoadFromDiskResult = if (manager.options.do.load_lockfile)
             manager.lockfile.loadFromDisk(
@@ -5495,8 +5642,13 @@ pub const PackageManager = struct {
                 Output.flush();
             }
 
-            while (manager.pending_tasks > 0) {
-                try manager.runTasks(void, void{}, null, log_level);
+            {
+                manager.sleepy.store(1, .Monotonic);
+                defer manager.sleepy.store(0, .Monotonic);
+
+                while (manager.pending_tasks > 0) {
+                    try manager.runTasks(void, void{}, null, log_level);
+                }
             }
 
             if (comptime log_level.showProgress()) {
@@ -5523,7 +5675,6 @@ pub const PackageManager = struct {
         }
 
         // sleep on since we might not need it anymore
-        NetworkThread.global.pool.sleep_on_idle_network_thread = true;
 
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;

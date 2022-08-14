@@ -38,10 +38,15 @@ pub var default_arena: Arena = undefined;
 const log = Output.scoped(.fetch, true);
 
 pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
+    onThreadStartNew(0);
+    return null;
+}
+
+pub fn onThreadStartNew(event_fd: os.fd_t) void {
     default_arena = Arena.init() catch unreachable;
     default_allocator = default_arena.allocator();
     NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(default_allocator);
-    AsyncIO.global = AsyncIO.init(1024, 0) catch |err| {
+    AsyncIO.global = AsyncIO.init(1024, 0, event_fd) catch |err| {
         log: {
             if (comptime Environment.isLinux) {
                 if (err == error.SystemOutdated) {
@@ -105,10 +110,17 @@ pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
     };
 
     AsyncIO.global_loaded = true;
-    NetworkThread.global.pool.io = &AsyncIO.global;
-    Global.setThreadName("HTTP");
+    NetworkThread.global.io = &AsyncIO.global;
+    if (comptime !Environment.isLinux) {
+        NetworkThread.global.pool.io = &AsyncIO.global;
+    }
+
+    Output.Source.configureNamedThread("HTTP");
     AsyncBIO.initBoringSSL();
-    return null;
+
+    if (comptime Environment.isLinux) {
+        NetworkThread.global.processEvents();
+    }
 }
 
 pub inline fn getAllocator() std.mem.Allocator {
@@ -128,7 +140,7 @@ else
 
 pub const OPEN_SOCKET_FLAGS = SOCK.CLOEXEC;
 
-pub const extremely_verbose = Environment.isDebug;
+pub const extremely_verbose = false;
 
 fn writeRequest(
     comptime Writer: type,
@@ -471,7 +483,7 @@ pub const AsyncHTTP = struct {
 
         var batch = NetworkThread.Batch{};
         this.schedule(bun.default_allocator, &batch);
-        NetworkThread.global.pool.schedule(batch);
+        NetworkThread.global.schedule(batch);
         while (true) {
             var data = @ptrCast(*SingleHTTPChannel, @alignCast(@alignOf(*SingleHTTPChannel), this.callback_ctx.?));
             var async_http: *AsyncHTTP = data.channel.readItem() catch unreachable;
@@ -509,17 +521,17 @@ pub const AsyncHTTP = struct {
 
     pub fn do(sender: *HTTPSender, this: *AsyncHTTP) void {
         defer {
-            NetworkThread.global.pool.schedule(.{ .head = &sender.finisher, .tail = &sender.finisher, .len = 1 });
+            NetworkThread.global.schedule(.{ .head = &sender.finisher, .tail = &sender.finisher, .len = 1 });
         }
 
         outer: {
             this.err = null;
             this.state.store(.sending, .Monotonic);
 
-            var timer = std.time.Timer.start() catch @panic("Timer failure");
-            defer this.elapsed = timer.read();
+            const start = NetworkThread.global.timer.read();
+            defer this.elapsed = NetworkThread.global.timer.read() -| start;
 
-            this.response = await this.client.sendAsync(this.request_body.list.items, this.response_buffer) catch |err| {
+            this.response = this.client.send(this.request_body.list.items, this.response_buffer) catch |err| {
                 this.state.store(.fail, .Monotonic);
                 this.err = err;
 
@@ -527,7 +539,7 @@ pub const AsyncHTTP = struct {
                     this.retries_count += 1;
                     this.response_buffer.reset();
 
-                    NetworkThread.global.pool.schedule(ThreadPool.Batch.from(&this.task));
+                    NetworkThread.global.schedule(ThreadPool.Batch.from(&this.task));
                     return;
                 }
                 break :outer;
@@ -654,7 +666,7 @@ pub fn connect(
     connector: ConnectType,
 ) !void {
     const port = this.url.getPortAuto();
-
+    if (this.verbose) Output.prettyErrorln("<d>[HTTP]<r> Connecting to {s}:{d}", .{ this.url.href, port });
     try connector.connect(this.url.hostname, port);
     std.debug.assert(this.socket.socket.socket > 0);
     var client = std.x.net.tcp.Client{ .socket = std.x.os.Socket.from(this.socket.socket.socket) };
@@ -741,6 +753,7 @@ pub fn sendHTTP(this: *HTTPClient, body: []const u8, body_out_str: *MutableStrin
     }
 
     try writeRequest(@TypeOf(socket), socket, request, body);
+
     _ = try socket.send();
     this.stage = Stage.response;
     if (this.progress_node == null) {

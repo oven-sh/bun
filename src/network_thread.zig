@@ -20,8 +20,7 @@ thread: std.Thread = undefined,
 event_fd: std.os.fd_t = 0,
 queued_tasks_mutex: Lock = Lock.init(),
 queued_tasks: Batch = .{},
-head: ?*Node = null,
-tail: ?*Node = null,
+processing_tasks: Batch = .{},
 timer: std.time.Timer = undefined,
 
 pub var global: NetworkThread = undefined;
@@ -35,14 +34,7 @@ fn queueEvents(this: *@This()) void {
     if (this.queued_tasks.len == 0)
         return;
     log("Received {d} tasks\n", .{this.queued_tasks.len});
-    if (this.tail) |tail| {
-        std.debug.assert(tail.next == null);
-        tail.next = &this.queued_tasks.head.?.node;
-        this.tail = &this.queued_tasks.tail.?.node;
-    } else {
-        this.head = &this.queued_tasks.head.?.node;
-        this.tail = &this.queued_tasks.tail.?.node;
-    }
+    this.processing_tasks.push(this.queued_tasks);
     this.queued_tasks = .{};
 }
 
@@ -62,13 +54,7 @@ fn processEvents_(this: *@This()) !void {
 
         var count: usize = 0;
 
-        while (this.head) |node| {
-            if (node == this.tail) {
-                this.tail = null;
-            }
-            this.head = node.next;
-            node.next = null;
-            var task = @fieldParentPtr(Task, "node", node);
+        while (this.processing_tasks.pop()) |task| {
             var callback = task.callback;
             callback(task);
             if (comptime Environment.allow_assert) {

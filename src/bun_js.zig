@@ -141,7 +141,7 @@ pub const Run = struct {
                 i +%= 1;
 
                 if (i > 0 and i % 100 == 0) {
-                    this.vm.global.vm().runGC(true);
+                    std.time.sleep(std.time.ns_per_ms);
                 }
             }
 

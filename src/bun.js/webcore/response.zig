@@ -459,7 +459,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
-                if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
+                if (Body.Init.init(getAllocator(ctx), ctx, init) catch null) |_init| {
                     response.body.init = _init;
                 }
             }
@@ -508,7 +508,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
-                if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
+                if (Body.Init.init(getAllocator(ctx), ctx, init) catch null) |_init| {
                     response.body.init = _init;
                     response.body.init.status_code = 302;
                 }
@@ -888,13 +888,13 @@ pub const Fetch = struct {
 
             if (arguments.len >= 2 and js.JSValueIsObject(ctx, arguments[1])) {
                 var options = JSValue.fromRef(arguments[1]);
-                if (options.get(ctx.ptr(), "method")) |method_| {
+                if (options.get(ctx.ptr(),  "method")) |method_| {
                     var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
                     defer slice_.deinit();
                     method = Method.which(slice_.slice()) orelse .GET;
                 }
 
-                if (options.get(ctx.ptr(), "headers")) |headers_| {
+                if (options.get(ctx.ptr(),  "headers")) |headers_| {
                     if (headers_.as(FetchHeaders)) |headers__| {
                         headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
                         // TODO: make this one pass
@@ -904,7 +904,7 @@ pub const Fetch = struct {
                     }
                 }
 
-                if (options.get(ctx.ptr(), "body")) |body__| {
+                if (options.get(ctx.ptr(),  "body")) |body__| {
                     if (Blob.fromJS(ctx.ptr(), body__, true, false)) |new_blob| {
                         if (new_blob.size > 0) {
                             body = MutableString{
@@ -3042,7 +3042,7 @@ pub const Blob = struct {
                         // representing the media type of the Blob.
                         // Normative conditions for this member are provided
                         // in the § 3.1 Constructors.
-                        if (options.get(ctx.ptr(), "type")) |content_type| {
+                        if (options.get(ctx.ptr(),  "type")) |content_type| {
                             if (content_type.isString()) {
                                 var content_type_str = content_type.getZigString(ctx.ptr());
                                 if (!content_type_str.is16Bit()) {
@@ -3812,44 +3812,31 @@ pub const Body = struct {
             return that;
         }
 
-        pub fn init(_: std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
+        pub fn init(allocator: std.mem.Allocator, ctx: js.JSContextRef, response_init: JSC.JSValue) !?Init {
             var result = Init{ .status_code = 200 };
-            var array = js.JSObjectCopyPropertyNames(ctx, init_ref);
-            defer js.JSPropertyNameArrayRelease(array);
-            const count = js.JSPropertyNameArrayGetCount(array);
 
-            var i: usize = 0;
-            while (i < count) : (i += 1) {
-                var property_name_ref = js.JSPropertyNameArrayGetNameAtIndex(array, i);
-                switch (js.JSStringGetLength(property_name_ref)) {
-                    "headers".len => {
-                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "headers")) {
-                            // only support headers as an object for now.
-                            if (js.JSObjectGetProperty(ctx, init_ref, property_name_ref, null)) |header_prop| {
-                                const header_val = JSValue.fromRef(header_prop);
-                                if (header_val.as(FetchHeaders)) |orig| {
-                                    result.headers = orig.cloneThis();
-                                } else {
-                                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), header_val);
-                                }
-                            }
-                        }
-                    },
+            if (!response_init.isCell())
+                return null;
 
-                    "method".len => {
-                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "status")) {
-                            var value_ref = js.JSObjectGetProperty(ctx, init_ref, property_name_ref, null);
-                            var exception: js.JSValueRef = null;
-                            const number = js.JSValueToNumber(ctx, value_ref, &exception);
-                            if (exception != null or !std.math.isFinite(number)) continue;
-                            result.status_code = @truncate(u16, @floatToInt(u64, number));
-                        } else if (js.JSStringIsEqualToUTF8CString(property_name_ref, "method")) {
-                            result.method = Method.which(
-                                JSC.JSValue.fromRef(init_ref).get(ctx.ptr(), "method").?.getZigString(ctx.ptr()).slice(),
-                            ) orelse Method.GET;
-                        }
-                    },
-                    else => {},
+            if (response_init.get(ctx,  "headers")) |headers| {
+                if (headers.as(FetchHeaders)) |orig| {
+                    result.headers = orig.cloneThis();
+                } else {
+                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
+                }
+            }
+
+            if (response_init.get(ctx,  "status")) |status_value| {
+                const number = status_value.to(i32);
+                if (number > 0)
+                    result.status_code = @truncate(u16, @intCast(u32, number));
+            }
+
+            if (response_init.get(ctx,  "method")) |method_value| {
+                var method_str = method_value.toSlice(ctx, allocator);
+                defer method_str.deinit();
+                if (method_str.len > 0) {
+                    result.method = Method.which(method_str.slice()) orelse .GET;
                 }
             }
 
@@ -4155,7 +4142,7 @@ pub const Body = struct {
         var allocator = getAllocator(ctx);
 
         if (comptime has_init) {
-            if (Init.init(allocator, ctx, init_ref.?)) |maybeInit| {
+            if (Init.init(allocator, ctx, JSValue.c(init_ref))) |maybeInit| {
                 if (maybeInit) |init_| {
                     body.init = init_;
                 }
@@ -4494,18 +4481,18 @@ pub const Request = struct {
                 if (urlOrObject.isString()) {
                     request.url = urlOrObject.getZigString(ctx.ptr());
                 } else {
-                    if (Body.Init.init(getAllocator(ctx), ctx, arguments[0]) catch null) |req_init| {
+                    if (Body.Init.init(getAllocator(ctx), ctx, JSC.JSValue.c(arguments[0])) catch null) |req_init| {
                         request.headers = req_init.headers;
                         request.method = req_init.method;
                     }
 
-                    if (urlOrObject.get(ctx.ptr(), "url")) |url| {
+                    if (urlOrObject.get(ctx.ptr(),  "url")) |url| {
                         request.url = url.getZigString(ctx.ptr()).clone(bun.default_allocator) catch {
                             return js.JSValueMakeUndefined(ctx.ptr());
                         };
                     }
 
-                    if (urlOrObject.get(ctx.ptr(), "body")) |body_| {
+                    if (urlOrObject.get(ctx.ptr(),  "body")) |body_| {
                         if (Blob.fromJS(ctx.ptr(), body_, true, false)) |blob| {
                             if (blob.size > 0) {
                                 request.body = Body.Value{ .Blob = blob };
@@ -4525,12 +4512,12 @@ pub const Request = struct {
             else => {
                 request.url = JSC.JSValue.fromRef(arguments[0]).getZigString(ctx.ptr());
 
-                if (Body.Init.init(getAllocator(ctx), ctx, arguments[1]) catch null) |req_init| {
+                if (Body.Init.init(getAllocator(ctx), ctx, JSValue.c(arguments[1])) catch null) |req_init| {
                     request.headers = req_init.headers;
                     request.method = req_init.method;
                 }
 
-                if (JSC.JSValue.fromRef(arguments[1]).get(ctx.ptr(), "body")) |body_| {
+                if (JSC.JSValue.fromRef(arguments[1]).get(ctx.ptr(),  "body")) |body_| {
                     if (Blob.fromJS(ctx.ptr(), body_, true, false)) |blob| {
                         if (blob.size > 0) {
                             request.body = Body.Value{ .Blob = blob };

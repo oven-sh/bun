@@ -150,7 +150,7 @@ using JSBuffer = WebCore::JSBuffer;
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
-#include "../modules/Buffer.h"
+#include "../modules/BufferModule.h"
 
 // #include <iostream>
 static bool has_loaded_jsc = false;

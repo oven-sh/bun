@@ -162,6 +162,7 @@ pub fn IOTask(comptime Context: type) type {
                 .allocator = allocator,
                 .globalThis = globalThis,
             };
+            VirtualMachine.vm.active_tasks +|= 1;
             return this;
         }
 
@@ -209,6 +210,7 @@ pub fn AsyncNativeCallbackTask(comptime Context: type) type {
                 .allocator = allocator,
                 .globalThis = globalThis,
             };
+            VirtualMachine.vm.active_tasks +|= 1;
             return this;
         }
 

@@ -59,5 +59,7 @@ int main() {
        << JSC::CallFrame::argumentOffset(0) << ";\n";
   cout << "pub const Bun_FFI_PointerOffsetToTypedArrayVector = "
        << JSC::JSArrayBufferView::offsetOfVector() << ";\n";
+  cout << "pub const Bun_FFI_PointerOffsetToTypedArrayLength = "
+       << JSC::JSArrayBufferView::offsetOfLength() << ";\n";
   return 0;
 }

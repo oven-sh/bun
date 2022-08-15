@@ -26,7 +26,7 @@ pub fn main() anyerror!void {
         const paths = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers.h" };
         const paths2 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers-cpp.h" };
         const paths3 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "ZigLazyStaticFunctions.h" };
-        const paths4 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "ZigLazyStaticFunctions-inlines.h" };
+        const paths4 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "ZigGeneratedCode.cpp" };
 
         const cpp = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths2), .{});
         const file = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths), .{});

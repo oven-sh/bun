@@ -2392,9 +2392,7 @@ pub const Timer = struct {
 pub const FFI = struct {
     pub const Class = NewClass(
         void,
-        .{
-            .name = "FFI",
-        },
+        .{ .name = "FFI", .has_dom_calls = true },
         .{
             .viewSource = .{
                 .rfn = JSC.wrapWithHasContainer(JSC.FFI, "print", false, false, true),
@@ -2408,9 +2406,7 @@ pub const FFI = struct {
             .linkSymbols = .{
                 .rfn = JSC.wrapWithHasContainer(JSC.FFI, "linkSymbols", false, false, false),
             },
-            .ptr = .{
-                .rfn = JSC.wrapWithHasContainer(@This(), "ptr", false, false, true),
-            },
+            .ptr = JSC.DOMCall("FFI", @This(), "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties)),
             .toBuffer = .{
                 .rfn = JSC.wrapWithHasContainer(@This(), "toBuffer", false, false, true),
             },
@@ -2427,6 +2423,26 @@ pub const FFI = struct {
 
     pub fn ptr(
         globalThis: *JSGlobalObject,
+        _: JSValue,
+        arguments: []const JSValue,
+    ) JSValue {
+        return switch (arguments.len) {
+            0 => ptr_(globalThis, JSValue.zero, null),
+            1 => ptr_(globalThis, arguments[0], null),
+            else => ptr_(globalThis, arguments[0], arguments[1]),
+        };
+    }
+
+    pub fn ptrWithoutTypeChecks(
+        _: *JSGlobalObject,
+        _: *anyopaque,
+        array: *JSC.JSUint8Array,
+    ) callconv(.C) JSValue {
+        return JSValue.fromPtrAddress(@ptrToInt(array.ptr()));
+    }
+
+    fn ptr_(
+        globalThis: *JSGlobalObject,
         value: JSValue,
         byteOffset: ?JSValue,
     ) JSValue {
@@ -2435,7 +2451,7 @@ pub const FFI = struct {
         }
 
         const array_buffer = value.asArrayBuffer(globalThis) orelse {
-            return JSC.toInvalidArguments("Expected ArrayBufferView", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())}, globalThis.ref());
         };
 
         if (array_buffer.len == 0) {
@@ -2443,6 +2459,8 @@ pub const FFI = struct {
         }
 
         var addr: usize = @ptrToInt(array_buffer.ptr);
+        // const Sizes = @import("../bindings/sizes.zig");
+        // std.debug.assert(addr == @ptrToInt(value.asEncoded().ptr) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector);
 
         if (byteOffset) |off| {
             if (!off.isEmptyOrUndefinedOrNull()) {
@@ -2687,6 +2705,7 @@ pub const FFI = struct {
             var prototype = JSC.C.JSObjectMake(ctx, FFI.Class.get().?[0], null);
             var base = JSC.C.JSObjectMake(ctx, null, null);
             JSC.C.JSObjectSetPrototype(ctx, base, prototype);
+            FFI.Class.putDOMCalls(ctx, JSC.JSValue.c(base));
             return ctx.ptr().putCachedObject(
                 &ZigString.init("FFI"),
                 JSValue.fromRef(base),

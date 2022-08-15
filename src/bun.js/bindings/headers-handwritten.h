@@ -160,9 +160,12 @@ typedef void WebSocketClientTLS;
 
 #ifndef __cplusplus
 typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
+typedef struct Uint8Array_alias Uint8Array_alias;
 #endif
 
 #ifdef __cplusplus
+
+using Uint8Array_alias = JSC::JSUint8Array;
 
 typedef struct {
     char* ptr;

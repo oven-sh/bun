@@ -854,6 +854,22 @@ pub const SystemError = extern struct {
 };
 
 pub const ReturnableException = *?*Exception;
+pub const Sizes = @import("../bindings/sizes.zig");
+
+pub const JSUint8Array = opaque {
+    pub const name = "Uint8Array_alias";
+    pub fn ptr(this: *JSUint8Array) [*]u8 {
+        return @intToPtr(*[*]u8, @ptrToInt(this) + Sizes.Bun_FFI_PointerOffsetToTypedArrayVector).*;
+    }
+
+    pub fn len(this: *JSUint8Array) usize {
+        return @intToPtr(*usize, @ptrToInt(this) + Sizes.Bun_FFI_PointerOffsetToTypedArrayLength).*;
+    }
+
+    pub fn slice(this: *JSUint8Array) []u8 {
+        return this.ptr()[0..this.len()];
+    }
+};
 
 pub const JSCell = extern struct {
     pub const shim = Shimmer("JSC", "JSCell", @This());
@@ -3847,3 +3863,10 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         }
     };
 }
+
+// DOMCall Fields
+pub const __DOMCall_ptr = @import("../api/bun.zig").FFI.Class.functionDefinitions.ptr;
+
+pub const DOMCalls = .{
+    @import("../api/bun.zig").FFI,
+};

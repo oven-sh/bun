@@ -404,6 +404,7 @@ pub extern fn WTF__StringView__is16Bit(arg0: [*c]const WTF__StringView) bool;
 pub extern fn WTF__StringView__is8Bit(arg0: [*c]const WTF__StringView) bool;
 pub extern fn WTF__StringView__isEmpty(arg0: [*c]const WTF__StringView) bool;
 pub extern fn WTF__StringView__length(arg0: [*c]const WTF__StringView) usize;
+pub extern fn FFI__ptr__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*anyopaque) ?*JSC__JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: ?*JSC__JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: ?*JSC__JSGlobalObject, arg1: ?*anyopaque) bool;

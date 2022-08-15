@@ -2807,6 +2807,7 @@ pub const HardcodedModule = enum {
             .{ "http", "node:http" },
             .{ "module", "node:module" },
             .{ "node:buffer", "node:buffer" },
+            .{ "buffer", "node:buffer" },
             .{ "node:fs", "node:fs" },
             .{ "node:fs/promises", "node:fs/promises" },
             .{ "node:http", "node:http" },

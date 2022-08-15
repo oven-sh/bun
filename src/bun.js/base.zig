@@ -843,6 +843,7 @@ pub const ClassOptions = struct {
     no_inheritance: bool = false,
     singleton: bool = false,
     ts: d.ts.decl = d.ts.decl{ .empty = 0 },
+    has_dom_calls: bool = false,
 };
 
 pub fn NewConstructor(
@@ -891,6 +892,7 @@ pub fn NewClassWithInstanceType(
         pub const Zig = ZigType;
         const ClassDefinitionCreator = @This();
         const function_names = std.meta.fieldNames(@TypeOf(staticFunctions));
+        pub const functionDefinitions = staticFunctions;
         const function_name_literals = function_names;
         var function_name_refs: [function_names.len]js.JSStringRef = undefined;
         var function_name_refs_set = false;
@@ -994,6 +996,16 @@ pub fn NewClassWithInstanceType(
 
             return result;
         }
+
+        pub fn putDOMCalls(globalThis: *JSC.JSGlobalObject, value: JSValue) void {
+            inline for (function_name_literals) |functionName| {
+                const Function = comptime @field(staticFunctions, functionName);
+                if (@TypeOf(Function) == type and @hasDecl(Function, "is_dom_call")) {
+                    Function.put(globalThis, value);
+                }
+            }
+        }
+
         pub fn GetClass(comptime ReceiverType: type) type {
             const ClassGetter = struct {
                 get: fn (
@@ -1993,6 +2005,8 @@ pub fn NewClassWithInstanceType(
                 _ = i;
                 switch (@typeInfo(@TypeOf(@field(staticFunctions, function_name_literal)))) {
                     .Struct => {
+                        const CtxField = @field(staticFunctions, function_name_literals[i]);
+
                         if (strings.eqlComptime(function_name_literal, "constructor")) {
                             def.callAsConstructor = To.JS.Constructor(staticFunctions.constructor.rfn).rfn;
                         } else if (strings.eqlComptime(function_name_literal, "finalize")) {
@@ -2021,8 +2035,7 @@ pub fn NewClassWithInstanceType(
                             def.getPropertyNames = @field(staticFunctions, "getPropertyNames").rfn;
                         } else if (strings.eqlComptime(function_name_literal, "convertToType")) {
                             def.convertToType = @field(staticFunctions, "convertToType").rfn;
-                        } else {
-                            const CtxField = @field(staticFunctions, function_name_literals[i]);
+                        } else if (!@hasField(@TypeOf(CtxField), "is_dom_call")) {
                             if (!@hasField(@TypeOf(CtxField), "rfn")) {
                                 @compileError("Expected " ++ options.name ++ "." ++ function_name_literal ++ " to have .rfn");
                             }
@@ -2787,6 +2800,363 @@ pub fn wrap(
     comptime maybe_async: bool,
 ) MethodType(Container, true) {
     return wrapWithHasContainer(Container, name, maybe_async, true, true);
+}
+
+pub const DOMEffect = struct {
+    reads: [4]ID = std.mem.zeroes([4]ID),
+    writes: [4]ID = std.mem.zeroes([4]ID),
+
+    pub const top = DOMEffect{
+        .reads = .{ ID.Heap, ID.Heap, ID.Heap, ID.Heap },
+        .writes = .{ ID.Heap, ID.Heap, ID.Heap, ID.Heap },
+    };
+
+    pub fn forRead(read: ID) DOMEffect {
+        return DOMEffect{
+            .reads = .{ read, ID.Heap, ID.Heap, ID.Heap },
+            .writes = .{ ID.Heap, ID.Heap, ID.Heap, ID.Heap },
+        };
+    }
+
+    pub fn forWrite(read: ID) DOMEffect {
+        return DOMEffect{
+            .writes = .{ read, ID.Heap, ID.Heap, ID.Heap },
+            .reads = .{ ID.Heap, ID.Heap, ID.Heap, ID.Heap },
+        };
+    }
+
+    pub const pure = DOMEffect{};
+
+    pub fn isPure(this: DOMEffect) bool {
+        return this.reads[0] == ID.InvalidAbstractHeap and this.writes[0] == ID.InvalidAbstractHeap;
+    }
+
+    pub const ID = enum(u8) {
+        InvalidAbstractHeap = 0,
+        World,
+        Stack,
+        Heap,
+        Butterfly_publicLength,
+        Butterfly_vectorLength,
+        GetterSetter_getter,
+        GetterSetter_setter,
+        JSCell_cellState,
+        JSCell_indexingType,
+        JSCell_structureID,
+        JSCell_typeInfoFlags,
+        JSObject_butterfly,
+        JSPropertyNameEnumerator_cachedPropertyNames,
+        RegExpObject_lastIndex,
+        NamedProperties,
+        IndexedInt32Properties,
+        IndexedDoubleProperties,
+        IndexedContiguousProperties,
+        IndexedArrayStorageProperties,
+        DirectArgumentsProperties,
+        ScopeProperties,
+        TypedArrayProperties,
+        /// Used to reflect the fact that some allocations reveal object identity */
+        HeapObjectCount,
+        RegExpState,
+        MathDotRandomState,
+        JSDateFields,
+        JSMapFields,
+        JSSetFields,
+        JSWeakMapFields,
+        JSWeakSetFields,
+        JSInternalFields,
+        InternalState,
+        CatchLocals,
+        Absolute,
+        /// DOMJIT tells the heap range with the pair of integers. */
+        DOMState,
+        /// Use this for writes only, to indicate that this may fire watchpoints. Usually this is never directly written but instead we test to see if a node clobbers this; it just so happens that you have to write world to clobber it. */
+        Watchpoint_fire,
+        /// Use these for reads only, just to indicate that if the world got clobbered, then this operation will not work. */
+        MiscFields,
+        /// Use this for writes only, just to indicate that hoisting the node is invalid. This works because we don't hoist anything that has any side effects at all. */
+        SideState,
+    };
+};
+
+fn DOMCallArgumentType(comptime Type: type) []const u8 {
+    const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
+    return switch (ChildType) {
+        i32 => "JSC::SpecInt32Only",
+        bool => "JSC::SpecBoolean",
+        JSC.JSString => "JSC::SpecString",
+        JSC.JSUint8Array => "JSC::SpecUint8Array",
+        else => @compileError("Unknown DOM type: " ++ @typeName(Type)),
+    };
+}
+
+fn DOMCallArgumentTypeWrapper(comptime Type: type) []const u8 {
+    const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
+    return switch (ChildType) {
+        i32 => "int32_t",
+        bool => "bool",
+        JSC.JSString => "JSC::JSString*",
+        JSC.JSUint8Array => "JSC::JSUint8Array*",
+        else => @compileError("Unknown DOM type: " ++ @typeName(Type)),
+    };
+}
+
+fn DOMCallResultType(comptime Type: type) []const u8 {
+    const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
+    return switch (ChildType) {
+        i32 => "JSC::SpecInt32Only",
+        bool => "JSC::SpecBoolean",
+        JSC.JSString => "JSC::SpecString",
+        JSC.JSUint8Array => "JSC::SpecUint8Array",
+        JSC.JSCell => "JSC::SpecCell",
+        f64 => "JSC::SpecNonIntAsDouble",
+        else => "JSC::SpecHeapTop",
+    };
+}
+
+pub fn DOMCall(
+    comptime class_name: string,
+    comptime Container: type,
+    comptime functionName: string,
+    comptime ResultType: type,
+    comptime dom_effect: DOMEffect,
+) type {
+    return extern struct {
+        const className = class_name;
+        pub const is_dom_call = true;
+        const Slowpath = @field(Container, functionName);
+        const SlowpathType = @TypeOf(@field(Container, functionName));
+        pub const shim = JSC.Shimmer(className, functionName, @This());
+        pub const name = class_name ++ "__" ++ functionName;
+
+        // Zig doesn't support @frameAddress(1)
+        // so we have to add a small wrapper fujnction
+        pub fn slowpath(
+            globalObject: *JSC.JSGlobalObject,
+            thisValue: JSC.JSValue,
+            arguments_ptr: [*]const JSC.JSValue,
+            arguments_len: usize,
+        ) callconv(.C) JSValue {
+            return @call(.{}, @field(Container, functionName), .{
+                globalObject,
+                thisValue,
+                arguments_ptr[0..arguments_len],
+            });
+        }
+
+        pub const fastpath = @field(Container, functionName ++ "WithoutTypeChecks");
+        pub const Fastpath = @TypeOf(fastpath);
+        pub const Arguments = std.meta.ArgsTuple(Fastpath);
+
+        pub const Export = shim.exportFunctions(.{
+            .@"slowpath" = slowpath,
+            .@"fastpath" = fastpath,
+        });
+
+        pub fn put(globalObject: *JSC.JSGlobalObject, value: JSValue) void {
+            shim.cppFn("put", .{ globalObject, value });
+        }
+
+        pub const effect = dom_effect;
+
+        pub fn printGenerateDOMJITSignature(comptime Writer: type, writer: Writer) !void {
+            const signatureName = "DOMJIT_" ++ shim.name ++ "_signature";
+            const slowPathName = Export[0].symbol_name;
+            const fastPathName = Export[1].symbol_name;
+            const Fields: []const std.builtin.Type.StructField = std.meta.fields(Arguments);
+
+            const options = .{
+                .name = functionName,
+                .exportName = name ++ "__put",
+                .signatureName = signatureName,
+                .IDLResultName = DOMCallResultType(ResultType),
+                .fastPathName = fastPathName,
+                .slowPathName = slowPathName,
+                .argumentsCount = Fields.len - 2,
+            };
+            {
+                const fmt =
+                    \\extern "C" JSC_DECLARE_HOST_FUNCTION({[slowPathName]s}Wrapper);
+                    \\extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL({[fastPathName]s}Wrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue
+                ;
+                try writer.print(fmt, .{ .fastPathName = options.fastPathName, .slowPathName = options.slowPathName });
+            }
+            {
+                switch (Fields.len - 2) {
+                    0 => @compileError("Must be > 0 arguments"),
+                    1 => {
+                        try writer.writeAll(", ");
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
+                        try writer.writeAll("));\n");
+                    },
+                    2 => {
+                        try writer.writeAll(", ");
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
+                        try writer.writeAll(", ");
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].field_type));
+                        try writer.writeAll("));\n");
+                    },
+                    else => @compileError("Must be <= 3 arguments"),
+                }
+            }
+
+            {
+                const fmt =
+                    \\
+                    \\JSC_DEFINE_JIT_OPERATION({[fastPathName]s}Wrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue
+                ;
+                try writer.print(fmt, .{ .fastPathName = options.fastPathName });
+            }
+            {
+                switch (Fields.len - 2) {
+                    0 => @compileError("Must be > 0 arguments"),
+                    1 => {
+                        try writer.writeAll(", ");
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
+                        try writer.writeAll(" arg1)) {\n");
+                    },
+                    2 => {
+                        try writer.writeAll(", ");
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
+                        try writer.writeAll("arg1, ");
+                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].field_type));
+                        try writer.writeAll(" arg2)) {\n");
+                    },
+                    else => @compileError("Must be <= 3 arguments"),
+                }
+                {
+                    const fmt =
+                        \\VM& vm = JSC::getVM(lexicalGlobalObject);
+                        \\IGNORE_WARNINGS_BEGIN("frame-address")
+                        \\CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+                        \\IGNORE_WARNINGS_END
+                        \\JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+                        \\return {[fastPathName]s}(lexicalGlobalObject, thisValue
+                    ;
+                    try writer.print(fmt, .{ .fastPathName = options.fastPathName });
+                }
+                {
+                    switch (Fields.len - 2) {
+                        0 => @compileError("Must be > 0 arguments"),
+                        1 => {
+                            try writer.writeAll(", arg1);\n}\n");
+                        },
+                        2 => {
+                            try writer.writeAll(", arg1, arg2);\n}\n");
+                        },
+                        else => @compileError("Must be <= 3 arguments"),
+                    }
+                }
+            }
+
+            {
+                const fmt =
+                    \\JSC_DEFINE_HOST_FUNCTION({[slowPathName]s}Wrapper, (JSC::JSGlobalObject *globalObject, JSC::CallFrame* frame)) {{
+                    \\    return {[slowPathName]s}(globalObject, JSValue::encode(frame->thisValue()), reinterpret_cast<JSC::EncodedJSValue*>(frame->addressOfArgumentsStart()), frame->argumentCount());
+                    \\}}
+                    \\
+                    \\extern "C" void {[exportName]s}(JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value) {{
+                    \\  JSC::JSObject *thisObject = JSC::jsCast<JSC::JSObject *>(JSC::JSValue::decode(value));
+                    \\  static const JSC::DOMJIT::Signature {[signatureName]s}(
+                    \\    {[fastPathName]s}Wrapper,
+                    \\    thisObject->classInfo(),
+                    \\    
+                ;
+
+                try writer.print(fmt, .{
+                    .slowPathName = options.slowPathName,
+                    .exportName = options.exportName,
+                    .fastPathName = options.fastPathName,
+                    .signatureName = options.signatureName,
+                });
+            }
+            if (effect.isPure()) {
+                try writer.writeAll("JSC::DOMJIT::Effect::forPure(),\n  ");
+            } else if (effect.writes[0] == DOMEffect.pure.writes[0]) {
+                try writer.print(
+                    "JSC::DOMJIT::Effect::forReadKinds(JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}),\n  ",
+                    .{
+                        @tagName(effect.reads[0]),
+                        @tagName(effect.reads[1]),
+                        @tagName(effect.reads[2]),
+                        @tagName(effect.reads[3]),
+                    },
+                );
+            } else if (effect.reads[0] == DOMEffect.pure.reads[0]) {
+                try writer.print(
+                    "JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}),\n  ",
+                    .{
+                        @tagName(effect.writes[0]),
+                        @tagName(effect.writes[1]),
+                        @tagName(effect.writes[2]),
+                        @tagName(effect.writes[3]),
+                    },
+                );
+            } else {
+                try writer.writeAll("JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),\n  ");
+            }
+
+            {
+                try writer.writeAll(DOMCallResultType(ResultType));
+                try writer.writeAll(",\n  ");
+            }
+
+            switch (Fields.len - 2) {
+                0 => @compileError("Must be > 0 arguments"),
+                1 => {
+                    try writer.writeAll(DOMCallArgumentType(Fields[2].field_type));
+                    try writer.writeAll("\n  ");
+                },
+                2 => {
+                    try writer.writeAll(DOMCallArgumentType(Fields[2].field_type));
+                    try writer.writeAll(",\n  ");
+                    try writer.writeAll(DOMCallArgumentType(Fields[3].field_type));
+                    try writer.writeAll("\n  ");
+                },
+                else => @compileError("Must be <= 3 arguments"),
+            }
+
+            try writer.writeAll(");\n  ");
+
+            {
+                const fmt =
+                    \\                JSFunction* function = JSFunction::create(
+                    \\                    globalObject->vm(),
+                    \\                    globalObject,
+                    \\                    {[argumentsCount]d},
+                    \\                    String("{[name]s}"_s),
+                    \\                    {[slowPathName]s}Wrapper, ImplementationVisibility::Public, NoIntrinsic, {[slowPathName]s}Wrapper,
+                    \\                    &{[signatureName]s}
+                    \\                );
+                    \\           thisObject->putDirect(
+                    \\             globalObject->vm(),
+                    \\             Identifier::fromString(globalObject->vm(), "{[name]s}"_s),
+                    \\             function,
+                    \\             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0
+                    \\           );
+                    \\}}
+                ;
+                try writer.print(fmt, .{
+                    .argumentsCount = options.argumentsCount,
+                    .name = options.name,
+                    .slowPathName = options.slowPathName,
+                    .signatureName = options.signatureName,
+                });
+            }
+        }
+
+        pub const Extern = [_][]const u8{"put"};
+
+        comptime {
+            if (!JSC.is_bindgen) {
+                @export(slowpath, .{ .name = Export[0].symbol_name });
+                @export(fastpath, .{ .name = Export[1].symbol_name });
+            } else {
+                _ = slowpath;
+                _ = fastpath;
+            }
+        }
+    };
 }
 
 pub fn wrapWithHasContainer(

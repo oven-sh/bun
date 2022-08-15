@@ -26,25 +26,50 @@
 #pragma once
 
 #include "IDLTypes.h"
+#include "JSDOMConvertBufferSource.h"
 
-namespace WebCore { namespace DOMJIT {
+namespace WebCore {
+namespace DOMJIT {
 
 template<typename IDLType>
 struct IDLJSArgumentTypeSelect;
 
-template<> struct IDLJSArgumentTypeSelect<IDLBoolean> { typedef bool type; };
-template<> struct IDLJSArgumentTypeSelect<IDLByte> { typedef int32_t type; };
-template<> struct IDLJSArgumentTypeSelect<IDLOctet> { typedef int32_t type; };
-template<> struct IDLJSArgumentTypeSelect<IDLShort> { typedef int32_t type; };
-template<> struct IDLJSArgumentTypeSelect<IDLUnsignedShort> { typedef int32_t type; };
-template<> struct IDLJSArgumentTypeSelect<IDLLong> { typedef int32_t type; };
-template<> struct IDLJSArgumentTypeSelect<IDLDOMString> { typedef JSC::JSString* type; };
-template<> struct IDLJSArgumentTypeSelect<IDLUint8Array> { typedef JSC::JSUint8Array* type; };
-template<> struct IDLJSArgumentTypeSelect<IDLObject> { typedef JSC::JSObject* type; };
-template<> struct IDLJSArgumentTypeSelect<IDLAtomStringAdaptor<IDLDOMString>> { typedef JSC::JSString* type; };
-template<> struct IDLJSArgumentTypeSelect<IDLRequiresExistingAtomStringAdaptor<IDLDOMString>> { typedef JSC::JSString* type; };
+template<> struct IDLJSArgumentTypeSelect<IDLBoolean> {
+    typedef bool type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLByte> {
+    typedef int32_t type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLOctet> {
+    typedef int32_t type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLShort> {
+    typedef int32_t type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLUnsignedShort> {
+    typedef int32_t type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLLong> {
+    typedef int32_t type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLDOMString> {
+    typedef JSC::JSString* type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLUint8Array> {
+    typedef JSC::JSUint8Array* type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLObject> {
+    typedef JSC::JSObject* type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLAtomStringAdaptor<IDLDOMString>> {
+    typedef JSC::JSString* type;
+};
+template<> struct IDLJSArgumentTypeSelect<IDLRequiresExistingAtomStringAdaptor<IDLDOMString>> {
+    typedef JSC::JSString* type;
+};
 
 template<typename IDLType>
 using IDLJSArgumentType = typename IDLJSArgumentTypeSelect<IDLType>::type;
 
-} }
+}
+}

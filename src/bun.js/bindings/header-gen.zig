@@ -655,14 +655,11 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             var impl_fourth_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
             var impl_fourth_writer = impl_fourth_buffer.writer();
 
-            var lazy_functions_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
-            var lazy_functions_buffer_writer = lazy_functions_buffer.writer();
-
             var lazy_function_definitions_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
-            var lazy_function_definitions_writer = lazy_function_definitions_buffer.writer();
+            // var lazy_function_definitions_writer = lazy_function_definitions_buffer.writer();
 
-            var lazy_function_visitor_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
-            var lazy_function_visitor_writer = lazy_function_visitor_buffer.writer();
+            var dom_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
+            var dom_writer = dom_buffer.writer();
 
             // inline for (import.all_static_externs) |static_extern, i| {
             //     const Type = static_extern.Type;
@@ -689,7 +686,36 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             var to_get_sizes: usize = 0;
 
             const exclude_from_cpp = comptime [_][]const u8{ "ZigString", "ZigException" };
-            const TypesToCheck = [_]type{ first_import, second_import };
+
+            const TypesToCheck: []type = comptime brk: {
+                var all_types: [100]type = undefined;
+                all_types[0] = first_import;
+                all_types[1] = second_import;
+                var counter: usize = 2;
+                inline for (first_import.DOMCalls) |Type| {
+                    inline for (std.meta.fieldNames(@TypeOf(Type.Class.functionDefinitions))) |static_function_name| {
+                        const static_function = @field(Type.Class.functionDefinitions, static_function_name);
+                        if (@TypeOf(static_function) == type and @hasDecl(static_function, "is_dom_call")) {
+                            all_types[counter] = static_function;
+                            counter += 1;
+                        }
+                    }
+                }
+
+                break :brk all_types[0..counter];
+            };
+
+            inline for (first_import.DOMCalls) |Type| {
+                inline for (comptime std.meta.fieldNames(@TypeOf(Type.Class.functionDefinitions))) |static_function_name| {
+                    const static_function = @field(Type.Class.functionDefinitions, static_function_name);
+                    if (comptime @TypeOf(static_function) == type and @hasDecl(static_function, "is_dom_call")) {
+                        dom_writer.writeAll("\n\n") catch unreachable;
+                        static_function.printGenerateDOMJITSignature(@TypeOf(&dom_writer), &dom_writer) catch unreachable;
+                        dom_writer.writeAll("\n\n") catch unreachable;
+                    }
+                }
+            }
+
             inline for (TypesToCheck) |BaseType| {
                 const all_decls = comptime std.meta.declarations(BaseType);
                 inline for (all_decls) |_decls| {
@@ -798,74 +824,74 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                                         }
                                     }
 
-                                    if (@hasDecl(Type, "lazy_static_functions")) {
-                                        const ExportLIst = comptime brk: {
-                                            const Sorder = struct {
-                                                pub fn lessThan(_: @This(), comptime lhs: StaticExport, comptime rhs: StaticExport) bool {
-                                                    return std.ascii.orderIgnoreCase(lhs.symbol_name, rhs.symbol_name) == std.math.Order.lt;
-                                                }
-                                            };
-                                            var extern_list = Type.lazy_static_functions;
-                                            std.sort.sort(StaticExport, &extern_list, Sorder{}, Sorder.lessThan);
-                                            break :brk extern_list;
-                                        };
+                                    // if (@hasDecl(Type, "lazy_static_functions")) {
+                                    //     const ExportLIst = comptime brk: {
+                                    //         const Sorder = struct {
+                                    //             pub fn lessThan(_: @This(), comptime lhs: StaticExport, comptime rhs: StaticExport) bool {
+                                    //                 return std.ascii.orderIgnoreCase(lhs.symbol_name, rhs.symbol_name) == std.math.Order.lt;
+                                    //             }
+                                    //         };
+                                    //         var extern_list = Type.lazy_static_functions;
+                                    //         std.sort.sort(StaticExport, &extern_list, Sorder{}, Sorder.lessThan);
+                                    //         break :brk extern_list;
+                                    //     };
 
-                                        gen.direction = C_Generator.Direction.export_zig;
-                                        if (ExportLIst.len > 0) {
-                                            lazy_function_definitions_writer.writeAll("\n#pragma mark ") catch unreachable;
-                                            lazy_function_definitions_writer.writeAll(Type.shim.name) catch unreachable;
-                                            lazy_function_definitions_writer.writeAll("\n\n") catch unreachable;
+                                    //     gen.direction = C_Generator.Direction.export_zig;
+                                    //     if (ExportLIst.len > 0) {
+                                    //         lazy_function_definitions_writer.writeAll("\n#pragma mark ") catch unreachable;
+                                    //         lazy_function_definitions_writer.writeAll(Type.shim.name) catch unreachable;
+                                    //         lazy_function_definitions_writer.writeAll("\n\n") catch unreachable;
 
-                                            inline for (ExportLIst) |static_export| {
-                                                const exp: StaticExport = static_export;
-                                                lazy_function_definitions_writer.print("  JSC::LazyProperty<Zig::GlobalObject, Zig::JSFFIFunction> m_{s};", .{exp.symbol_name}) catch unreachable;
-                                                lazy_function_definitions_writer.writeAll("\n") catch unreachable;
+                                    //         inline for (ExportLIst) |static_export| {
+                                    //             const exp: StaticExport = static_export;
+                                    //             lazy_function_definitions_writer.print("  JSC::LazyProperty<Zig::GlobalObject, Zig::JSFFIFunction> m_{s};", .{exp.symbol_name}) catch unreachable;
+                                    //             lazy_function_definitions_writer.writeAll("\n") catch unreachable;
 
-                                                lazy_function_definitions_writer.print(
-                                                    "  Zig::JSFFIFunction* get__{s}(Zig::GlobalObject *globalObject) {{ return m_{s}.getInitializedOnMainThread(globalObject); }}",
-                                                    .{ exp.symbol_name, exp.symbol_name },
-                                                ) catch unreachable;
-                                                lazy_function_definitions_writer.writeAll("\n") catch unreachable;
+                                    //             lazy_function_definitions_writer.print(
+                                    //                 "  Zig::JSFFIFunction* get__{s}(Zig::GlobalObject *globalObject) {{ return m_{s}.getInitializedOnMainThread(globalObject); }}",
+                                    //                 .{ exp.symbol_name, exp.symbol_name },
+                                    //             ) catch unreachable;
+                                    //             lazy_function_definitions_writer.writeAll("\n") catch unreachable;
 
-                                                const impl_format =
-                                                    \\
-                                                    \\  m_{s}.initLater(
-                                                    \\      [](const JSC::LazyProperty<Zig::GlobalObject, Zig::JSFFIFunction>::Initializer& init) {{
-                                                    \\          WTF::String functionName = WTF::String("{s}"_s);
-                                                    \\          Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(
-                                                    \\               init.vm,
-                                                    \\               init.owner, 
-                                                    \\               1,
-                                                    \\               functionName,
-                                                    \\               {s},
-                                                    \\               JSC::NoIntrinsic,
-                                                    \\               {s}
-                                                    \\          );
-                                                    \\          init.set(function);
-                                                    \\      }});
-                                                    \\
-                                                ;
+                                    //             const impl_format =
+                                    //                 \\
+                                    //                 \\  m_{s}.initLater(
+                                    //                 \\      [](const JSC::LazyProperty<Zig::GlobalObject, Zig::JSFFIFunction>::Initializer& init) {{
+                                    //                 \\          WTF::String functionName = WTF::String("{s}"_s);
+                                    //                 \\          Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(
+                                    //                 \\               init.vm,
+                                    //                 \\               init.owner,
+                                    //                 \\               1,
+                                    //                 \\               functionName,
+                                    //                 \\               {s},
+                                    //                 \\               JSC::NoIntrinsic,
+                                    //                 \\               {s}
+                                    //                 \\          );
+                                    //                 \\          init.set(function);
+                                    //                 \\      }});
+                                    //                 \\
+                                    //             ;
 
-                                                lazy_functions_buffer_writer.print(
-                                                    impl_format,
-                                                    .{
-                                                        exp.symbol_name,
-                                                        exp.local_name,
-                                                        exp.symbol_name,
-                                                        exp.symbol_name,
-                                                    },
-                                                ) catch unreachable;
+                                    //             lazy_functions_buffer_writer.print(
+                                    //                 impl_format,
+                                    //                 .{
+                                    //                     exp.symbol_name,
+                                    //                     exp.local_name,
+                                    //                     exp.symbol_name,
+                                    //                     exp.symbol_name,
+                                    //                 },
+                                    //             ) catch unreachable;
 
-                                                lazy_function_visitor_writer.print(
-                                                    \\  this->m_{s}.visit(visitor);
-                                                    \\
-                                                ,
-                                                    .{exp.symbol_name},
-                                                ) catch unreachable;
-                                            }
-                                            gen.write("\n");
-                                        }
-                                    }
+                                    //             lazy_function_visitor_writer.print(
+                                    //                 \\  this->m_{s}.visit(visitor);
+                                    //                 \\
+                                    //             ,
+                                    //                 .{exp.symbol_name},
+                                    //             ) catch unreachable;
+                                    //         }
+                                    //         gen.write("\n");
+                                    //     }
+                                    // }
                                 }
                             }
                         }
@@ -892,7 +918,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\namespace Zig {{
                 \\  class GlobalObject;
                 \\  class JSFFIFunction;
-                \\ 
+                \\
                 \\  class LazyStaticFunctions {{
                 \\    public:
                 \\
@@ -900,8 +926,8 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\
                 \\    template<typename Visitor>
                 \\    void visit(Visitor& visitor);
-                \\    
-                \\  
+                \\
+                \\
                 \\  /* -- BEGIN FUNCTION DEFINITIONS -- */
                 \\  {s}
                 \\  /* -- END FUNCTION DEFINITIONS-- */
@@ -912,25 +938,28 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             , .{lazy_function_definitions_buffer.items}) catch unreachable;
 
             lazy_functions_impl.writer().print(
-                \\// GENERATED FILE
-                \\#pragma once
+                \\ #include "root.h"
+                \\ 
+                \\ #include <JavaScriptCore/DOMJITAbstractHeap.h>
+                \\ #include "DOMJITIDLConvert.h"
+                \\ #include "DOMJITIDLType.h"
+                \\ #include "DOMJITIDLTypeFilter.h"
+                \\ #include "DOMJITHelpers.h"
+                \\ #include <JavaScriptCore/DFGAbstractHeap.h>
+                \\ 
+                \\ #include "JSDOMConvertBufferSource.h"
+                \\ 
+                \\ using namespace JSC;
+                \\ using namespace WebCore;
                 \\
-                \\namespace Zig {{
                 \\
-                \\  template<typename Visitor>
-                \\  void LazyStaticFunctions::visit(Visitor& visitor) {{
-                \\     {s}
-                \\  }}
-                \\  
-                \\  void LazyStaticFunctions::init(Zig::GlobalObject *globalObject) {{
-                \\    {s}
-                \\  }}
+                \\  /* -- BEGIN DOMCall DEFINITIONS -- */
+                \\  {s}
+                \\  /* -- END DOMCall DEFINITIONS-- */
                 \\
-                \\}} // namespace Zig
                 \\
             , .{
-                lazy_function_visitor_buffer.items,
-                lazy_functions_buffer.items,
+                dom_buffer.items,
             }) catch unreachable;
 
             const NamespaceMap = std.StringArrayHashMap(std.BufMap);

@@ -853,6 +853,9 @@ function readDirectStream(stream, sink, underlyingSource) {
 function assignToStream(stream, sink) {
   "use strict";
 
+  // prevent sink being GC'ed. A long name to prevent collision.
+  globalThis.______sink = sink
+
   // The stream is either a direct stream or a "default" JS stream
   var underlyingSource = @getByIdDirectPrivate(stream, "underlyingSource");
 

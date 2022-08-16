@@ -39,6 +39,7 @@
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IdentifierInlines.h>
+#include <JavaScriptCore/ImplementationVisibility.h>
 #include <JavaScriptCore/Intrinsic.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
@@ -1051,11 +1052,14 @@ const char* const s_readableStreamInternalsReadDirectStreamCode =
 const JSC::ConstructAbility s_readableStreamInternalsAssignToStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsAssignToStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsAssignToStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsAssignToStreamCodeLength = 438;
+const int s_readableStreamInternalsAssignToStreamCodeLength = 475;
 static const JSC::Intrinsic s_readableStreamInternalsAssignToStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsAssignToStreamCode =
     "(function (stream, sink) {\n" \
     "  \"use strict\";\n" \
+    "\n" \
+    "  //\n" \
+    "  globalThis.______sink = sink\n" \
     "\n" \
     "  //\n" \
     "  var underlyingSource = @getByIdDirectPrivate(stream, \"underlyingSource\");\n" \

@@ -164,14 +164,16 @@ function header() {
 
                 class Owner final : public JSC::WeakHandleOwner {
                 public:
-                    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final {
+                    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
+                    {
                         auto* controller = JSC::jsCast<${controller}*>(handle.slot()->asCell());
                         return controller->hasPendingActivity();
                     }
                     void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
                 };
             
-                static JSC::WeakHandleOwner* getOwner() {
+                static JSC::WeakHandleOwner* getOwner()
+                {
                     static NeverDestroyed<Owner> m_owner;
                     return &m_owner.get();
                 }

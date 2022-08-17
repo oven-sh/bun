@@ -1,7 +1,4 @@
-// import { renderToReadableStream } from "react-dom/server.browser";
-var { renderToReadableStream } = import.meta.require(
-  "../../test/bun.js/reactdom-bun.js"
-);
+import { renderToReadableStream } from "react-dom/server.browser";
 
 const headers = {
   headers: {

@@ -100,10 +100,10 @@ function header() {
             ${className}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
                 : Base(vm, structure)                                                                                                                                               
             {                                                                                                                                                                       
-                m_sinkPtr = sinkPtr;                                                                                                                                                
+                m_sinkPtr = sinkPtr;
             }                                                                                                                                                                       
                                                                                                                                                                                     
-            void finishCreation(JSC::VM&);                                                                                                                                          
+            void finishCreation(JSC::VM&);
         };
 
         class ${controller} final : public JSC::JSDestructibleObject {                                                                                                              
@@ -141,20 +141,42 @@ function header() {
                 void start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSFunction *onPull, JSC::JSFunction *onClose);
                 DECLARE_VISIT_CHILDREN;
                                                                                                                                                                                         
-                static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);                                                                                                                   
-                                                                                                                                                                                        
+                static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+                                                                 
+                bool hasPendingActivity() { return m_hasPendingActivity; }
+
                 void* m_sinkPtr;
+                bool m_hasPendingActivity;
                 mutable WriteBarrier<JSC::JSFunction> m_onPull;
                 mutable WriteBarrier<JSC::JSFunction> m_onClose;
                 mutable JSC::Weak<JSObject> m_weakReadableStream;
+                JSC::Weak<${controller}> m_weakThis;
                                                                                                                                                                                         
                 ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)                                                                                                    
                     : Base(vm, structure)                                                                                                                                               
                 {                                                                                                                                                                       
-                    m_sinkPtr = sinkPtr;                                                                                                                                                
+                    m_sinkPtr = sinkPtr;
+                    m_hasPendingActivity = true;
+                    m_weakThis = JSC::Weak<${controller}>(this, getOwner());
                 }                                                                                                                                                                       
                                                                                                                                                                                         
-                void finishCreation(JSC::VM&);                                                                                                                                          
+                void finishCreation(JSC::VM&);
+
+                class Owner final : public JSC::WeakHandleOwner {
+                public:
+                    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, JSC::AbstractSlotVisitor&, const char**) final
+                    {
+                        auto* controller = JSC::jsCast<${controller}*>(handle.slot()->asCell());
+                        return controller->hasPendingActivity();
+                    }
+                    void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+                };
+            
+                static JSC::WeakHandleOwner* getOwner()
+                {
+                    static NeverDestroyed<Owner> m_owner;
+                    return &m_owner.get();
+                }
             };
 
 JSC_DECLARE_CUSTOM_GETTER(function${name}__getter);
@@ -186,7 +208,7 @@ JSC_DECLARE_HOST_FUNCTION(functionStartDirectStream);
   const bottom = `
 JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
 JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
-
+Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
 } // namespace WebCore
 `;
   var templ = outer;
@@ -369,6 +391,8 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
 
     controller->detach();
     ${name}__close(lexicalGlobalObject, ptr);
+    // Release the controller right before close.
+    controller->m_hasPendingActivity = false;
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -775,6 +799,25 @@ JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* glob
   templ += `
 default: 
   RELEASE_ASSERT_NOT_REACHED();
+  }
+}`;
+
+  templ += `
+Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
+{
+    switch (sinkID) {
+  `;
+  for (let name of classes) {
+    templ += `
+  case ${name}: {
+    auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
+    return JSReadable${name}Controller::createStructure(vm, globalObject, prototype);
+  }
+`;
+  }
+  templ += `
+default:
+    RELEASE_ASSERT_NOT_REACHED();
   }
 }`;
 

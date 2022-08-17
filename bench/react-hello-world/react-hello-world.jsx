@@ -1,4 +1,4 @@
-import { renderToReadableStream } from "react-dom/server.browser";
+import { renderToReadableStream } from "../../test/bun.js/reactdom-bun.js";
 
 const headers = {
   headers: {

@@ -64,7 +64,7 @@ pub fn onThreadStartNew(event_fd: os.fd_t) void {
                         \\ Please make sure you're using WSL version 2 (not WSL 1). To check: wsl -l -v
                         \\ If you are on WSL 1, update to WSL 2 with the following commands:
                         \\  1. wsl --set-default-version 2
-                        \\  2. wsl --set-version <distro_name> 2
+                        \\  2. wsl --set-version [distro_name] 2
                         \\  3. Now follow the WSL 2 instructions above.
                         \\     Where [distro_name] is one of the names from the list given by: wsl -l -v
                         \\ 

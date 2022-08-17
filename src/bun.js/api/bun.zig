@@ -231,7 +231,7 @@ pub fn registerMacro(
         return js.JSValueMakeUndefined(ctx);
     }
 
-    if (!js.JSValueIsObject(ctx, arguments[1]) or !js.JSObjectIsFunction(ctx, arguments[1])) {
+    if (!arguments[1].?.value().isCell() or !arguments[1].?.value().isCallable(ctx.vm())) {
         JSError(getAllocator(ctx), "Macro must be a function. Received: {s}", .{@tagName(js.JSValueGetType(ctx, arguments[1]))}, ctx, exception);
         return js.JSValueMakeUndefined(ctx);
     }
@@ -1283,20 +1283,33 @@ pub const Crypto = struct {
                 },
             );
 
+            pub const codgen = JSC.codegen(
+                @This(),
+                @as(string, name),
+                .{
+                    .update = JSC.wrapSync(@This(), "update"),
+                    .digest = JSC.wrapSync(@This(), "digest"),
+                    .finalize = finalize,
+
+                    .byteLength = .{
+                        .get = byteLength2,
+                    },
+                },
+                .{
+                    .constructor = constructor,
+                    .hash = JSC.wrapWithHasContainer(@This(), "hash", false, false, true),
+                    .byteLength = .{
+                        .get = byteLength,
+                    },
+                },
+            );
+
             pub const Class = JSC.NewClass(
                 @This(),
                 .{
                     .name = name,
                 },
-                .{
-                    .update = .{
-                        .rfn = JSC.wrapSync(@This(), "update"),
-                    },
-                    .digest = .{
-                        .rfn = JSC.wrapSync(@This(), "digest"),
-                    },
-                    .finalize = finalize,
-                },
+                .{},
                 .{
                     .byteLength = .{
                         .get = byteLength2,
@@ -1620,12 +1633,12 @@ pub export fn Bun__escapeHTML(
     globalObject: *JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) JSC.JSValue {
-    const arguments = callframe.arguments();
+    const arguments = callframe.arguments(2);
     if (arguments.len < 1) {
         return ZigString.Empty.toValue(globalObject);
     }
 
-    const input_value = arguments[0];
+    const input_value = arguments.ptr[0];
     const zig_str = input_value.getZigString(globalObject);
     if (zig_str.len == 0)
         return ZigString.Empty.toValue(globalObject);

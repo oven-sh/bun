@@ -120,6 +120,9 @@ pub extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*JSC__JSGloba
 pub extern fn WebCore__FetchHeaders__createFromUWS(arg0: ?*JSC__JSGlobalObject, arg1: ?*anyopaque) ?*bindings.FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createValue(arg0: ?*JSC__JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSC__JSValue;
 pub extern fn WebCore__FetchHeaders__deref(arg0: ?*bindings.FetchHeaders) void;
+pub extern fn WebCore__FetchHeaders__fastGet_(arg0: ?*bindings.FetchHeaders, arg1: u8, arg2: [*c]ZigString) void;
+pub extern fn WebCore__FetchHeaders__fastHas_(arg0: ?*bindings.FetchHeaders, arg1: u8) bool;
+pub extern fn WebCore__FetchHeaders__fastRemove_(arg0: ?*bindings.FetchHeaders, arg1: u8) void;
 pub extern fn WebCore__FetchHeaders__get_(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]ZigString) void;
 pub extern fn WebCore__FetchHeaders__has(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString) bool;
 pub extern fn WebCore__FetchHeaders__put_(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString) void;
@@ -272,6 +275,7 @@ pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c
 pub extern fn JSC__JSValue__createUninitializedUint8Array(arg0: ?*JSC__JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__fastGet_(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__VM, ?*JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
 pub extern fn JSC__JSValue__fromEntries(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__fromInt64NoTruncate(arg0: ?*JSC__JSGlobalObject, arg1: i64) JSC__JSValue;

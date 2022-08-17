@@ -47,3 +47,5 @@ pub const jsBoolean = @This().JSValue.jsBoolean;
 pub inline fn markBinding() void {
     if (comptime is_bindgen) unreachable;
 }
+
+pub const Codegen = @import("./bun.js/bindings/generated_classes.zig");

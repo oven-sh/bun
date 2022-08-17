@@ -203,6 +203,10 @@ public:
     }
 
     void handleRejectedPromises();
+    void initGeneratedLazyClasses();
+
+    template<typename Visitor>
+    void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
 
     void* bunVM() { return m_bunVM; }
     bool isThreadLocalDefaultGlobalObject = false;
@@ -217,6 +221,8 @@ public:
     {
         this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
     }
+
+#include "ZigGeneratedClasses+lazyStructureHeader.h"
 
 private:
     void addBuiltinGlobals(JSC::VM&);

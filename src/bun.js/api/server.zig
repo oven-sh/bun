@@ -530,7 +530,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         response_ptr: ?*JSC.WebCore.Response = null,
         blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
         promise: ?*JSC.JSValue = null,
-        response_headers: ?*JSC.FetchHeaders = null,
         has_abort_handler: bool = false,
         has_sendfile_ctx: bool = false,
         has_called_error_handler: bool = false,
@@ -846,11 +845,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
                 JSC.C.JSValueUnprotect(this.server.globalThis.ref(), promise.asObjectRef());
             }
-
-            if (this.response_headers != null) {
-                this.response_headers.?.deref();
-                this.response_headers = null;
-            }
         }
         pub fn finalize(this: *RequestContext) void {
             this.finalizeWithoutDeinit();
@@ -876,9 +870,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this: *RequestContext,
             headers: *JSC.FetchHeaders,
         ) void {
-            headers.remove(&ZigString.init("content-length"));
-            headers.remove(&ZigString.init("transfer-encoding"));
-            if (!ssl_enabled) headers.remove(&ZigString.init("strict-transport-security"));
+            headers.fastRemove(.ContentLength);
+            headers.fastRemove(.TransferEncoding);
+            if (!ssl_enabled) headers.fastRemove(.StrictTransportSecurity);
             headers.toUWSResponse(ssl_enabled, this.resp);
         }
 
@@ -1234,7 +1228,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             .JavaScript, .Direct => {
                                 // uWS automatically adds the status line if needed
                                 // we want to batch network calls as much as possible
-                                if (!(this.response_ptr.?.statusCode() == 200 or this.response_headers == null)) {
+                                if (!(this.response_ptr.?.statusCode() == 200 and this.response_ptr.?.body.init.headers == null)) {
                                     this.renderMetadata();
                                 }
 
@@ -1626,7 +1620,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (response.body.init.headers) |headers_| {
                 this.writeHeaders(headers_);
-                has_content_disposition = headers_.has(&ZigString.init("content-disposition"));
+                has_content_disposition = headers_.fastHas(.ContentDisposition);
                 response.body.init.headers = null;
                 headers_.deref();
             }
@@ -1704,9 +1698,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     else
                         Blob.initEmpty(this.server.globalThis),
                 };
-                old.resolve(&req.body, this.server.globalThis);
+                if (old == .Locked)
+                    old.resolve(&req.body, this.server.globalThis);
                 request.unprotect();
-                VirtualMachine.vm.tick();
                 return;
             }
         }
@@ -1723,15 +1717,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     request.ensureStillAlive();
                     uws.Loop.get().?.nextTick(*RequestContext, this, resolveRequestBody);
                 } else {
-                    this.request_body_buf.deinit(this.allocator);
-                    this.request_body_buf = .{};
+                    this.request_body_buf.clearAndFree(this.allocator);
                 }
             }
         }
 
         pub fn onPull(this: *RequestContext) void {
             const request = JSC.JSValue.c(this.request_js_object);
-            request.protect();
+            request.ensureStillAlive();
 
             if (this.req.header("content-length")) |content_length| {
                 const len = std.fmt.parseInt(usize, content_length, 10) catch 0;
@@ -1741,11 +1734,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         old.Locked.callback = null;
                         req.body = .{ .Empty = .{} };
                         old.resolve(&req.body, this.server.globalThis);
-                        VirtualMachine.vm.tick();
-
                         return;
                     }
-                    request.unprotect();
+                    request.ensureStillAlive();
                 }
 
                 if (len >= this.server.config.max_request_body_size) {
@@ -1754,11 +1745,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         old.Locked.callback = null;
                         req.body = .{ .Empty = .{} };
                         old.toError(error.RequestBodyTooLarge, this.server.globalThis);
-
-                        VirtualMachine.vm.tick();
                         return;
                     }
-                    request.unprotect();
+                    request.ensureStillAlive();
 
                     this.resp.writeStatus("413 Request Entity Too Large");
                     this.resp.endWithoutBody();
@@ -1767,9 +1756,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
 
                 this.request_body_buf.ensureTotalCapacityPrecise(this.allocator, len) catch @panic("Out of memory while allocating request body buffer");
+            } else if (this.req.header("transfer-encoding") == null) {
+                // no content-length
+                // no transfer-encoding
+                if (request.as(Request)) |req| {
+                    var old = req.body;
+                    old.Locked.callback = null;
+                    req.body = .{ .Empty = .{} };
+                    old.resolve(&req.body, this.server.globalThis);
+                    return;
+                }
             }
-            this.setAbortHandler();
 
+            request.protect();
+            this.setAbortHandler();
             this.resp.onData(*RequestContext, onBodyChunk, this);
         }
 
@@ -2096,7 +2096,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             };
             request_object.url.mark();
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
-            var args = [_]JSC.C.JSValueRef{JSC.WebCore.Request.Class.make(this.globalThis.ref(), request_object)};
+            var args = [_]JSC.C.JSValueRef{request_object.toJS(this.globalThis).asObjectRef()};
             ctx.request_js_object = args[0];
             const request_value = JSValue.c(args[0]);
             request_value.ensureStillAlive();
@@ -2161,6 +2161,35 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             if (wait_for_promise) {
+                // Even if the user hasn't requested it, we have to start downloading the body!!
+                // terrible for performance.
+                if (request_object.body == .Locked and (request_object.body.Locked.promise == null and request_object.body.Locked.readable == null) and ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasBody())) {
+                    const req_len: usize = brk: {
+                        if (req.header("content-length")) |content_length| {
+                            break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
+                        }
+
+                        break :brk 0;
+                    };
+
+                    if (req_len > this.config.max_request_body_size) {
+                        resp.writeStatus("413 Request Entity Too Large");
+                        resp.endWithoutBody();
+                        this.finalize();
+                        return;
+                    }
+
+                    if ((req_len > 0)) {
+                        ctx.request_body_buf.ensureTotalCapacityPrecise(ctx.allocator, req_len) catch {
+                            resp.writeStatus("413 Request Entity Too Large");
+                            resp.endWithoutBody();
+                            this.finalize();
+                            return;
+                        };
+                        resp.onData(*RequestContext, RequestContext.onBodyChunk, ctx);
+                    }
+                }
+
                 ctx.setAbortHandler();
                 ctx.pending_promises_for_abort += 1;
 

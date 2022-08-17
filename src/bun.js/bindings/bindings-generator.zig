@@ -25,20 +25,18 @@ pub fn main() anyerror!void {
     {
         const paths = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers.h" };
         const paths2 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "headers-cpp.h" };
-        const paths3 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "ZigLazyStaticFunctions.h" };
         const paths4 = [_][]const u8{ std.fs.path.dirname(src.file) orelse return error.BadPath, "ZigGeneratedCode.cpp" };
 
         const cpp = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths2), .{});
         const file = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths), .{});
-        const static = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths3), .{});
-        const staticInlines = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths4), .{});
+        const generated = try std.fs.createFileAbsolute(try std.fs.path.join(allocator, &paths4), .{});
 
         const HeaderGenerator = HeaderGen(
             Bindings,
             Exports,
             "src/bun.js/bindings/bindings.zig",
         );
-        HeaderGenerator.exec(HeaderGenerator{}, file, cpp, static, staticInlines);
+        HeaderGenerator.exec(HeaderGenerator{}, file, cpp, generated);
     }
     // TODO: finish this
     const use_cpp_generator = false;

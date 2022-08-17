@@ -7836,17 +7836,6 @@ pub const Macro = struct {
                                     this.macro.vm.runErrorHandler(value, null);
                                     return error.MacroFailed;
                                 },
-                                .Request => {
-                                    var req: *JSC.WebCore.Request = private_data.as(JSC.WebCore.Request);
-                                    blob_ = req.body.use();
-                                    mime_type = HTTP.MimeType.init(req.mimeType());
-                                },
-                                .Response => {
-                                    var res: *JSC.WebCore.Response = private_data.as(JSC.WebCore.Response);
-                                    blob_ = res.body.use();
-                                    mime_type =
-                                        HTTP.MimeType.init(res.mimeType(null));
-                                },
                                 .Blob => {
                                     var blob = private_data.as(JSC.WebCore.Blob);
                                     blob_ = blob.*;

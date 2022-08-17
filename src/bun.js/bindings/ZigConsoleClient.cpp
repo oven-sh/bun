@@ -63,7 +63,6 @@ void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
     auto count = std::min(args->argumentCount(), (size_t)255);
     for (size_t i = 0; i < count; i++) {
         auto val = args->argumentAt(i);
-        // JSC::gcProtect(val);
         jsArgs[i] = JSC::JSValue::encode(val);
     }
 
@@ -72,10 +71,6 @@ void Zig::ConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel 
         static_cast<uint32_t>(level), globalObject, jsArgs,
         count);
     scope.clearException();
-
-    // for (size_t i = 0; i < count; i++) {
-    //     JSC::gcUnprotect(JSC::JSValue::decode(jsArgs[i]));
-    // }
 }
 void Zig::ConsoleClient::count(JSGlobalObject* globalObject, const String& label)
 {

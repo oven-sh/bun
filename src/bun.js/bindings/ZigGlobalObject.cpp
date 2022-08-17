@@ -102,6 +102,8 @@
 #include "ReadableStreamBuiltins.h"
 #include "BunJSCModule.h"
 
+#include "ZigGeneratedClasses.h"
+
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
@@ -469,6 +471,28 @@ JSC_DEFINE_CUSTOM_GETTER(JSURLSearchParams_getter,
     Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
     return JSC::JSValue::encode(
         WebCore::JSURLSearchParams::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSRequest_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSRequest_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        thisObject->JSRequestConstructor());
+}
+
+JSC_DECLARE_CUSTOM_GETTER(JSResponse_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSResponse_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        thisObject->JSResponseConstructor());
 }
 
 JSC_DECLARE_CUSTOM_GETTER(JSErrorEvent_getter);
@@ -1768,9 +1792,11 @@ void GlobalObject::finishCreation(VM& vm)
 
     // Change prototype from null to object for synthetic modules.
     m_moduleNamespaceObjectStructure.initLater(
-        [] (const Initializer<Structure>& init) {
+        [](const Initializer<Structure>& init) {
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
+
+    this->initGeneratedLazyClasses();
 
     m_NapiClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
@@ -2068,6 +2094,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URLSearchParams"_s), JSC::CustomGetterSetter::create(vm, JSURLSearchParams_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Request"_s), JSC::CustomGetterSetter::create(vm, JSRequest_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Response"_s), JSC::CustomGetterSetter::create(vm, JSResponse_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
@@ -2323,6 +2355,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_processEnvObject.visit(visitor);
     thisObject->m_processObject.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
+
+    thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
 
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
     visitor.append(thisObject->m_readableStreamToText);
@@ -2644,5 +2678,7 @@ void GlobalObject::queueMicrotaskToEventLoop(JSC::JSGlobalObject& global,
             &global, &JSMicrotaskCallback::create(global, WTFMove(task)).leakRef());
     }
 }
+
+#include "ZigGeneratedClasses+lazyStructureImpl.h"
 
 } // namespace Zig

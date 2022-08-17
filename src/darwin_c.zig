@@ -28,19 +28,19 @@ pub const COPYFILE_DATA = @as(c_int, 1) << @as(c_int, 3);
 pub const COPYFILE_SECURITY = COPYFILE_STAT | COPYFILE_ACL;
 pub const COPYFILE_METADATA = COPYFILE_SECURITY | COPYFILE_XATTR;
 pub const COPYFILE_ALL = COPYFILE_METADATA | COPYFILE_DATA;
-/// Descend into hierarchies 
+/// Descend into hierarchies
 pub const COPYFILE_RECURSIVE = @as(c_int, 1) << @as(c_int, 15);
-/// return flags for xattr or acls if set 
+/// return flags for xattr or acls if set
 pub const COPYFILE_CHECK = @as(c_int, 1) << @as(c_int, 16);
-/// fail if destination exists 
+/// fail if destination exists
 pub const COPYFILE_EXCL = @as(c_int, 1) << @as(c_int, 17);
-/// don't follow if source is a symlink 
+/// don't follow if source is a symlink
 pub const COPYFILE_NOFOLLOW_SRC = @as(c_int, 1) << @as(c_int, 18);
-/// don't follow if dst is a symlink 
+/// don't follow if dst is a symlink
 pub const COPYFILE_NOFOLLOW_DST = @as(c_int, 1) << @as(c_int, 19);
-/// unlink src after copy 
+/// unlink src after copy
 pub const COPYFILE_MOVE = @as(c_int, 1) << @as(c_int, 20);
-/// unlink dst before copy 
+/// unlink dst before copy
 pub const COPYFILE_UNLINK = @as(c_int, 1) << @as(c_int, 21);
 pub const COPYFILE_NOFOLLOW = COPYFILE_NOFOLLOW_SRC | COPYFILE_NOFOLLOW_DST;
 pub const COPYFILE_PACK = @as(c_int, 1) << @as(c_int, 22);

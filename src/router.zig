@@ -513,7 +513,7 @@ pub const Route = struct {
     /// case-sensitive, has leading slash
     name: string,
 
-    /// Name used for matching. 
+    /// Name used for matching.
     /// - Omits leading slash
     /// - Lowercased
     /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
@@ -1132,7 +1132,7 @@ const Pattern = struct {
         kind: Tag = Tag.static,
     };
     /// Validate a Route pattern, returning the number of route parameters.
-    /// `null` means invalid. Error messages are logged. 
+    /// `null` means invalid. Error messages are logged.
     /// That way, we can provide a list of all invalid routes rather than failing the first time.
     pub fn validate(input: string, allocator: std.mem.Allocator, log: *Logger.Log) ?ValidationResult {
         if (CodepointIterator.needsUTF8Decoding(input)) {

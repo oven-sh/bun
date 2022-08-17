@@ -599,7 +599,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             }
         }
 
-        pub fn exec(comptime self: Self, file: std.fs.File, impl: std.fs.File, lazy_functions_header: std.fs.File, lazy_functions_impl: std.fs.File) void {
+        pub fn exec(comptime self: Self, file: std.fs.File, impl: std.fs.File, generated: std.fs.File) void {
             const Generator = C_Generator;
             validateGenerator(Generator);
             var file_writer = file.writer();
@@ -655,7 +655,6 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             var impl_fourth_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
             var impl_fourth_writer = impl_fourth_buffer.writer();
 
-            var lazy_function_definitions_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
             // var lazy_function_definitions_writer = lazy_function_definitions_buffer.writer();
 
             var dom_buffer = std.ArrayList(u8).init(std.heap.c_allocator);
@@ -910,34 +909,7 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             impl.writeAll("};\n") catch unreachable;
             var iter = type_names.iterator();
 
-            lazy_functions_header.writer().print(
-                \\// GENERATED FILE
-                \\#pragma once
-                \\#include "root.h"
-                \\
-                \\namespace Zig {{
-                \\  class GlobalObject;
-                \\  class JSFFIFunction;
-                \\
-                \\  class LazyStaticFunctions {{
-                \\    public:
-                \\
-                \\    void init(Zig::GlobalObject* globalObject);
-                \\
-                \\    template<typename Visitor>
-                \\    void visit(Visitor& visitor);
-                \\
-                \\
-                \\  /* -- BEGIN FUNCTION DEFINITIONS -- */
-                \\  {s}
-                \\  /* -- END FUNCTION DEFINITIONS-- */
-                \\  }};
-                \\
-                \\}} // namespace Zig
-                \\
-            , .{lazy_function_definitions_buffer.items}) catch unreachable;
-
-            lazy_functions_impl.writer().print(
+            generated.writer().print(
                 \\ #include "root.h"
                 \\ 
                 \\ #include <JavaScriptCore/DOMJITAbstractHeap.h>

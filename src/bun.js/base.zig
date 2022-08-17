@@ -2152,6 +2152,154 @@ pub fn NewClassWithInstanceType(
     };
 }
 
+// pub fn NewInstanceFunction(
+//     comptime className: []const u8,
+//     comptime functionName: []const u8,
+//     comptime InstanceType: type,
+//     comptime target: anytype,
+// ) type {
+//     return struct {
+//         pub const shim = JSC.Shimmer("ZigGenerated__" ++ className, functionName, @This());
+//         pub const name = functionName;
+//         pub const Type = InstanceType;
+
+//         pub fn callAsFunction(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+//             var this = InstanceType.toWrapped(callframe.this()) orelse {
+//                 callframe.toInvalidArguments("Expected this to be a " ++ className, .{}, globalObject);
+//                 return JSC.JSValue.jsUndefined();
+//             };
+
+//             return target(globalObject, this, callframe.arguments());
+//         }
+
+//         pub const Export = shim.exportFunctions(.{
+//             .callAsFunction = callAsFunction,
+//         });
+
+//         pub const symbol = Export[0].symbol_name;
+
+//         comptime {
+//             if (!JSC.is_bindgen) {
+//                 @export(callAsFunction, .{
+//                     .name = Export[0].symbol_name,
+//                 });
+//             }
+//         }
+//     };
+// }
+
+// pub fn NewStaticFunction(
+//     comptime className: []const u8,
+//     comptime functionName: []const u8,
+//     comptime target: anytype,
+// ) type {
+//     return struct {
+//         pub const shim = JSC.Shimmer("ZigGenerated__Static__" ++ className, functionName, @This());
+//         pub const name = functionName;
+
+//         pub fn callAsFunction(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+//             return target(globalObject, callframe.arguments());
+//         }
+
+//         pub const Export = shim.exportFunctions(.{
+//             .callAsFunction = callAsFunction,
+//         });
+
+//         pub const symbol = Export[0].symbol_name;
+
+//         comptime {
+//             if (!JSC.is_bindgen) {
+//                 @export(callAsFunction, .{
+//                     .name = Export[0].symbol_name,
+//                 });
+//             }
+//         }
+//     };
+// }
+
+// pub fn NewStaticConstructor(
+//     comptime className: []const u8,
+//     comptime functionName: []const u8,
+//     comptime target: anytype,
+// ) type {
+//     return struct {
+//         pub const shim = JSC.Shimmer("ZigGenerated__Static__" ++ className, functionName, @This());
+//         pub const name = functionName;
+
+//         pub fn callAsConstructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+//             return target(globalObject, callframe.arguments());
+//         }
+
+//         pub const Export = shim.exportFunctions(.{
+//             .callAsConstructor = callAsConstructor,
+//         });
+
+//         pub const symbol = Export[0].symbol_name;
+
+//         comptime {
+//             if (!JSC.is_bindgen) {
+//                 @export(callAsConstructor, .{
+//                     .name = Export[0].symbol_name,
+//                 });
+//             }
+//         }
+//     };
+// }
+
+// pub fn NewStaticObject(
+//     comptime className: []const u8,
+//     comptime function_definitions: anytype,
+//     comptime property_definitions_: anytype,
+// ) type {
+//     return struct {
+//         const property_definitions = property_definitions_;
+//         pub const shim = JSC.Shimmer("ZigGenerated", name, @This());
+//         pub const name = className;
+//         pub const Type = void;
+
+//         const function_names = std.meta.fieldNames(@TypeOf(function_definitions));
+//         pub fn getFunctions() [function_names.len]type {
+//             var data: [function_names.len]type = undefined;
+//             var i: usize = 0;
+//             while (i < function_names.len) : (i += 1) {
+//                 if (strings.eqlComptime(function_names[i], "constructor")) {
+//                     data[i] = NewStaticConstructor(className, function_names[i], @TypeOf(function_definitions)[function_names[i]]);
+//                 } else {
+//                     data[i] = NewStaticFunction(className, function_names[i], @TypeOf(function_definitions)[function_names[i]]);
+//                 }
+//             }
+
+//             return data;
+//         }
+
+//         const property_names = std.meta.fieldNames(@TypeOf(property_definitions));
+//         pub fn getProperties() [property_definitions.len]type {
+//             var data: [property_definitions.len]type = undefined;
+//             var i: usize = 0;
+//             while (i < property_definitions.len) : (i += 1) {
+//                 const definition = property_definitions[i];
+//                 if (@hasField(definition, "lazyClass")) {
+//                     data[i] = New(className, property_names[i], @field(property_definitions, property_names[i]));
+//                 } else if (@hasField(definition, "lazyProperty")) {
+//                     data[i] = NewLazyProperty(className, property_names[i], @field(property_definitions, property_names[i]));
+//                 } else if (@hasField(definition, "get") and @hasField(definition, "set")) {
+//                     data[i] = NewStaticProperty(className, property_names[i], definition.get, definition.set);
+//                 } else if (@hasField(definition, "get")) {
+//                     data[i] = NewStaticProperty(className, property_names[i], definition.get, void{});
+//                 } else if (@hasField(definition, "set")) {
+//                     data[i] = NewStaticProperty(className, property_names[i], void{}, definition.set);
+//                 } else {
+//                     @compileError(className ++ "." ++ property_names[i] ++ " missing lazy, get, or set");
+//                 }
+//             }
+
+//             return data;
+//         }
+
+//         pub const entries = getProperties() ++ getFunctions();
+//     };
+// }
+
 const JSValue = JSC.JSValue;
 const ZigString = JSC.ZigString;
 

@@ -1159,7 +1159,8 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
-            const args = callframe.arguments();
+            const args_list = callframe.arguments(4);
+            const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0 or args[0].isEmptyOrUndefinedOrNull() or args[0].isNumber()) {
                 const err = JSC.toTypeError(
@@ -1206,7 +1207,8 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
-            const args = callframe.arguments();
+            const args_list = callframe.arguments(4);
+            const args = args_list.ptr[0..args_list.len];
             if (args.len == 0 or args[0].isEmptyOrUndefinedOrNull() or args[0].isNumber()) {
                 const err = JSC.toTypeError(
                     if (args.len == 0) JSC.Node.ErrorCode.ERR_MISSING_ARGS else JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,

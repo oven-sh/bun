@@ -73,15 +73,24 @@
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 
+#include "wtf/text/AtomString.h"
+#include "HTTPHeaderNames.h"
+#include "JSDOMPromiseDeferred.h"
+
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
 {
-    auto iter = headers->createIterator();
-    uint32_t i = 0;
-    unsigned count = 0;
-    for (auto pair = iter.next(); pair; pair = iter.next()) {
-        auto name = pair->key;
-        auto value = pair->value;
+    auto& internalHeaders = headers->internalHeaders();
+
+    for (auto& header : internalHeaders.commonHeaders()) {
+        const auto& name = WebCore::httpHeaderNameString(header.key);
+        auto& value = header.value;
+        res->writeHeader(std::string_view(reinterpret_cast<const char*>(name.characters8()), name.length()), std::string_view(reinterpret_cast<const char*>(value.characters8()), value.length()));
+    }
+
+    for (auto& header : internalHeaders.uncommonHeaders()) {
+        auto& name = header.key;
+        auto& value = header.value;
         res->writeHeader(std::string_view(reinterpret_cast<const char*>(name.characters8()), name.length()), std::string_view(reinterpret_cast<const char*>(value.characters8()), value.length()));
     }
 }
@@ -176,6 +185,11 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore__FetchHeaders* h
     return clone.leakRef();
 }
 
+bool WebCore__FetchHeaders__fastHas_(WebCore__FetchHeaders* arg0, unsigned char HTTPHeaderName1)
+{
+    return arg0->fastHas(static_cast<HTTPHeaderName>(HTTPHeaderName1));
+}
+
 void WebCore__FetchHeaders__copyTo(WebCore__FetchHeaders* headers, StringPointer* names, StringPointer* values, unsigned char* buf)
 {
     auto iter = headers->createIterator();
@@ -237,17 +251,53 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(JSC__JSGlob
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
-    Vector<KeyValuePair<String, String>> pairs;
-    pairs.reserveCapacity(55);
-    for (const auto& header : req) {
-        auto name = WTF::String(reinterpret_cast<const LChar*>(header.first.data()), header.first.length());
-        auto value = WTF::String(reinterpret_cast<const LChar*>(header.second.data()), header.second.length());
-        pairs.uncheckedAppend(KeyValuePair<String, String>(name, value));
-    }
+    std::bitset<255> seenHeaderSizes;
+    // uWebSockets limits to 50 headers
+    uint32_t nameHashes[55];
+    size_t i = 0;
 
     RefPtr<WebCore::FetchHeaders> headers = adoptRef(*new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} }));
-    headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
-    pairs.releaseBuffer();
+    HTTPHeaderMap map = HTTPHeaderMap();
+
+    for (const auto& header : req) {
+        StringView nameView = StringView(reinterpret_cast<const LChar*>(header.first.data()), header.first.length());
+
+        uint32_t hash = nameView.hash();
+        nameHashes[i++] = hash;
+        size_t name_len = nameView.length();
+        auto value = WTF::StringView(reinterpret_cast<const LChar*>(header.second.data()), header.second.length()).toStringWithoutCopying().isolatedCopy();
+
+        if (name_len < 255) {
+            if (seenHeaderSizes[name_len]) {
+                bool found = false;
+                for (size_t j = 0; j < i; j++) {
+                    if (nameHashes[j] == hash) {
+                        map.add(nameView.toString(), WTF::String(WTF::StringImpl::createWithoutCopying(header.second.data(), header.second.length())));
+                        found = true;
+                        break;
+                    }
+                }
+
+                if (found)
+                    continue;
+            } else {
+                seenHeaderSizes.set(name_len);
+            }
+        } else {
+            map.add(nameView.toString(), value);
+            continue;
+        }
+
+        HTTPHeaderName name;
+
+        if (WebCore::findHTTPHeaderName(nameView, name)) {
+            map.add(name, value);
+        } else {
+            map.setUncommonHeader(nameView.toString().isolatedCopy(), value);
+        }
+    }
+
+    headers->setInternalHeaders(WTFMove(map));
     return headers.leakRef();
 }
 void WebCore__FetchHeaders__deref(WebCore__FetchHeaders* arg0)
@@ -287,6 +337,21 @@ void WebCore__FetchHeaders__put_(WebCore__FetchHeaders* headers, const ZigString
 void WebCore__FetchHeaders__remove(WebCore__FetchHeaders* headers, const ZigString* arg1)
 {
     headers->remove(Zig::toString(*arg1));
+}
+
+void WebCore__FetchHeaders__fastRemove_(WebCore__FetchHeaders* headers, unsigned char headerName)
+{
+    headers->fastRemove(static_cast<WebCore::HTTPHeaderName>(headerName));
+}
+
+void WebCore__FetchHeaders__fastGet_(WebCore__FetchHeaders* headers, unsigned char headerName, ZigString* arg2)
+{
+    auto str = headers->fastGet(static_cast<WebCore::HTTPHeaderName>(headerName));
+    if (!str) {
+        return;
+    }
+
+    *arg2 = Zig::toZigString(str);
 }
 
 WebCore__DOMURL* WebCore__DOMURL__cast_(JSC__JSValue JSValue0, JSC::VM* vm)
@@ -1385,7 +1450,13 @@ void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1,
 }
 JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
 {
-    return JSC::JSPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1));
+    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    JSC::JSPromise* promise = JSC::JSPromise::create(arg0->vm(), arg0->promiseStructure());
+    promise->internalField(JSC::JSPromise::Field::Flags).set(arg0->vm(), promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
+    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(arg0->vm(), promise, JSC::JSValue::decode(JSValue1));
+    JSC::ensureStillAliveHere(promise);
+    JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
+    return promise;
 }
 
 JSC__JSValue JSC__JSPromise__result(const JSC__JSPromise* arg0, JSC__VM* arg1)
@@ -3004,14 +3075,24 @@ void WTF__URL__setUser(WTF__URL* arg0, bWTF__StringView arg1)
 JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
 {
-    return JSC::JSValue::encode(
-        JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1)));
+    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    JSC::JSPromise* promise = JSC::JSPromise::create(arg0->vm(), arg0->promiseStructure());
+    promise->internalField(JSC::JSPromise::Field::Flags).set(arg0->vm(), promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
+    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(arg0->vm(), promise, JSC::JSValue::decode(JSValue1));
+    JSC::ensureStillAliveHere(promise);
+    JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
+    return JSC::JSValue::encode(promise);
 }
 JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
 {
-    return JSC::JSValue::encode(
-        JSC::JSPromise::resolvedPromise(arg0, JSC::JSValue::decode(JSValue1)));
+    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    JSC::JSPromise* promise = JSC::JSPromise::create(arg0->vm(), arg0->promiseStructure());
+    promise->internalField(JSC::JSPromise::Field::Flags).set(arg0->vm(), promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
+    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(arg0->vm(), promise, JSC::JSValue::decode(JSValue1));
+    JSC::ensureStillAliveHere(promise);
+    JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
+    return JSC::JSValue::encode(promise);
 }
 }
 
@@ -3019,4 +3100,45 @@ JSC__JSValue JSC__JSValue__createUninitializedUint8Array(JSC__JSGlobalObject* ar
 {
     JSC::JSValue value = JSC::JSUint8Array::createUninitialized(arg0, arg0->m_typedArrayUint8.get(arg0), arg1);
     return JSC::JSValue::encode(value);
+}
+
+enum class BuiltinNamesMap : uint8_t {
+    method,
+    headers,
+    status,
+    url,
+    body,
+};
+
+static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
+{
+    auto clientData = WebCore::clientData(globalObject->vm());
+    switch (static_cast<BuiltinNamesMap>(name)) {
+    case BuiltinNamesMap::method: {
+        return clientData->builtinNames().methodPublicName();
+    }
+    case BuiltinNamesMap::headers: {
+        return clientData->builtinNames().headersPublicName();
+    }
+    case BuiltinNamesMap::status: {
+        return clientData->builtinNames().statusPublicName();
+    }
+    case BuiltinNamesMap::url: {
+        return clientData->builtinNames().urlPublicName();
+    }
+    case BuiltinNamesMap::body: {
+        return clientData->builtinNames().bodyPublicName();
+    }
+    }
+}
+
+JSC__JSValue JSC__JSValue__fastGet_(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (!value.isCell()) {
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    return JSValue::encode(
+        value.getObject()->getIfPropertyExists(globalObject, builtinNameMap(globalObject, arg2)));
 }

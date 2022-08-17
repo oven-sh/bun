@@ -1520,7 +1520,8 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 		-g3 -c -o $@ $<
 
 sizegen:
-	$(CXX) src/bun.js/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
+	mkdir -p $(BUN_TMP_DIR)
+	$(CXX) src/bun.js/headergen/sizegen.cpp -Wl,-dead_strip -Wl,-dead_strip_dylibs -fuse-ld=lld -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1 
 	$(BUN_TMP_DIR)/sizegen > src/bun.js/bindings/sizes.zig
 
 

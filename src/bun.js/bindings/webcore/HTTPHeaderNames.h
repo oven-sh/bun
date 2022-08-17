@@ -33,7 +33,7 @@
 
 namespace WebCore {
 
-enum class HTTPHeaderName {
+enum class HTTPHeaderName : uint8_t {
     Accept,
     AcceptCharset,
     AcceptEncoding,
@@ -111,6 +111,7 @@ enum class HTTPHeaderName {
     SetCookie,
     SetCookie2,
     SourceMap,
+    StrictTransportSecurity,
     TE,
     TimingAllowOrigin,
     Trailer,
@@ -128,7 +129,7 @@ enum class HTTPHeaderName {
     XXSSProtection,
 };
 
-const unsigned numHTTPHeaderNames = 92;
+const unsigned numHTTPHeaderNames = 93;
 const size_t minHTTPHeaderNameLength = 2;
 const size_t maxHTTPHeaderNameLength = 40;
 
@@ -219,6 +220,7 @@ template<> struct EnumTraits<WebCore::HTTPHeaderName> {
         WebCore::HTTPHeaderName::SetCookie,
         WebCore::HTTPHeaderName::SetCookie2,
         WebCore::HTTPHeaderName::SourceMap,
+        WebCore::HTTPHeaderName::StrictTransportSecurity,
         WebCore::HTTPHeaderName::TE,
         WebCore::HTTPHeaderName::TimingAllowOrigin,
         WebCore::HTTPHeaderName::Trailer,
@@ -233,8 +235,7 @@ template<> struct EnumTraits<WebCore::HTTPHeaderName> {
         WebCore::HTTPHeaderName::XFrameOptions,
         WebCore::HTTPHeaderName::XSourceMap,
         WebCore::HTTPHeaderName::XTempTablet,
-        WebCore::HTTPHeaderName::XXSSProtection
-    >;
+        WebCore::HTTPHeaderName::XXSSProtection>;
 };
 
 } // namespace WTF

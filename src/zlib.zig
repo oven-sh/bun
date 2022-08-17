@@ -89,30 +89,30 @@ pub const struct_internal_state = extern struct {
 // } z_stream;
 
 pub const zStream_struct = extern struct {
-    /// next input byte 
+    /// next input byte
     next_in: [*c]const u8,
-    /// number of bytes available at next_in 
+    /// number of bytes available at next_in
     avail_in: uInt,
-    /// total number of input bytes read so far 
+    /// total number of input bytes read so far
     total_in: uLong,
 
-    /// next output byte will go here 
+    /// next output byte will go here
     next_out: [*c]u8,
-    /// remaining free space at next_out 
+    /// remaining free space at next_out
     avail_out: uInt,
-    /// total number of bytes output so far 
+    /// total number of bytes output so far
     total_out: uLong,
 
-    /// last error message, NULL if no error 
+    /// last error message, NULL if no error
     err_msg: [*c]const u8,
-    /// not visible by applications 
+    /// not visible by applications
     internal_state: ?*struct_internal_state,
 
-    /// used to allocate the internal state 
+    /// used to allocate the internal state
     alloc_func: z_alloc_fn,
-    /// used to free the internal state 
+    /// used to free the internal state
     free_func: z_free_fn,
-    /// private data object passed to zalloc and zfree 
+    /// private data object passed to zalloc and zfree
     user_data: *anyopaque,
 
     /// best guess about the data type: binary or text for deflate, or the decoding state for inflate

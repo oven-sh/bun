@@ -1268,12 +1268,12 @@ pub const ZigConsoleClient = struct {
                     return .{
                         .tag = .Boolean,
                     };
-                } else if (value.isSymbol()) {
-                    return .{
-                        .tag = .Symbol,
-                        .cell = .Symbol,
-                    };
                 }
+
+                if (!value.isCell())
+                    return .{
+                        .tag = .NativeCode,
+                    };
 
                 const js_type = value.jsType();
 
@@ -1287,6 +1287,13 @@ pub const ZigConsoleClient = struct {
                 if (js_type == .Cell) {
                     return .{
                         .tag = .NativeCode,
+                        .cell = js_type,
+                    };
+                }
+
+                if (js_type == .DOMWrapper) {
+                    return .{
+                        .tag = .Private,
                         .cell = js_type,
                     };
                 }
@@ -1771,39 +1778,36 @@ pub const ZigConsoleClient = struct {
                     writer.writeAll(" ]");
                 },
                 .Private => {
-                    if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
-                        const priv_data = JSPrivateDataPtr.from(private_data_ptr);
-                        switch (priv_data.tag()) {
-                            .BuildError => {
-                                const build_error = priv_data.as(JS.BuildError);
-                                build_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
-                                return;
-                            },
-                            .ResolveError => {
-                                const resolve_error = priv_data.as(JS.ResolveError);
-                                resolve_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
-                                return;
-                            },
-                            .Response => {
-                                var response = priv_data.as(JSC.WebCore.Response);
-                                response.writeFormat(this, writer_, enable_ansi_colors) catch {};
-                                return;
-                            },
-                            .Request => {
-                                var request = priv_data.as(JSC.WebCore.Request);
-                                request.writeFormat(this, writer_, enable_ansi_colors) catch {};
-                                return;
-                            },
-                            .Blob => {
-                                var request = priv_data.as(JSC.WebCore.Blob);
-                                request.writeFormat(this, writer_, enable_ansi_colors) catch {};
-                                return;
-                            },
-                            else => {},
+                    if (value.as(JSC.WebCore.Response)) |response| {
+                        response.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                        return;
+                    } else if (value.as(JSC.WebCore.Request)) |request| {
+                        request.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                        return;
+                    } else if (jsType != .DOMWrapper) {
+                        if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
+                            const priv_data = JSPrivateDataPtr.from(private_data_ptr);
+                            switch (priv_data.tag()) {
+                                .BuildError => {
+                                    const build_error = priv_data.as(JS.BuildError);
+                                    build_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                                    return;
+                                },
+                                .ResolveError => {
+                                    const resolve_error = priv_data.as(JS.ResolveError);
+                                    resolve_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
+                                    return;
+                                },
+                                .Blob => {
+                                    var request = priv_data.as(JSC.WebCore.Blob);
+                                    request.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                                    return;
+                                },
+                                else => {},
+                            }
                         }
                     }
-
-                    writer.writeAll("[native code]");
+                    return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
                 },
                 .NativeCode => {
                     writer.writeAll("[native code]");

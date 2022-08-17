@@ -89,9 +89,6 @@ const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 pub const GlobalConstructors = [_]type{
     WebCore.Blob.Constructor,
     WebCore.TextDecoder.Constructor,
-    // WebCore.TextEncoder.Constructor,
-    Request.Constructor,
-    Response.Constructor,
     JSC.Cloudflare.HTMLRewriter.Constructor,
 };
 
@@ -1732,7 +1729,7 @@ pub const VirtualMachine = struct {
             return;
         }
 
-        if (js.JSValueIsObject(this.global.ref(), value.asRef())) {
+        if (value.isObject()) {
             if (js.JSObjectGetPrivate(value.asRef())) |priv| {
                 was_internal = this.printErrorFromMaybePrivateData(
                     priv,

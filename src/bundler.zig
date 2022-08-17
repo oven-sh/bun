@@ -57,12 +57,14 @@ const JSC = @import("javascript_core");
 
 pub fn MacroJSValueType_() type {
     if (comptime JSC.is_bindgen) {
-        return void;
+        return struct {
+            pub const zero = @This(){};
+        };
     }
     return JSC.JSValue;
 }
-const MacroJSValueType = MacroJSValueType_();
-const default_macro_js_value = if (JSC.is_bindgen) void{} else JSC.JSValue.zero;
+pub const MacroJSValueType = MacroJSValueType_();
+const default_macro_js_value = if (JSC.is_bindgen) MacroJSValueType{} else JSC.JSValue.zero;
 
 const EntryPoints = @import("./bundler/entry_points.zig");
 const SystemTimer = @import("./system_timer.zig").Timer;

@@ -109,6 +109,7 @@ using namespace JSC;
     macro(handleEvent) \
     macro(hash) \
     macro(header) \
+    macro(headers) \
     macro(highWaterMark) \
     macro(host) \
     macro(hostname) \
@@ -137,6 +138,7 @@ using namespace JSC;
     macro(makeGetterTypeError) \
     macro(makeThisTypeError) \
     macro(map) \
+    macro(method) \
     macro(nextTick) \
     macro(normalize) \
     macro(on) \
@@ -199,6 +201,7 @@ using namespace JSC;
     macro(started) \
     macro(startedPromise) \
     macro(state) \
+    macro(status) \
     macro(storedError) \
     macro(strategy) \
     macro(strategyHWM) \

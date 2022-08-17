@@ -53,22 +53,26 @@ pub fn onThreadStartNew(event_fd: os.fd_t) void {
                     Output.prettyErrorln(
                         \\<red>error<r>: Linux kernel version doesn't support io_uring, which Bun depends on. 
                         \\
-                        \\To fix this error: <b>please upgrade to a newer Linux kernel<r>.
-                        \\
-                        \\If you're using Windows Subsystem for Linux, here's how: 
+                        \\ To fix this error: please upgrade to a newer Linux kernel.
+                        \\ 
+                        \\ If you're using Windows Subsystem for Linux, here's how:
                         \\  1. Open PowerShell as an administrator
                         \\  2. Run this:
-                        \\    <cyan>wsl --update<r>
-                        \\    <cyan>wsl --shutdown<r>
-                        \\
-                        \\  Please make sure you're using WSL version 2 (not WSL 1).
-                        \\
-                        \\If that doesn't work (and you're on a Windows machine), try this:
+                        \\      wsl --update
+                        \\      wsl --shutdown
+                        \\ 
+                        \\ Please make sure you're using WSL version 2 (not WSL 1). To check: wsl -l -v
+                        \\ If you are on WSL 1, update to WSL 2 with the following commands:
+                        \\  1. wsl --set-default-version 2
+                        \\  2. wsl --set-version <distro_name> 2
+                        \\  3. Now follow the WSL 2 instructions above.
+                        \\     Where [distro_name] is one of the names from the list given by: wsl -l -v
+                        \\ 
+                        \\ If that doesn't work (and you're on a Windows machine), try this:
                         \\  1. Open Windows Update
                         \\  2. Download any updates to Windows Subsystem for Linux
-                        \\
-                        \\If you're still having trouble, ask for help in bun's discord https://bun.sh/discord
-                        \\
+                        \\ 
+                        \\ If you're still having trouble, ask for help in bun's discord https://bun.sh/discord
                     , .{});
                     break :log;
                 } else if (err == error.SystemResources) {

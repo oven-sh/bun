@@ -183,7 +183,6 @@ pub const FFI = struct {
     }
 
     pub fn print(global: *JSGlobalObject, object: JSC.JSValue, is_callback_val: ?JSC.JSValue) JSValue {
-        JSC.markBinding();
         const allocator = VirtualMachine.vm.allocator;
         if (is_callback_val) |is_callback| {
             if (is_callback.toBoolean()) {
@@ -204,7 +203,7 @@ pub const FFI = struct {
             symbols.clearAndFree(allocator);
             return val;
         }
-
+        JSC.markBinding();
         var zig_strings = allocator.alloc(ZigString, symbols.count()) catch unreachable;
         for (symbols.values()) |*function, i| {
             var arraylist = std.ArrayList(u8).init(allocator);

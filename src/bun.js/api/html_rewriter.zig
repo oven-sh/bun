@@ -219,7 +219,7 @@ pub const HTMLRewriter = struct {
 
         response.cloneInto(result, getAllocator(global.ref()), global);
         this.finalizeWithoutDestroy();
-        return JSValue.fromRef(Response.makeMaybePooled(global.ref(), result));
+        return result.toJS(global);
     }
 
     pub fn transform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
@@ -467,9 +467,7 @@ pub const HTMLRewriter = struct {
 
             // Hold off on cloning until we're actually done.
 
-            return JSC.JSValue.fromRef(
-                Response.makeMaybePooled(sink.global.ref(), sink.response),
-            );
+            return sink.response.toJS(sink.global.ref());
         }
 
         pub fn onFinishedLoading(sink: *BufferOutputSink, bytes: JSC.WebCore.Blob.Store.ReadFile.ResultType) void {

@@ -659,8 +659,8 @@ pub const TestScope = struct {
             args = args[1..];
         }
 
-        var function = args[0];
-        if (!js.JSValueIsObject(ctx, function) or !js.JSObjectIsFunction(ctx, function)) {
+        var function = args[0].?.value();
+        if (!function.isCell() or !function.isCallable(ctx.vm())) {
             JSError(getAllocator(ctx), "test() expects a function", .{}, ctx, exception);
             return this;
         }
@@ -672,11 +672,11 @@ pub const TestScope = struct {
         if (!is_only and Jest.runner.?.only)
             return this;
 
-        js.JSValueProtect(ctx, function);
+        js.JSValueProtect(ctx, function.asObjectRef());
 
         DescribeScope.active.tests.append(getAllocator(ctx), TestScope{
             .label = label,
-            .callback = function,
+            .callback = function.asObjectRef(),
             .parent = DescribeScope.active,
         }) catch unreachable;
 

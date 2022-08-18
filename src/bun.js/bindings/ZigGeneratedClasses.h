@@ -16,253 +16,256 @@ using namespace Zig;
 using namespace JSC;
 
 class JSRequest final : public JSC::JSDestructibleObject {
-public:
-    using Base = JSC::JSDestructibleObject;
-    static JSRequest* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    public:
+        using Base = JSC::JSDestructibleObject;
+        static JSRequest* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    
+        DECLARE_EXPORT_INFO;
+        template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                return nullptr;
+            return WebCore::subspaceForImpl<JSRequest, WebCore::UseCustomHeapCellType::No>(
+                vm,
+                [](auto& spaces) { return spaces.m_clientSubspaceForRequest.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequest = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForRequest.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForRequest = WTFMove(space); });
+        }
+    
+        static void destroy(JSC::JSCell*);
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+        }
+    
+        static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    
+        ~JSRequest();
+    
+        void* wrapped() const { return m_ctx; }
+    
+        void detach()
+        {
+            m_ctx = nullptr;
+        }
+    
+        static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+        static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSRequest, m_ctx); }
+    
+        void* m_ctx { nullptr };
 
-    DECLARE_EXPORT_INFO;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSRequest, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForRequest.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequest = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForRequest.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForRequest = WTFMove(space); });
-    }
+            
+        JSRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+            : Base(vm, structure)
+        {
+            m_ctx = sinkPtr;
+        }
+    
+        void finishCreation(JSC::VM&);
 
-    static void destroy(JSC::JSCell*);
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
-    }
+        DECLARE_VISIT_CHILDREN;
 
-    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
-
-    ~JSRequest();
-
-    void* wrapped() const { return m_ctx; }
-
-    void detach()
-    {
-        m_ctx = nullptr;
-    }
-
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSRequest, m_ctx); }
-
-    void* m_ctx { nullptr };
-
-    JSRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
-        : Base(vm, structure)
-    {
-        m_ctx = sinkPtr;
-    }
-
-    void finishCreation(JSC::VM&);
-
-    DECLARE_VISIT_CHILDREN;
-
-    mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_url;
-};
+        mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
+mutable JSC::WriteBarrier<JSC::Unknown> m_url;
+    };
 class JSRequestPrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
+    public:
+        using Base = JSC::JSNonFinalObject;
+    
+        static JSRequestPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        {
+            JSRequestPrototype* ptr = new (NotNull, JSC::allocateCell<JSRequestPrototype>(vm)) JSRequestPrototype(vm, globalObject, structure);
+            ptr->finishCreation(vm, globalObject);
+            return ptr;
+        }
+    
+        DECLARE_INFO;
+        template<typename CellType, JSC::SubspaceAccess>
+        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            return &vm.plainObjectSpace();
+        }
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        }
+    
+    private:
+        JSRequestPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+            : Base(vm, structure)
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    };
+    
+  class JSRequestConstructor final : public JSC::InternalFunction {
+    public:
+        using Base = JSC::InternalFunction;
+        static JSRequestConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSRequestPrototype* prototype);
+    
+        static constexpr unsigned StructureFlags = Base::StructureFlags;
+        static constexpr bool needsDestruction = false;
+    
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        }
 
-    static JSRequestPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSRequestPrototype* ptr = new (NotNull, JSC::allocateCell<JSRequestPrototype>(vm)) JSRequestPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
+        template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                return nullptr;
+            return WebCore::subspaceForImpl<JSRequestConstructor, WebCore::UseCustomHeapCellType::No>(
+                vm,
+                [](auto& spaces) { return spaces.m_clientSubspaceForRequestConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequestConstructor = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForRequestConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForRequestConstructor = WTFMove(space); });
+        }
+    
 
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSRequestPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSRequestConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSRequestConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSRequestPrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSRequestConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForRequestConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForRequestConstructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForRequestConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForRequestConstructor = WTFMove(space); });
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSRequestPrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSRequestConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
-        : Base(vm, structure, nativeFunction, nativeFunction)
-
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSRequestPrototype* prototype);
-};
+        void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSRequestPrototype* prototype);
+    
+        // Must be defined for each specialization class.
+        static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+        DECLARE_EXPORT_INFO;
+    private:
+        JSRequestConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
+            : Base(vm, structure, nativeFunction, nativeFunction)
+    
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSRequestPrototype* prototype);
+    };
 class JSResponse final : public JSC::JSDestructibleObject {
-public:
-    using Base = JSC::JSDestructibleObject;
-    static JSResponse* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    public:
+        using Base = JSC::JSDestructibleObject;
+        static JSResponse* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    
+        DECLARE_EXPORT_INFO;
+        template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                return nullptr;
+            return WebCore::subspaceForImpl<JSResponse, WebCore::UseCustomHeapCellType::No>(
+                vm,
+                [](auto& spaces) { return spaces.m_clientSubspaceForResponse.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResponse = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForResponse.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForResponse = WTFMove(space); });
+        }
+    
+        static void destroy(JSC::JSCell*);
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+        }
+    
+        static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    
+        ~JSResponse();
+    
+        void* wrapped() const { return m_ctx; }
+    
+        void detach()
+        {
+            m_ctx = nullptr;
+        }
+    
+        static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+        static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSResponse, m_ctx); }
+    
+        void* m_ctx { nullptr };
 
-    DECLARE_EXPORT_INFO;
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSResponse, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForResponse.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResponse = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForResponse.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForResponse = WTFMove(space); });
-    }
+            
+        JSResponse(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+            : Base(vm, structure)
+        {
+            m_ctx = sinkPtr;
+        }
+    
+        void finishCreation(JSC::VM&);
 
-    static void destroy(JSC::JSCell*);
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
-    }
+        DECLARE_VISIT_CHILDREN;
 
-    static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
-
-    ~JSResponse();
-
-    void* wrapped() const { return m_ctx; }
-
-    void detach()
-    {
-        m_ctx = nullptr;
-    }
-
-    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSResponse, m_ctx); }
-
-    void* m_ctx { nullptr };
-
-    JSResponse(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
-        : Base(vm, structure)
-    {
-        m_ctx = sinkPtr;
-    }
-
-    void finishCreation(JSC::VM&);
-
-    DECLARE_VISIT_CHILDREN;
-
-    mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_statusText;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_url;
-};
+        mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
+mutable JSC::WriteBarrier<JSC::Unknown> m_statusText;
+mutable JSC::WriteBarrier<JSC::Unknown> m_url;
+    };
 class JSResponsePrototype final : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
+    public:
+        using Base = JSC::JSNonFinalObject;
+    
+        static JSResponsePrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        {
+            JSResponsePrototype* ptr = new (NotNull, JSC::allocateCell<JSResponsePrototype>(vm)) JSResponsePrototype(vm, globalObject, structure);
+            ptr->finishCreation(vm, globalObject);
+            return ptr;
+        }
+    
+        DECLARE_INFO;
+        template<typename CellType, JSC::SubspaceAccess>
+        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            return &vm.plainObjectSpace();
+        }
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        }
+    
+    private:
+        JSResponsePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+            : Base(vm, structure)
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    };
+    
+  class JSResponseConstructor final : public JSC::InternalFunction {
+    public:
+        using Base = JSC::InternalFunction;
+        static JSResponseConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSResponsePrototype* prototype);
+    
+        static constexpr unsigned StructureFlags = Base::StructureFlags;
+        static constexpr bool needsDestruction = false;
+    
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        }
 
-    static JSResponsePrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSResponsePrototype* ptr = new (NotNull, JSC::allocateCell<JSResponsePrototype>(vm)) JSResponsePrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
+        template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                return nullptr;
+            return WebCore::subspaceForImpl<JSResponseConstructor, WebCore::UseCustomHeapCellType::No>(
+                vm,
+                [](auto& spaces) { return spaces.m_clientSubspaceForResponseConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResponseConstructor = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForResponseConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForResponseConstructor = WTFMove(space); });
+        }
+    
 
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSResponsePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
-
-class JSResponseConstructor final : public JSC::InternalFunction {
-public:
-    using Base = JSC::InternalFunction;
-    static JSResponseConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSResponsePrototype* prototype);
-
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSResponseConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForResponseConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResponseConstructor = WTFMove(space); },
-            [](auto& spaces) { return spaces.m_subspaceForResponseConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForResponseConstructor = WTFMove(space); });
-    }
-
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSResponsePrototype* prototype);
-
-    // Must be defined for each specialization class.
-    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-    DECLARE_EXPORT_INFO;
-
-private:
-    JSResponseConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
-        : Base(vm, structure, nativeFunction, nativeFunction)
-
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSResponsePrototype* prototype);
-};
+        void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSResponsePrototype* prototype);
+    
+        // Must be defined for each specialization class.
+        static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+        DECLARE_EXPORT_INFO;
+    private:
+        JSResponseConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
+            : Base(vm, structure, nativeFunction, nativeFunction)
+    
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSResponsePrototype* prototype);
+    };
 
 }
+

@@ -211,11 +211,14 @@ public:
     void* bunVM() { return m_bunVM; }
     bool isThreadLocalDefaultGlobalObject = false;
 
+    EncodedJSValue assignToStream(JSValue stream, JSValue controller);
+
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
+    mutable WriteBarrier<JSFunction> m_assignToStream;
 
     void trackFFIFunction(JSC::JSFunction* function)
     {

@@ -245,6 +245,7 @@ pub const ResolvedSource = extern struct {
         wasm = 1,
 
         @"node:buffer" = 1024,
+        @"node:process" = 1025,
     };
 };
 

@@ -89,7 +89,6 @@
 
 #include "Process.h"
 
-#include "JavaScriptCore/RemoteInspectorServer.h"
 #include "WebCoreJSBuiltinInternals.h"
 #include "JSBuffer.h"
 #include "JSFFIFunction.h"
@@ -103,6 +102,10 @@
 #include "BunJSCModule.h"
 
 #include "ZigGeneratedClasses.h"
+
+#if ENABLE(REMOTE_INSPECTOR)
+#include "JavaScriptCore/RemoteInspectorServer.h"
+#endif
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -946,9 +949,15 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto path = JSC::JSValue::encode(callFrame->argument(0));
+    JSValue arg0 = callFrame->argument(0);
+    auto path = JSC::JSValue::encode(arg0);
     auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(path);
     if (!domURL) {
+        if (arg0.isString()) {
+            auto url = WTF::URL(arg0.toWTFString(globalObject));
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+            RETURN_AND_RELEASE_SCOPE(scope, jsString(vm, url.fileSystemPath()));
+        }
         throwTypeError(globalObject, scope, "Argument must be a URL"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -1586,8 +1595,8 @@ private:
         static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
             functionPerformanceNowWithoutTypeCheck,
             JSPerformanceObject::info(),
-            JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
-            WebCore::DOMJIT::IDLResultTypeFilter<IDLUnsignedLong>::value);
+            JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
+            SpecBytecodeDouble);
 
         JSFunction* function = JSFunction::create(
             vm,
@@ -1909,7 +1918,10 @@ void GlobalObject::finishCreation(VM& vm)
         });
 
     addBuiltinGlobals(vm);
+
+#if ENABLE(REMOTE_INSPECTOR)
     setRemoteDebuggingEnabled(false);
+#endif
 
     RELEASE_ASSERT(classInfo());
 }
@@ -2342,9 +2354,13 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
 {
+#if !ENABLE(REMOTE_INSPECTOR)
+    return false;
+#else
     globalObject->setRemoteDebuggingEnabled(true);
     auto& server = Inspector::RemoteInspectorServer::singleton();
     return server.start(reinterpret_cast<const char*>(host), arg1);
+#endif
 }
 
 template<typename Visitor>

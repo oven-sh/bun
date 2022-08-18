@@ -10,7 +10,6 @@
 #include "JavaScriptCore/APICast.h"
 #include "JavaScriptCore/JSBasePrivate.h"
 #include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/RemoteInspectorServer.h"
 #include "JavaScriptCore/AggregateError.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "JavaScriptCore/CallFrameInlines.h"
@@ -25,6 +24,10 @@
 #include "JavaScriptCore/DeferTermination.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
 
+#if ENABLE(REMOTE_INSPECTOR)
+#include "JavaScriptCore/RemoteInspectorServer.h"
+#endif
+
 #include "mimalloc.h"
 
 using namespace JSC;
@@ -33,7 +36,7 @@ using namespace WTF;
 JSC_DECLARE_HOST_FUNCTION(functionStartRemoteDebugger);
 JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-
+#if ENABLE(REMOTE_INSPECTOR)
     static const char* defaultHost = "127.0.0.1\0";
     static uint16_t defaultPort = 9230; // node + 1
     auto& vm = globalObject->vm();
@@ -73,6 +76,12 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger, (JSGlobalObject * globalOb
     }
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+#else
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwVMError(globalObject, scope, createTypeError(globalObject, "Remote inspector is not enabled in this build of Bun"_s));
+    return JSC::JSValue::encode(JSC::jsUndefined());
+#endif
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionDescribe);

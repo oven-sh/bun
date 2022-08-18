@@ -23,11 +23,12 @@ group("bun:ffi", () => {
   bench("c string", () => new CString(ffi_string()));
 });
 
-group("bun:napi", () => {
-  bench("noop", () => napiNoop());
-  bench("hash", () => napiHash(bytes));
+if (process.env.SHOW_NAPI)
+  group("bun:napi", () => {
+    bench("noop", () => napiNoop());
+    bench("hash", () => napiHash(bytes));
 
-  bench("string", () => napiString());
-});
+    bench("string", () => napiString());
+  });
 
 await run();

@@ -1412,12 +1412,17 @@ bun-relink-fast: bun-relink-copy bun-link-lld-release-no-lto
 wasm-return1:
 	zig build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
 
+generate-classes:
+	bun src/bun.js/scripts/generate-classes.ts
+
 generate-sink:
-	bun src/bun.js/generate-jssink.js
+	bun src/bun.js/scripts/generate-jssink.js
 	$(WEBKIT_DIR)/Source/JavaScriptCore/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/#include "Lookup.h"//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/namespace JSC {//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/} \/\/ namespace JSC//' src/bun.js/bindings/JSSinkLookupTable.h
+
+codegen: generate-sink generate-classes
 
 EMIT_LLVM_FOR_RELEASE=-emit-llvm -flto="full"
 EMIT_LLVM_FOR_DEBUG=

@@ -1195,7 +1195,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return this.sink.writeLatin1(.{ .temporary = bun.ByteList.init(str.slice()) }).toJS(globalThis);
         }
 
-        pub fn writeString(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn writeUTF8(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
             JSC.markBinding();
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
@@ -1209,10 +1209,10 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             const args_list = callframe.arguments(4);
             const args = args_list.ptr[0..args_list.len];
-            if (args.len == 0 or args[0].isEmptyOrUndefinedOrNull() or args[0].isNumber()) {
+            if (args.len == 0 or !args[0].isString()) {
                 const err = JSC.toTypeError(
                     if (args.len == 0) JSC.Node.ErrorCode.ERR_MISSING_ARGS else JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
-                    "write() expects a string, ArrayBufferView, or ArrayBuffer",
+                    "writeUTF8() expects a string",
                     .{},
                     globalThis,
                 );

@@ -3061,30 +3061,18 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                     // @reduce doesn't tell us the index though
                     const min_value = @reduce(.Min, vec);
                     if (min_value < 0x20 or max_value > 127) {
-                        remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
 
-                        // this is really slow
-                        // it does it element-wise for every single u8 on the vector
-                        // instead of doing the SIMD instructions
-                        // it removes a loop, but probably is slower in the end
-                        const cmp = @bitCast(AsciiVectorU16U1, vec > max_u16_ascii) |
-                            @bitCast(AsciiVectorU16U1, vec < min_u16_ascii);
-                        const bitmask: u16 = @ptrCast(*const u16, &cmp).*;
-                        const first = @ctz(u16, bitmask);
+                        // 259270.66932
+                        // 167884.799276 (firstIndexOfValue)
+                        // 257732.238829 (coerced cast)
+                        // 205784.307709
+                        // 176408.10689
 
-                        return @intCast(u32, @as(u32, first) +
-                            @intCast(u32, slice.len - remaining.len));
+                        return @intCast(u32, std.simd.firstIndexOfValue(vec, min_value).?);
                     }
                 } else if (comptime !check_min) {
                     if (max_value > 127) {
-                        remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
-
-                        const cmp = vec > max_u16_ascii;
-                        const bitmask = @ptrCast(*const u16, &cmp).*;
-                        const first = @ctz(u16, bitmask);
-
-                        return @intCast(u32, @as(u32, first) +
-                            @intCast(u32, slice.len - remaining.len));
+                        return @intCast(u32, std.simd.firstIndexOfValue(vec, max_value).?);
                     }
                 }
 

@@ -2684,6 +2684,11 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     } else {
         metaProperties->putDirect(vm, builtinNames.filePublicName(), keyString);
     }
+    metaProperties->putDirect(
+        vm,
+        builtinNames.pathPublicName(),
+        keyString,
+        0);
 
     metaProperties->putDirect(
         vm,

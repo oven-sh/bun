@@ -2668,7 +2668,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     }
 
     JSC::Structure* structure = WebCore::getDOMStructure<Zig::ImportMetaObject>(vm, *reinterpret_cast<Zig::GlobalObject*>(globalObject));
-    Zig::ImportMetaObject* metaProperties = Zig::ImportMetaObject::create(vm, globalObject, structure, view.isolatedCopy());
+    Zig::ImportMetaObject* metaProperties = Zig::ImportMetaObject::create(vm, globalObject, structure);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto clientData = WebCore::clientData(vm);

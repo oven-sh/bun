@@ -185,6 +185,13 @@ export default {
 ./http_load_test  20 127.0.0.1 3000
 ```
 
+or 
+
+```bash
+./ab -q -k -n 400 -c 100 -g out.data -H "Accept-Encoding: gzip,deflate" 127.0.0.1 3000 
+```
+
+
 </details>
 
 bun.js prefers Web API compatibility instead of designing new APIs when possible. bun.js also implements some Node.js APIs.

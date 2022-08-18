@@ -2661,20 +2661,19 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSString* keyString = key.toStringOrNull(globalObject);
+    auto view = keyString->value(globalObject);
+    if (UNLIKELY(!keyString)) {
+        RELEASE_AND_RETURN(scope, JSC::constructEmptyObject(globalObject));
+    }
+
     JSC::Structure* structure = WebCore::getDOMStructure<Zig::ImportMetaObject>(vm, *reinterpret_cast<Zig::GlobalObject*>(globalObject));
-    Zig::ImportMetaObject* metaProperties = Zig::ImportMetaObject::create(vm, globalObject, structure);
+    Zig::ImportMetaObject* metaProperties = Zig::ImportMetaObject::create(vm, globalObject, structure, view.isolatedCopy());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto clientData = WebCore::clientData(vm);
-    JSString* keyString = key.toStringOrNull(globalObject);
-    if (UNLIKELY(!keyString)) {
-        RELEASE_AND_RETURN(scope, metaProperties);
-    }
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
     auto& builtinNames = clientData->builtinNames();
 
-    auto view = keyString->value(globalObject);
     auto index = view.reverseFind('/', view.length());
     if (index != WTF::notFound) {
         metaProperties->putDirect(vm, builtinNames.dirPublicName(),
@@ -2686,7 +2685,6 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
         metaProperties->putDirect(vm, builtinNames.filePublicName(), keyString);
     }
 
-    metaProperties->putDirect(vm, builtinNames.pathPublicName(), keyString);
     metaProperties->putDirect(
         vm,
         builtinNames.requirePublicName(),

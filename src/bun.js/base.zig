@@ -3498,6 +3498,298 @@ pub fn wrapWithHasContainer(
     }.callback;
 }
 
+pub fn InstanceMethodType(comptime Container: type) type {
+    return fn (instance: *Container, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue;
+}
+
+pub fn wrapInstanceMethod(
+    comptime Container: type,
+    comptime name: string,
+    comptime auto_protect: bool,
+) InstanceMethodType(Container) {
+    return struct {
+        const FunctionType = @TypeOf(@field(Container, name));
+        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+        const Args = std.meta.ArgsTuple(FunctionType);
+        const eater = if (auto_protect) JSC.Node.ArgumentsSlice.protectEatNext else JSC.Node.ArgumentsSlice.nextEat;
+
+        pub fn method(
+            this: *Container,
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            const arguments = callframe.arguments(FunctionTypeInfo.args.len);
+            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+            var args: Args = undefined;
+
+            comptime var i: usize = 0;
+            inline while (i < FunctionTypeInfo.args.len) : (i += 1) {
+                const ArgType = comptime FunctionTypeInfo.args[i].arg_type.?;
+
+                switch (comptime ArgType) {
+                    *Container => {
+                        args[i] = this;
+                    },
+                    *JSC.JSGlobalObject => {
+                        args[i] = globalThis.ptr();
+                    },
+                    JSC.Node.StringOrBuffer => {
+                        const arg = iter.nextEat() orelse {
+                            globalThis.throwInvalidArguments("expected string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                            globalThis.throwInvalidArguments("expected string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                    },
+                    ?JSC.Node.StringOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                                globalThis.throwInvalidArguments("expected string or buffer", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    JSC.ArrayBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
+                                globalThis.throwInvalidArguments("expected TypedArray", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            globalThis.throwInvalidArguments("expected TypedArray", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        }
+                    },
+                    ?JSC.ArrayBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
+                                globalThis.throwInvalidArguments("expected TypedArray", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    ZigString => {
+                        var string_value = eater(&iter) orelse {
+                            globalThis.throwInvalidArguments("Missing argument", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+
+                        if (string_value.isUndefinedOrNull()) {
+                            globalThis.throwInvalidArguments("Expected string", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        }
+
+                        args[i] = string_value.getZigString(globalThis.ptr());
+                    },
+                    ?JSC.Cloudflare.ContentOptions => {
+                        if (iter.nextEat()) |content_arg| {
+                            if (content_arg.get(globalThis.ptr(), "html")) |html_val| {
+                                args[i] = .{ .html = html_val.toBoolean() };
+                            }
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    *Response => {
+                        args[i] = (eater(&iter) orelse {
+                            globalThis.throwInvalidArguments("Missing Response object", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        }).as(Response) orelse {
+                            globalThis.throwInvalidArguments("Expected Response object", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                    },
+                    *Request => {
+                        args[i] = (eater(&iter) orelse {
+                            globalThis.throwInvalidArguments("Missing Request object", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        }).as(Request) orelse {
+                            globalThis.throwInvalidArguments("Expected Request object", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                    },
+                    JSValue => {
+                        const val = eater(&iter) orelse {
+                            globalThis.throwInvalidArguments("Missing argument", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                        args[i] = val;
+                    },
+                    ?JSValue => {
+                        args[i] = eater(&iter);
+                    },
+                    else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
+                }
+            }
+
+            defer iter.deinit();
+
+            return @call(.{}, @field(Container, name), args);
+        }
+    }.method;
+}
+
+pub fn wrapStaticMethod(
+    comptime Container: type,
+    comptime name: string,
+    comptime auto_protect: bool,
+) JSC.Codegen.StaticCallbackType {
+    return struct {
+        const FunctionType = @TypeOf(@field(Container, name));
+        const FunctionTypeInfo: std.builtin.TypeInfo.Fn = @typeInfo(FunctionType).Fn;
+        const Args = std.meta.ArgsTuple(FunctionType);
+        const eater = if (auto_protect) JSC.Node.ArgumentsSlice.protectEatNext else JSC.Node.ArgumentsSlice.nextEat;
+
+        pub fn method(
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            const arguments = callframe.arguments(FunctionTypeInfo.args.len);
+            var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.ptr[0..arguments.len]);
+            var args: Args = undefined;
+
+            comptime var i: usize = 0;
+            inline while (i < FunctionTypeInfo.args.len) : (i += 1) {
+                const ArgType = comptime FunctionTypeInfo.args[i].arg_type.?;
+
+                switch (comptime ArgType) {
+                    *JSC.JSGlobalObject => {
+                        args[i] = globalThis.ptr();
+                    },
+                    JSC.Node.StringOrBuffer => {
+                        const arg = iter.nextEat() orelse {
+                            globalThis.throwInvalidArguments("expected string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                        args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                            globalThis.throwInvalidArguments("expected string or buffer", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                    },
+                    ?JSC.Node.StringOrBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = JSC.Node.StringOrBuffer.fromJS(globalThis.ptr(), iter.arena.allocator(), arg, null) orelse {
+                                globalThis.throwInvalidArguments("expected string or buffer", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    JSC.ArrayBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
+                                globalThis.throwInvalidArguments("expected TypedArray", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            globalThis.throwInvalidArguments("expected TypedArray", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        }
+                    },
+                    ?JSC.ArrayBuffer => {
+                        if (iter.nextEat()) |arg| {
+                            args[i] = arg.asArrayBuffer(globalThis.ptr()) orelse {
+                                globalThis.throwInvalidArguments("expected TypedArray", .{});
+                                iter.deinit();
+                                return JSC.JSValue.zero;
+                            };
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    ZigString => {
+                        var string_value = eater(&iter) orelse {
+                            globalThis.throwInvalidArguments("Missing argument", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+
+                        if (string_value.isUndefinedOrNull()) {
+                            globalThis.throwInvalidArguments("Expected string", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        }
+
+                        args[i] = string_value.getZigString(globalThis.ptr());
+                    },
+                    ?JSC.Cloudflare.ContentOptions => {
+                        if (iter.nextEat()) |content_arg| {
+                            if (content_arg.get(globalThis.ptr(), "html")) |html_val| {
+                                args[i] = .{ .html = html_val.toBoolean() };
+                            }
+                        } else {
+                            args[i] = null;
+                        }
+                    },
+                    *Response => {
+                        args[i] = (eater(&iter) orelse {
+                            globalThis.throwInvalidArguments("Missing Response object", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        }).as(Response) orelse {
+                            globalThis.throwInvalidArguments("Expected Response object", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                    },
+                    *Request => {
+                        args[i] = (eater(&iter) orelse {
+                            globalThis.throwInvalidArguments("Missing Request object", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        }).as(Request) orelse {
+                            globalThis.throwInvalidArguments("Expected Request object", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                    },
+                    JSValue => {
+                        const val = eater(&iter) orelse {
+                            globalThis.throwInvalidArguments("Missing argument", .{});
+                            iter.deinit();
+                            return JSC.JSValue.zero;
+                        };
+                        args[i] = val;
+                    },
+                    ?JSValue => {
+                        args[i] = eater(&iter);
+                    },
+                    else => @compileError("Unexpected Type " ++ @typeName(ArgType)),
+                }
+            }
+
+            defer iter.deinit();
+
+            return @call(.{}, @field(Container, name), args);
+        }
+    }.method;
+}
+
 pub fn cachedBoundFunction(comptime name: [:0]const u8, comptime callback: anytype) (fn (
     _: void,
     ctx: js.JSContextRef,

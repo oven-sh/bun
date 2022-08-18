@@ -221,6 +221,60 @@ pub const StringOrBuffer = union(Tag) {
         };
     }
 };
+
+pub const SliceOrBuffer = union(Tag) {
+    string: JSC.ZigString.Slice,
+    buffer: Buffer,
+
+    pub fn deinit(this: SliceOrBuffer) void {
+        switch (this) {
+            .string => {
+                this.string.deinit();
+            },
+            .buffer => {},
+        }
+    }
+
+    pub const Tag = enum { string, buffer };
+
+    pub fn slice(this: SliceOrBuffer) []const u8 {
+        return switch (this) {
+            .string => this.string.slice(),
+            .buffer => this.buffer.slice(),
+        };
+    }
+
+    pub fn toJS(this: SliceOrBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return switch (this) {
+            string => {
+                const input = this.string.slice;
+                if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
+                    bun.default_allocator.free(bun.constStrToU8(input));
+                    return JSC.ZigString.toExternalU16(utf16.p.tr, utf16.len, ctx.ptr()).asObjectRef();
+                }
+
+                return JSC.ZigString.init(input).toExternalValue(ctx.ptr()).asObjectRef();
+            },
+            .buffer => this.buffer.toJSObjectRef(ctx, exception),
+        };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?SliceOrBuffer {
+        return switch (value.jsType()) {
+            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
+                var zig_str = value.toSlice(global, allocator);
+                return SliceOrBuffer{ .string = zig_str };
+            },
+            JSC.JSValue.JSType.ArrayBuffer, JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => SliceOrBuffer{
+                .buffer = JSC.MarkedArrayBuffer{
+                    .buffer = value.asArrayBuffer(global) orelse return null,
+                    .allocator = null,
+                },
+            },
+            else => null,
+        };
+    }
+};
 pub const ErrorCode = @import("./nodejs_error_code.zig").Code;
 
 // We can't really use Zig's error handling for syscalls because Node.js expects the "real" errno to be returned
@@ -279,7 +333,7 @@ pub const Encoding = enum(u8) {
         };
     }
 
-    pub fn encodeWithSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8, exception: JSC.C.ExceptionRef) JSC.JSValue {
+    pub fn encodeWithSize(encoding: Encoding, globalThis: *JSC.JSGlobalObject, comptime size: usize, input: *const [size]u8) JSC.JSValue {
         switch (encoding) {
             .base64 => {
                 var base64: [std.base64.standard.Encoder.calcSize(size)]u8 = undefined;
@@ -301,7 +355,7 @@ pub const Encoding = enum(u8) {
                 return result;
             },
             else => {
-                JSC.throwInvalidArguments("Unexpected encoding", .{}, globalThis.ref(), exception);
+                globalThis.throwInvalidArguments("Unexpected encoding", .{});
                 return JSC.JSValue.zero;
             },
         }

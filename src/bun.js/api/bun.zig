@@ -1137,7 +1137,7 @@ pub const Class = NewClass(
             .ts = d.ts{},
         },
         .sha = .{
-            .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash", false, false, true),
+            .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash_", false, false, true),
         },
         .nanoseconds = .{
             .rfn = nanoseconds,
@@ -1244,110 +1244,55 @@ pub const Class = NewClass(
 pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
 
-    fn CryptoHasher(comptime Hasher: type, comptime name: [:0]const u8, cached_constructor_name: []const u8) type {
+    fn CryptoHasher(comptime Hasher: type, name: [:0]const u8) type {
         return struct {
             hashing: Hasher = Hasher{},
 
-            pub fn byteLength(
-                _: void,
-                _: js.JSContextRef,
-                _: js.JSValueRef,
-                _: js.JSStringRef,
-                _: js.ExceptionRef,
-            ) js.JSValueRef {
-                return JSC.JSValue.jsNumber(@as(u16, Hasher.digest)).asObjectRef();
-            }
+            const ThisHasher = @This();
 
-            pub fn byteLength2(
+            pub usingnamespace @field(JSC.Codegen, "JS" ++ name);
+
+            pub const digest = JSC.wrapInstanceMethod(ThisHasher, "digest_", false);
+            pub const hash = JSC.wrapStaticMethod(ThisHasher, "hash_", false);
+
+            pub fn getByteLength(
                 _: *@This(),
-                _: js.JSContextRef,
-                _: js.JSValueRef,
-                _: js.JSStringRef,
-                _: js.ExceptionRef,
-            ) js.JSValueRef {
-                return JSC.JSValue.jsNumber(@as(u16, Hasher.digest)).asObjectRef();
+                _: *JSC.JSGlobalObject,
+            ) callconv(.C) JSC.JSValue {
+                return JSC.JSValue.jsNumber(@as(u16, Hasher.digest));
             }
 
-            pub const Constructor = JSC.NewConstructor(
-                @This(),
-                .{
-                    .hash = .{
-                        .rfn = JSC.wrapWithHasContainer(@This(), "hash", false, false, true),
-                    },
-                    .constructor = .{ .rfn = constructor },
-                },
-                .{
-                    .byteLength = .{
-                        .get = byteLength,
-                    },
-                },
-            );
-
-            pub const codgen = JSC.codegen(
-                @This(),
-                @as(string, name),
-                .{
-                    .update = JSC.wrapSync(@This(), "update"),
-                    .digest = JSC.wrapSync(@This(), "digest"),
-                    .finalize = finalize,
-
-                    .byteLength = .{
-                        .get = byteLength2,
-                    },
-                },
-                .{
-                    .constructor = constructor,
-                    .hash = JSC.wrapWithHasContainer(@This(), "hash", false, false, true),
-                    .byteLength = .{
-                        .get = byteLength,
-                    },
-                },
-            );
-
-            pub const Class = JSC.NewClass(
-                @This(),
-                .{
-                    .name = name,
-                },
-                .{},
-                .{
-                    .byteLength = .{
-                        .get = byteLength2,
-                    },
-                },
-            );
+            pub fn getByteLengthStatic(
+                _: *JSC.JSGlobalObject,
+                _: JSValue,
+                _: JSValue,
+            ) callconv(.C) JSC.JSValue {
+                return JSC.JSValue.jsNumber(@as(u16, Hasher.digest));
+            }
 
             fn hashToEncoding(
                 globalThis: *JSGlobalObject,
                 input: JSC.Node.StringOrBuffer,
                 encoding: JSC.Node.Encoding,
-                exception: JSC.C.ExceptionRef,
             ) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
 
                 Hasher.hash(input.slice(), &output_digest_buf, JSC.VirtualMachine.vm.rareData().boringEngine());
 
-                return encoding.encodeWithSize(globalThis, Hasher.digest, &output_digest_buf, exception);
+                return encoding.encodeWithSize(globalThis, Hasher.digest, &output_digest_buf);
             }
 
             fn hashToBytes(
                 globalThis: *JSGlobalObject,
                 input: JSC.Node.StringOrBuffer,
                 output: ?JSC.ArrayBuffer,
-                exception: JSC.C.ExceptionRef,
             ) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
                 var output_digest_slice: *Hasher.Digest = &output_digest_buf;
                 if (output) |output_buf| {
                     var bytes = output_buf.byteSlice();
                     if (bytes.len < Hasher.digest) {
-                        JSC.JSError(
-                            bun.default_allocator,
-                            comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{Hasher.digest}),
-                            .{},
-                            globalThis.ref(),
-                            exception,
-                        );
+                        globalThis.throwInvalidArguments(comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{Hasher.digest}), .{});
                         return JSC.JSValue.zero;
                     }
                     output_digest_slice = bytes[0..Hasher.digest];
@@ -1359,54 +1304,39 @@ pub const Crypto = struct {
                     return output_buf.value;
                 } else {
                     var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, output_digest_slice) catch unreachable, .Uint8Array);
-                    return array_buffer_out.toJSUnchecked(globalThis.ref(), exception);
+                    return array_buffer_out.toJSUnchecked(globalThis.ref(), null);
                 }
             }
 
-            pub fn hash(
+            pub fn hash_(
                 globalThis: *JSGlobalObject,
                 input: JSC.Node.StringOrBuffer,
                 output: ?JSC.Node.StringOrBuffer,
-                exception: JSC.C.ExceptionRef,
             ) JSC.JSValue {
                 if (output) |string_or_buffer| {
                     switch (string_or_buffer) {
                         .string => |str| {
                             const encoding = JSC.Node.Encoding.from(str) orelse {
-                                JSC.JSError(
-                                    bun.default_allocator,
-                                    "Unknown encoding",
-                                    .{},
-                                    globalThis.ref(),
-                                    exception,
-                                );
+                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
                                 return JSC.JSValue.zero;
                             };
 
-                            return hashToEncoding(globalThis, input, encoding, exception);
+                            return hashToEncoding(globalThis, input, encoding);
                         },
                         .buffer => |buffer| {
-                            return hashToBytes(globalThis, input, buffer.buffer, exception);
+                            return hashToBytes(globalThis, input, buffer.buffer);
                         },
                     }
                 } else {
-                    return hashToBytes(globalThis, input, null, exception);
+                    return hashToBytes(globalThis, input, null);
                 }
             }
 
-            pub fn constructor(
-                ctx: js.JSContextRef,
-                _: js.JSObjectRef,
-                _: []const js.JSValueRef,
-                exception: js.ExceptionRef,
-            ) js.JSObjectRef {
-                var this = bun.default_allocator.create(@This()) catch {
-                    JSC.JSError(bun.default_allocator, "Failed to create new object", .{}, ctx, exception);
-                    return null;
-                };
+            pub fn constructor(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*@This() {
+                var this = bun.default_allocator.create(@This()) catch return null;
 
                 this.* = .{ .hashing = Hasher.init() };
-                return @This().Class.make(ctx, this);
+                return this;
             }
 
             pub fn getter(
@@ -1416,70 +1346,54 @@ pub const Crypto = struct {
                 _: js.JSStringRef,
                 _: js.ExceptionRef,
             ) js.JSValueRef {
-                var existing = ctx.ptr().getCachedObject(&ZigString.init(cached_constructor_name));
-                if (existing.isEmpty()) {
-                    return ctx.ptr().putCachedObject(
-                        &ZigString.init(cached_constructor_name),
-                        JSC.JSValue.fromRef(@This().Constructor.constructor(ctx)),
-                    ).asObjectRef();
-                }
-
-                return existing.asObjectRef();
+                return ThisHasher.getConstructor(ctx).asObjectRef();
             }
 
-            pub fn update(this: *@This(), thisObj: JSC.C.JSObjectRef, buffer: JSC.Node.StringOrBuffer) JSC.JSValue {
+            pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                const input = callframe.argument(0);
+                const buffer = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), globalThis.bunVM().allocator, input) orelse {
+                    globalThis.throwInvalidArguments("expected string or buffer", .{});
+                    return JSC.JSValue.zero;
+                };
+                defer buffer.deinit();
                 this.hashing.update(buffer.slice());
-                return JSC.JSValue.c(thisObj);
+                return input;
             }
 
-            pub fn digest(
+            pub fn digest_(
                 this: *@This(),
                 globalThis: *JSGlobalObject,
                 output: ?JSC.Node.StringOrBuffer,
-                exception: JSC.C.ExceptionRef,
             ) JSC.JSValue {
                 if (output) |string_or_buffer| {
                     switch (string_or_buffer) {
                         .string => |str| {
                             const encoding = JSC.Node.Encoding.from(str) orelse {
-                                JSC.JSError(
-                                    bun.default_allocator,
-                                    "Unknown encoding",
-                                    .{},
-                                    globalThis.ref(),
-                                    exception,
-                                );
+                                globalThis.throwInvalidArguments("Unknown encoding: {s}", .{str});
                                 return JSC.JSValue.zero;
                             };
 
-                            return this.digestToEncoding(globalThis, exception, encoding);
+                            return this.digestToEncoding(globalThis, encoding);
                         },
                         .buffer => |buffer| {
                             return this.digestToBytes(
                                 globalThis,
-                                exception,
                                 buffer.buffer,
                             );
                         },
                     }
                 } else {
-                    return this.digestToBytes(globalThis, exception, null);
+                    return this.digestToBytes(globalThis, null);
                 }
             }
 
-            fn digestToBytes(this: *@This(), globalThis: *JSGlobalObject, exception: JSC.C.ExceptionRef, output: ?JSC.ArrayBuffer) JSC.JSValue {
+            fn digestToBytes(this: *@This(), globalThis: *JSGlobalObject, output: ?JSC.ArrayBuffer) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = undefined;
                 var output_digest_slice: *Hasher.Digest = &output_digest_buf;
                 if (output) |output_buf| {
                     var bytes = output_buf.byteSlice();
                     if (bytes.len < Hasher.digest) {
-                        JSC.JSError(
-                            bun.default_allocator,
-                            comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{@as(usize, Hasher.digest)}),
-                            .{},
-                            globalThis.ref(),
-                            exception,
-                        );
+                        globalThis.throwInvalidArguments(comptime std.fmt.comptimePrint("TypedArray must be at least {d} bytes", .{Hasher.digest}), .{});
                         return JSC.JSValue.zero;
                     }
                     output_digest_slice = bytes[0..Hasher.digest];
@@ -1501,11 +1415,11 @@ pub const Crypto = struct {
                     return output_buf.value;
                 } else {
                     var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, &output_digest_buf) catch unreachable, .Uint8Array);
-                    return array_buffer_out.toJSUnchecked(globalThis.ref(), exception);
+                    return array_buffer_out.toJSUnchecked(globalThis.ref(), null);
                 }
             }
 
-            fn digestToEncoding(this: *@This(), globalThis: *JSGlobalObject, exception: JSC.C.ExceptionRef, encoding: JSC.Node.Encoding) JSC.JSValue {
+            fn digestToEncoding(this: *@This(), globalThis: *JSGlobalObject, encoding: JSC.Node.Encoding) JSC.JSValue {
                 var output_digest_buf: Hasher.Digest = comptime brk: {
                     var bytes: Hasher.Digest = undefined;
                     var i: usize = 0;
@@ -1520,24 +1434,24 @@ pub const Crypto = struct {
 
                 this.hashing.final(output_digest_slice);
 
-                return encoding.encodeWithSize(globalThis, Hasher.digest, output_digest_slice, exception);
+                return encoding.encodeWithSize(globalThis, Hasher.digest, output_digest_slice);
             }
 
-            pub fn finalize(this: *@This()) void {
+            pub fn finalize(this: *@This()) callconv(.C) void {
                 VirtualMachine.vm.allocator.destroy(this);
             }
         };
     }
 
-    pub const SHA1 = CryptoHasher(Hashers.SHA1, "SHA1", "Bun_Crypto_SHA1");
-    pub const MD5 = CryptoHasher(Hashers.MD5, "MD5", "Bun_Crypto_MD5");
-    pub const MD4 = CryptoHasher(Hashers.MD4, "MD4", "Bun_Crypto_MD4");
-    pub const SHA224 = CryptoHasher(Hashers.SHA224, "SHA224", "Bun_Crypto_SHA224");
-    pub const SHA512 = CryptoHasher(Hashers.SHA512, "SHA512", "Bun_Crypto_SHA512");
-    pub const SHA384 = CryptoHasher(Hashers.SHA384, "SHA384", "Bun_Crypto_SHA384");
-    pub const SHA256 = CryptoHasher(Hashers.SHA256, "SHA256", "Bun_Crypto_SHA256");
-    pub const SHA512_256 = CryptoHasher(Hashers.SHA512_256, "SHA512_256", "Bun_Crypto_SHA512_256");
-    pub const MD5_SHA1 = CryptoHasher(Hashers.MD5_SHA1, "MD5_SHA1", "Bun_Crypto_MD5_SHA1");
+    pub const SHA1 = CryptoHasher(Hashers.SHA1, "SHA1");
+    pub const MD5 = CryptoHasher(Hashers.MD5, "MD5");
+    pub const MD4 = CryptoHasher(Hashers.MD4, "MD4");
+    pub const SHA224 = CryptoHasher(Hashers.SHA224, "SHA224");
+    pub const SHA512 = CryptoHasher(Hashers.SHA512, "SHA512");
+    pub const SHA384 = CryptoHasher(Hashers.SHA384, "SHA384");
+    pub const SHA256 = CryptoHasher(Hashers.SHA256, "SHA256");
+    pub const SHA512_256 = CryptoHasher(Hashers.SHA512_256, "SHA512_256");
+    pub const MD5_SHA1 = CryptoHasher(Hashers.MD5_SHA1, "MD5_SHA1");
 };
 
 pub fn nanoseconds(

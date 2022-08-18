@@ -400,7 +400,9 @@ void ${name}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, ${
 const ClassInfo ${name}::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
 
 
-
+extern "C" EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
+  return JSValue::encode(globalObject->${className(typeName)}Constructor());
+}
 
       
       `;
@@ -1005,6 +1007,13 @@ pub const ${className(typeName)} = struct {
         return ${symbolName(typeName, "fromJS")}(value);
     }
 
+    /// Get the ${typeName} constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        return ${symbolName(typeName, "getConstructor")}(globalObject);
+    }
+
     /// Create a new instance of ${typeName}
     pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding();
@@ -1027,6 +1036,10 @@ pub const ${className(typeName)} = struct {
     }
 
     extern fn ${symbolName(typeName, "fromJS")}(JSC.JSValue) ?*${typeName};
+    extern fn ${symbolName(
+      typeName,
+      "getConstructor"
+    )}(*JSC.JSGlobalObject) JSC.JSValue;
 
     extern fn ${symbolName(
       typeName,
@@ -1185,9 +1198,9 @@ const Classes = @import("./generated_classes_list.zig").Classes;
 const Environment = @import("../../env.zig");
 const std = @import("std");
 
-const StaticGetterType = fn(*JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-const StaticSetterType = fn(*JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-const StaticCallbackType = fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+pub const StaticGetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(.C) JSC.JSValue;
+pub const StaticSetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(.C) bool;
+pub const StaticCallbackType = fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
 
 

@@ -832,6 +832,16 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:process" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(""),
+                        .specifier = ZigString.init("node:process"),
+                        .source_url = ZigString.init("node:process"),
+                        .hash = 0,
+                        .tag = ResolvedSource.Tag.@"node:process",
+                    };
+                },
                 .@"bun:ffi" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2745,6 +2755,7 @@ pub const HardcodedModule = enum {
     @"node:module",
     @"node:path",
     @"node:perf_hooks",
+    @"node:process",
     @"node:streams/consumer",
     @"node:streams/web",
     @"node:timers",
@@ -2776,12 +2787,14 @@ pub const HardcodedModule = enum {
             .{ "node:path/posix", HardcodedModule.@"node:path" },
             .{ "node:path/win32", HardcodedModule.@"node:path" },
             .{ "node:perf_hooks", HardcodedModule.@"node:perf_hooks" },
+            .{ "node:process", HardcodedModule.@"node:process" },
             .{ "node:streams/consumer", HardcodedModule.@"node:streams/consumer" },
             .{ "node:streams/web", HardcodedModule.@"node:streams/web" },
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "path", HardcodedModule.@"node:path" },
+            .{ "process", HardcodedModule.@"node:process" },
             .{ "undici", HardcodedModule.@"undici" },
             .{ "ws", HardcodedModule.@"ws" },
         },
@@ -2813,6 +2826,7 @@ pub const HardcodedModule = enum {
             .{ "node:path/posix", "node:path" },
             .{ "node:path/win32", "node:path" },
             .{ "node:perf_hooks", "node:perf_hooks" },
+            .{ "node:process", "node:process" },
             .{ "node:streams/consumer", "node:streams/consumer" },
             .{ "node:streams/web", "node:streams/web" },
             .{ "node:timers", "node:timers" },
@@ -2822,6 +2836,7 @@ pub const HardcodedModule = enum {
             .{ "path/posix", "node:path" },
             .{ "path/win32", "node:path" },
             .{ "perf_hooks", "node:perf_hooks" },
+            .{ "process", "node:process" },
             .{ "streams/consumer", "node:streams/consumer" },
             .{ "streams/web", "node:streams/web" },
             .{ "timers", "node:timers" },

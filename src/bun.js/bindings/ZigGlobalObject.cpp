@@ -153,6 +153,7 @@ using JSBuffer = WebCore::JSBuffer;
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 #include "../modules/BufferModule.h"
+#include "../modules/ProcessModule.h"
 
 // #include <iostream>
 static bool has_loaded_jsc = false;
@@ -2505,7 +2506,8 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    if (res.result.value.tag == SyntheticModuleType::Buffer) {
+    switch (res.result.value.tag) {
+    case SyntheticModuleType::Buffer: {
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(
                 generateBufferSourceCode,
@@ -2515,11 +2517,23 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
     }
+    case SyntheticModuleType::Process: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                generateProcessSourceCode,
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:process"_s)), WTFMove(moduleKey)));
 
-    auto provider = Zig::SourceProvider::create(res.result.value);
-    globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
+    default: {
+        auto provider = Zig::SourceProvider::create(res.result.value);
+        globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
+    }
 }
 
 JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
@@ -2557,7 +2571,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
     }
 
-    if (res.result.value.tag == 1) {
+    switch (res.result.value.tag) {
+    case 1: {
         auto buffer = Vector<uint8_t>(res.result.value.source_code.ptr, res.result.value.source_code.len);
         auto source = JSC::SourceCode(
             JSC::WebAssemblySourceProvider::create(WTFMove(buffer),
@@ -2572,7 +2587,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
         globalObject->vm().drainMicrotasks();
         return promise;
-    } else if (res.result.value.tag == SyntheticModuleType::Buffer) {
+    }
+    case SyntheticModuleType::Buffer: {
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(generateBufferSourceCode,
                 JSC::SourceOrigin(), WTFMove(moduleKey)));
@@ -2583,10 +2599,24 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         promise->resolve(globalObject, sourceCode);
         scope.release();
         return promise;
-    } else {
+    }
+    case SyntheticModuleType::Process: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(generateProcessSourceCode,
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
+        return promise;
+    }
+    default: {
         auto provider = Zig::SourceProvider::create(res.result.value);
         auto jsSourceCode = JSC::JSSourceCode::create(vm, JSC::SourceCode(provider));
         promise->resolve(globalObject, jsSourceCode);
+    }
     }
 
     // if (provider.ptr()->isBytecodeCacheEnabled()) {

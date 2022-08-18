@@ -332,6 +332,7 @@ void ${name}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, ${protot
         ? `reifyStaticProperties(vm, &${name}::s_info, ${hashTableIdentifier}, *this);`
         : ""
     }
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
 }
 

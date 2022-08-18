@@ -8,10 +8,6 @@ export default [
     klass: {},
     JSType: "0b11101110",
     proto: {
-      // body: {
-      //     getter: "getBody",
-      // },
-
       text: { fn: "getText" },
       json: { fn: "getJSON" },
       arrayBuffer: { fn: "getArrayBuffer" },
@@ -78,10 +74,6 @@ export default [
         getter: "getURL",
         cache: true,
       },
-
-      // body: {
-      //     getter: "getBody",
-      // },
 
       text: { fn: "getText" },
       json: { fn: "getJSON" },

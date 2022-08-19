@@ -26,12 +26,24 @@ pub const Method = enum {
         values.remove(.HEAD);
         values.remove(.TRACE);
         values.remove(.OPTIONS);
+        break :brk values;
+    };
+
+    const with_request_body: std.enums.EnumSet(Method) = brk: {
+        var values = std.enums.EnumSet(Method).initFull();
+        values.remove(.HEAD);
+        values.remove(.TRACE);
+        values.remove(.OPTIONS);
         values.remove(.GET);
         break :brk values;
     };
 
     pub fn hasBody(this: Method) bool {
         return with_body.contains(this);
+    }
+
+    pub fn hasRequestBody(this: Method) bool {
+        return with_request_body.contains(this);
     }
 
     pub fn which(str: []const u8) ?Method {

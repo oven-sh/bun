@@ -2163,7 +2163,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (wait_for_promise) {
                 // Even if the user hasn't requested it, we have to start downloading the body!!
                 // terrible for performance.
-                if (request_object.body == .Locked and (request_object.body.Locked.promise == null and request_object.body.Locked.readable == null) and ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasBody())) {
+                if (request_object.body == .Locked and (request_object.body.Locked.promise == null and request_object.body.Locked.readable == null) and ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody())) {
                     const req_len: usize = brk: {
                         if (req.header("content-length")) |content_length| {
                             break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;

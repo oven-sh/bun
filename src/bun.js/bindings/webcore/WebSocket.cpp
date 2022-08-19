@@ -880,6 +880,11 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
     this->m_upgradeClient = nullptr;
 
+    if (this->hasEventListeners("close"_s)) {
+        this->dispatchEvent(CloseEvent::create(wasClean, code, reason));
+        return;
+    }
+
     if (auto* context = scriptExecutionContext()) {
         this->m_pendingActivityCount++;
         context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {

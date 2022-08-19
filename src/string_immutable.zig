@@ -3045,6 +3045,24 @@ pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: us
     return results;
 }
 
+// copied from std.simd.vectorLength because it is not public
+fn vectorLength(comptime VectorType: type) comptime_int {
+    return switch (@typeInfo(VectorType)) {
+        .Vector => |info| info.len,
+        .Array => |info| info.len,
+        else => @compileError("Invalid type" ++ @typeName(VectorType)),
+    };
+}
+
+// Will return the Index of the first value found
+fn findValueIndexInVector(vec: anytype, value: std.meta.Child(@TypeOf(vec))) ?std.simd.VectorIndex(@TypeOf(vec)) {
+    const len = vectorLength(@TypeOf(vec));
+    const vector = vec == @splat(len, value);
+    const IndexInt = std.simd.VectorIndex(@TypeOf(vector));
+    const indices = @select(IndexInt, vector, std.simd.iota(IndexInt, len), @splat(len, ~@as(IndexInt, 0)));
+    return @reduce(.Min, indices);
+}
+
 pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
     var remaining = slice;
 
@@ -3061,18 +3079,14 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
                     // @reduce doesn't tell us the index though
                     const min_value = @reduce(.Min, vec);
                     if (min_value < 0x20 or max_value > 127) {
-
-                        // 259270.66932
-                        // 167884.799276 (firstIndexOfValue)
-                        // 257732.238829 (coerced cast)
-                        // 205784.307709
-                        // 176408.10689
-
-                        return @intCast(u32, std.simd.firstIndexOfValue(vec, min_value).?);
+                        remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
+                        // SIMD instruction is faster
+                        return @intCast(u32, findValueIndexInVector(vec, min_value).?);
                     }
                 } else if (comptime !check_min) {
                     if (max_value > 127) {
-                        return @intCast(u32, std.simd.firstIndexOfValue(vec, max_value).?);
+                        remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
+                        return @intCast(u32, findValueIndexInVector(vec, max_value).?);
                     }
                 }
 

@@ -831,18 +831,9 @@ void WebSocket::didReceiveMessageError(WTF::StringImpl::StaticStringImpl* reason
     m_state = CLOSED;
     if (auto* context = scriptExecutionContext()) {
         this->m_pendingActivityCount++;
-
-        context->postTask([this, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            ASSERT(scriptExecutionContext());
-            // if (UNLIKELY(InspectorInstrumentation::hasFrontends())) {
-            //     if (auto* inspector = m_channel->channelInspector())
-            //         inspector->didReceiveWebSocketFrameError(reason);
-            // }
-
-            // FIXME: As per https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
-            dispatchEvent(CloseEvent::create(false, 0, WTF::String(reason)));
-            protectedThis->m_pendingActivityCount--;
-        });
+        // https://html.spec.whatwg.org/multipage/web-sockets.html#feedback-from-the-protocol:concept-websocket-closed, we should synchronously fire a close event.
+        dispatchEvent(CloseEvent::create(false, 0, WTF::String(reason)));
+        this->m_pendingActivityCount--;
     }
 }
 
@@ -894,7 +885,7 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
         context->postTask([this, code, wasClean, reason, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             ASSERT(scriptExecutionContext());
             protectedThis->dispatchEvent(CloseEvent::create(wasClean, code, reason));
-            protectedThis->m_pendingActivityCount++;
+            protectedThis->m_pendingActivityCount--;
         });
     }
 

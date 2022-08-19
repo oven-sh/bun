@@ -1879,134 +1879,128 @@ void JSSHA512_256::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 JSObject* JSSHA512_256::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
     return JSSHA512_256Prototype::create(vm, globalObject, JSSHA512_256Prototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-}extern "C" void* MD5_SHA1Class__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-JSC_DECLARE_CUSTOM_GETTER(jsMD5_SHA1Constructor);
-extern "C" void MD5_SHA1Class__finalize(void*);
+}extern "C" void* TextDecoderClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+JSC_DECLARE_CUSTOM_GETTER(jsTextDecoderConstructor);
+extern "C" void TextDecoderClass__finalize(void*);
 
-extern "C" JSC::EncodedJSValue MD5_SHA1Prototype__getByteLength(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(MD5_SHA1Prototype__byteLengthGetterWrap);
-
-
-extern "C" EncodedJSValue MD5_SHA1Prototype__digest(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(MD5_SHA1Prototype__digestCallback);
+extern "C" EncodedJSValue TextDecoderPrototype__decode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC_DECLARE_HOST_FUNCTION(TextDecoderPrototype__decodeCallback);
 
 
-extern "C" EncodedJSValue MD5_SHA1Prototype__update(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
-JSC_DECLARE_HOST_FUNCTION(MD5_SHA1Prototype__updateCallback);
+extern "C" JSC::EncodedJSValue TextDecoderPrototype__getEncoding(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(TextDecoderPrototype__encodingGetterWrap);
 
 
-STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMD5_SHA1Prototype, JSMD5_SHA1Prototype::Base);
+extern "C" JSC::EncodedJSValue TextDecoderPrototype__getFatal(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(TextDecoderPrototype__fatalGetterWrap);
 
 
-  static const HashTableValue JSMD5_SHA1PrototypeTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(MD5_SHA1Prototype__byteLengthGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(MD5_SHA1Prototype__digestCallback), (intptr_t)(0) } }  ,
-{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(MD5_SHA1Prototype__updateCallback), (intptr_t)(0) } }
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextDecoderPrototype, JSTextDecoderPrototype::Base);
+
+
+  static const HashTableValue JSTextDecoderPrototypeTableValues[] = {
+{ "decode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(TextDecoderPrototype__decodeCallback), (intptr_t)(1) } }  ,
+{ "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(TextDecoderPrototype__encodingGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
+{ "fatal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(TextDecoderPrototype__fatalGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }
   };
 
 
-const ClassInfo JSMD5_SHA1Prototype::s_info = { "MD5_SHA1"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMD5_SHA1Prototype) };
+const ClassInfo JSTextDecoderPrototype::s_info = { "TextDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextDecoderPrototype) };
 
 
 
-JSC_DEFINE_CUSTOM_GETTER(jsMD5_SHA1Constructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* prototype = jsDynamicCast<JSMD5_SHA1Prototype*>(JSValue::decode(thisValue));
+    auto* prototype = jsDynamicCast<JSTextDecoderPrototype*>(JSValue::decode(thisValue));
 
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(globalObject->JSMD5_SHA1Constructor());
+    return JSValue::encode(globalObject->JSTextDecoderConstructor());
 }    
     
 
 
-JSC_DEFINE_CUSTOM_GETTER(MD5_SHA1Prototype__byteLengthGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_HOST_FUNCTION(TextDecoderPrototype__decodeCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    
+    JSTextDecoder* thisObject = jsDynamicCast<JSTextDecoder*>(callFrame->thisValue());
+
+    if (UNLIKELY(!thisObject)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        return throwVMTypeError(lexicalGlobalObject, throwScope);
+    }
+
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    
+    return TextDecoderPrototype__decode(thisObject->wrapped(), lexicalGlobalObject, callFrame);
+}
+
+
+JSC_DEFINE_CUSTOM_GETTER(TextDecoderPrototype__encodingGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     auto& vm = lexicalGlobalObject->vm();
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSMD5_SHA1* thisObject = jsCast<JSMD5_SHA1*>(JSValue::decode(thisValue));
+    JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(JSValue::decode(thisValue));
+      JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    
+    if (JSValue cachedValue = thisObject->m_encoding.get())
+        return JSValue::encode(cachedValue);
+    
+    JSC::JSValue result = JSC::JSValue::decode(
+        TextDecoderPrototype__getEncoding(thisObject->wrapped(), globalObject)
+    );
+    RETURN_IF_EXCEPTION(throwScope, {});
+    thisObject->m_encoding.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+
+JSC_DEFINE_CUSTOM_GETTER(TextDecoderPrototype__fatalGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(JSValue::decode(thisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    JSC::EncodedJSValue result = MD5_SHA1Prototype__getByteLength(thisObject->wrapped(), globalObject);
+    JSC::EncodedJSValue result = TextDecoderPrototype__getFatal(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, result);
 }
         
 
-JSC_DEFINE_HOST_FUNCTION(MD5_SHA1Prototype__digestCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    
-    JSMD5_SHA1* thisObject = jsDynamicCast<JSMD5_SHA1*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    
-    return MD5_SHA1Prototype__digest(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-
-JSC_DEFINE_HOST_FUNCTION(MD5_SHA1Prototype__updateCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    
-    JSMD5_SHA1* thisObject = jsDynamicCast<JSMD5_SHA1*>(callFrame->thisValue());
-
-    if (UNLIKELY(!thisObject)) {
-        auto throwScope = DECLARE_THROW_SCOPE(vm);
-        return throwVMTypeError(lexicalGlobalObject, throwScope);
-    }
-
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    
-    return MD5_SHA1Prototype__update(thisObject->wrapped(), lexicalGlobalObject, callFrame);
-}
-
-
-void JSMD5_SHA1Prototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+void JSTextDecoderPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSMD5_SHA1::info(), JSMD5_SHA1PrototypeTableValues, *this);
+    reifyStaticProperties(vm, JSTextDecoder::info(), JSTextDecoderPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
-extern "C" JSC_DECLARE_CUSTOM_GETTER(MD5_SHA1Class__getByteLengthStatic);
-extern "C" JSC_DECLARE_HOST_FUNCTION(MD5_SHA1Class__hash);
-
-  static const HashTableValue JSMD5_SHA1ConstructorTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(MD5_SHA1Class__getByteLengthStatic), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(MD5_SHA1Class__hash), (intptr_t)(2) } }
-  };
-
-
-void JSMD5_SHA1Constructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSMD5_SHA1Prototype* prototype)
+void JSTextDecoderConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSTextDecoderPrototype* prototype)
 {
-    Base::finishCreation(vm, 0, "MD5_SHA1"_s, PropertyAdditionMode::WithoutStructureTransition);
-    reifyStaticProperties(vm, &JSMD5_SHA1Constructor::s_info, JSMD5_SHA1ConstructorTableValues, *this);
+    Base::finishCreation(vm, 0, "TextDecoder"_s, PropertyAdditionMode::WithoutStructureTransition);
+    
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
 }
 
-JSMD5_SHA1Constructor* JSMD5_SHA1Constructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSMD5_SHA1Prototype* prototype) {
-    JSMD5_SHA1Constructor* ptr = new (NotNull, JSC::allocateCell<JSMD5_SHA1Constructor>(vm)) JSMD5_SHA1Constructor(vm, structure, construct);
+JSTextDecoderConstructor* JSTextDecoderConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTextDecoderPrototype* prototype) {
+    JSTextDecoderConstructor* ptr = new (NotNull, JSC::allocateCell<JSTextDecoderConstructor>(vm)) JSTextDecoderConstructor(vm, structure, construct);
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;
 }
 
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMD5_SHA1Constructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     JSC::VM &vm = globalObject->vm();
     JSObject* newTarget = asObject(callFrame->newTarget());
-    auto* constructor = globalObject->JSMD5_SHA1Constructor();
-    Structure* structure = globalObject->JSMD5_SHA1Structure();
+    auto* constructor = globalObject->JSTextDecoderConstructor();
+    Structure* structure = globalObject->JSTextDecoderStructure();
     if (constructor != newTarget) {
       auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -2018,76 +2012,76 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMD5_SHA1Constructor::construct(JS
       structure = InternalFunction::createSubclassStructure(
         globalObject,
         newTarget,
-        functionGlobalObject->JSMD5_SHA1Structure()
+        functionGlobalObject->JSTextDecoderStructure()
       );
     }
 
-    void* ptr = MD5_SHA1Class__construct(globalObject, callFrame);
+    void* ptr = TextDecoderClass__construct(globalObject, callFrame);
 
     if (UNLIKELY(!ptr)) {
       return JSValue::encode(JSC::jsUndefined());
     }
 
-    JSMD5_SHA1* instance = JSMD5_SHA1::create(vm, globalObject, structure, ptr);
+    JSTextDecoder* instance = JSTextDecoder::create(vm, globalObject, structure, ptr);
 
     return JSValue::encode(instance);
 }
 
-extern "C" EncodedJSValue MD5_SHA1__create(Zig::GlobalObject* globalObject, void* ptr) {
+extern "C" EncodedJSValue TextDecoder__create(Zig::GlobalObject* globalObject, void* ptr) {
   auto &vm = globalObject->vm();
-  JSC::Structure* structure = globalObject->JSMD5_SHA1Structure();
-  JSMD5_SHA1* instance = JSMD5_SHA1::create(vm, globalObject, structure, ptr);
+  JSC::Structure* structure = globalObject->JSTextDecoderStructure();
+  JSTextDecoder* instance = JSTextDecoder::create(vm, globalObject, structure, ptr);
   return JSValue::encode(instance);
 }
 
-void JSMD5_SHA1Constructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSMD5_SHA1Prototype* prototype)
+void JSTextDecoderConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSTextDecoderPrototype* prototype)
 {
 
 }
 
-const ClassInfo JSMD5_SHA1Constructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMD5_SHA1Constructor) };
+const ClassInfo JSTextDecoderConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextDecoderConstructor) };
 
 
-extern "C" EncodedJSValue MD5_SHA1__getConstructor(Zig::GlobalObject* globalObject) {
-  return JSValue::encode(globalObject->JSMD5_SHA1Constructor());
+extern "C" EncodedJSValue TextDecoder__getConstructor(Zig::GlobalObject* globalObject) {
+  return JSValue::encode(globalObject->JSTextDecoderConstructor());
 }
 
-JSMD5_SHA1::~JSMD5_SHA1()
+JSTextDecoder::~JSTextDecoder()
 {
     if (m_ctx) {
-        MD5_SHA1Class__finalize(m_ctx);
+        TextDecoderClass__finalize(m_ctx);
     }
 }
-void JSMD5_SHA1::destroy(JSCell* cell)
+void JSTextDecoder::destroy(JSCell* cell)
 {
-    static_cast<JSMD5_SHA1*>(cell)->JSMD5_SHA1::~JSMD5_SHA1();
+    static_cast<JSTextDecoder*>(cell)->JSTextDecoder::~JSTextDecoder();
 }
   
-const ClassInfo JSMD5_SHA1::s_info = { "MD5_SHA1"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMD5_SHA1) };
+const ClassInfo JSTextDecoder::s_info = { "TextDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextDecoder) };
 
-void JSMD5_SHA1::finishCreation(VM& vm)
+void JSTextDecoder::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 }
 
-JSMD5_SHA1* JSMD5_SHA1::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
-  JSMD5_SHA1* ptr = new (NotNull, JSC::allocateCell<JSMD5_SHA1>(vm)) JSMD5_SHA1(vm, structure, ctx);
+JSTextDecoder* JSTextDecoder::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx) {
+  JSTextDecoder* ptr = new (NotNull, JSC::allocateCell<JSTextDecoder>(vm)) JSTextDecoder(vm, structure, ctx);
   ptr->finishCreation(vm);
   return ptr;
 }
 
 
-extern "C" void* MD5_SHA1__fromJS(JSC::EncodedJSValue value) {
-  JSMD5_SHA1* object = JSC::jsDynamicCast<JSMD5_SHA1*>(JSValue::decode(value));
+extern "C" void* TextDecoder__fromJS(JSC::EncodedJSValue value) {
+  JSTextDecoder* object = JSC::jsDynamicCast<JSTextDecoder*>(JSValue::decode(value));
   if (!object)
       return nullptr;
       
   return object->wrapped();
 }
 
-extern "C" bool MD5_SHA1__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr) {
-  JSMD5_SHA1* object = JSC::jsDynamicCast<JSMD5_SHA1*>(JSValue::decode(value));
+extern "C" bool TextDecoder__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr) {
+  JSTextDecoder* object = JSC::jsDynamicCast<JSTextDecoder*>(JSValue::decode(value));
   if (!object)
       return false;
   
@@ -2096,11 +2090,11 @@ extern "C" bool MD5_SHA1__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr
 }
 
 
-extern "C" const size_t MD5_SHA1__ptrOffset = JSMD5_SHA1::offsetOfWrapped();
+extern "C" const size_t TextDecoder__ptrOffset = JSTextDecoder::offsetOfWrapped();
 
-void JSMD5_SHA1::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+void JSTextDecoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
-    auto* thisObject = jsCast<JSMD5_SHA1*>(cell);
+    auto* thisObject = jsCast<JSTextDecoder*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         // if (thisObject->scriptExecutionContext())
         //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
@@ -2108,10 +2102,21 @@ void JSMD5_SHA1::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-JSObject* JSMD5_SHA1::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
+JSObject* JSTextDecoder::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    return JSMD5_SHA1Prototype::create(vm, globalObject, JSMD5_SHA1Prototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-}extern "C" void* RequestClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+    return JSTextDecoderPrototype::create(vm, globalObject, JSTextDecoderPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+}
+      
+template<typename Visitor>
+void JSTextDecoder::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_encoding);
+}
+
+DEFINE_VISIT_CHILDREN(JSTextDecoder);extern "C" void* RequestClass__construct(JSC::JSGlobalObject*, JSC::CallFrame*);
 JSC_DECLARE_CUSTOM_GETTER(jsRequestConstructor);
 extern "C" void RequestClass__finalize(void*);
 

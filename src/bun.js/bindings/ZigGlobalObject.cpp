@@ -521,6 +521,17 @@ JSC_DEFINE_CUSTOM_GETTER(JSCloseEvent_getter,
         WebCore::JSCloseEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
+JSC_DECLARE_CUSTOM_GETTER(JSTextDecoder_getter);
+
+JSC_DEFINE_CUSTOM_GETTER(JSTextDecoder_getter,
+    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return JSC::JSValue::encode(
+        thisObject->JSTextDecoderConstructor());
+}
+
 JSC_DECLARE_CUSTOM_GETTER(JSMessageEvent_getter);
 
 JSC_DEFINE_CUSTOM_GETTER(JSMessageEvent_getter,
@@ -2132,6 +2143,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Response"_s), JSC::CustomGetterSetter::create(vm, JSResponse_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "TextDecoder"_s), JSC::CustomGetterSetter::create(vm, JSTextDecoder_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),

@@ -1451,7 +1451,6 @@ pub const Crypto = struct {
     pub const SHA384 = CryptoHasher(Hashers.SHA384, "SHA384");
     pub const SHA256 = CryptoHasher(Hashers.SHA256, "SHA256");
     pub const SHA512_256 = CryptoHasher(Hashers.SHA512_256, "SHA512_256");
-    pub const MD5_SHA1 = CryptoHasher(Hashers.MD5_SHA1, "MD5_SHA1");
 };
 
 pub fn nanoseconds(

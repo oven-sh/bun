@@ -47,11 +47,11 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSSHA512_256::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSSHA512_256Constructor::create(init.vm, init.global, WebCore::JSSHA512_256Constructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSSHA512_256Prototype*>(init.prototype)));
               });
-    m_JSMD5_SHA1.initLater(
+    m_JSTextDecoder.initLater(
               [](LazyClassStructure::Initializer& init) {
-                 init.setPrototype(WebCore::JSMD5_SHA1::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
-                 init.setStructure(WebCore::JSMD5_SHA1::createStructure(init.vm, init.global, init.prototype));
-                 init.setConstructor(WebCore::JSMD5_SHA1Constructor::create(init.vm, init.global, WebCore::JSMD5_SHA1Constructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSMD5_SHA1Prototype*>(init.prototype)));
+                 init.setPrototype(WebCore::JSTextDecoder::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSTextDecoder::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSTextDecoderConstructor::create(init.vm, init.global, WebCore::JSTextDecoderConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSTextDecoderPrototype*>(init.prototype)));
               });
     m_JSRequest.initLater(
               [](LazyClassStructure::Initializer& init) {
@@ -77,7 +77,7 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSSHA384.visit(visitor);
       thisObject->m_JSSHA256.visit(visitor);
       thisObject->m_JSSHA512_256.visit(visitor);
-      thisObject->m_JSMD5_SHA1.visit(visitor);
+      thisObject->m_JSTextDecoder.visit(visitor);
       thisObject->m_JSRequest.visit(visitor);
       thisObject->m_JSResponse.visit(visitor);
 }

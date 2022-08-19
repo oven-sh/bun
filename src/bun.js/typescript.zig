@@ -40,7 +40,6 @@ pub fn main() anyerror!void {
         JSC.WebCore.Fetch.Class.typescriptDeclaration(),
         JSC.Performance.Class.typescriptDeclaration(),
         JSC.Crypto.Class.typescriptDeclaration(),
-        JSC.WebCore.TextDecoder.Class.typescriptDeclaration(),
         JSC.API.Transpiler.Class.typescriptDeclaration(),
     };
 

@@ -623,80 +623,74 @@ pub const JSSHA512_256 = struct {
         }
     }
 };
-pub const JSMD5_SHA1 = struct {
-    const MD5_SHA1 = Classes.MD5_SHA1;
-    const GetterType = fn (*MD5_SHA1, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
-    const SetterType = fn (*MD5_SHA1, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
-    const CallbackType = fn (*MD5_SHA1, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+pub const JSTextDecoder = struct {
+    const TextDecoder = Classes.TextDecoder;
+    const GetterType = fn (*TextDecoder, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*TextDecoder, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*TextDecoder, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
-    pub fn fromJS(value: JSC.JSValue) ?*MD5_SHA1 {
+    pub fn fromJS(value: JSC.JSValue) ?*TextDecoder {
         JSC.markBinding();
-        return MD5_SHA1__fromJS(value);
+        return TextDecoder__fromJS(value);
     }
 
-    /// Get the MD5_SHA1 constructor value.
+    /// Get the TextDecoder constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding();
-        return MD5_SHA1__getConstructor(globalObject);
+        return TextDecoder__getConstructor(globalObject);
     }
 
-    /// Create a new instance of MD5_SHA1
-    pub fn toJS(this: *MD5_SHA1, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    /// Create a new instance of TextDecoder
+    pub fn toJS(this: *TextDecoder, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding();
         if (comptime Environment.allow_assert) {
-            const value__ = MD5_SHA1__create(globalObject, this);
-            std.debug.assert(value__.as(MD5_SHA1).? == this); // If this fails, likely a C ABI issue.
+            const value__ = TextDecoder__create(globalObject, this);
+            std.debug.assert(value__.as(TextDecoder).? == this); // If this fails, likely a C ABI issue.
             return value__;
         } else {
-            return MD5_SHA1__create(globalObject, this);
+            return TextDecoder__create(globalObject, this);
         }
     }
 
-    /// Modify the internal ptr to point to a new instance of MD5_SHA1.
-    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*MD5_SHA1) bool {
+    /// Modify the internal ptr to point to a new instance of TextDecoder.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*TextDecoder) bool {
         JSC.markBinding();
-        return MD5_SHA1__dangerouslySetPtr(value, ptr);
+        return TextDecoder__dangerouslySetPtr(value, ptr);
     }
 
-    extern fn MD5_SHA1__fromJS(JSC.JSValue) ?*MD5_SHA1;
-    extern fn MD5_SHA1__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+    extern fn TextDecoder__fromJS(JSC.JSValue) ?*TextDecoder;
+    extern fn TextDecoder__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
 
-    extern fn MD5_SHA1__create(globalObject: *JSC.JSGlobalObject, ptr: ?*MD5_SHA1) JSC.JSValue;
+    extern fn TextDecoder__create(globalObject: *JSC.JSGlobalObject, ptr: ?*TextDecoder) JSC.JSValue;
 
-    extern fn MD5_SHA1__dangerouslySetPtr(JSC.JSValue, ?*MD5_SHA1) bool;
+    extern fn TextDecoder__dangerouslySetPtr(JSC.JSValue, ?*TextDecoder) bool;
 
     comptime {
-        if (@TypeOf(MD5_SHA1.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*MD5_SHA1)) {
-            @compileLog("MD5_SHA1.constructor is not a constructor");
+        if (@TypeOf(TextDecoder.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*TextDecoder)) {
+            @compileLog("TextDecoder.constructor is not a constructor");
         }
 
-        if (@TypeOf(MD5_SHA1.finalize) != (fn (*MD5_SHA1) callconv(.C) void)) {
-            @compileLog("MD5_SHA1.finalize is not a finalizer");
+        if (@TypeOf(TextDecoder.finalize) != (fn (*TextDecoder) callconv(.C) void)) {
+            @compileLog("TextDecoder.finalize is not a finalizer");
         }
 
-        if (@TypeOf(MD5_SHA1.getByteLength) != GetterType)
-            @compileLog("Expected MD5_SHA1.getByteLength to be a getter");
+        if (@TypeOf(TextDecoder.decode) != CallbackType)
+            @compileLog("Expected TextDecoder.decode to be a callback");
+        if (@TypeOf(TextDecoder.getEncoding) != GetterType)
+            @compileLog("Expected TextDecoder.getEncoding to be a getter");
 
-        if (@TypeOf(MD5_SHA1.digest) != CallbackType)
-            @compileLog("Expected MD5_SHA1.digest to be a callback");
-        if (@TypeOf(MD5_SHA1.update) != CallbackType)
-            @compileLog("Expected MD5_SHA1.update to be a callback");
-        if (@TypeOf(MD5_SHA1.getByteLengthStatic) != StaticGetterType)
-            @compileLog("Expected MD5_SHA1.getByteLengthStatic to be a static getter");
+        if (@TypeOf(TextDecoder.getFatal) != GetterType)
+            @compileLog("Expected TextDecoder.getFatal to be a getter");
 
-        if (@TypeOf(MD5_SHA1.hash) != StaticCallbackType)
-            @compileLog("Expected MD5_SHA1.hash to be a static callback");
         if (!JSC.is_bindgen) {
-            @export(MD5_SHA1.constructor, .{ .name = "MD5_SHA1Class__construct" });
-            @export(MD5_SHA1.digest, .{ .name = "MD5_SHA1Prototype__digest" });
-            @export(MD5_SHA1.finalize, .{ .name = "MD5_SHA1Class__finalize" });
-            @export(MD5_SHA1.getByteLength, .{ .name = "MD5_SHA1Prototype__getByteLength" });
-            @export(MD5_SHA1.getByteLengthStatic, .{ .name = "MD5_SHA1Class__getByteLengthStatic" });
-            @export(MD5_SHA1.hash, .{ .name = "MD5_SHA1Class__hash" });
-            @export(MD5_SHA1.update, .{ .name = "MD5_SHA1Prototype__update" });
+            @export(TextDecoder.constructor, .{ .name = "TextDecoderClass__construct" });
+            @export(TextDecoder.decode, .{ .name = "TextDecoderPrototype__decode" });
+            @export(TextDecoder.finalize, .{ .name = "TextDecoderClass__finalize" });
+            @export(TextDecoder.getEncoding, .{ .name = "TextDecoderPrototype__getEncoding" });
+            @export(TextDecoder.getFatal, .{ .name = "TextDecoderPrototype__getFatal" });
         }
     }
 };
@@ -935,3 +929,17 @@ pub const JSResponse = struct {
         }
     }
 };
+
+comptime {
+    _ = JSSHA1;
+    _ = JSMD5;
+    _ = JSMD4;
+    _ = JSSHA224;
+    _ = JSSHA512;
+    _ = JSSHA384;
+    _ = JSSHA256;
+    _ = JSSHA512_256;
+    _ = JSTextDecoder;
+    _ = JSRequest;
+    _ = JSResponse;
+}

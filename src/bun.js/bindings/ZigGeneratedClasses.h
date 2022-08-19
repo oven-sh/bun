@@ -1007,22 +1007,22 @@ class JSSHA512_256Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSHA512_256Prototype* prototype);
     };
-class JSMD5_SHA1 final : public JSC::JSDestructibleObject {
+class JSTextDecoder final : public JSC::JSDestructibleObject {
     public:
         using Base = JSC::JSDestructibleObject;
-        static JSMD5_SHA1* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+        static JSTextDecoder* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
         template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
         {
             if constexpr (mode == JSC::SubspaceAccess::Concurrently)
                 return nullptr;
-            return WebCore::subspaceForImpl<JSMD5_SHA1, WebCore::UseCustomHeapCellType::No>(
+            return WebCore::subspaceForImpl<JSTextDecoder, WebCore::UseCustomHeapCellType::No>(
                 vm,
-                [](auto& spaces) { return spaces.m_clientSubspaceForMD5_SHA1.get(); },
-                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD5_SHA1 = WTFMove(space); },
-                [](auto& spaces) { return spaces.m_subspaceForMD5_SHA1.get(); },
-                [](auto& spaces, auto&& space) { spaces.m_subspaceForMD5_SHA1 = WTFMove(space); });
+                [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoder.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoder = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForTextDecoder.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoder = WTFMove(space); });
         }
     
         static void destroy(JSC::JSCell*);
@@ -1033,7 +1033,7 @@ class JSMD5_SHA1 final : public JSC::JSDestructibleObject {
     
         static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
     
-        ~JSMD5_SHA1();
+        ~JSTextDecoder();
     
         void* wrapped() const { return m_ctx; }
     
@@ -1043,12 +1043,12 @@ class JSMD5_SHA1 final : public JSC::JSDestructibleObject {
         }
     
         static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-        static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSMD5_SHA1, m_ctx); }
+        static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSTextDecoder, m_ctx); }
     
         void* m_ctx { nullptr };
 
             
-        JSMD5_SHA1(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+        JSTextDecoder(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
             : Base(vm, structure)
         {
             m_ctx = sinkPtr;
@@ -1056,17 +1056,17 @@ class JSMD5_SHA1 final : public JSC::JSDestructibleObject {
     
         void finishCreation(JSC::VM&);
 
-        
+        DECLARE_VISIT_CHILDREN;
 
-        
+        mutable JSC::WriteBarrier<JSC::Unknown> m_encoding;
     };
-class JSMD5_SHA1Prototype final : public JSC::JSNonFinalObject {
+class JSTextDecoderPrototype final : public JSC::JSNonFinalObject {
     public:
         using Base = JSC::JSNonFinalObject;
     
-        static JSMD5_SHA1Prototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        static JSTextDecoderPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
         {
-            JSMD5_SHA1Prototype* ptr = new (NotNull, JSC::allocateCell<JSMD5_SHA1Prototype>(vm)) JSMD5_SHA1Prototype(vm, globalObject, structure);
+            JSTextDecoderPrototype* ptr = new (NotNull, JSC::allocateCell<JSTextDecoderPrototype>(vm)) JSTextDecoderPrototype(vm, globalObject, structure);
             ptr->finishCreation(vm, globalObject);
             return ptr;
         }
@@ -1083,7 +1083,7 @@ class JSMD5_SHA1Prototype final : public JSC::JSNonFinalObject {
         }
     
     private:
-        JSMD5_SHA1Prototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+        JSTextDecoderPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
             : Base(vm, structure)
         {
         }
@@ -1091,10 +1091,10 @@ class JSMD5_SHA1Prototype final : public JSC::JSNonFinalObject {
         void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
     };
     
-  class JSMD5_SHA1Constructor final : public JSC::InternalFunction {
+  class JSTextDecoderConstructor final : public JSC::InternalFunction {
     public:
         using Base = JSC::InternalFunction;
-        static JSMD5_SHA1Constructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSMD5_SHA1Prototype* prototype);
+        static JSTextDecoderConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSTextDecoderPrototype* prototype);
     
         static constexpr unsigned StructureFlags = Base::StructureFlags;
         static constexpr bool needsDestruction = false;
@@ -1108,28 +1108,28 @@ class JSMD5_SHA1Prototype final : public JSC::JSNonFinalObject {
         {
             if constexpr (mode == JSC::SubspaceAccess::Concurrently)
                 return nullptr;
-            return WebCore::subspaceForImpl<JSMD5_SHA1Constructor, WebCore::UseCustomHeapCellType::No>(
+            return WebCore::subspaceForImpl<JSTextDecoderConstructor, WebCore::UseCustomHeapCellType::No>(
                 vm,
-                [](auto& spaces) { return spaces.m_clientSubspaceForMD5_SHA1Constructor.get(); },
-                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMD5_SHA1Constructor = WTFMove(space); },
-                [](auto& spaces) { return spaces.m_subspaceForMD5_SHA1Constructor.get(); },
-                [](auto& spaces, auto&& space) { spaces.m_subspaceForMD5_SHA1Constructor = WTFMove(space); });
+                [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoderConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderConstructor = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForTextDecoderConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderConstructor = WTFMove(space); });
         }
     
 
-        void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSMD5_SHA1Prototype* prototype);
+        void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSTextDecoderPrototype* prototype);
     
         // Must be defined for each specialization class.
         static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
         DECLARE_EXPORT_INFO;
     private:
-        JSMD5_SHA1Constructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
+        JSTextDecoderConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
             : Base(vm, structure, nativeFunction, nativeFunction)
     
         {
         }
     
-        void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSMD5_SHA1Prototype* prototype);
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSTextDecoderPrototype* prototype);
     };
 class JSRequest final : public JSC::JSDestructibleObject {
     public:

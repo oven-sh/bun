@@ -88,7 +88,6 @@ const EventLoop = JSC.EventLoop;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 pub const GlobalConstructors = [_]type{
     WebCore.Blob.Constructor,
-    WebCore.TextDecoder.Constructor,
     JSC.Cloudflare.HTMLRewriter.Constructor,
 };
 
@@ -366,7 +365,7 @@ pub const VirtualMachine = struct {
     pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
         return this.node_fs orelse brk: {
             this.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
-            this.node_fs.?.* = Node.NodeFS{ .async_io = undefined };
+            this.node_fs.?.* = Node.NodeFS{};
             break :brk this.node_fs.?;
         };
     }

@@ -9,7 +9,6 @@ const names = [
   "SHA384",
   "SHA256",
   "SHA512_256",
-  "MD5_SHA1",
 ];
 export default names.map((name) => {
   return define({

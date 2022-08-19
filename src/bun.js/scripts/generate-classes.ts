@@ -1,3 +1,4 @@
+import { unlinkSync } from "fs";
 import { readdirSync } from "fs";
 import { resolve } from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
@@ -1232,26 +1233,41 @@ function findClasses() {
 
 const classes = findClasses();
 
-await Bun.write(`${import.meta.dir}/../bindings/generated_classes.zig`, [
+function writeAndUnlink(path, content) {
+  try {
+    unlinkSync(path);
+  } catch (e) {}
+  return Bun.write(path, content);
+}
+
+await writeAndUnlink(`${import.meta.dir}/../bindings/generated_classes.zig`, [
   ZIG_GENERATED_CLASSES_HEADER,
+
   ...classes.map((a) => generateZig(a.name, a).trim()).join("\n"),
+  "\n",
+  `
+comptime {
+  ${classes.map((a) => `_ = ${className(a.name)};`).join("\n  ")}
+}
+  
+  `,
 ]);
-await Bun.write(`${import.meta.dir}/../bindings/ZigGeneratedClasses.h`, [
+await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.h`, [
   GENERATED_CLASSES_HEADER,
   ...classes.map((a) => generateHeader(a.name, a)),
   GENERATED_CLASSES_FOOTER,
 ]);
-await Bun.write(`${import.meta.dir}/../bindings/ZigGeneratedClasses.cpp`, [
+await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.cpp`, [
   GENERATED_CLASSES_IMPL_HEADER,
   ...classes.map((a) => generateImpl(a.name, a)),
   GENERATED_CLASSES_IMPL_FOOTER,
 ]);
-await Bun.write(
+await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureHeader.h`,
   classes.map((a) => generateLazyClassStructureHeader(a.name, a)).join("\n")
 );
 
-await Bun.write(
+await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+DOMClientIsoSubspaces.h`,
   classes.map((a) =>
     [
@@ -1263,7 +1279,7 @@ await Bun.write(
   )
 );
 
-await Bun.write(
+await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+DOMIsoSubspaces.h`,
   classes.map((a) =>
     [
@@ -1273,7 +1289,7 @@ await Bun.write(
   )
 );
 
-await Bun.write(
+await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureImpl.h`,
   initLazyClasses(
     classes.map((a) => generateLazyClassStructureImpl(a.name, a))

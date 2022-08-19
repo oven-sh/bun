@@ -11,5 +11,5 @@ pub const Classes = struct {
     pub const SHA384 = JSC.API.Bun.Crypto.SHA384;
     pub const SHA256 = JSC.API.Bun.Crypto.SHA256;
     pub const SHA512_256 = JSC.API.Bun.Crypto.SHA512_256;
-    pub const MD5_SHA1 = JSC.API.Bun.Crypto.MD5_SHA1;
+    pub const TextDecoder = JSC.WebCore.TextDecoder;
 };

@@ -30,10 +30,10 @@ JSC::Structure* JSSHA512_256Structure() { return m_JSSHA512_256.getInitializedOn
         JSC::JSObject* JSSHA512_256Constructor() { return m_JSSHA512_256.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSSHA512_256Prototype() { return m_JSSHA512_256.prototypeInitializedOnMainThread(this); }
         JSC::LazyClassStructure m_JSSHA512_256;
-JSC::Structure* JSMD5_SHA1Structure() { return m_JSMD5_SHA1.getInitializedOnMainThread(this); }
-        JSC::JSObject* JSMD5_SHA1Constructor() { return m_JSMD5_SHA1.constructorInitializedOnMainThread(this); }
-        JSC::JSValue JSMD5_SHA1Prototype() { return m_JSMD5_SHA1.prototypeInitializedOnMainThread(this); }
-        JSC::LazyClassStructure m_JSMD5_SHA1;
+JSC::Structure* JSTextDecoderStructure() { return m_JSTextDecoder.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSTextDecoderConstructor() { return m_JSTextDecoder.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSTextDecoderPrototype() { return m_JSTextDecoder.prototypeInitializedOnMainThread(this); }
+        JSC::LazyClassStructure m_JSTextDecoder;
 JSC::Structure* JSRequestStructure() { return m_JSRequest.getInitializedOnMainThread(this); }
         JSC::JSObject* JSRequestConstructor() { return m_JSRequest.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSRequestPrototype() { return m_JSRequest.prototypeInitializedOnMainThread(this); }

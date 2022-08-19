@@ -2314,8 +2314,6 @@ const Return = struct {
 /// https://nodejs.org/api/fs.html
 /// https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/types/node/fs.d.ts
 pub const NodeFS = struct {
-    async_io: *AsyncIO,
-
     /// Buffer to store a temporary file path that might appear in a returned error message.
     ///
     /// We want to avoid allocating a new path buffer for every error message so that JSC can clone + GC it.

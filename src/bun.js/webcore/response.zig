@@ -4587,7 +4587,7 @@ pub const FetchEvent = struct {
     response: ?*Response = null,
     request_context: ?*RequestContext = null,
     request: Request,
-    pending_promise: ?*JSInternalPromise = null,
+    pending_promise: JSValue = JSValue.zero,
 
     onPromiseRejectionCtx: *anyopaque = undefined,
     onPromiseRejectionHandler: ?fn (ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
@@ -4678,12 +4678,8 @@ pub const FetchEvent = struct {
         var request_context = this.request_context orelse return js.JSValueMakeUndefined(ctx);
         if (request_context.has_called_done) return js.JSValueMakeUndefined(ctx);
         var globalThis = ctx.ptr();
-        var existing_response: ?*Response = if (arguments.len > 0)
-            arguments[0].?.value().as(Response)
-        else
-            null;
         // A Response or a Promise that resolves to a Response. Otherwise, a network error is returned to Fetch.
-        if (arguments.len == 0 or existing_response != null or !js.JSValueIsObject(ctx, arguments[0])) {
+        if (arguments.len == 0) {
             JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
             request_context.sendInternalError(error.respondWithWasEmpty) catch {};
             return js.JSValueMakeUndefined(ctx);
@@ -4691,18 +4687,55 @@ pub const FetchEvent = struct {
 
         var arg = arguments[0];
 
+        var existing_response: ?*Response = arguments[0].?.value().as(Response);
+
         if (existing_response == null) {
-            this.pending_promise = this.pending_promise orelse JSInternalPromise.resolvedPromise(globalThis, JSValue.fromRef(arguments[0]));
+            switch (JSValue.fromRef(arg).jsType()) {
+                .JSPromise => {
+                    this.pending_promise = JSValue.fromRef(arg);
+                },
+                else => {
+                    JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
+                    request_context.sendInternalError(error.respondWithWasNotResponse) catch {};
+                    return js.JSValueMakeUndefined(ctx);
+                },
+            }
         }
 
-        if (this.pending_promise) |promise| {
-            VirtualMachine.vm.event_loop.waitForPromise(promise);
+        if (this.pending_promise.asPromise()) |promise| {
+            switch (promise.status(ctx.vm())) {
+                JSC.JSPromise.Status.Pending => {
+                    while (promise.status(ctx.vm()) == .Pending) {
+                        ctx.bunVM().tick();
+                    }
+                },
+                else => {},
+            }
 
             switch (promise.status(ctx.ptr().vm())) {
                 .Fulfilled => {},
                 else => {
                     this.rejected = true;
-                    this.pending_promise = null;
+                    this.pending_promise = JSValue.zero;
+                    this.onPromiseRejectionHandler.?(
+                        this.onPromiseRejectionCtx,
+                        error.PromiseRejection,
+                        this,
+                        promise.result(globalThis.vm()),
+                    );
+                    return js.JSValueMakeUndefined(ctx);
+                },
+            }
+
+            arg = promise.result(ctx.ptr().vm()).asRef();
+        } else if (this.pending_promise.asInternalPromise()) |promise| {
+            globalThis.bunVM().waitForPromise(promise);
+
+            switch (promise.status(ctx.ptr().vm())) {
+                .Fulfilled => {},
+                else => {
+                    this.rejected = true;
+                    this.pending_promise = JSValue.zero;
                     this.onPromiseRejectionHandler.?(
                         this.onPromiseRejectionCtx,
                         error.PromiseRejection,
@@ -4718,7 +4751,7 @@ pub const FetchEvent = struct {
 
         var response: *Response = JSValue.c(arg.?).as(Response) orelse {
             this.rejected = true;
-            this.pending_promise = null;
+            this.pending_promise = JSValue.zero;
             JSError(getAllocator(ctx), "event.respondWith() expects Response or Promise<Response>", .{}, ctx, exception);
             this.onPromiseRejectionHandler.?(this.onPromiseRejectionCtx, error.RespondWithInvalidTypeInternal, this, JSValue.fromRef(exception.*));
             return js.JSValueMakeUndefined(ctx);
@@ -4739,7 +4772,7 @@ pub const FetchEvent = struct {
             }
         }
 
-        defer this.pending_promise = null;
+        defer this.pending_promise = JSValue.zero;
         var needs_mime_type = true;
         var content_length: ?usize = null;
 

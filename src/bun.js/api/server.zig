@@ -1481,11 +1481,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn doRenderBlob(this: *RequestContext) void {
-            if (this.has_abort_handler)
-                this.resp.runCorkedWithType(*RequestContext, renderMetadata, this)
-            else
-                this.renderMetadata();
+            // We are not corked
+            // The body is small
+            // Faster to do the memcpy than to do the two network calls
+            // We are not streaming
+            // This is an important performance optimization
+            if (this.has_abort_handler and this.blob.sharedView().len < 16384 - 1024) {
+                this.resp.runCorkedWithType(*RequestContext, doRenderBlobCorked, this);
+            } else {
+                this.doRenderBlobCorked();
+            }
+        }
 
+        pub fn doRenderBlobCorked(this: *RequestContext) void {
+            this.renderMetadata();
             this.renderBytes();
         }
 

@@ -204,17 +204,6 @@ function writeBigUInt64BE(value, offset) {
   return offset + 8;
 }
 
-function slice(start, end) {
-  "use strict";
-  if (start === undefined && end === undefined) {
-    return this;
-  }
-
-  Buffer[Symbol.species] ||= Buffer;
-
-  return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));
-}
-
 function utf8Write(text, offset, length) {
   "use strict";
   return this.write(text, offset, length, "utf8");

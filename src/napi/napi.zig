@@ -1462,6 +1462,8 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_ref_threadsafe_function);
     std.mem.doNotOptimizeAway(&napi_add_async_cleanup_hook);
     std.mem.doNotOptimizeAway(&napi_remove_async_cleanup_hook);
+
+    std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }
 
 comptime {
@@ -1552,5 +1554,6 @@ comptime {
         _ = napi_ref_threadsafe_function;
         _ = napi_add_async_cleanup_hook;
         _ = napi_remove_async_cleanup_hook;
+        _ = @import("../bun.js/node/buffer.zig").BufferVectorized.fill;
     }
 }

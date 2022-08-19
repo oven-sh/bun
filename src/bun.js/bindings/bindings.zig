@@ -2431,7 +2431,6 @@ pub const JSValue = enum(JSValueReprInt) {
                 .JSImmutableButterfly,
                 .JSSourceCode,
                 .JSScriptFetcher,
-                .InternalFunction,
                 .JSScriptFetchParameters,
                 => true,
                 else => false,

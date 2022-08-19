@@ -211,6 +211,51 @@ it("Buffer.copy", () => {
   expect(array1.join("")).toBe(array2.join(""));
 });
 
+export function fillRepeating(dstBuffer, start, end) {
+  let len = dstBuffer.length, // important: use indices length, not byte-length
+    sLen = end - start,
+    p = sLen; // set initial position = source sequence length
+
+  // step 2: copy existing data doubling segment length per iteration
+  while (p < len) {
+    if (p + sLen > len) sLen = len - p; // if not power of 2, truncate last segment
+    dstBuffer.copyWithin(p, start, sLen); // internal copy
+    p += sLen; // add current length to offset
+    sLen <<= 1; // double length for next segment
+  }
+}
+
+describe("Buffer.fill string", () => {
+  for (let text of [
+    "hello world",
+    "1234567890",
+    "\uD83D\uDE00",
+    "😀😃😄😁😆😅😂🤣☺️😊😊😇",
+  ]) {
+    it(text, () => {
+      var input = new Buffer(1024);
+      input.fill(text);
+      var demo = new Uint8Array(1024);
+      var encoded = new TextEncoder().encode(text);
+
+      demo.set(encoded);
+      fillRepeating(demo, 0, encoded.length);
+      expect(input.join("")).toBe(demo.join(""));
+    });
+  }
+});
+
+it("Buffer.fill 1 char string", () => {
+  var input = new Buffer(1024);
+  input.fill("h");
+  var demo = new Uint8Array(1024);
+  var encoded = new TextEncoder().encode("h");
+
+  demo.set(encoded);
+  fillRepeating(demo, 0, encoded.length);
+  expect(input.join("")).toBe(demo.join(""));
+});
+
 it("Buffer.concat", () => {
   var array1 = new Uint8Array(128);
   array1.fill(100);

@@ -986,17 +986,15 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
         }
 
         auto startPtr = castedThis->typedVector() + start;
+        auto str_ = value.toWTFString(lexicalGlobalObject);
+        ZigString str = Zig::toZigString(str_);
 
-        // ZigString str = Zig::toString(value.toString(lexicalGlobalObject));
-
-        // Bun__ArrayBuffer buf;
-        // JSC__JSValue__asArrayBuffer_(JSC::JSValue::encode(castedThis), lexicalGlobalObject,
-        //     &buf);
-        // Bun__Buffer_fill(lexicalGlobalObject, &buf, &str, start, end, encoding);
+        Bun__Buffer_fill(&str, startPtr, end - start, encoding);
 
         RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis));
     }
 }
+
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1004,7 +1002,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JS
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
 
-    return JSC::JSValue::encode(JSC::JSValue(reinterpret_cast<uint8_t*>(castedThis->vector())[0]));
+    return jsBufferPrototypeFunction_indexOfBody(lexicalGlobalObject, callFrame, castedThis)
 }
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
@@ -1031,6 +1029,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGl
     auto& vm = JSC::getVM(lexicalGlobalObject);
     return JSC::JSValue::encode(jsUndefined());
 }
+
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

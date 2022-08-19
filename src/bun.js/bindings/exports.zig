@@ -1326,9 +1326,14 @@ pub const ZigConsoleClient = struct {
                     };
                 }
 
-                if (callable) {
+                if (callable and js_type == .JSFunction) {
                     return .{
                         .tag = .Function,
+                        .cell = js_type,
+                    };
+                } else if (callable and js_type == .InternalFunction) {
+                    return .{
+                        .tag = .Object,
                         .cell = js_type,
                     };
                 }

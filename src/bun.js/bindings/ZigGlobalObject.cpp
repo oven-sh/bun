@@ -277,6 +277,31 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
 extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
 
+#define GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                         \
+    JSC_DECLARE_CUSTOM_GETTER(ConstructorName##_getter);                                      \
+    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                        \
+        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,            \
+            JSC::PropertyName))                                                               \
+    {                                                                                         \
+        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject); \
+        if (JSValue override = thisObject->m_##ConstructorName##SetterValue.get()) {          \
+            return JSC::JSValue::encode(override);                                            \
+        }                                                                                     \
+        return JSC::JSValue::encode(                                                          \
+            thisObject->ConstructorName##Constructor());                                      \
+    }
+
+#define GENERATED_CONSTRUCTOR_SETTER(ConstructorName)                                                           \
+    JSC_DECLARE_CUSTOM_SETTER(ConstructorName##_setter);                                                        \
+    JSC_DEFINE_CUSTOM_SETTER(ConstructorName##_setter,                                                          \
+        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                              \
+            EncodedJSValue value, JSC::PropertyName))                                                           \
+    {                                                                                                           \
+        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);                   \
+        thisObject->m_##ConstructorName##SetterValue.set(thisObject->vm(), thisObject, JSValue::decode(value)); \
+        return true;                                                                                            \
+    }
+
 namespace Zig {
 
 using namespace WebCore;
@@ -477,28 +502,6 @@ JSC_DEFINE_CUSTOM_GETTER(JSURLSearchParams_getter,
         WebCore::JSURLSearchParams::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
-JSC_DECLARE_CUSTOM_GETTER(JSRequest_getter);
-
-JSC_DEFINE_CUSTOM_GETTER(JSRequest_getter,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSC::JSValue::encode(
-        thisObject->JSRequestConstructor());
-}
-
-JSC_DECLARE_CUSTOM_GETTER(JSResponse_getter);
-
-JSC_DEFINE_CUSTOM_GETTER(JSResponse_getter,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSC::JSValue::encode(
-        thisObject->JSResponseConstructor());
-}
-
 JSC_DECLARE_CUSTOM_GETTER(JSErrorEvent_getter);
 
 JSC_DEFINE_CUSTOM_GETTER(JSErrorEvent_getter,
@@ -521,16 +524,14 @@ JSC_DEFINE_CUSTOM_GETTER(JSCloseEvent_getter,
         WebCore::JSCloseEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
 
-JSC_DECLARE_CUSTOM_GETTER(JSTextDecoder_getter);
+GENERATED_CONSTRUCTOR_GETTER(JSTextDecoder);
+GENERATED_CONSTRUCTOR_SETTER(JSTextDecoder);
 
-JSC_DEFINE_CUSTOM_GETTER(JSTextDecoder_getter,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::PropertyName))
-{
-    Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    return JSC::JSValue::encode(
-        thisObject->JSTextDecoderConstructor());
-}
+GENERATED_CONSTRUCTOR_GETTER(JSResponse);
+GENERATED_CONSTRUCTOR_SETTER(JSResponse);
+
+GENERATED_CONSTRUCTOR_GETTER(JSRequest);
+GENERATED_CONSTRUCTOR_SETTER(JSRequest);
 
 JSC_DECLARE_CUSTOM_GETTER(JSMessageEvent_getter);
 
@@ -2139,14 +2140,14 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URLSearchParams"_s), JSC::CustomGetterSetter::create(vm, JSURLSearchParams_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Request"_s), JSC::CustomGetterSetter::create(vm, JSRequest_getter, nullptr),
-        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Request"_s), JSC::CustomGetterSetter::create(vm, JSRequest_getter, JSRequest_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Response"_s), JSC::CustomGetterSetter::create(vm, JSResponse_getter, nullptr),
-        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Response"_s), JSC::CustomGetterSetter::create(vm, JSResponse_getter, JSResponse_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
 
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "TextDecoder"_s), JSC::CustomGetterSetter::create(vm, JSTextDecoder_getter, nullptr),
-        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "TextDecoder"_s), JSC::CustomGetterSetter::create(vm, JSTextDecoder_getter, JSTextDecoder_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);

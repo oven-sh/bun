@@ -1086,7 +1086,9 @@ function generateLazyClassStructureHeader(
         JSC::JSValue ${className(typeName)}Prototype() { return m_${className(
     typeName
   )}.prototypeInitializedOnMainThread(this); }
-        JSC::LazyClassStructure m_${className(typeName)};
+  JSC::LazyClassStructure m_${className(typeName)};
+  bool has${className(typeName)}SetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_${className(typeName)}SetterValue;
     `.trim();
 }
 
@@ -1187,7 +1189,11 @@ template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
 {
       ${classes
-        .map((a) => `thisObject->m_${className(a.name)}.visit(visitor);`)
+        .map(
+          (a) =>
+            `thisObject->m_${className(a.name)}.visit(visitor);
+visitor.visit(thisObject->m_${className(a.name)}SetterValue);`
+        )
         .join("\n      ")}
 }
       

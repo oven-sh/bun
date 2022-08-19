@@ -15,10 +15,10 @@ if (($?)); then
     exit 1
 fi
 
-SHASUM_RESULT=$(cat index.ts .gitignore tsconfig.json package.json README.md | shasum)
+SHASUM_RESULT=$(cat index.ts .gitignore tsconfig.json package.json | shasum)
 
 # This test will fail when the minor version of Bun changes.
-if [[ "${SHASUM_RESULT}" != "b1548bb4e806f0506fd1b27ae8901d2e84926774  -" ]]; then
+if [[ "${SHASUM_RESULT}" != "10eabf5101a3ef999bd67232a7af33542c525ec6  -" ]]; then
     echo -e "Bun init shasum mismatch\n  expected: b1548bb4e806f0506fd1b27ae8901d2e84926774\n  actual: ${SHASUM_RESULT}"
     exit 1
 fi

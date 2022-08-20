@@ -35,7 +35,7 @@ pub const Os = struct {
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        return JSC.ZigString.init(Global.arch_name).withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(Global.arch_name).withEncoding().toValue(globalThis);
     }
 
     pub fn homedir(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {

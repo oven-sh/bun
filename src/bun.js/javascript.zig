@@ -2372,6 +2372,10 @@ pub const ResolveError = struct {
                 .ro = true,
                 .ts = d.ts{ .@"return" = "string" },
             },
+            .@"code" = .{
+                .@"get" = getCode,
+                .ro = true,
+            },
             .@"message" = .{
                 .@"get" = getMessage,
                 .ro = true,
@@ -2415,6 +2419,16 @@ pub const ResolveError = struct {
         var ref = Class.make(globalThis.ref(), resolve_error);
         js.JSValueProtect(globalThis.ref(), ref);
         return ref;
+    }
+
+    pub fn getCode(
+        _: *ResolveError,
+        ctx: js.JSContextRef,
+        _: js.JSObjectRef,
+        _: js.JSStringRef,
+        _: js.ExceptionRef,
+    ) js.JSValueRef {
+        return ZigString.init(JSC.Node.ErrorCode.ERR_MODULE_NOT_FOUND).toValue(ctx).asObjectRef();
     }
 
     pub fn getPosition(

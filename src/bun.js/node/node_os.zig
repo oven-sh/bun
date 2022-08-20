@@ -21,14 +21,14 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("platform"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, platform));
         module.put(globalObject, &JSC.ZigString.init("type"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, @"type"));
 
-        module.put(globalObject, &JSC.ZigString.init("devNull"), devNull.toValueGC(globalObject));
-        module.put(globalObject, &JSC.ZigString.init("EOL"), EOL.toValueGC(globalObject));
+        module.put(globalObject, &JSC.ZigString.init("devNull"), JSC.ZigString.init(devNull).withEncoding().toValueGC(globalObject));
+        module.put(globalObject, &JSC.ZigString.init("EOL"), JSC.ZigString.init(EOL).withEncoding().toValueGC(globalObject));
 
         return module;
     }
 
-    pub const EOL = if (Environment.isWindows) JSC.ZigString.init("\\r\\n").withEncoding() else JSC.ZigString.init("\\n").withEncoding();
-    pub const devNull = if (Environment.isWindows) JSC.ZigString.init("\\\\.\nul").withEncoding() else JSC.ZigString.init("/dev/null").withEncoding();
+    pub const EOL = if (Environment.isWindows) "\\r\\n" else "\\n";
+    pub const devNull = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
 
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();

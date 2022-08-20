@@ -175,6 +175,7 @@ pub const ZigErrorType = extern struct {
     }
 };
 
+pub const NodeOs = JSC.Node.Os;
 pub const NodePath = JSC.Node.Path;
 
 // Web Streams
@@ -2767,6 +2768,7 @@ comptime {
         _ = Zig__getAPIGlobals;
         _ = Zig__getAPIConstructors;
         Bun.Timer.shim.ref();
+        NodeOs.shim.ref();
         NodePath.shim.ref();
         JSReadableStreamBlob.shim.ref();
         JSArrayBufferSink.shim.ref();

@@ -844,11 +844,10 @@ pub const VirtualMachine = struct {
                 .@"node:os" => {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(""),
+                        .source_code = ZigString.init(Node.Os.code),
                         .specifier = ZigString.init("node:os"),
                         .source_url = ZigString.init("node:os"),
                         .hash = 0,
-                        .tag = ResolvedSource.Tag.@"node:os",
                     };
                 },
                 .@"bun:ffi" => {

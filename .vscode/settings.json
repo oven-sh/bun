@@ -164,7 +164,14 @@
     "numeric": "cpp",
     "set": "cpp",
     "__memory": "cpp",
-    "memory_resource": "cpp"
+    "memory_resource": "cpp",
+    "resource.h": "c",
+    "sysinfo.h": "c",
+    "*.tcc": "cpp",
+    "list": "cpp",
+    "shared_mutex": "cpp",
+    "cinttypes": "cpp",
+    "variant": "cpp"
   },
   "cmake.configureOnOpen": false
 }

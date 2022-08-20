@@ -1,6 +1,7 @@
 function bound(obj) {
   return {
     arch: obj.arch.bind(obj),
+    endianness: obj.endianness.bind(obj),
     homedir: obj.homedir.bind(obj),
     hostname: obj.hostname.bind(obj),
     platform: obj.platform.bind(obj),
@@ -14,6 +15,7 @@ var os = bound(Bun._Os());
 
 export var {
   arch,
+  endianness,
   homedir,
   hostname,
   platform,

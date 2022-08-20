@@ -16,6 +16,7 @@ pub const Os = struct {
         const module = JSC.JSValue.createEmptyObject(globalObject, 5);
 
         module.put(globalObject, &JSC.ZigString.init("arch"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, arch));
+        module.put(globalObject, &JSC.ZigString.init("endianness"), JSC.NewFunction(globalObject, &JSC.ZigString.init("endianness"), 0, endianness));
         module.put(globalObject, &JSC.ZigString.init("homedir"), JSC.NewFunction(globalObject, &JSC.ZigString.init("homedir"), 0, homedir));
         module.put(globalObject, &JSC.ZigString.init("hostname"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, hostname));
         module.put(globalObject, &JSC.ZigString.init("platform"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, platform));
@@ -34,6 +35,19 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         return JSC.ZigString.init(Global.arch_name).withEncoding().toValue(globalThis);
+    }
+
+    pub fn endianness(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        switch (std.builtin.Endian) {
+            .Big => {
+                return JSC.ZigString.init("BE").withEncoding().toValue(globalThis);
+            },
+            .Little => {
+                return JSC.ZigString.init("LE").withEncoding().toValue(globalThis);
+            },
+        }
     }
 
     pub fn homedir(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {

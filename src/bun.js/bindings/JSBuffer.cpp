@@ -1049,9 +1049,9 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
         if (std::isnan(byteOffset_) || std::isinf(byteOffset_)) {
             byteOffset = last ? length - 1 : 0;
         } else if (byteOffset_ < 0) {
-            byteOffset = length + static_cast<int>(byteOffset_);
+            byteOffset = length + static_cast<int64_t>(byteOffset_);
         } else {
-            byteOffset = static_cast<int>(byteOffset_);
+            byteOffset = static_cast<int64_t>(byteOffset_);
         }
 
         if (last) {
@@ -1069,7 +1069,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
         }
 
         if (callFrame->argumentCount() > 2) {
-          std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(2));
+          std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->uncheckedArgument(2));
           if (!encoded) {
               throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
               return JSC::JSValue::encode(jsUndefined());

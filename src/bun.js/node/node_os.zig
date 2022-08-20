@@ -52,9 +52,16 @@ pub const Os = struct {
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
 
+    pub fn platform(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
+    }
+
     pub const Export = shim.exportFunctions(.{
         .@"arch" = arch,
         .@"homedir" = homedir,
+        .@"platform" = platform,
     });
 
     pub const Extern = [_][]const u8{"create"};
@@ -66,6 +73,9 @@ pub const Os = struct {
             });
             @export(Os.homedir, .{
                 .name = Export[1].symbol_name,
+            });
+            @export(Os.platform, .{
+                .name = Export[2].symbol_name,
             });
         }
     }

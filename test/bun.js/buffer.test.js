@@ -405,6 +405,8 @@ it("lastIndexOf", () => {
   const buf = Buffer.from('this buffer is a buffer');
 
   expect(buf.lastIndexOf('this')).toBe(0);
+  expect(buf.lastIndexOf('this', 0)).toBe(0);
+  expect(buf.lastIndexOf('this', -1000)).toBe(-1);
   expect(buf.lastIndexOf('buffer')).toBe(17);
   expect(buf.lastIndexOf(Buffer.from('buffer'))).toBe(17);
   expect(buf.lastIndexOf(97)).toBe(15);

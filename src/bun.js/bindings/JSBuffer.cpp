@@ -1010,8 +1010,8 @@ static int indexOf(const uint8_t* thisPtr, size_t thisLength, const uint8_t* val
         return -1;
     auto start = thisPtr + byteOffset;
     auto end = thisPtr + thisLength;
-    auto it = std::search(start, end, std::boyer_moore_searcher(valuePtr, valuePtr + valueLength));
-    if (it != end) {
+    auto it = static_cast<uint8_t*>(memmem(start, thisLength - byteOffset, valuePtr, valueLength));
+    if (it != NULL) {
         return it - thisPtr;
     }
     return -1;
@@ -1055,11 +1055,8 @@ static int indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* cal
             byteOffset = static_cast<int>(byteOffset_);
         }
 
-        if (byteOffset < 0)
-            byteOffset = 0;
-
         if (last) {
-            if (byteOffset <= 0) {
+            if (byteOffset < 0) {
                 return -1;
             } else if (byteOffset > length - 1) {
                 byteOffset = length - 1;

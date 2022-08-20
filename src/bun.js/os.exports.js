@@ -3,6 +3,7 @@ function bound(obj) {
     arch: obj.arch.bind(obj),
     __arch: obj.__arch,
     devNull: obj.devNull,
+    EOL: obj.EOL,
   };
 }
 
@@ -12,6 +13,7 @@ export var {
   arch,
   __arch,
   devNull,
+  EOL,
 } = os;
 
 export default os;

@@ -78,9 +78,13 @@ static JSC::JSObject* createOs(JSGlobalObject* globalThis, bool isWindows)
     if (isWindows) {
         os->putDirect(vm, JSC::Identifier::fromString(vm, "devNull"_s),
            JSC::jsString(vm, makeAtomString("\\\\.\nul"_s)));
+        os->putDirect(vm, JSC::Identifier::fromString(vm, "EOL"_s),
+           JSC::jsString(vm, makeAtomString("\\r\\n"_s)));
     } else {
         os->putDirect(vm, JSC::Identifier::fromString(vm, "devNull"_s),
            JSC::jsString(vm, makeAtomString("/dev/null"_s)));
+        os->putDirect(vm, JSC::Identifier::fromString(vm, "EOL"_s),
+           JSC::jsString(vm, makeAtomString("\\n"_s)));
     }
 
     #if defined(__x86_64__)

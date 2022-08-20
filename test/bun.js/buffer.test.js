@@ -209,6 +209,33 @@ it("Buffer.copy", () => {
   gc();
   expect(array1.copy(array2)).toBe(128);
   expect(array1.join("")).toBe(array2.join(""));
+
+  {
+    // Create two `Buffer` instances.
+    const buf1 = Buffer.allocUnsafe(26);
+    const buf2 = Buffer.allocUnsafe(26).fill('!');
+
+    for (let i = 0; i < 26; i++) {
+      // 97 is the decimal ASCII value for 'a'.
+      buf1[i] = i + 97;
+    }
+
+    // Copy `buf1` bytes 16 through 19 into `buf2` starting at byte 8 of `buf2`.
+    buf1.copy(buf2, 8, 16, 20);
+    expect(buf2.toString('ascii', 0, 25)).toBe('!!!!!!!!qrst!!!!!!!!!!!!!');
+  }
+
+  {
+    const buf = Buffer.allocUnsafe(26);
+
+    for (let i = 0; i < 26; i++) {
+      // 97 is the decimal ASCII value for 'a'.
+      buf[i] = i + 97;
+    }
+
+    buf.copy(buf, 0, 4, 10);
+    expect(buf.toString()).toBe('efghijghijklmnopqrstuvwxyz');
+  }
 });
 
 export function fillRepeating(dstBuffer, start, end) {

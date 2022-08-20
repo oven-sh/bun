@@ -25,7 +25,14 @@ pub const isX86 = @import("builtin").target.cpu.arch.isX86();
 pub const isX64 = @import("builtin").target.cpu.arch == .x86_64;
 pub const allow_assert = isDebug or isTest;
 pub const analytics_url = if (isDebug) "http://localhost:4000/events" else "http://i.bun.sh/events";
-pub const baseline = @import("build_options").baseline;
+
+const BuildOptions = if (isTest) struct {
+    pub const baseline = false;
+    pub const git_sha = "0000000000000000000000000000000000000000";
+    pub const is_canary = false;
+} else @import("build_options");
+
+pub const baseline = BuildOptions.baseline;
 pub const enableSIMD: bool = !baseline;
-pub const git_sha = @import("build_options").sha;
-pub const is_canary = @import("build_options").is_canary;
+pub const git_sha = BuildOptions.sha;
+pub const is_canary = BuildOptions.is_canary;

@@ -6,6 +6,7 @@ const string = bun.string;
 const AsyncIO = @import("io");
 const JSC = @import("../../jsc.zig");
 const PathString = JSC.PathString;
+const Environment = bun.Environment;
 const Global = bun.Global;
 const C = bun.C;
 const Syscall = @import("./syscall.zig");
@@ -39,7 +40,22 @@ pub const Os = struct {
         return JSC.ZigString.init(Global.arch_name).withEncoding().toValueGC(globalThis);
     }
 
-    pub const Export = shim.exportFunctions(.{ .@"arch" = arch });
+    pub fn homedir(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        var dir: string = "unknown";
+        if (Environment.isWindows)
+            dir = std.os.getenv("USERPROFILE") orelse "unknown"
+        else
+            dir = std.os.getenv("HOME") orelse "unknown";
+
+        return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
+    }
+
+    pub const Export = shim.exportFunctions(.{
+        .@"arch" = arch,
+        .@"homedir" = homedir,
+    });
 
     pub const Extern = [_][]const u8{"create"};
 
@@ -47,6 +63,9 @@ pub const Os = struct {
         if (!is_bindgen) {
             @export(Os.arch, .{
                 .name = Export[0].symbol_name,
+            });
+            @export(Os.homedir, .{
+                .name = Export[1].symbol_name,
             });
         }
     }

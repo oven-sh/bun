@@ -44,7 +44,7 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         var dir: string = "unknown";
-        if (Environment.isWindows)
+        if (comptime Environment.isWindows)
             dir = std.os.getenv("USERPROFILE") orelse "unknown"
         else
             dir = std.os.getenv("HOME") orelse "unknown";

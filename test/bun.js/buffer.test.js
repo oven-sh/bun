@@ -358,3 +358,79 @@ it("read", () => {
   expect(buf.readUInt8(0)).toBe(255);
   reset();
 });
+
+it("includes", () => {
+  const buf = Buffer.from('this is a buffer');
+
+  expect(buf.includes('this')).toBe(true);
+  expect(buf.includes('is')).toBe(true);
+  expect(buf.includes(Buffer.from('a buffer'))).toBe(true);
+  expect(buf.includes(97)).toBe(true);
+  expect(buf.includes(Buffer.from('a buffer example'))).toBe(false);
+  expect(buf.includes(Buffer.from('a buffer example').slice(0, 8))).toBe(true);
+  expect(buf.includes('this', 4)).toBe(false);
+});
+
+it("indexOf", () => {
+  const buf = Buffer.from('this is a buffer');
+
+  expect(buf.indexOf('this')).toBe(0);
+  expect(buf.indexOf('is')).toBe(2);
+  expect(buf.indexOf(Buffer.from('a buffer'))).toBe(8);
+  expect(buf.indexOf(97)).toBe(8);
+  expect(buf.indexOf(Buffer.from('a buffer example'))).toBe(-1);
+  expect(buf.indexOf(Buffer.from('a buffer example').slice(0, 8))).toBe(8);
+
+  const utf16Buffer = Buffer.from('\u039a\u0391\u03a3\u03a3\u0395', 'utf16le');
+
+  expect(utf16Buffer.indexOf('\u03a3', 0, 'utf16le')).toBe(4);
+  expect(utf16Buffer.indexOf('\u03a3', -4, 'utf16le')).toBe(6);
+
+  const b = Buffer.from('abcdef');
+
+  // Passing a value that's a number, but not a valid byte.
+  // Prints: 2, equivalent to searching for 99 or 'c'.
+  expect(b.indexOf(99.9)).toBe(2);
+  expect(b.indexOf(256 + 99)).toBe(2);
+
+  // Passing a byteOffset that coerces to NaN or 0.
+  // Prints: 1, searching the whole buffer.
+  expect(b.indexOf('b', undefined)).toBe(1);
+  expect(b.indexOf('b', {})).toBe(1);
+  expect(b.indexOf('b', null)).toBe(1);
+  expect(b.indexOf('b', [])).toBe(1);
+});
+
+it("lastIndexOf", () => {
+  const buf = Buffer.from('this buffer is a buffer');
+
+  expect(buf.lastIndexOf('this')).toBe(0);
+  expect(buf.lastIndexOf('buffer')).toBe(17);
+  expect(buf.lastIndexOf(Buffer.from('buffer'))).toBe(17);
+  expect(buf.lastIndexOf(97)).toBe(15);
+  expect(buf.lastIndexOf(Buffer.from('yolo'))).toBe(-1);
+  expect(buf.lastIndexOf('buffer', 5)).toBe(5);
+  expect(buf.lastIndexOf('buffer', 4)).toBe(-1);
+
+  const utf16Buffer = Buffer.from('\u039a\u0391\u03a3\u03a3\u0395', 'utf16le');
+
+  expect(utf16Buffer.lastIndexOf('\u03a3', undefined, 'utf16le')).toBe(6);
+  expect(utf16Buffer.lastIndexOf('\u03a3', -5, 'utf16le')).toBe(4);
+
+  const b = Buffer.from('abcdef');
+
+  // Passing a value that's a number, but not a valid byte.
+  // Prints: 2, equivalent to searching for 99 or 'c'.
+  expect(b.lastIndexOf(99.9)).toBe(2);
+  expect(b.lastIndexOf(256 + 99)).toBe(2);
+
+  // Passing a byteOffset that coerces to NaN or 0.
+  // Prints: 1, searching the whole buffer.
+  expect(b.lastIndexOf('b', undefined)).toBe(1);
+  expect(b.lastIndexOf('b', {})).toBe(1);
+
+  // Passing a byteOffset that coerces to 0.
+  // Prints: -1, equivalent to passing 0.
+  expect(b.lastIndexOf('b', null)).toBe(-1);
+  expect(b.lastIndexOf('b', [])).toBe(-1);
+});

@@ -412,7 +412,6 @@ pub extern fn FFI__ptr__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue)
 pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*anyopaque) ?*JSC__JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: ?*JSC__JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: ?*JSC__JSGlobalObject, arg1: ?*anyopaque) bool;
-pub extern fn Bun__Os__create(arg0: ?*JSC__JSGlobalObject, arg1: bool) JSC__JSValue;
 pub extern fn Bun__Path__create(arg0: ?*JSC__JSGlobalObject, arg1: bool) JSC__JSValue;
 pub extern fn ArrayBufferSink__assignToStream(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue, arg2: ?*anyopaque, arg3: [*c]*anyopaque) JSC__JSValue;
 pub extern fn ArrayBufferSink__createObject(arg0: ?*JSC__JSGlobalObject, arg1: ?*anyopaque) JSC__JSValue;

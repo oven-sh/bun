@@ -491,11 +491,10 @@ pub fn newOs(
     ctx: js.JSContextRef,
     _: js.JSObjectRef,
     _: js.JSObjectRef,
-    args: []const js.JSValueRef,
+    _: []const js.JSValueRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    const is_windows = args.len == 1 and JSValue.fromRef(args[0]).toBoolean();
-    return Node.Os.create(ctx.ptr(), is_windows).asObjectRef();
+    return Node.Os.create(ctx.ptr()).asObjectRef();
 }
 
 pub fn newPath(

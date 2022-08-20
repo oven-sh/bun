@@ -2,7 +2,9 @@
 #include "JavaScriptCore/JSCInlines.h"
 
 #include "JavaScriptCore/JavaScript.h"
+#include "wtf/FileSystem.h"
 #include "wtf/MemoryFootprint.h"
+#include "wtf/text/WTFString.h"
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/JSCInlines.h"
 #include "JavaScriptCore/TestRunnerUtils.h"
@@ -22,6 +24,7 @@
 #include "JavaScriptCore/HeapSnapshotBuilder.h"
 #include "JavaScriptCore/JSONObject.h"
 #include "JavaScriptCore/DeferTermination.h"
+#include "JavaScriptCore/SamplingProfiler.h"
 #include "JavaScriptCore/VMTrapsInlines.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -244,6 +247,62 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint, (JSGlobalObject * global
     return JSValue::encode(JSCMemoryFootprint::create(vm, globalObject));
 }
 
+JSC_DECLARE_HOST_FUNCTION(functionNeverInlineFunction);
+JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(setNeverInline(globalObject, callFrame));
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
+JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
+
+    JSC::JSValue directoryValue = callFrame->argument(0);
+    JSC::JSValue sampleValue = callFrame->argument(1);
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (directoryValue.isString()) {
+        WTF::String optionString = WTF::String::fromUTF8("samplingProfilerPath=");
+        auto path = directoryValue.toWTFString(globalObject);
+        if (!path.isEmpty()) {
+            StringPrintStream pathOut;
+            if (!WTF::FileSystemImpl::makeAllDirectories(path)) {
+                throwVMError(globalObject, scope, createTypeError(globalObject, "directory couldn't be created"_s));
+                return JSC::JSValue::encode(jsUndefined());
+            }
+            const char* optionCString = toCString(String(optionString + path)).data();
+            Options::setOption(optionCString);
+            samplingProfiler.registerForReportAtExit();
+        }
+    }
+    if (sampleValue.isNumber()) {
+        unsigned sampleInterval = sampleValue.toUInt32(globalObject);
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(sampleInterval));
+    }
+
+    samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
+    samplingProfiler.start();
+    return JSC::JSValue::encode(jsUndefined());
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionSamplingProfilerStackTraces);
+JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    JSC::VM& vm = globalObject->vm();
+    JSC::DeferTermination deferScope(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!vm.samplingProfiler())
+        return JSC::JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Sampling profiler was never started"_s)));
+
+    WTF::String jsonString = vm.samplingProfiler()->stackTracesAsJSON();
+    JSC::EncodedJSValue result = JSC::JSValue::encode(JSONParse(globalObject, jsonString));
+    scope.releaseAssertNoException();
+    return result;
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionGetRandomSeed);
 JSC_DEFINE_HOST_FUNCTION(functionGetRandomSeed, (JSGlobalObject * globalObject, CallFrame*))
 {
@@ -400,6 +459,9 @@ JSC::JSObject* createJSCModule(JSC::JSGlobalObject* globalObject)
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getRandomSeed"_s), 1, functionGetRandomSeed, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapSize"_s), 1, functionHeapSize, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "heapStats"_s), 1, functionMemoryUsageStatistics, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startSamplingProfiler"_s), 1, functionStartSamplingProfiler, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "samplingProfilerStackTraces"_s), 1, functionSamplingProfilerStackTraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+        object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "noInline"_s), 1, functionNeverInlineFunction, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "isRope"_s), 1, functionIsRope, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "memoryUsage"_s), 1, functionCreateMemoryFootprint, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
         object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "noFTL"_s), 1, functionNoFTL, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);

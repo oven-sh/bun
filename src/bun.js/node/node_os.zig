@@ -18,9 +18,10 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("arch"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, arch));
         module.put(globalObject, &JSC.ZigString.init("endianness"), JSC.NewFunction(globalObject, &JSC.ZigString.init("endianness"), 0, endianness));
         module.put(globalObject, &JSC.ZigString.init("homedir"), JSC.NewFunction(globalObject, &JSC.ZigString.init("homedir"), 0, homedir));
-        module.put(globalObject, &JSC.ZigString.init("hostname"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, hostname));
-        module.put(globalObject, &JSC.ZigString.init("platform"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, platform));
-        module.put(globalObject, &JSC.ZigString.init("type"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, @"type"));
+        module.put(globalObject, &JSC.ZigString.init("hostname"), JSC.NewFunction(globalObject, &JSC.ZigString.init("hostname"), 0, hostname));
+        module.put(globalObject, &JSC.ZigString.init("platform"), JSC.NewFunction(globalObject, &JSC.ZigString.init("platform"), 0, platform));
+        module.put(globalObject, &JSC.ZigString.init("release"), JSC.NewFunction(globalObject, &JSC.ZigString.init("release"), 0, release));
+        module.put(globalObject, &JSC.ZigString.init("type"), JSC.NewFunction(globalObject, &JSC.ZigString.init("type"), 0, @"type"));
 
         module.put(globalObject, &JSC.ZigString.init("devNull"), JSC.ZigString.init(devNull).withEncoding().toValue(globalObject));
         module.put(globalObject, &JSC.ZigString.init("EOL"), JSC.ZigString.init(EOL).withEncoding().toValue(globalObject));
@@ -40,7 +41,7 @@ pub const Os = struct {
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        switch (std.builtin.Endian) {
+        switch (comptime builtin.target.cpu.arch.endian()) {
             .Big => {
                 return JSC.ZigString.init("BE").withEncoding().toValue(globalThis);
             },
@@ -74,6 +75,17 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
+    }
+
+    pub fn release(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+        const uts = std.os.uname();
+        const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.release, 0), 0);
+        std.mem.copy(u8, &name_buffer, result);
+
+        return JSC.ZigString.init(name_buffer[0..result.len]).withEncoding().toValueGC(globalThis);
     }
 
     pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {

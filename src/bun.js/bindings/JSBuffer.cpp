@@ -1004,20 +1004,19 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlob
     }
 }
 
-static int indexOf(const uint8_t* thisPtr, size_t thisLength, const uint8_t* valuePtr, size_t valueLength, int byteOffset)
+static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
     if (thisLength < valueLength + byteOffset)
         return -1;
     auto start = thisPtr + byteOffset;
-    auto end = thisPtr + thisLength;
-    auto it = static_cast<uint8_t*>(memmem(start, thisLength - byteOffset, valuePtr, valueLength));
+    auto it = static_cast<uint8_t*>(memmem(start, static_cast<size_t>(thisLength - byteOffset), valuePtr, static_cast<size_t>(valueLength)));
     if (it != NULL) {
         return it - thisPtr;
     }
     return -1;
 }
 
-static int lastIndexOf(const uint8_t* thisPtr, size_t thisLength, const uint8_t* valuePtr, size_t valueLength, int byteOffset)
+static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
     auto start = thisPtr;
     auto end = thisPtr + std::min(thisLength, byteOffset + valueLength);
@@ -1028,7 +1027,7 @@ static int lastIndexOf(const uint8_t* thisPtr, size_t thisLength, const uint8_t*
     return -1;
 }
 
-static int indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis, bool last)
+static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis, bool last)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1040,10 +1039,10 @@ static int indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* cal
     auto value = callFrame->uncheckedArgument(0);
     WebCore::BufferEncodingType encoding = WebCore::BufferEncodingType::utf8;
 
-    int length = static_cast<int>(castedThis->byteLength());
+    int64_t length = static_cast<int64_t>(castedThis->byteLength());
     const uint8_t* typedVector = castedThis->typedVector();
 
-    int byteOffset = last ? length - 1 : 0;
+    int64_t byteOffset = last ? length - 1 : 0;
 
     if (callFrame->argumentCount() > 1) {
         auto byteOffset_ = callFrame->uncheckedArgument(1).toNumber(lexicalGlobalObject);
@@ -1084,7 +1083,7 @@ static int indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* cal
         auto* str = value.toString(lexicalGlobalObject);
         JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding);
         auto* arrayValue = JSC::jsDynamicCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
-        int lengthValue = static_cast<int>(arrayValue->byteLength());
+        int64_t lengthValue = static_cast<int64_t>(arrayValue->byteLength());
         const uint8_t* typedVectorValue = arrayValue->typedVector();
         if (last) {
             return lastIndexOf(typedVector, length, typedVectorValue, lengthValue, byteOffset);
@@ -1094,13 +1093,13 @@ static int indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* cal
     } else if (value.isNumber()) {
         uint8_t byteValue = static_cast<uint8_t>(value.toNumber(lexicalGlobalObject));
         if (last) {
-            for (int i = byteOffset; i >= 0; --i) {
+            for (int64_t i = byteOffset; i >= 0; --i) {
                 if (byteValue == typedVector[i]) {
                     return i;
                 }
             }
         } else {
-            for (int i = byteOffset; i < length; ++i) {
+            for (int64_t i = byteOffset; i < length; ++i) {
                 if (byteValue == typedVector[i]) {
                     return i;
                 }
@@ -1125,17 +1124,17 @@ static int indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* cal
 
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
-    int index = indexOf(lexicalGlobalObject, callFrame, castedThis, false);
+    auto index = indexOf(lexicalGlobalObject, callFrame, castedThis, false);
     return JSC::JSValue::encode(jsBoolean(index != -1));
 }
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
-    int index = indexOf(lexicalGlobalObject, callFrame, castedThis, false);
+    auto index = indexOf(lexicalGlobalObject, callFrame, castedThis, false);
     return JSC::JSValue::encode(jsNumber(index));
 }
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_lastIndexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)
 {
-    int index = indexOf(lexicalGlobalObject, callFrame, castedThis, true);
+    auto index = indexOf(lexicalGlobalObject, callFrame, castedThis, true);
     return JSC::JSValue::encode(jsNumber(index));
 }
 static inline JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBuffer>::ClassParameter castedThis)

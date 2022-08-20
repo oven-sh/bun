@@ -292,7 +292,12 @@ function slice(start, end) {
 
   Buffer[Symbol.species] ||= Buffer;
 
-  return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));
+  start = start || 0;
+  if (end !== 0) {
+      end = end || this.byteLength;
+  }
+
+  return new Buffer(this.buffer, this.byteOffset + start, end - start);
 }
 
 

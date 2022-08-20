@@ -32,6 +32,7 @@ it("buffer", () => {
   gc();
   expect(buf.slice(0, 1) instanceof Buffer).toBe(true);
   gc();
+  expect(buf.slice(0, 0).length).toBe(0);
 });
 
 it("Buffer", () => {

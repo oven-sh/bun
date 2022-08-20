@@ -6,7 +6,7 @@ const string = bun.string;
 const AsyncIO = @import("io");
 const JSC = @import("../../jsc.zig");
 const PathString = JSC.PathString;
-const Environment = bun.Environment;
+const Global = bun.Global;
 const C = bun.C;
 const Syscall = @import("./syscall.zig");
 const os = std.os;
@@ -36,7 +36,7 @@ pub const Os = struct {
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        return JSC.ZigString.init("must implement").withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(Global.arch_name).withEncoding().toValueGC(globalThis);
     }
 
     pub const Export = shim.exportFunctions(.{ .@"arch" = arch });

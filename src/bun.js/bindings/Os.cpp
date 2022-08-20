@@ -87,20 +87,6 @@ static JSC::JSObject* createOs(JSGlobalObject* globalThis, bool isWindows)
            JSC::jsString(vm, makeAtomString("\\n"_s)));
     }
 
-    #if defined(__x86_64__)
-        os->putDirect(vm, JSC::Identifier::fromString(vm, "__arch"_s),
-            JSC::jsString(vm, makeAtomString("x64")));
-    #elif defined(__i386__)
-        os->putDirect(vm, JSC::Identifier::fromString(vm, "__arch"_s),
-            JSC::jsString(vm, makeAtomString("x86")));
-    #elif defined(__arm__)
-        os->putDirect(vm, JSC::Identifier::fromString(vm, "__arch"_s),
-            JSC::jsString(vm, makeAtomString("arm")));
-    #elif defined(__aarch64__)
-        os->putDirect(vm, JSC::Identifier::fromString(vm, "__arch"_s),
-            JSC::jsString(vm, makeAtomString("arm64")));
-    #endif
-
     return os;
 }
 

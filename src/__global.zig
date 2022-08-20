@@ -31,6 +31,8 @@ else
 
 pub const arch_name = if (Environment.isX64)
     "x64"
+else if (Environment.isX86)
+    "x86"
 else if (Environment.isAarch64)
     "arm64"
 else

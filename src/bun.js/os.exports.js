@@ -3,6 +3,7 @@ function bound(obj) {
     arch: obj.arch.bind(obj),
     homedir: obj.homedir.bind(obj),
     platform: obj.platform.bind(obj),
+    type: obj.type.bind(obj),
     devNull: obj.devNull,
     EOL: obj.EOL,
   };
@@ -14,6 +15,7 @@ export var {
   arch,
   homedir,
   platform,
+  type,
   devNull,
   EOL,
 } = os;

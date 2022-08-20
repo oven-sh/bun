@@ -58,10 +58,24 @@ pub const Os = struct {
         return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
     }
 
+    pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        if (comptime Environment.isWindows)
+            return JSC.ZigString.init("Windows_NT").withEncoding().toValueGC(globalThis)
+        else if (comptime Environment.isMac)
+            return JSC.ZigString.init("Darwin").withEncoding().toValueGC(globalThis)
+        else if (comptime Environment.isLinux)
+            return JSC.ZigString.init("Linux").withEncoding().toValueGC(globalThis);
+
+        return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
+    }
+
     pub const Export = shim.exportFunctions(.{
         .@"arch" = arch,
         .@"homedir" = homedir,
         .@"platform" = platform,
+        .@"type" = @"type",
     });
 
     pub const Extern = [_][]const u8{"create"};
@@ -76,6 +90,9 @@ pub const Os = struct {
             });
             @export(Os.platform, .{
                 .name = Export[2].symbol_name,
+            });
+            @export(Os.@"type", .{
+                .name = Export[3].symbol_name,
             });
         }
     }

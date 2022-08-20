@@ -71,6 +71,13 @@ static JSC_DEFINE_HOST_FUNCTION(Os_functionHomedir,
     DEFINE_CALLBACK_FUNCTION_BODY(Bun__Os__homedir);
 }
 
+static JSC_DECLARE_HOST_FUNCTION(Os_functionHostname);
+static JSC_DEFINE_HOST_FUNCTION(Os_functionHostname,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    DEFINE_CALLBACK_FUNCTION_BODY(Bun__Os__hostname);
+}
+
 static JSC_DECLARE_HOST_FUNCTION(Os_functionPlatform);
 static JSC_DEFINE_HOST_FUNCTION(Os_functionPlatform,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -99,6 +106,11 @@ static JSC::JSObject* createOs(JSGlobalObject* globalThis, bool isWindows)
     os->putDirect(vm, JSC::Identifier::fromString(vm, "homedir"_s),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             "homedir"_s, Os_functionHomedir, ImplementationVisibility::Public),
+        0);
+
+    os->putDirect(vm, JSC::Identifier::fromString(vm, "hostname"_s),
+        JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
+            "hostname"_s, Os_functionHostname, ImplementationVisibility::Public),
         0);
 
     os->putDirect(vm, JSC::Identifier::fromString(vm, "platform"_s),

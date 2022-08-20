@@ -52,6 +52,14 @@ pub const Os = struct {
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
 
+    pub fn hostname(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+
+        return JSC.ZigString.init(std.os.gethostname(&name_buffer) catch "unknown").withEncoding().toValueGC(globalThis);
+    }
+
     pub fn platform(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
@@ -74,6 +82,7 @@ pub const Os = struct {
     pub const Export = shim.exportFunctions(.{
         .@"arch" = arch,
         .@"homedir" = homedir,
+        .@"hostname" = hostname,
         .@"platform" = platform,
         .@"type" = @"type",
     });
@@ -88,11 +97,14 @@ pub const Os = struct {
             @export(Os.homedir, .{
                 .name = Export[1].symbol_name,
             });
-            @export(Os.platform, .{
+            @export(Os.hostname, .{
                 .name = Export[2].symbol_name,
             });
-            @export(Os.@"type", .{
+            @export(Os.platform, .{
                 .name = Export[3].symbol_name,
+            });
+            @export(Os.@"type", .{
+                .name = Export[4].symbol_name,
             });
         }
     }

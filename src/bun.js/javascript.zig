@@ -841,6 +841,16 @@ pub const VirtualMachine = struct {
                         .tag = ResolvedSource.Tag.@"node:process",
                     };
                 },
+                .@"node:os" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(""),
+                        .specifier = ZigString.init("node:os"),
+                        .source_url = ZigString.init("node:os"),
+                        .hash = 0,
+                        .tag = ResolvedSource.Tag.@"node:os",
+                    };
+                },
                 .@"bun:ffi" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2752,6 +2762,7 @@ pub const HardcodedModule = enum {
     @"node:fs/promises",
     @"node:http",
     @"node:module",
+    @"node:os",
     @"node:path",
     @"node:perf_hooks",
     @"node:process",
@@ -2782,6 +2793,7 @@ pub const HardcodedModule = enum {
             .{ "node:fs/promises", HardcodedModule.@"node:fs/promises" },
             .{ "node:http", HardcodedModule.@"node:http" },
             .{ "node:module", HardcodedModule.@"node:module" },
+            .{ "node:os", HardcodedModule.@"node:os" },
             .{ "node:path", HardcodedModule.@"node:path" },
             .{ "node:path/posix", HardcodedModule.@"node:path" },
             .{ "node:path/win32", HardcodedModule.@"node:path" },
@@ -2792,6 +2804,7 @@ pub const HardcodedModule = enum {
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:url", HardcodedModule.@"node:url" },
+            .{ "os", HardcodedModule.@"node:os" },
             .{ "path", HardcodedModule.@"node:path" },
             .{ "process", HardcodedModule.@"node:process" },
             .{ "undici", HardcodedModule.@"undici" },
@@ -2821,6 +2834,7 @@ pub const HardcodedModule = enum {
             .{ "node:fs/promises", "node:fs/promises" },
             .{ "node:http", "node:http" },
             .{ "node:module", "node:module" },
+            .{ "node:os", "node:os" },
             .{ "node:path", "node:path" },
             .{ "node:path/posix", "node:path" },
             .{ "node:path/win32", "node:path" },
@@ -2831,6 +2845,7 @@ pub const HardcodedModule = enum {
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
             .{ "node:url", "node:url" },
+            .{ "os", "node:os" },
             .{ "path", "node:path" },
             .{ "path/posix", "node:path" },
             .{ "path/win32", "node:path" },

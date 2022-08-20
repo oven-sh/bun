@@ -800,25 +800,23 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
     }
 
     size_t targetStart = 0;
-    size_t targetEndInit = view->byteLength();
-    size_t targetEnd = targetEndInit;
+    size_t targetEnd = view->byteLength();
 
     size_t sourceStart = 0;
     size_t sourceEndInit = castedThis->byteLength();
     size_t sourceEnd = sourceEndInit;
 
     if (callFrame->argumentCount() > 1) {
-        if (auto targetEnd_ = callFrame->uncheckedArgument(1).tryGetAsUint32Index()) {
-            targetStart = targetEnd_.value();
+        if (auto targetStart_ = callFrame->uncheckedArgument(1).tryGetAsUint32Index()) {
+            targetStart = targetStart_.value();
         } else {
             throwVMTypeError(lexicalGlobalObject, throwScope, "Expected number"_s);
             return JSValue::encode(jsUndefined());
         }
 
         if (callFrame->argumentCount() > 2) {
-            auto targetEndArgument = callFrame->uncheckedArgument(2);
-            if (auto targetEnd_ = targetEndArgument.tryGetAsUint32Index()) {
-                targetEnd = targetEnd_.value();
+            if (auto sourceStart_ = callFrame->uncheckedArgument(2).tryGetAsUint32Index()) {
+                sourceStart = sourceStart_.value();
             } else {
                 throwVMTypeError(lexicalGlobalObject, throwScope, "Expected number"_s);
                 return JSValue::encode(jsUndefined());
@@ -826,19 +824,8 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
         }
 
         if (callFrame->argumentCount() > 3) {
-            auto targetEndArgument = callFrame->uncheckedArgument(3);
-            if (auto targetEnd_ = targetEndArgument.tryGetAsUint32Index()) {
-                sourceStart = targetEnd_.value();
-            } else {
-                throwVMTypeError(lexicalGlobalObject, throwScope, "Expected number"_s);
-                return JSValue::encode(jsUndefined());
-            }
-        }
-
-        if (callFrame->argumentCount() > 4) {
-            auto targetEndArgument = callFrame->uncheckedArgument(4);
-            if (auto targetEnd_ = targetEndArgument.tryGetAsUint32Index()) {
-                sourceEnd = targetEnd_.value();
+            if (auto sourceEnd_ = callFrame->uncheckedArgument(3).tryGetAsUint32Index()) {
+                sourceEnd = sourceEnd_.value();
             } else {
                 throwVMTypeError(lexicalGlobalObject, throwScope, "Expected number"_s);
                 return JSValue::encode(jsUndefined());
@@ -846,7 +833,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlob
         }
     }
 
-    targetStart = std::min(targetStart, std::min(targetEnd, targetEndInit));
+    targetStart = std::min(targetStart, targetEnd);
     sourceStart = std::min(sourceStart, std::min(sourceEnd, sourceEndInit));
 
     auto sourceLength = sourceEnd - sourceStart;

@@ -346,6 +346,9 @@ extern "C" JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObje
     return JSC::JSValue::encode(JSC::JSValue(object));
 }
 
+extern "C" EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, EncodedJSValue input, const LChar* ptr, size_t length);
+extern "C" EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, EncodedJSValue input, const UChar* ptr, size_t length);
+
 const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &supportsRichSourceInfo,
     &shouldInterruptScript,
@@ -1572,6 +1575,7 @@ class JSPerformanceObject;
 static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformanceObject*));
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunNanosecondsWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSObject*));
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSObject*, JSString*));
 }
 
 class JSPerformanceObject final : public JSC::JSNonFinalObject {
@@ -1636,6 +1640,51 @@ JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSV
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     return functionPerformanceNowBody(lexicalGlobalObject);
+}
+
+JSC_DEFINE_JIT_OPERATION(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSObject* castedThis, JSString* string))
+{
+    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    size_t length = string->length();
+    if (!length)
+        return JSValue::encode(string);
+
+    auto resolvedString = string->value(lexicalGlobalObject);
+    if (!resolvedString.is8Bit()) {
+        return Bun__escapeHTML16(lexicalGlobalObject, JSValue::encode(string), resolvedString.characters16(), length);
+    } else {
+        return Bun__escapeHTML8(lexicalGlobalObject, JSValue::encode(string), resolvedString.characters8(), length);
+    }
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionBunEscapeHTML);
+JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    JSC::JSValue argument = callFrame->argument(0);
+    if (argument.isEmpty())
+        return JSValue::encode(jsEmptyString(vm));
+    if (argument.isNumber() || argument.isBoolean())
+        return JSValue::encode(argument.toString(lexicalGlobalObject));
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto string = argument.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    size_t length = string->length();
+    if (!length)
+        RELEASE_AND_RETURN(scope, JSValue::encode(string));
+
+    auto resolvedString = string->value(lexicalGlobalObject);
+    EncodedJSValue encodedInput = JSValue::encode(string);
+    if (!resolvedString.is8Bit()) {
+        RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, resolvedString.characters16(), length));
+    } else {
+        RELEASE_AND_RETURN(scope, Bun__escapeHTML8(lexicalGlobalObject, encodedInput, resolvedString.characters8(), length));
+    }
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
@@ -1937,8 +1986,6 @@ void GlobalObject::finishCreation(VM& vm)
 
     RELEASE_ASSERT(classInfo());
 }
-
-extern "C" EncodedJSValue Bun__escapeHTML(JSGlobalObject* globalObject, CallFrame* callFrame);
 
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
@@ -2248,7 +2295,14 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "escapeHTML"_s);
-            object->putDirectNativeFunction(vm, this, identifier, 1, Bun__escapeHTML, ImplementationVisibility::Public, NoIntrinsic,
+            static ClassInfo escapeHTMLClassInfo = *object->classInfo();
+            static const JSC::DOMJIT::Signature DOMJITSignatureForEscapeHTML(
+                functionBunEscapeHTMLWithoutTypeCheck,
+                object->classInfo(),
+                JSC::DOMJIT::Effect::forPure(),
+                SpecString,
+                SpecString);
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionBunEscapeHTML, ImplementationVisibility::Public, NoIntrinsic, &DOMJITSignatureForEscapeHTML,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 

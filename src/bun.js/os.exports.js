@@ -12,6 +12,7 @@ function bound(obj) {
     totalmem: obj.totalmem.bind(obj),
     type: obj.type.bind(obj),
     uptime: obj.uptime.bind(obj),
+    version: obj.version.bind(obj),
     devNull: obj.devNull,
     EOL: obj.EOL,
   };
@@ -32,6 +33,7 @@ export var {
   totalmem,
   type,
   uptime,
+  version,
   devNull,
   EOL,
 } = os;

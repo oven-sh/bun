@@ -28,6 +28,7 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("totalmem"), JSC.NewFunction(globalObject, &JSC.ZigString.init("totalmem"), 0, @"totalmem"));
         module.put(globalObject, &JSC.ZigString.init("type"), JSC.NewFunction(globalObject, &JSC.ZigString.init("type"), 0, @"type"));
         module.put(globalObject, &JSC.ZigString.init("uptime"), JSC.NewFunction(globalObject, &JSC.ZigString.init("uptime"), 0, uptime));
+        module.put(globalObject, &JSC.ZigString.init("version"), JSC.NewFunction(globalObject, &JSC.ZigString.init("version"), 0, version));
 
         module.put(globalObject, &JSC.ZigString.init("devNull"), JSC.ZigString.init(devNull).withEncoding().toValue(globalObject));
         module.put(globalObject, &JSC.ZigString.init("EOL"), JSC.ZigString.init(EOL).withEncoding().toValue(globalObject));
@@ -175,6 +176,17 @@ pub const Os = struct {
         } else {
             return JSC.JSValue.jsNumber(0);
         }
+    }
+
+    pub fn version(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+        const uts = std.os.uname();
+        const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.version, 0), 0);
+        std.mem.copy(u8, &name_buffer, result);
+
+        return JSC.ZigString.init(name_buffer[0..result.len]).withEncoding().toValueGC(globalThis);
     }
 };
 

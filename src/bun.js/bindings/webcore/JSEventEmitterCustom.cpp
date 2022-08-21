@@ -24,7 +24,7 @@ std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(VM& vm, JSC::JSGlobalO
 {
     if (auto* target = jsDynamicCast<JSEventEmitter*>(thisValue))
         return makeUnique<JSEventEmitterWrapper>(target->wrapped(), *target);
-    if (auto* object = jsDynamicCast<JSObject*>(thisValue)) {
+    if (auto* object = jsDynamicCast<JSNonFinalObject*>(thisValue)) {
         // need to create a EventEmitter for Object.
         // use `mapPrivateName` as it is not occupied.
         auto emitterTag = WebCore::clientData(vm)->builtinNames().mapPrivateName();

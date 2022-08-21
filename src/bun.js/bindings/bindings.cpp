@@ -1261,6 +1261,25 @@ JSC__JSValue ZigString__toValue(const ZigString* arg0, JSC__JSGlobalObject* arg1
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(*arg0))));
 }
 
+JSC__JSValue ZigString__toAtomicValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
+{
+    if (arg0->len == 0) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
+    }
+
+    if (isTaggedUTF16Ptr(arg0->ptr)) {
+        if (auto impl = WTF::AtomStringImpl::lookUp(reinterpret_cast<const UChar*>(untag(arg0->ptr)), arg0->len)) {
+            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTFMove(impl))));
+        }
+    } else {
+        if (auto impl = WTF::AtomStringImpl::lookUp(untag(arg0->ptr), arg0->len)) {
+            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTFMove(impl))));
+        }
+    }
+
+    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), makeAtomString(Zig::toStringCopy(*arg0)))));
+}
+
 JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {
     auto str = WTF::String::fromUTF8(arg0->ptr, arg0->len);

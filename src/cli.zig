@@ -1094,7 +1094,11 @@ pub const Command = struct {
             .RunCommand => {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
                 if (ctx.positionals.len > 0) {
-                    _ = try RunCommand.exec(ctx, false, true);
+                    if (try RunCommand.exec(ctx, false, true)) {
+                        return;
+                    }
+
+                    Global.exit(1);
                 }
             },
             .UpgradeCommand => {
@@ -1146,72 +1150,28 @@ pub const Command = struct {
                 }
 
                 var was_js_like = false;
-                if (options.defaultLoaders.get(extension)) |loader| {
+                // If we start bun with:
+                // 1. `bun foo.js`, assume it's a JavaScript file.
+                // 2. `bun /absolute/path/to/bin/foo` assume its a JavaScript file.
+                //                                  ^ no file extension
+                //
+                // #!/usr/bin/env bun
+                // will pass us an absolute path to the script.
+                // This means a non-standard file extension will not work, but that is better than the current state
+                // which is file extension-less doesn't work
+                const default_loader = options.defaultLoaders.get(extension) orelse brk: {
+                    if (extension.len == 0 and ctx.args.entry_points.len > 0 and ctx.args.entry_points[0].len > 0 and std.fs.path.isAbsolute(ctx.args.entry_points[0])) {
+                        break :brk options.Loader.js;
+                    }
+
+                    break :brk null;
+                };
+
+                if (default_loader) |loader| {
                     if (loader.isJavaScriptLike()) {
                         was_js_like = true;
-                        possibly_open_with_bun_js: {
-                            const script_name_to_search = ctx.args.entry_points[0];
-
-                            var file_path = script_name_to_search;
-                            const file_: std.fs.File.OpenError!std.fs.File = brk: {
-                                if (script_name_to_search[0] == std.fs.path.sep) {
-                                    break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
-                                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
-                                    const file_pathZ = brk2: {
-                                        if (!strings.hasPrefix(file_path, "./")) {
-                                            script_name_buf[0..2].* = "./".*;
-                                            @memcpy(script_name_buf[2..], file_path.ptr, file_path.len);
-                                            script_name_buf[file_path.len + 2] = 0;
-                                            break :brk2 script_name_buf[0 .. file_path.len + 2 :0];
-                                        } else {
-                                            @memcpy(&script_name_buf, file_path.ptr, file_path.len);
-                                            script_name_buf[file_path.len] = 0;
-                                            break :brk2 script_name_buf[0..file_path.len :0];
-                                        }
-                                    };
-
-                                    break :brk std.fs.cwd().openFileZ(file_pathZ, .{ .mode = .read_only });
-                                } else {
-                                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                                    const cwd = std.os.getcwd(&path_buf) catch break :possibly_open_with_bun_js;
-                                    path_buf[cwd.len] = std.fs.path.sep;
-                                    var parts = [_]string{script_name_to_search};
-                                    file_path = resolve_path.joinAbsStringBuf(
-                                        path_buf[0 .. cwd.len + 1],
-                                        &script_name_buf,
-                                        &parts,
-                                        .auto,
-                                    );
-                                    if (file_path.len == 0) break :possibly_open_with_bun_js;
-                                    script_name_buf[file_path.len] = 0;
-                                    var file_pathZ = script_name_buf[0..file_path.len :0];
-                                    break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .mode = .read_only });
-                                }
-                            };
-
-                            const file = file_ catch break :possibly_open_with_bun_js;
-
-                            Global.configureAllocator(.{ .long_running = true });
-
-                            // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-                            var absolute_script_path = std.os.getFdPath(file.handle, &script_name_buf) catch break :possibly_open_with_bun_js;
-                            BunJS.Run.boot(
-                                ctx,
-                                file,
-                                absolute_script_path,
-                            ) catch |err| {
-                                if (Output.enable_ansi_colors) {
-                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                                } else {
-                                    ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                                }
-
-                                Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
-                                    std.fs.path.basename(file_path),
-                                    @errorName(err),
-                                });
-                                Global.exit(1);
-                            };
+                        if (maybeOpenWithBunJS(&ctx)) {
+                            return;
                         }
                     }
                 }
@@ -1221,9 +1181,6 @@ pub const Command = struct {
                         return;
                     }
 
-                    Output.prettyErrorln("<r><red>error<r>: Script not found \"<b>{s}<r>\"", .{
-                        ctx.positionals[0],
-                    });
                     Global.exit(1);
                 }
 
@@ -1243,6 +1200,72 @@ pub const Command = struct {
             },
             else => unreachable,
         }
+    }
+
+    fn maybeOpenWithBunJS(ctx: *const Command.Context) bool {
+        const script_name_to_search = ctx.args.entry_points[0];
+
+        var file_path = script_name_to_search;
+        const file_: std.fs.File.OpenError!std.fs.File = brk: {
+            if (script_name_to_search[0] == std.fs.path.sep) {
+                break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
+            } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
+                const file_pathZ = brk2: {
+                    if (!strings.hasPrefix(file_path, "./")) {
+                        script_name_buf[0..2].* = "./".*;
+                        @memcpy(script_name_buf[2..], file_path.ptr, file_path.len);
+                        script_name_buf[file_path.len + 2] = 0;
+                        break :brk2 script_name_buf[0 .. file_path.len + 2 :0];
+                    } else {
+                        @memcpy(&script_name_buf, file_path.ptr, file_path.len);
+                        script_name_buf[file_path.len] = 0;
+                        break :brk2 script_name_buf[0..file_path.len :0];
+                    }
+                };
+
+                break :brk std.fs.cwd().openFileZ(file_pathZ, .{ .mode = .read_only });
+            } else {
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                const cwd = std.os.getcwd(&path_buf) catch return false;
+                path_buf[cwd.len] = std.fs.path.sep;
+                var parts = [_]string{script_name_to_search};
+                file_path = resolve_path.joinAbsStringBuf(
+                    path_buf[0 .. cwd.len + 1],
+                    &script_name_buf,
+                    &parts,
+                    .auto,
+                );
+                if (file_path.len == 0) return false;
+                script_name_buf[file_path.len] = 0;
+                var file_pathZ = script_name_buf[0..file_path.len :0];
+                break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .mode = .read_only });
+            }
+        };
+
+        const file = file_ catch return false;
+
+        Global.configureAllocator(.{ .long_running = true });
+
+        // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
+        var absolute_script_path = std.os.getFdPath(file.handle, &script_name_buf) catch return false;
+        BunJS.Run.boot(
+            ctx.*,
+            file,
+            absolute_script_path,
+        ) catch |err| {
+            if (Output.enable_ansi_colors) {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+            } else {
+                ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
+            }
+
+            Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
+                std.fs.path.basename(file_path),
+                @errorName(err),
+            });
+            Global.exit(1);
+        };
+        return true;
     }
 
     pub const Tag = enum {

@@ -47,6 +47,7 @@ const Blob = JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;
 const Request = JSC.WebCore.Request;
 const assert = std.debug.assert;
+const Syscall = JSC.Node.Syscall;
 
 pub const ReadableStream = struct {
     value: JSValue,
@@ -241,7 +242,7 @@ pub const ReadableStream = struct {
 
 pub const StreamStart = union(Tag) {
     empty: void,
-    err: JSC.Node.Syscall.Error,
+    err: Syscall.Error,
     chunk_size: Blob.SizeType,
     ArrayBufferSink: struct {
         chunk_size: Blob.SizeType,
@@ -363,7 +364,7 @@ pub const StreamResult = union(Tag) {
     into_array: IntoArray,
     into_array_and_done: IntoArray,
     pending: *Pending,
-    err: JSC.Node.Syscall.Error,
+    err: Syscall.Error,
     done: void,
 
     pub const Tag = enum {
@@ -391,7 +392,7 @@ pub const StreamResult = union(Tag) {
     pub const Writable = union(StreamResult.Tag) {
         pending: *Writable.Pending,
 
-        err: JSC.Node.Syscall.Error,
+        err: Syscall.Error,
         done: void,
 
         owned: Blob.SizeType,
@@ -578,7 +579,7 @@ pub const Signal = struct {
         return initWithType(std.meta.Child(@TypeOf(handler)), handler);
     }
 
-    pub fn close(this: Signal, err: ?JSC.Node.Syscall.Error) void {
+    pub fn close(this: Signal, err: ?Syscall.Error) void {
         if (this.isDead())
             return;
         this.vtable.close(this.ptr, err);
@@ -595,7 +596,7 @@ pub const Signal = struct {
     }
 
     pub const VTable = struct {
-        pub const OnCloseFn = fn (this: *anyopaque, err: ?JSC.Node.Syscall.Error) void;
+        pub const OnCloseFn = fn (this: *anyopaque, err: ?Syscall.Error) void;
         pub const OnReadyFn = fn (this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void;
         pub const OnStartFn = fn (this: *anyopaque) void;
         close: OnCloseFn,
@@ -603,7 +604,7 @@ pub const Signal = struct {
         start: OnStartFn,
 
         const DeadFns = struct {
-            pub fn close(_: *anyopaque, _: ?JSC.Node.Syscall.Error) void {
+            pub fn close(_: *anyopaque, _: ?Syscall.Error) void {
                 unreachable;
             }
             pub fn ready(_: *anyopaque, _: ?Blob.SizeType, _: ?Blob.SizeType) void {
@@ -621,7 +622,7 @@ pub const Signal = struct {
             comptime Wrapped: type,
         ) VTable {
             const Functions = struct {
-                fn onClose(this: *anyopaque, err: ?JSC.Node.Syscall.Error) void {
+                fn onClose(this: *anyopaque, err: ?Syscall.Error) void {
                     Wrapped.close(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), err);
                 }
                 fn onReady(this: *anyopaque, amount: ?Blob.SizeType, offset: ?Blob.SizeType) void {
@@ -696,7 +697,7 @@ pub const Sink = struct {
             }
 
             {
-                var slice = bun.default_allocator.alloc(u8, str.len) catch return .{ .err = JSC.Node.Syscall.Error.oom };
+                var slice = bun.default_allocator.alloc(u8, str.len) catch return .{ .err = Syscall.Error.oom };
                 @memcpy(slice.ptr, str.ptr, str.len);
                 strings.replaceLatin1WithUTF8(slice[0..str.len]);
                 if (input.isDone()) {
@@ -725,7 +726,7 @@ pub const Sink = struct {
             }
 
             {
-                var allocated = strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = JSC.Node.Syscall.Error.oom };
+                var allocated = strings.toUTF8Alloc(bun.default_allocator, str) catch return .{ .err = Syscall.Error.oom };
                 if (input.isDone()) {
                     return writeFn(ctx, .{ .owned_and_done = bun.ByteList.init(allocated) });
                 } else {
@@ -739,7 +740,7 @@ pub const Sink = struct {
         pub const WriteUTF16Fn = fn (this: *anyopaque, data: StreamResult) StreamResult.Writable;
         pub const WriteUTF8Fn = fn (this: *anyopaque, data: StreamResult) StreamResult.Writable;
         pub const WriteLatin1Fn = fn (this: *anyopaque, data: StreamResult) StreamResult.Writable;
-        pub const EndFn = fn (this: *anyopaque, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void);
+        pub const EndFn = fn (this: *anyopaque, err: ?Syscall.Error) JSC.Node.Maybe(void);
         pub const ConnectFn = fn (this: *anyopaque, signal: Signal) JSC.Node.Maybe(void);
 
         connect: ConnectFn,
@@ -764,7 +765,7 @@ pub const Sink = struct {
                 pub fn onWriteUTF16(this: *anyopaque, data: StreamResult) StreamResult.Writable {
                     return Wrapped.writeUTF16(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), data);
                 }
-                pub fn onEnd(this: *anyopaque, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
+                pub fn onEnd(this: *anyopaque, err: ?Syscall.Error) JSC.Node.Maybe(void) {
                     return Wrapped.end(@ptrCast(*Wrapped, @alignCast(std.meta.alignment(Wrapped), this)), err);
                 }
             };
@@ -779,7 +780,7 @@ pub const Sink = struct {
         }
     };
 
-    pub fn end(this: *Sink, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
+    pub fn end(this: *Sink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
         if (this.status == .closed) {
             return .{ .result = {} };
         }
@@ -867,7 +868,7 @@ pub const ArrayBufferSink = struct {
         switch (stream_start) {
             .ArrayBufferSink => |config| {
                 if (config.chunk_size > 0) {
-                    list.ensureTotalCapacityPrecise(config.chunk_size) catch return .{ .err = JSC.Node.Syscall.Error.oom };
+                    list.ensureTotalCapacityPrecise(config.chunk_size) catch return .{ .err = Syscall.Error.oom };
                     this.bytes.update(list);
                 }
 
@@ -938,7 +939,7 @@ pub const ArrayBufferSink = struct {
         }
 
         const len = this.bytes.write(this.allocator, data.slice()) catch {
-            return .{ .err = JSC.Node.Syscall.Error.oom };
+            return .{ .err = Syscall.Error.oom };
         };
         this.signal.ready(null, null);
         return .{ .owned = len };
@@ -949,7 +950,7 @@ pub const ArrayBufferSink = struct {
             return next.writeLatin1(data);
         }
         const len = this.bytes.writeLatin1(this.allocator, data.slice()) catch {
-            return .{ .err = JSC.Node.Syscall.Error.oom };
+            return .{ .err = Syscall.Error.oom };
         };
         this.signal.ready(null, null);
         return .{ .owned = len };
@@ -959,13 +960,13 @@ pub const ArrayBufferSink = struct {
             return next.writeUTF16(data);
         }
         const len = this.bytes.writeUTF16(this.allocator, @ptrCast([*]const u16, @alignCast(@alignOf(u16), data.slice().ptr))[0..std.mem.bytesAsSlice(u16, data.slice()).len]) catch {
-            return .{ .err = JSC.Node.Syscall.Error.oom };
+            return .{ .err = Syscall.Error.oom };
         };
         this.signal.ready(null, null);
         return .{ .owned = len };
     }
 
-    pub fn end(this: *ArrayBufferSink, err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
+    pub fn end(this: *ArrayBufferSink, err: ?Syscall.Error) JSC.Node.Maybe(void) {
         if (this.next) |*next| {
             return next.end(err);
         }
@@ -1039,7 +1040,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 return Signal.initWithType(SinkSignal, @intToPtr(*SinkSignal, @bitCast(usize, @enumToInt(cpp))));
             }
 
-            pub fn close(this: *@This(), _: ?JSC.Node.Syscall.Error) void {
+            pub fn close(this: *@This(), _: ?Syscall.Error) void {
                 onClose(@bitCast(SinkSignal, @ptrToInt(this)).cpp, JSValue.jsUndefined());
             }
 
@@ -1097,7 +1098,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             var allocator = globalThis.bunVM().allocator;
             var this = allocator.create(ThisSink) catch {
-                globalThis.vm().throwError(globalThis, JSC.Node.Syscall.Error.oom.toJSC(
+                globalThis.vm().throwError(globalThis, Syscall.Error.oom.toJSC(
                     globalThis,
                 ));
                 return JSC.JSValue.jsUndefined();
@@ -1537,8 +1538,8 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             if (this.buffer.cap == 0) {
                 std.debug.assert(this.pooled_buffer == null);
                 if (comptime FeatureFlags.http_buffer_pooling) {
-                    if (ByteListPool.has()) {
-                        this.pooled_buffer = ByteListPool.get(this.allocator);
+                    if (ByteListPool.getIfExists()) |pooled_node| {
+                        this.pooled_buffer = pooled_node;
                         this.buffer = this.pooled_buffer.?.data;
                     }
                 }
@@ -1557,7 +1558,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             var list = this.buffer.listManaged(this.allocator);
             list.clearRetainingCapacity();
-            list.ensureTotalCapacityPrecise(this.highWaterMark) catch return .{ .err = JSC.Node.Syscall.Error.oom };
+            list.ensureTotalCapacityPrecise(this.highWaterMark) catch return .{ .err = Syscall.Error.oom };
             this.buffer.update(list);
 
             this.done = false;
@@ -1656,12 +1657,12 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     }
 
                     _ = this.buffer.write(this.allocator, bytes) catch {
-                        return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                        return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                     };
                 } else if (this.buffer.len + len >= this.highWaterMark) {
                     // TODO: attempt to write both in a corked buffer?
                     _ = this.buffer.write(this.allocator, bytes) catch {
-                        return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                        return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                     };
                     const slice = this.readableSlice();
                     if (this.send(slice)) {
@@ -1673,7 +1674,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     // queue the data
                     // do not send it
                     _ = this.buffer.write(this.allocator, bytes) catch {
-                        return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                        return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                     };
                     return .{ .owned = len };
                 }
@@ -1681,7 +1682,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.res.onWritable(*@This(), onWritable, this);
             } else {
                 _ = this.buffer.write(this.allocator, bytes) catch {
-                    return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                    return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
             }
 
@@ -1719,7 +1720,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     }
 
                     _ = this.buffer.writeLatin1(this.allocator, bytes) catch {
-                        return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                        return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                     };
 
                     if (do_send) {
@@ -1733,7 +1734,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     // - combined chunk is large enough to flush automatically
                     // - no backpressure
                     _ = this.buffer.writeLatin1(this.allocator, bytes) catch {
-                        return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                        return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                     };
                     const readable = this.readableSlice();
                     if (this.send(readable)) {
@@ -1742,7 +1743,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                     }
                 } else {
                     _ = this.buffer.writeLatin1(this.allocator, bytes) catch {
-                        return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                        return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                     };
                     return .{ .owned = len };
                 }
@@ -1750,7 +1751,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.res.onWritable(*@This(), onWritable, this);
             } else {
                 _ = this.buffer.writeLatin1(this.allocator, bytes) catch {
-                    return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                    return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
             }
 
@@ -1776,7 +1777,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 // we must always buffer UTF-16
                 // we assume the case of all-ascii UTF-16 string is pretty uncommon
                 written = this.buffer.writeUTF16(this.allocator, @alignCast(2, std.mem.bytesAsSlice(u16, bytes))) catch {
-                    return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                    return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
 
                 const readable = this.readableSlice();
@@ -1791,7 +1792,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 }
             } else {
                 written = this.buffer.writeUTF16(this.allocator, @alignCast(2, std.mem.bytesAsSlice(u16, bytes))) catch {
-                    return .{ .err = JSC.Node.Syscall.Error.fromCode(.NOMEM, .write) };
+                    return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };
             }
 
@@ -1799,7 +1800,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         // In this case, it's always an error
-        pub fn end(this: *@This(), err: ?JSC.Node.Syscall.Error) JSC.Node.Maybe(void) {
+        pub fn end(this: *@This(), err: ?Syscall.Error) JSC.Node.Maybe(void) {
             log("end({s})", .{err});
 
             if (this.requested_end) {
@@ -1939,10 +1940,9 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
                 this.pooled_buffer = null;
                 pooled.release();
             } else if (this.buffer.cap == 0) {} else if (FeatureFlags.http_buffer_pooling and !ByteListPool.full()) {
-                var entry = ByteListPool.get(this.allocator);
-                entry.data = this.buffer;
+                const buffer = this.buffer;
                 this.buffer = bun.ByteList.init("");
-                entry.release();
+                ByteListPool.push(this.allocator, buffer);
             } else {
                 this.buffer.len = 0;
             }
@@ -1979,7 +1979,7 @@ pub fn ReadableStreamSource(
         context: Context,
         cancelled: bool = false,
         deinited: bool = false,
-        pending_err: ?JSC.Node.Syscall.Error = null,
+        pending_err: ?Syscall.Error = null,
         close_handler: ?fn (*anyopaque) void = null,
         close_ctx: ?*anyopaque = null,
         close_jsvalue: JSValue = JSValue.zero,
@@ -2034,7 +2034,7 @@ pub fn ReadableStreamSource(
             deinit(&this.context);
         }
 
-        pub fn getError(this: *This) ?JSC.Node.Syscall.Error {
+        pub fn getError(this: *This) ?Syscall.Error {
             if (this.pending_err) |err| {
                 this.pending_err = null;
                 return err;
@@ -2127,6 +2127,7 @@ pub fn ReadableStreamSource(
                     }
                     OnlyOnce.last_globals = globalThis;
                 }
+
                 return JSC.JSArray.from(globalThis, &.{
                     JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.pull),
                     JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.start),
@@ -2349,16 +2350,16 @@ pub const FileBlobLoader = struct {
             this.concurrent.read = @truncate(Blob.SizeType, result catch |err| {
                 if (@hasField(HTTPClient.NetworkThread.Completion, "result")) {
                     this.pending.result = .{
-                        .err = JSC.Node.Syscall.Error{
-                            .errno = @intCast(JSC.Node.Syscall.Error.Int, -completion.result),
+                        .err = Syscall.Error{
+                            .errno = @intCast(Syscall.Error.Int, -completion.result),
                             .syscall = .read,
                         },
                     };
                 } else {
                     this.pending.result = .{
-                        .err = JSC.Node.Syscall.Error{
+                        .err = Syscall.Error{
                             // this is too hacky
-                            .errno = @truncate(JSC.Node.Syscall.Error.Int, @intCast(u16, @maximum(1, @errorToInt(err)))),
+                            .errno = @truncate(Syscall.Error.Int, @intCast(u16, @maximum(1, @errorToInt(err)))),
                             .syscall = .read,
                         },
                     };
@@ -2377,7 +2378,7 @@ pub const FileBlobLoader = struct {
 
                 while (remaining.len > 0) {
                     const to_read = @minimum(@as(usize, this.concurrent.chunk_size), remaining.len);
-                    switch (JSC.Node.Syscall.read(this.fd, remaining[0..to_read])) {
+                    switch (Syscall.read(this.fd, remaining[0..to_read])) {
                         .err => |err| {
                             const retry = comptime if (Environment.isLinux)
                                 std.os.E.WOULDBLOCK
@@ -2507,7 +2508,7 @@ pub const FileBlobLoader = struct {
         defer this.auto_close = auto_close;
         var fd = if (!auto_close)
             file.pathlike.fd
-        else switch (JSC.Node.Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
+        else switch (Syscall.open(file.pathlike.path.sliceZ(&file_buf), std.os.O.RDONLY | std.os.O.NONBLOCK | std.os.O.CLOEXEC, 0)) {
             .result => |_fd| _fd,
             .err => |err| {
                 this.deinit();
@@ -2517,22 +2518,32 @@ pub const FileBlobLoader = struct {
 
         if (!auto_close) {
             // ensure we have non-blocking IO set
-            const flags = std.os.fcntl(fd, std.os.F.GETFL, 0) catch return .{ .err = JSC.Node.Syscall.Error.fromCode(std.os.E.BADF, .fcntl) };
+            switch (Syscall.fcntl(fd, std.os.F.GETFL, 0)) {
+                .err => return .{ .err = Syscall.Error.fromCode(std.os.E.BADF, .fcntl) },
+                .result => |flags| {
+                    // if we do not, clone the descriptor and set non-blocking
+                    // it is important for us to clone it so we don't cause Weird Things to happen
+                    if ((flags & std.os.O.NONBLOCK) == 0) {
+                        auto_close = true;
+                        fd = switch (Syscall.fcntl(fd, std.os.F.DUPFD, 0)) {
+                            .result => |_fd| @intCast(@TypeOf(fd), _fd),
+                            .err => |err| return .{ .err = err },
+                        };
 
-            // if we do not, clone the descriptor and set non-blocking
-            // it is important for us to clone it so we don't cause Weird Things to happen
-            if ((flags & std.os.O.NONBLOCK) == 0) {
-                auto_close = true;
-                fd = @intCast(@TypeOf(fd), std.os.fcntl(fd, std.os.F.DUPFD, 0) catch return .{ .err = JSC.Node.Syscall.Error.fromCode(std.os.E.BADF, .fcntl) });
-                _ = std.os.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK) catch return .{ .err = JSC.Node.Syscall.Error.fromCode(std.os.E.BADF, .fcntl) };
+                        switch (Syscall.fcntl(fd, std.os.F.SETFL, flags | std.os.O.NONBLOCK)) {
+                            .err => |err| return .{ .err = err },
+                            .result => |_| {},
+                        }
+                    }
+                },
             }
         }
 
-        const stat: std.os.Stat = switch (JSC.Node.Syscall.fstat(fd)) {
+        const stat: std.os.Stat = switch (Syscall.fstat(fd)) {
             .result => |result| result,
             .err => |err| {
                 if (auto_close) {
-                    _ = JSC.Node.Syscall.close(fd);
+                    _ = Syscall.close(fd);
                 }
                 this.deinit();
                 return .{ .err = err.withPath(file.pathlike.path.slice()) };
@@ -2540,19 +2551,19 @@ pub const FileBlobLoader = struct {
         };
 
         if (std.os.S.ISDIR(stat.mode)) {
-            const err = JSC.Node.Syscall.Error.fromCode(.ISDIR, .fstat);
+            const err = Syscall.Error.fromCode(.ISDIR, .fstat);
             if (auto_close) {
-                _ = JSC.Node.Syscall.close(fd);
+                _ = Syscall.close(fd);
             }
             this.deinit();
             return .{ .err = err };
         }
 
         if (std.os.S.ISSOCK(stat.mode)) {
-            const err = JSC.Node.Syscall.Error.fromCode(.INVAL, .fstat);
+            const err = Syscall.Error.fromCode(.INVAL, .fstat);
 
             if (auto_close) {
-                _ = JSC.Node.Syscall.close(fd);
+                _ = Syscall.close(fd);
             }
             this.deinit();
             return .{ .err = err };
@@ -2567,7 +2578,7 @@ pub const FileBlobLoader = struct {
 
         if ((file.seekable orelse false) and file.max_size == 0) {
             if (auto_close) {
-                _ = JSC.Node.Syscall.close(fd);
+                _ = Syscall.close(fd);
             }
             this.deinit();
             return .{ .empty = {} };
@@ -2612,7 +2623,7 @@ pub const FileBlobLoader = struct {
                 this.protected_view.protect();
                 // should never be reached
                 this.pending.result = .{
-                    .err = JSC.Node.Syscall.Error.todo,
+                    .err = Syscall.Error.todo,
                 };
                 this.buf = buffer;
 
@@ -2628,7 +2639,7 @@ pub const FileBlobLoader = struct {
 
     fn maybeAutoClose(this: *FileBlobLoader) void {
         if (this.auto_close) {
-            _ = JSC.Node.Syscall.close(this.fd);
+            _ = Syscall.close(this.fd);
             this.auto_close = false;
         }
     }
@@ -2667,7 +2678,7 @@ pub const FileBlobLoader = struct {
         std.debug.assert(this.started);
 
         const rc =
-            JSC.Node.Syscall.read(this.fd, read_buf);
+            Syscall.read(this.fd, read_buf);
 
         switch (rc) {
             .err => |err| {
@@ -2723,7 +2734,7 @@ pub const FileBlobLoader = struct {
             if (!this.pending.used) {
                 // should never be reached
                 this.pending.result = .{
-                    .err = JSC.Node.Syscall.Error.todo,
+                    .err = Syscall.Error.todo,
                 };
                 resume this.pending.frame;
             }

@@ -99,6 +99,7 @@ pub extern fn JSC__JSObject__getIndex(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlo
 pub extern fn JSC__JSObject__putRecord(arg0: [*c]JSC__JSObject, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn ZigString__external(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn (?*anyopaque, ?*anyopaque, usize) callconv(.C) void) JSC__JSValue;
 pub extern fn ZigString__to16BitValue(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn ZigString__toAtomicValue(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toErrorInstance(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toExternalU16(arg0: [*c]const u16, arg1: usize, arg2: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toExternalValue(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
@@ -193,6 +194,7 @@ pub extern fn JSC__JSGlobalObject__bigIntPrototype(arg0: ?*JSC__JSGlobalObject) 
 pub extern fn JSC__JSGlobalObject__booleanPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__bunVM(arg0: ?*JSC__JSGlobalObject) ?*bindings.VirtualMachine;
 pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: ?*JSC__JSGlobalObject, arg1: [*c]*anyopaque, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
+pub extern fn JSC__JSGlobalObject__createSyntheticModule_(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: usize, arg3: [*c]JSC__JSValue, arg4: usize) void;
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString) void;
 pub extern fn JSC__JSGlobalObject__errorPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;

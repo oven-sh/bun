@@ -17,6 +17,7 @@ pub const Os = struct {
         const module = JSC.JSValue.createEmptyObject(globalObject, 5);
 
         module.put(globalObject, &JSC.ZigString.init("arch"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, arch));
+        module.put(globalObject, &JSC.ZigString.init("cpus"), JSC.NewFunction(globalObject, &JSC.ZigString.init("cpus"), 0, cpus));
         module.put(globalObject, &JSC.ZigString.init("endianness"), JSC.NewFunction(globalObject, &JSC.ZigString.init("endianness"), 0, endianness));
         module.put(globalObject, &JSC.ZigString.init("freemem"), JSC.NewFunction(globalObject, &JSC.ZigString.init("freemem"), 0, freemem));
         module.put(globalObject, &JSC.ZigString.init("getPriority"), JSC.NewFunction(globalObject, &JSC.ZigString.init("getPriority"), 1, getPriority));
@@ -45,6 +46,31 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         return JSC.ZigString.init(Global.arch_name).withEncoding().toValue(globalThis);
+    }
+
+    pub fn cpus(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        if (comptime Environment.isLinux) {
+            const allocator = JSC.getAllocator(globalThis.ref());
+            const cpus_ = C.linux.get_cpu_infos(allocator) catch {
+                @setCold(true);
+                return JSC.JSArray.from(globalThis, &.{});
+            };
+            var result = std.ArrayList(JSC.JSValue).init(allocator);
+            defer result.deinit();
+
+            for (cpus_) |_, index| {
+                var object = JSC.JSValue.createEmptyObject(globalThis, 2);
+                object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(cpus_[index].model).withEncoding().toValueGC(globalThis));
+                object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(cpus_[index].speed));
+
+                _ = result.append(object) catch unreachable;
+            }
+
+            return JSC.JSArray.from(globalThis, result.items[0..result.items.len]);
+        }
+        return JSC.JSArray.from(globalThis, &.{});
     }
 
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {

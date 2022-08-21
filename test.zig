@@ -10,9 +10,71 @@ const std = @import("std");
 const sysResource = @cImport(@cInclude("sys/resource.h"));
 const unistd = @cImport(@cInclude("unistd.h"));
 
-pub fn main() void {
+pub const CpuInfo = struct {
+    model: []const u8 = undefined,
+    speed: i64 = undefined,
+};
+
+pub fn get_cpu_count() anyerror!?usize {
+    var file = std.fs.openFileAbsolute("/proc/stat", .{ .intended_io_mode = .blocking }) catch |err| switch (err) {
+        else => return null,
+    };
+    defer file.close();
+
+    const reader = file.reader();
+
+    var line_buf: [2048]u8 = undefined;
+    var count: usize = 0;
+
+    while (true) {
+        const line = (try reader.readUntilDelimiterOrEof(&line_buf, '\n')) orelse break;
+
+        if (std.mem.startsWith(u8, line, "cpu")) {
+            count += 1;
+        } else break;
+    }
+
+    return count - 1;
+}
+
+pub fn get_cpus_info() anyerror!?[]CpuInfo {
+    var file = std.fs.openFileAbsolute("/proc/cpuinfo", .{ .intended_io_mode = .blocking }) catch {
+        return null;
+    };
+    defer file.close();
+
+    const reader = file.reader();
+
+    var line_buf: [1024]u8 = undefined;
+
+    var cores = std.ArrayList(CpuInfo).init(std.heap.page_allocator);
+    defer cores.deinit();
+
+    while (true) {
+        const line = (try reader.readUntilDelimiterOrEof(&line_buf, '\n')) orelse break;
+        const colon_pos = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const key = std.mem.trimRight(u8, line[0..colon_pos], " \t");
+        const value = std.mem.trimLeft(u8, line[colon_pos + 1 ..], " \t");
+
+        if (std.mem.eql(u8, key, "processor")) {
+            _ = cores.append(.{}) catch unreachable;
+        } else if (std.mem.eql(u8, key, "model name") or std.mem.eql(u8, key, "cpu")) {
+            cores.items[cores.items.len - 1].model = std.heap.page_allocator.dupe(u8, value) catch "0";
+        } else if (std.mem.eql(u8, key, "cpu MHz") or std.mem.eql(u8, key, "clock")) {
+            cores.items[cores.items.len - 1].speed = @floatToInt(i64, std.fmt.parseFloat(f64, value) catch 0);
+        }
+    }
+
+    //std.debug.print("test {any},", .{cores.items});
+    return cores.items;
+}
+
+pub fn main() !void {
     std.debug.print("priority: {}\n", .{sysResource.getpriority(sysResource.PRIO_PROCESS, 0)});
     std.debug.print("uid: {}\n", .{unistd.getuid()});
     std.debug.print("gid: {}\n", .{unistd.getgid()});
+    std.debug.print("info: {any}\n", .{get_cpus_info()});
+    //_ = get_cpus_info() catch unreachable;
+    //std.debug.print("test: {any}\n", .{getInfo()});
     //std.debug.print("FREE: {}", .{pages2 * page_size});
 }

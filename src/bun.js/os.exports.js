@@ -1,6 +1,7 @@
 function bound(obj) {
   return {
     arch: obj.arch.bind(obj),
+    cpus: obj.cpus.bind(obj),
     endianness: obj.endianness.bind(obj),
     freemem: obj.freemem.bind(obj),
     getPriority: obj.getPriority.bind(obj),
@@ -24,6 +25,7 @@ var os = bound(Bun._Os());
 
 export var {
   arch,
+  cpus,
   endianness,
   freemem,
   getPriority,

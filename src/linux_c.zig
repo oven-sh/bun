@@ -350,3 +350,37 @@ pub fn get_system_loadavg() [3]f64 {
     }
     return [3]f64{ 0, 0, 0 };
 }
+
+pub const CpuInfo = struct {
+    model: []const u8 = undefined,
+    speed: i64 = undefined,
+};
+
+pub fn get_cpu_infos(allocator: std.mem.Allocator) anyerror![]CpuInfo {
+    var file = std.fs.openFileAbsolute("/proc/cpuinfo", .{ .intended_io_mode = .blocking }) catch |err| return err;
+    defer file.close();
+
+    const reader = file.reader();
+
+    var line_buf: [1024]u8 = undefined;
+
+    var cores = std.ArrayList(CpuInfo).init(allocator);
+    defer cores.deinit();
+
+    while (true) {
+        const line = (try reader.readUntilDelimiterOrEof(&line_buf, '\n')) orelse break;
+        const colon_pos = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        const key = std.mem.trimRight(u8, line[0..colon_pos], " \t");
+        const value = std.mem.trimLeft(u8, line[colon_pos + 1 ..], " \t");
+
+        if (std.mem.eql(u8, key, "processor")) {
+            _ = cores.append(.{}) catch unreachable;
+        } else if (std.mem.eql(u8, key, "model name") or std.mem.eql(u8, key, "cpu")) {
+            cores.items[cores.items.len - 1].model = allocator.dupe(u8, value) catch "0";
+        } else if (std.mem.eql(u8, key, "cpu MHz") or std.mem.eql(u8, key, "clock")) {
+            cores.items[cores.items.len - 1].speed = @floatToInt(i64, std.fmt.parseFloat(f64, value) catch 0);
+        }
+    }
+
+    return cores.items;
+}

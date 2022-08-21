@@ -21,6 +21,7 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("hostname"), JSC.NewFunction(globalObject, &JSC.ZigString.init("hostname"), 0, hostname));
         module.put(globalObject, &JSC.ZigString.init("platform"), JSC.NewFunction(globalObject, &JSC.ZigString.init("platform"), 0, platform));
         module.put(globalObject, &JSC.ZigString.init("release"), JSC.NewFunction(globalObject, &JSC.ZigString.init("release"), 0, release));
+        module.put(globalObject, &JSC.ZigString.init("tmpdir"), JSC.NewFunction(globalObject, &JSC.ZigString.init("tmpdir"), 0, tmpdir));
         module.put(globalObject, &JSC.ZigString.init("type"), JSC.NewFunction(globalObject, &JSC.ZigString.init("type"), 0, @"type"));
 
         module.put(globalObject, &JSC.ZigString.init("devNull"), JSC.ZigString.init(devNull).withEncoding().toValue(globalObject));
@@ -86,6 +87,27 @@ pub const Os = struct {
         std.mem.copy(u8, &name_buffer, result);
 
         return JSC.ZigString.init(name_buffer[0..result.len]).withEncoding().toValueGC(globalThis);
+    }
+
+    pub fn tmpdir(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        var dir: string = "unknown";
+        if (comptime Environment.isWindows) {
+            if (std.os.getenv("TEMP") orelse std.os.getenv("TMP")) |tmpdir_| {
+                dir = tmpdir_;
+            }
+
+            if (std.os.getenv("SYSTEMROOT") orelse std.os.getenv("WINDIR")) |systemdir_| {
+                dir = systemdir_ + "\\temp";
+            }
+
+            dir = "unknown";
+        } else {
+            dir = std.os.getenv("TMPDIR") orelse std.os.getenv("TMP") orelse std.os.getenv("TEMP") orelse "/tmp";
+        }
+
+        return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
 
     pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {

@@ -73,6 +73,7 @@ pub const Tag = enum(u8) {
     lutimes,
     mkdir,
     mkdtemp,
+    fnctl,
     mmap,
     munmap,
     open,
@@ -93,6 +94,7 @@ pub const Tag = enum(u8) {
     send,
     sendfile,
     splice,
+    rmdir,
 
     kevent,
     kqueue,
@@ -152,6 +154,12 @@ pub fn mkdir(file_path: [:0]const u8, flags: JSC.Node.Mode) Maybe(void) {
     if (comptime Environment.isLinux) {
         return Maybe(void).errnoSysP(linux.mkdir(file_path, flags), .mkdir, file_path) orelse Maybe(void).success;
     }
+}
+
+pub fn fcntl(fd: JSC.Node.FileDescriptor, cmd: i32, arg: usize) Maybe(usize) {
+    const result = fcntl_symbol(fd, cmd, arg);
+    if (Maybe(usize).errnoSys(result, .fcntl)) |err| return err;
+    return .{ .result = @intCast(usize, result) };
 }
 
 pub fn getErrno(rc: anytype) std.os.E {
@@ -232,6 +240,8 @@ else if (builtin.os.tag.isDarwin())
     system.@"pread$NOCANCEL"
 else
     system.pread;
+
+const fcntl_symbol = system.fcntl;
 
 pub fn pread(fd: os.fd_t, buf: []u8, offset: i64) Maybe(usize) {
     const adjusted_len = @minimum(buf.len, max_count);

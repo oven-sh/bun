@@ -264,6 +264,10 @@ pub const ZigString = extern struct {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
+    pub fn toAtomicValue(this: *const ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
+        return shim.cppFn("toAtomicValue", .{ this, globalThis });
+    }
+
     pub fn init16(slice_: []const u16) ZigString {
         var out = ZigString{ .ptr = std.mem.sliceAsBytes(slice_).ptr, .len = slice_.len };
         out.markUTF16();
@@ -503,7 +507,7 @@ pub const ZigString = extern struct {
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
-    pub const Extern = [_][]const u8{ "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
+    pub const Extern = [_][]const u8{ "toAtomicValue", "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
 };
 
 pub const DOMURL = opaque {
@@ -1769,6 +1773,24 @@ pub const JSGlobalObject = extern struct {
         this.vm().throwError(this, err);
     }
 
+    pub fn createSyntheticModule_(this: *JSGlobalObject, export_names: [*]const ZigString, export_len: usize, value_ptrs: [*]const JSValue, values_len: usize) void {
+        shim.cppFn("createSyntheticModule_", .{ this, export_names, export_len, value_ptrs, values_len });
+    }
+
+    pub fn createSyntheticModule(this: *JSGlobalObject, comptime module: anytype) void {
+        const names = comptime std.meta.fieldNames(@TypeOf(module));
+        var export_names: [names.len]ZigString = undefined;
+        var export_values: [names.len]JSValue = undefined;
+        inline for (comptime names) |export_name, i| {
+            export_names[i] = ZigString.init(export_name);
+            const function = @field(module, export_name).@"0";
+            const len = @field(module, export_name).@"1";
+            export_values[i] = JSC.NewFunction(this, &export_names[i], len, function);
+        }
+
+        createSyntheticModule_(this, &export_names, names.len, &export_values, names.len);
+    }
+
     pub fn throw(
         this: *JSGlobalObject,
         comptime fmt: string,
@@ -1991,6 +2013,7 @@ pub const JSGlobalObject = extern struct {
         "generateHeapSnapshot",
         "startRemoteInspector",
         "handleRejectedPromises",
+        "createSyntheticModule_",
         // "createError",
         // "throwError",
     };

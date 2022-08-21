@@ -7,7 +7,6 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  */
-const escapeHTML = Bun.escapeHTML;
 var aa = require("react");
 function k(a) {
   for (
@@ -200,8 +199,7 @@ Object.keys(z).forEach(function (a) {
 });
 var ma = /["'&<>]/;
 function A(a) {
-  if ("boolean" === typeof a || "number" === typeof a) return "" + a;
-  return escapeHTML(a);
+  return Bun.escapeHTML(a);
 }
 var na = /([A-Z])/g,
   oa = /^ms-/,

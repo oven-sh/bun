@@ -1022,7 +1022,13 @@ pub const VirtualMachine = struct {
         std.debug.assert(std.fs.path.isAbsolute(specifier)); // if this crashes, it means the resolver was skipped.
 
         const path = Fs.Path.init(specifier);
-        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse .file;
+        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
+            if (strings.eqlLong(specifier, jsc_vm.main, true)) {
+                break :brk options.Loader.js;
+            }
+
+            break :brk options.Loader.file;
+        };
 
         switch (loader) {
             .js, .jsx, .ts, .tsx, .json, .toml => {

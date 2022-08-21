@@ -78,6 +78,7 @@
 #include "JSURLSearchParams.h"
 #include "JSDOMException.h"
 #include "JSEventTarget.h"
+#include "JSEventEmitter.h"
 #include "EventTargetConcrete.h"
 #include "JSAbortSignal.h"
 #include "JSCustomEvent.h"
@@ -156,6 +157,7 @@ using JSBuffer = WebCore::JSBuffer;
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 #include "../modules/BufferModule.h"
+#include "../modules/EventsModule.h"
 #include "../modules/ProcessModule.h"
 
 // #include <iostream>
@@ -2580,6 +2582,16 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
     }
+    case SyntheticModuleType::Events: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                generateEventsSourceCode,
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:events"_s)), WTFMove(moduleKey)));
+
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
     default: {
         auto provider = Zig::SourceProvider::create(res.result.value);
         globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
@@ -2656,6 +2668,18 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     case SyntheticModuleType::Process: {
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(generateProcessSourceCode,
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
+        return promise;
+    }
+    case SyntheticModuleType::Events: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(generateEventsSourceCode,
                 JSC::SourceOrigin(), WTFMove(moduleKey)));
 
         auto sourceCode = JSSourceCode::create(vm, WTFMove(source));

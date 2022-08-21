@@ -193,6 +193,7 @@ pub extern fn JSC__JSGlobalObject__bigIntPrototype(arg0: ?*JSC__JSGlobalObject) 
 pub extern fn JSC__JSGlobalObject__booleanPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__bunVM(arg0: ?*JSC__JSGlobalObject) ?*bindings.VirtualMachine;
 pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: ?*JSC__JSGlobalObject, arg1: [*c]*anyopaque, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
+pub extern fn JSC__JSGlobalObject__createSyntheticModule_(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: usize, arg3: [*c]JSC__JSValue, arg4: usize) void;
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString) void;
 pub extern fn JSC__JSGlobalObject__errorPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;

@@ -856,6 +856,7 @@ enum class DOMConstructorID : uint16_t {
 
     // --bun--
     Buffer,
+    EventEmitter,
 };
 
 static constexpr unsigned numberOfDOMConstructorsBase = 846;

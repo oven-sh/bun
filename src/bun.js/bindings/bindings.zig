@@ -264,6 +264,10 @@ pub const ZigString = extern struct {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
+    pub fn toAtomicValue(this: *const ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
+        return shim.cppFn("toAtomicValue", .{ this, globalThis });
+    }
+
     pub fn init16(slice_: []const u16) ZigString {
         var out = ZigString{ .ptr = std.mem.sliceAsBytes(slice_).ptr, .len = slice_.len };
         out.markUTF16();
@@ -503,7 +507,7 @@ pub const ZigString = extern struct {
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
-    pub const Extern = [_][]const u8{ "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
+    pub const Extern = [_][]const u8{ "toAtomicValue", "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
 };
 
 pub const DOMURL = opaque {

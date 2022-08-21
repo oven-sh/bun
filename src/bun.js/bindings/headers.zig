@@ -99,6 +99,7 @@ pub extern fn JSC__JSObject__getIndex(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlo
 pub extern fn JSC__JSObject__putRecord(arg0: [*c]JSC__JSObject, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn ZigString__external(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn (?*anyopaque, ?*anyopaque, usize) callconv(.C) void) JSC__JSValue;
 pub extern fn ZigString__to16BitValue(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn ZigString__toAtomicValue(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toErrorInstance(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toExternalU16(arg0: [*c]const u16, arg1: usize, arg2: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toExternalValue(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;

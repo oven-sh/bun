@@ -19,6 +19,7 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("arch"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, arch));
         module.put(globalObject, &JSC.ZigString.init("endianness"), JSC.NewFunction(globalObject, &JSC.ZigString.init("endianness"), 0, endianness));
         module.put(globalObject, &JSC.ZigString.init("freemem"), JSC.NewFunction(globalObject, &JSC.ZigString.init("freemem"), 0, freemem));
+        module.put(globalObject, &JSC.ZigString.init("getPriority"), JSC.NewFunction(globalObject, &JSC.ZigString.init("getPriority"), 1, getPriority));
         module.put(globalObject, &JSC.ZigString.init("homedir"), JSC.NewFunction(globalObject, &JSC.ZigString.init("homedir"), 0, homedir));
         module.put(globalObject, &JSC.ZigString.init("hostname"), JSC.NewFunction(globalObject, &JSC.ZigString.init("hostname"), 0, hostname));
         module.put(globalObject, &JSC.ZigString.init("loadavg"), JSC.NewFunction(globalObject, &JSC.ZigString.init("loadavg"), 0, loadavg));
@@ -67,6 +68,22 @@ pub const Os = struct {
         } else {
             return JSC.JSValue.jsNumber(0);
         }
+    }
+
+    pub fn getPriority(globalThis: *JSC.JSGlobalObject, _: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        //var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
+        //var allocator = stack_fallback.get();
+
+        var arguments: []JSC.JSValue = args_ptr[0..args_len];
+        std.debug.print("test, {any}", .{arguments});
+        //var pid_ = arguments[0].toSlice(globalThis, allocator); //else JSC.ZigString.init("0").toSlice(allocator);
+        //defer pid_.deinit();
+
+        const pid = "0"; //pid_.slice();
+
+        return JSC.ZigString.init(pid).withEncoding().toValueGC(globalThis);
     }
 
     pub fn homedir(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {

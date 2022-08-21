@@ -111,13 +111,59 @@ bool EventEmitter::emitForBindings(const AtomString& eventType)
     return true;
 }
 
-void EventEmitter::emit(const AtomString& eventName)
+void EventEmitter::emit(const AtomString& eventType)
 {
-    fireEventListeners(eventName);
+    fireEventListeners(eventType);
 }
 
 void EventEmitter::uncaughtExceptionInEventHandler()
 {
+}
+
+Vector<AtomString> EventEmitter::getEventNames()
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return {};
+    return data->eventListenerMap.eventTypes();
+}
+
+int EventEmitter::listenerCount(const AtomString& eventType)
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return 0;
+    int result = 0;
+    if (auto* listenersVector = data->eventListenerMap.find(eventType)) {
+        for (auto& registeredListener : *listenersVector) {
+            if (UNLIKELY(registeredListener->wasRemoved()))
+                continue;
+
+            if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
+                result++;
+            }
+        }
+    }
+    return result;
+}
+
+Vector<JSObject*> EventEmitter::getListeners(const AtomString& eventType)
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return {};
+    Vector<JSObject*> listeners;
+    if (auto* listenersVector = data->eventListenerMap.find(eventType)) {
+        for (auto& registeredListener : *listenersVector) {
+            if (UNLIKELY(registeredListener->wasRemoved()))
+                continue;
+
+            if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
+                listeners.append(jsFunction);
+            }
+        }
+    }
+    return listeners;
 }
 
 static const AtomString& legacyType(const Event& event)

@@ -48,6 +48,9 @@ static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_prependOnceList
 static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_removeListener);
 static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_removeAllListeners);
 static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_emit);
+static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_eventNames);
+static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listenerCount);
+static JSC_DECLARE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listeners);
 
 // Attributes
 
@@ -142,6 +145,11 @@ static const HashTableValue JSEventEmitterPrototypeTableValues[] = {
     { "off"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventEmitterPrototypeFunction_removeListener), (intptr_t)(2) } },
     { "removeAllListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventEmitterPrototypeFunction_removeAllListeners), (intptr_t)(1) } },
     { "emit"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventEmitterPrototypeFunction_emit), (intptr_t)(1) } },
+    { "eventNames"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventEmitterPrototypeFunction_eventNames), (intptr_t)(0) } },
+    { "listenerCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventEmitterPrototypeFunction_listenerCount), (intptr_t)(1) } },
+    { "listeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventEmitterPrototypeFunction_listeners), (intptr_t)(1) } },
+    // Need to double check the difference between rawListeners and listeners.
+    { "rawListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsEventEmitterPrototypeFunction_listeners), (intptr_t)(1) } },
 };
 
 const ClassInfo JSEventEmitterPrototype::s_info = { "EventEmitter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventEmitterPrototype) };
@@ -326,6 +334,69 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_emitBody(JSC::
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_emit, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_emitBody>(*lexicalGlobalObject, *callFrame, "emit");
+}
+
+static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_eventNamesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    JSC::MarkedArgumentBuffer args;
+    for (auto& name : impl.getEventNames()) {
+        args.append(jsOwnedString(vm, name));
+    }
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), WTFMove(args))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_eventNames, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_eventNamesBody>(*lexicalGlobalObject, *callFrame, "eventNames");
+}
+
+static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenerCountBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    if (UNLIKELY(callFrame->argumentCount() < 1))
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    auto* argument0 = callFrame->uncheckedArgument(0).toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    auto eventType = argument0->toAtomString(lexicalGlobalObject);
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(impl.listenerCount(eventType))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listenerCount, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenerCountBody>(*lexicalGlobalObject, *callFrame, "listeners");
+}
+
+static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventEmitter>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    if (UNLIKELY(callFrame->argumentCount() < 1))
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    auto* argument0 = callFrame->uncheckedArgument(0).toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    auto eventType = argument0->toAtomString(lexicalGlobalObject);
+    JSC::MarkedArgumentBuffer args;
+    for (auto* listener : impl.getListeners(eventType)) {
+        args.append(listener);
+    }
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), WTFMove(args))));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_listeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSEventEmitter>::call<jsEventEmitterPrototypeFunction_listenersBody>(*lexicalGlobalObject, *callFrame, "listeners");
 }
 
 JSC::GCClient::IsoSubspace* JSEventEmitter::subspaceForImpl(JSC::VM& vm)

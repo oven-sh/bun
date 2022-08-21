@@ -60,6 +60,10 @@ public:
     WEBCORE_EXPORT void emit(const AtomString&);
     WEBCORE_EXPORT void uncaughtExceptionInEventHandler();
 
+    WEBCORE_EXPORT Vector<AtomString> getEventNames();
+    WEBCORE_EXPORT Vector<JSObject*> getListeners(const AtomString& eventType);
+    WEBCORE_EXPORT int listenerCount(const AtomString& eventType);
+
     bool hasEventListeners() const;
     bool hasEventListeners(const AtomString& eventType) const;
     bool hasCapturingEventListeners(const AtomString& eventType);

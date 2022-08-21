@@ -1094,7 +1094,11 @@ pub const Command = struct {
             .RunCommand => {
                 const ctx = try Command.Context.create(allocator, log, .RunCommand);
                 if (ctx.positionals.len > 0) {
-                    _ = try RunCommand.exec(ctx, false, true);
+                    if (try RunCommand.exec(ctx, false, true)) {
+                        return;
+                    }
+
+                    Global.exit(1);
                 }
             },
             .UpgradeCommand => {

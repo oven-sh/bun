@@ -216,9 +216,8 @@ pub const Os = struct {
                 result.put(globalThis, &JSC.ZigString.init("uid"), JSC.JSValue.jsNumber(std.os.linux.getuid()));
                 result.put(globalThis, &JSC.ZigString.init("gid"), JSC.JSValue.jsNumber(std.os.linux.getgid()));
             } else {
-                // TODO: IMPLEMENT FOR MACOS
-                result.put(globalThis, &JSC.ZigString.init("uid"), JSC.JSValue.jsNumber(-1));
-                result.put(globalThis, &JSC.ZigString.init("gid"), JSC.JSValue.jsNumber(-1));
+                result.put(globalThis, &JSC.ZigString.init("uid"), JSC.JSValue.jsNumber(C.darwin.getuid()));
+                result.put(globalThis, &JSC.ZigString.init("gid"), JSC.JSValue.jsNumber(C.darwin.getgid()));
             }
         }
 

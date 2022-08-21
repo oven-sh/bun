@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const uinstd = @cImport(@cInclude("unistd.h"));
+const unistd = @cImport(@cInclude("unistd.h"));
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
@@ -466,6 +466,8 @@ pub const kFSEventStreamEventFlagMount: c_int = 64;
 pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
+pub const uid_t = u32;
+pub const gid_t = u32;
 
 // System related
 pub fn get_free_memory() u64 {
@@ -473,8 +475,8 @@ pub fn get_free_memory() u64 {
 }
 
 pub fn get_total_memory() u64 {
-    const pages = uinstd.sysconf(uinstd._SC_PHYS_PAGES);
-    const page_size = uinstd.sysconf(uinstd._SC_PAGE_SIZE);
+    const pages = unistd.sysconf(unistd._SC_PHYS_PAGES);
+    const page_size = unistd.sysconf(unistd._SC_PAGE_SIZE);
 
     return @bitCast(u64, pages) * @bitCast(u64, page_size);
 }
@@ -485,4 +487,12 @@ pub fn get_system_uptime() u64 {
 
 pub fn get_system_loadavg() [3]f64 {
     return [3]f64{ 0, 0, 0 };
+}
+
+pub fn getuid() uid_t {
+    return unistd.getuid();
+}
+
+pub fn getgid() gid_t {
+    return unistd.getuid();
 }

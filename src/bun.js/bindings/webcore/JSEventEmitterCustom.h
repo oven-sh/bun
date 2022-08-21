@@ -25,7 +25,7 @@ private:
     JSC::JSObject& m_wrapper;
 };
 
-std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(JSC::VM&, JSC::JSValue thisValue);
+std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue thisValue);
 
 template<> class IDLOperation<JSEventEmitter> {
 public:
@@ -39,7 +39,7 @@ public:
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
         auto thisValue = callFrame.thisValue().toThis(&lexicalGlobalObject, JSC::ECMAMode::strict());
-        auto thisObject = jsEventEmitterCast(vm, thisValue.isUndefinedOrNull() ? JSC::JSValue(&lexicalGlobalObject) : thisValue);
+        auto thisObject = jsEventEmitterCast(vm, &lexicalGlobalObject, thisValue.isUndefinedOrNull() ? JSC::JSValue(&lexicalGlobalObject) : thisValue);
         if (UNLIKELY(!thisObject))
             return throwThisTypeError(lexicalGlobalObject, throwScope, "EventEmitter", operationName);
 

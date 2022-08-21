@@ -102,18 +102,18 @@ bool EventEmitter::hasActiveEventListeners(const AtomString& eventType) const
     return data && data->eventListenerMap.containsActive(eventType);
 }
 
-bool EventEmitter::emitForBindings(const AtomString& eventType)
+bool EventEmitter::emitForBindings(const AtomString& eventType, const MarkedArgumentBuffer& arguments)
 {
     if (!scriptExecutionContext())
         return false;
 
-    emit(eventType);
+    emit(eventType, arguments);
     return true;
 }
 
-void EventEmitter::emit(const AtomString& eventType)
+void EventEmitter::emit(const AtomString& eventType, const MarkedArgumentBuffer& arguments)
 {
-    fireEventListeners(eventType);
+    fireEventListeners(eventType, arguments);
 }
 
 void EventEmitter::uncaughtExceptionInEventHandler()
@@ -173,7 +173,7 @@ static const AtomString& legacyType(const Event& event)
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-void EventEmitter::fireEventListeners(const AtomString& eventType)
+void EventEmitter::fireEventListeners(const AtomString& eventType, const MarkedArgumentBuffer& arguments)
 {
     ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::isEventAllowedInMainThread());
 
@@ -184,7 +184,7 @@ void EventEmitter::fireEventListeners(const AtomString& eventType)
     SetForScope firingEventListenersScope(data->isFiringEventListeners, true);
 
     if (auto* listenersVector = data->eventListenerMap.find(eventType)) {
-        innerInvokeEventListeners(eventType, *listenersVector);
+        innerInvokeEventListeners(eventType, *listenersVector, arguments);
         return;
     }
 }
@@ -192,7 +192,7 @@ void EventEmitter::fireEventListeners(const AtomString& eventType)
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
 // https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-void EventEmitter::innerInvokeEventListeners(const AtomString& eventType, EventListenerVector listeners)
+void EventEmitter::innerInvokeEventListeners(const AtomString& eventType, EventListenerVector listeners, const MarkedArgumentBuffer& arguments)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -218,7 +218,6 @@ void EventEmitter::innerInvokeEventListeners(const AtomString& eventType, EventL
         if (JSC::JSObject* jsFunction = registeredListener->callback().jsFunction()) {
             JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
             auto callData = JSC::getCallData(jsFunction);
-            JSC::MarkedArgumentBuffer arguments;
             JSC::call(jsFunction->globalObject(), jsFunction, callData, JSC::jsUndefined(), arguments);
         }
     }

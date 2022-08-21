@@ -51,13 +51,13 @@ public:
     WEBCORE_EXPORT void addListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&&, bool, bool);
     WEBCORE_EXPORT void removeListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&&);
     WEBCORE_EXPORT void removeAllListenersForBindings(const AtomString& eventType);
-    WEBCORE_EXPORT bool emitForBindings(const AtomString&);
+    WEBCORE_EXPORT bool emitForBindings(const AtomString&, const MarkedArgumentBuffer&);
 
     WEBCORE_EXPORT bool addListener(const AtomString& eventType, Ref<EventListener>&&, bool, bool);
     WEBCORE_EXPORT bool removeListener(const AtomString& eventType, EventListener&);
     WEBCORE_EXPORT bool removeAllListeners(const AtomString& eventType);
 
-    WEBCORE_EXPORT void emit(const AtomString&);
+    WEBCORE_EXPORT void emit(const AtomString&, const MarkedArgumentBuffer&);
     WEBCORE_EXPORT void uncaughtExceptionInEventHandler();
 
     WEBCORE_EXPORT Vector<AtomString> getEventNames();
@@ -72,7 +72,7 @@ public:
     Vector<AtomString> eventTypes();
     const EventListenerVector& eventListeners(const AtomString& eventType);
 
-    void fireEventListeners(const AtomString& eventName);
+    void fireEventListeners(const AtomString& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
 
     template<typename Visitor> void visitJSEventListeners(Visitor&);
@@ -90,7 +90,7 @@ private:
     EventEmitterData& ensureEventEmitterData() { return m_eventTargetData; }
     void eventListenersDidChange() {}
 
-    void innerInvokeEventListeners(const AtomString&, EventListenerVector);
+    void innerInvokeEventListeners(const AtomString&, EventListenerVector, const MarkedArgumentBuffer& arguments);
     void invalidateEventListenerRegions();
 
     EventEmitterData m_eventTargetData;

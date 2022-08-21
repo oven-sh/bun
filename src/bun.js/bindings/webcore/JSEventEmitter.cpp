@@ -323,12 +323,17 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_emitBody(JSC::
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
-    if (UNLIKELY(callFrame->argumentCount() < 1))
+    size_t argumentCount = callFrame->argumentCount();
+    if (UNLIKELY(argumentCount < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* argument0 = callFrame->uncheckedArgument(0).toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    JSC::MarkedArgumentBuffer args;
+    for (size_t i = 1; i < argumentCount; ++i) {
+        args.append(callFrame->uncheckedArgument(i));
+    }
     auto eventType = argument0->toAtomString(lexicalGlobalObject);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.emitForBindings(eventType))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.emitForBindings(eventType, args))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsEventEmitterPrototypeFunction_emit, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

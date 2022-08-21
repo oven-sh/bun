@@ -2437,7 +2437,7 @@ pub const ResolveError = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        return ZigString.init(JSC.Node.ErrorCode.ERR_MODULE_NOT_FOUND).toValue(ctx).asObjectRef();
+        return ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_MODULE_NOT_FOUND))).toValue(ctx).asObjectRef();
     }
 
     pub fn getPosition(

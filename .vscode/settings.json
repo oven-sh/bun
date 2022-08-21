@@ -171,7 +171,8 @@
     "list": "cpp",
     "shared_mutex": "cpp",
     "cinttypes": "cpp",
-    "variant": "cpp"
+    "variant": "cpp",
+    "sysctl.h": "c"
   },
   "cmake.configureOnOpen": false
 }

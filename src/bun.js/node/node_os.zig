@@ -152,7 +152,7 @@ pub const Os = struct {
         if (comptime Environment.isLinux) {
             return JSC.JSValue.jsNumberFromUint64(C.linux.get_total_memory());
         } else {
-            return JSC.JSValue.jsNumber(0);
+            return JSC.JSValue.jsNumber(C.darwin.get_total_memory());
         }
     }
 

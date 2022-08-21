@@ -468,3 +468,21 @@ pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
 // System related
+pub fn get_free_memory() u64 {
+    return 0;
+}
+
+pub fn get_total_memory() u64 {
+    const pages = uinstd.sysconf(uinstd._SC_PHYS_PAGES);
+    const page_size = uinstd.sysconf(uinstd._SC_PAGE_SIZE);
+
+    return @bitCast(u64, pages) * @bitCast(u64, page_size);
+}
+
+pub fn get_system_uptime() u64 {
+    return 0;
+}
+
+pub fn get_system_loadavg() [3]f64 {
+    return [3]f64{ 0, 0, 0 };
+}

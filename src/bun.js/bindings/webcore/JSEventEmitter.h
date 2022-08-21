@@ -7,6 +7,11 @@
 
 namespace WebCore {
 
+JSC_DECLARE_HOST_FUNCTION(Events_functionGetEventListeners);
+JSC_DECLARE_HOST_FUNCTION(Events_functionListenerCount);
+JSC_DECLARE_HOST_FUNCTION(Events_functionOnce);
+JSC_DECLARE_HOST_FUNCTION(Events_functionOn);
+
 class JSEventEmitter : public JSDOMWrapper<EventEmitter> {
 public:
     using Base = JSDOMWrapper<EventEmitter>;

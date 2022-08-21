@@ -298,6 +298,7 @@ pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?
     );
 }
 
+// System informations
 pub const struct_sysinfo = extern struct {
     uptime: c_long align(8),
     loads: [3]c_ulong,
@@ -320,18 +321,32 @@ pub const struct_sysinfo = extern struct {
 };
 pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
 
-pub export fn get_free_memory() u64 {
+pub fn get_free_memory() u64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.freeram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
     return 0;
 }
-pub export fn get_total_memory() u64 {
+
+pub fn get_total_memory() u64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.totalram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
     return 0;
 }
-pub export fn get_system_uptime() u64 {
+
+pub fn get_system_uptime() u64 {
     var info: struct_sysinfo = undefined;
     if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.uptime);
     return 0;
+}
+
+pub fn get_system_loadavg() [3]f64 {
+    var info: struct_sysinfo = undefined;
+    if (sysinfo(&info) == @as(c_int, 0)) {
+        return [3]f64{
+            std.math.ceil((@intToFloat(f64, info.loads[0]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@intToFloat(f64, info.loads[1]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@intToFloat(f64, info.loads[2]) / 65536.0) * 100.0) / 100.0,
+        };
+    }
+    return [3]f64{ 0, 0, 0 };
 }

@@ -21,12 +21,13 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("freemem"), JSC.NewFunction(globalObject, &JSC.ZigString.init("freemem"), 0, freemem));
         module.put(globalObject, &JSC.ZigString.init("homedir"), JSC.NewFunction(globalObject, &JSC.ZigString.init("homedir"), 0, homedir));
         module.put(globalObject, &JSC.ZigString.init("hostname"), JSC.NewFunction(globalObject, &JSC.ZigString.init("hostname"), 0, hostname));
-        module.put(globalObject, &JSC.ZigString.init("uptime"), JSC.NewFunction(globalObject, &JSC.ZigString.init("uptime"), 0, uptime));
+        module.put(globalObject, &JSC.ZigString.init("loadavg"), JSC.NewFunction(globalObject, &JSC.ZigString.init("loadavg"), 0, loadavg));
         module.put(globalObject, &JSC.ZigString.init("platform"), JSC.NewFunction(globalObject, &JSC.ZigString.init("platform"), 0, platform));
         module.put(globalObject, &JSC.ZigString.init("release"), JSC.NewFunction(globalObject, &JSC.ZigString.init("release"), 0, release));
         module.put(globalObject, &JSC.ZigString.init("tmpdir"), JSC.NewFunction(globalObject, &JSC.ZigString.init("tmpdir"), 0, tmpdir));
         module.put(globalObject, &JSC.ZigString.init("totalmem"), JSC.NewFunction(globalObject, &JSC.ZigString.init("totalmem"), 0, @"totalmem"));
         module.put(globalObject, &JSC.ZigString.init("type"), JSC.NewFunction(globalObject, &JSC.ZigString.init("type"), 0, @"type"));
+        module.put(globalObject, &JSC.ZigString.init("uptime"), JSC.NewFunction(globalObject, &JSC.ZigString.init("uptime"), 0, uptime));
 
         module.put(globalObject, &JSC.ZigString.init("devNull"), JSC.ZigString.init(devNull).withEncoding().toValue(globalObject));
         module.put(globalObject, &JSC.ZigString.init("EOL"), JSC.ZigString.init(EOL).withEncoding().toValue(globalObject));
@@ -57,6 +58,8 @@ pub const Os = struct {
     }
 
     pub fn freemem(_: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
         if (comptime Environment.isLinux) {
             return JSC.JSValue.jsNumberFromUint64(C.linux.get_free_memory());
         } else {
@@ -84,13 +87,22 @@ pub const Os = struct {
         return JSC.ZigString.init(std.os.gethostname(&name_buffer) catch "unknown").withEncoding().toValueGC(globalThis);
     }
 
-    pub fn uptime(_: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn loadavg(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isLinux) {
-            return JSC.JSValue.jsNumberFromUint64(C.linux.get_system_uptime());
+            const result = C.linux.get_system_loadavg();
+            return JSC.JSArray.from(globalThis, &.{
+                JSC.JSValue.jsDoubleNumber(result[0]),
+                JSC.JSValue.jsDoubleNumber(result[1]),
+                JSC.JSValue.jsDoubleNumber(result[2]),
+            });
         } else {
-            return JSC.JSValue.jsNumber(0);
+            return JSC.JSArray.from(globalThis, &.{
+                JSC.JSValue.jsNumber(0),
+                JSC.JSValue.jsNumber(0),
+                JSC.JSValue.jsNumber(0),
+            });
         }
     }
 
@@ -133,6 +145,8 @@ pub const Os = struct {
     }
 
     pub fn totalmem(_: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
         if (comptime Environment.isLinux) {
             return JSC.JSValue.jsNumberFromUint64(C.linux.get_total_memory());
         } else {
@@ -151,6 +165,16 @@ pub const Os = struct {
             return JSC.ZigString.init("Linux").withEncoding().toValueGC(globalThis);
 
         return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
+    }
+
+    pub fn uptime(_: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        if (comptime Environment.isLinux) {
+            return JSC.JSValue.jsNumberFromUint64(C.linux.get_system_uptime());
+        } else {
+            return JSC.JSValue.jsNumber(0);
+        }
     }
 };
 

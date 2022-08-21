@@ -465,3 +465,5 @@ pub const kFSEventStreamEventFlagMount: c_int = 64;
 pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
+
+// System informations

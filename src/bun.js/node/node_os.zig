@@ -28,6 +28,7 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("totalmem"), JSC.NewFunction(globalObject, &JSC.ZigString.init("totalmem"), 0, @"totalmem"));
         module.put(globalObject, &JSC.ZigString.init("type"), JSC.NewFunction(globalObject, &JSC.ZigString.init("type"), 0, @"type"));
         module.put(globalObject, &JSC.ZigString.init("uptime"), JSC.NewFunction(globalObject, &JSC.ZigString.init("uptime"), 0, uptime));
+        module.put(globalObject, &JSC.ZigString.init("userInfo"), JSC.NewFunction(globalObject, &JSC.ZigString.init("userInfo"), 0, userInfo));
         module.put(globalObject, &JSC.ZigString.init("version"), JSC.NewFunction(globalObject, &JSC.ZigString.init("version"), 0, version));
 
         module.put(globalObject, &JSC.ZigString.init("devNull"), JSC.ZigString.init(devNull).withEncoding().toValue(globalObject));
@@ -176,6 +177,35 @@ pub const Os = struct {
         } else {
             return JSC.JSValue.jsNumber(0);
         }
+    }
+
+    pub fn userInfo(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+        const result = JSC.JSValue.createEmptyObject(globalThis, 5);
+
+        result.put(globalThis, &JSC.ZigString.init("homedir"), homedir(globalThis, isWindows, args_ptr, args_len));
+
+        if (comptime Environment.isWindows) {
+            result.put(globalThis, &JSC.ZigString.init("username"), JSC.ZigString.init(std.os.getenv("USERNAME") orelse "unknown").withEncoding().toValueGC(globalThis));
+            result.put(globalThis, &JSC.ZigString.init("uid"), JSC.JSValue.jsNumber(-1));
+            result.put(globalThis, &JSC.ZigString.init("gid"), JSC.JSValue.jsNumber(-1));
+            result.put(globalThis, &JSC.ZigString.init("shell"), JSC.JSValue.jsNull());
+        } else {
+            const username = std.os.getenv("USER") orelse "unknown";
+
+            result.put(globalThis, &JSC.ZigString.init("username"), JSC.ZigString.init(username).withEncoding().toValueGC(globalThis));
+            result.put(globalThis, &JSC.ZigString.init("shell"), JSC.ZigString.init(std.os.getenv("SHELL") orelse "unknown").withEncoding().toValueGC(globalThis));
+
+            if (comptime Environment.isLinux) {
+                result.put(globalThis, &JSC.ZigString.init("uid"), JSC.JSValue.jsNumber(std.os.linux.getuid()));
+                result.put(globalThis, &JSC.ZigString.init("gid"), JSC.JSValue.jsNumber(std.os.linux.getgid()));
+            } else {
+                // TODO: IMPLEMENT FOR MACOS
+                result.put(globalThis, &JSC.ZigString.init("uid"), JSC.JSValue.jsNumber(-1));
+                result.put(globalThis, &JSC.ZigString.init("gid"), JSC.JSValue.jsNumber(-1));
+            }
+        }
+
+        return result;
     }
 
     pub fn version(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {

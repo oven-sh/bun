@@ -298,7 +298,7 @@ pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?
     );
 }
 
-// System informations
+// System related
 pub const struct_sysinfo = extern struct {
     uptime: c_long align(8),
     loads: [3]c_ulong,

@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const uinstd = @cImport(@cInclude("unistd.h"));
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
@@ -466,4 +467,4 @@ pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
-// System informations
+// System related

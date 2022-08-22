@@ -14,7 +14,7 @@ pub const Os = struct {
     pub const code = @embedFile("../os.exports.js");
 
     pub fn create(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        const module = JSC.JSValue.createEmptyObject(globalObject, 19);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 20);
 
         module.put(globalObject, &JSC.ZigString.init("arch"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, arch));
         module.put(globalObject, &JSC.ZigString.init("cpus"), JSC.NewFunction(globalObject, &JSC.ZigString.init("cpus"), 0, cpus));

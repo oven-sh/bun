@@ -19,6 +19,7 @@ function bound(obj) {
     version: obj.version.bind(obj),
     devNull: obj.devNull,
     EOL: obj.EOL,
+    constants: obj.constants,
   };
 }
 
@@ -44,6 +45,7 @@ export var {
   version,
   devNull,
   EOL,
+  constants,
 } = os;
 
 export default os;

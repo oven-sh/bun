@@ -14,7 +14,7 @@ pub const Os = struct {
     pub const code = @embedFile("../os.exports.js");
 
     pub fn create(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        const module = JSC.JSValue.createEmptyObject(globalObject, 5);
+        const module = JSC.JSValue.createEmptyObject(globalObject, 19);
 
         module.put(globalObject, &JSC.ZigString.init("arch"), JSC.NewFunction(globalObject, &JSC.ZigString.init("arch"), 0, arch));
         module.put(globalObject, &JSC.ZigString.init("cpus"), JSC.NewFunction(globalObject, &JSC.ZigString.init("cpus"), 0, cpus));
@@ -37,11 +37,70 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("devNull"), JSC.ZigString.init(devNull).withEncoding().toValue(globalObject));
         module.put(globalObject, &JSC.ZigString.init("EOL"), JSC.ZigString.init(EOL).withEncoding().toValue(globalObject));
 
+        constants.create(module, globalObject);
+
         return module;
     }
 
     pub const EOL = if (Environment.isWindows) "\\r\\n" else "\\n";
     pub const devNull = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
+    pub const constants = struct {
+        pub const signals = struct {};
+        pub const errno = struct {};
+        pub const dlopen = struct {
+            pub const RTLD_LAZY = 1;
+            pub const RTLD_NOW = 2;
+            pub const RTLD_GLOBAL = 256;
+            pub const RTLD_LOCAL = 0;
+            pub const RTLD_DEEPBIND = 8;
+
+            pub fn create(module: JSC.JSValue, globalObject: *JSC.JSGlobalObject) callconv(.C) void {
+                const constantsModule = JSC.JSValue.createEmptyObject(globalObject, 5);
+
+                constantsModule.put(globalObject, &JSC.ZigString.init("RTLD_LAZY"), JSC.JSValue.jsNumber(RTLD_LAZY));
+                constantsModule.put(globalObject, &JSC.ZigString.init("RTLD_NOW"), JSC.JSValue.jsNumber(RTLD_NOW));
+                constantsModule.put(globalObject, &JSC.ZigString.init("RTLD_GLOBAL"), JSC.JSValue.jsNumber(RTLD_GLOBAL));
+                constantsModule.put(globalObject, &JSC.ZigString.init("RTLD_LOCAL"), JSC.JSValue.jsNumber(RTLD_LOCAL));
+                constantsModule.put(globalObject, &JSC.ZigString.init("RTLD_DEEPBIND"), JSC.JSValue.jsNumber(RTLD_DEEPBIND));
+
+                module.put(globalObject, &JSC.ZigString.init("dlopen"), constantsModule);
+            }
+        };
+        pub const priority = struct {
+            pub const PRIORITY_LOW = 19;
+            pub const PRIORITY_BELOW_NORMAL = 10;
+            pub const PRIORITY_NORMAL = 0;
+            pub const PRIORITY_ABOVE_NORMAL = -7;
+            pub const PRIORITY_HIGH = -14;
+            pub const PRIORITY_HIGHEST = -20;
+
+            pub fn create(module: JSC.JSValue, globalObject: *JSC.JSGlobalObject) callconv(.C) void {
+                const constantsModule = JSC.JSValue.createEmptyObject(globalObject, 7);
+
+                constantsModule.put(globalObject, &JSC.ZigString.init("PRIORITY_LOW"), JSC.JSValue.jsNumber(PRIORITY_LOW));
+                constantsModule.put(globalObject, &JSC.ZigString.init("PRIORITY_BELOW_NORMAL"), JSC.JSValue.jsNumber(PRIORITY_BELOW_NORMAL));
+                constantsModule.put(globalObject, &JSC.ZigString.init("PRIORITY_NORMAL"), JSC.JSValue.jsNumber(PRIORITY_NORMAL));
+                constantsModule.put(globalObject, &JSC.ZigString.init("PRIORITY_ABOVE_NORMAL"), JSC.JSValue.jsNumber(PRIORITY_ABOVE_NORMAL));
+                constantsModule.put(globalObject, &JSC.ZigString.init("PRIORITY_HIGH"), JSC.JSValue.jsNumber(PRIORITY_HIGH));
+                constantsModule.put(globalObject, &JSC.ZigString.init("PRIORITY_HIGHEST"), JSC.JSValue.jsNumber(PRIORITY_HIGHEST));
+                constantsModule.put(globalObject, &JSC.ZigString.init("PRIORITY_LOW"), JSC.JSValue.jsNumber(PRIORITY_LOW));
+
+                module.put(globalObject, &JSC.ZigString.init("priority"), constantsModule);
+            }
+        };
+        pub const UV_UDP_REUSEADDR = 4;
+
+        pub fn create(module: JSC.JSValue, globalObject: *JSC.JSGlobalObject) callconv(.C) void {
+            const constantsModule = JSC.JSValue.createEmptyObject(globalObject, 31);
+
+            constantsModule.put(globalObject, &JSC.ZigString.init("UV_UDP_REUSEADDR"), JSC.JSValue.jsNumber(UV_UDP_REUSEADDR));
+
+            priority.create(constantsModule, globalObject);
+            dlopen.create(constantsModule, globalObject);
+
+            module.put(globalObject, &JSC.ZigString.init("constants"), constantsModule);
+        }
+    };
 
     pub fn arch(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();

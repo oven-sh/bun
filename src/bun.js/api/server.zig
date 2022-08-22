@@ -527,6 +527,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         has_marked_complete: bool = false,
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
+        response_protected: bool = false,
         response_ptr: ?*JSC.WebCore.Response = null,
         blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
         promise: ?*JSC.JSValue = null,
@@ -813,7 +814,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (!this.response_jsvalue.isEmpty()) {
-                this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
+                if (this.response_protected) {
+                    this.response_jsvalue.unprotect();
+                    this.response_protected = false;
+                }
                 this.response_jsvalue = JSC.JSValue.zero;
             }
 
@@ -1824,7 +1828,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         vm: *JSC.VirtualMachine = undefined,
         globalThis: *JSGlobalObject,
         base_url_string_for_joining: string = "",
-        response_objects_pool: JSC.WebCore.Response.Pool = JSC.WebCore.Response.Pool{},
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: std.mem.Allocator = undefined,
@@ -1913,12 +1916,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn deinit(this: *ThisServer) void {
-            if (this.vm.response_objects_pool) |pool| {
-                if (pool == &this.response_objects_pool) {
-                    this.vm.response_objects_pool = null;
-                }
-            }
-
             this.app.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);
@@ -2025,7 +2022,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.listener = socket;
             const needs_post_handler = this.vm.uws_event_loop == null;
             this.vm.uws_event_loop = uws.Loop.get();
-            this.vm.response_objects_pool = &this.response_objects_pool;
             this.listen_callback = JSC.AnyTask.New(ThisServer, run).init(this);
             this.vm.eventLoop().enqueueTask(JSC.Task.init(&this.listen_callback));
             if (needs_post_handler) {
@@ -2150,14 +2146,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (response_value.as(JSC.WebCore.Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
+                ctx.response_protected = false;
                 switch (response.body.value) {
                     .Blob => |*blob| {
                         if (blob.needsToReadFile()) {
                             response_value.protect();
+                            ctx.response_protected = true;
                         }
                     },
                     .Locked => {
                         response_value.protect();
+                        ctx.response_protected = true;
                     },
                     else => {},
                 }

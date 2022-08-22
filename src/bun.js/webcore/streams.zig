@@ -1460,7 +1460,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             std.debug.assert(!this.done);
             const success = if (!this.requested_end) this.res.write(buf) else this.res.tryEnd(buf, this.end_len);
             this.has_backpressure = !success;
-            log("send: {d} bytes ({d})", .{ buf.len, this.has_backpressure });
+            log("send: {d} bytes (backpressure: {d})", .{ buf.len, this.has_backpressure });
             return success;
         }
 
@@ -1681,6 +1681,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
                 this.res.onWritable(*@This(), onWritable, this);
             } else {
+                log("has backpressure", .{});
                 _ = this.buffer.write(this.allocator, bytes) catch {
                     return .{ .err = Syscall.Error.fromCode(.NOMEM, .write) };
                 };

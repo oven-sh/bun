@@ -91,6 +91,18 @@ export class Server extends EventEmitter {
   }
 }
 
+function assignHeaders(object, req) {
+  var headers = req.headers.toJSON();
+  const rawHeaders = new Array(req.headers.count * 2);
+  var i = 0;
+  for (const key in headers) {
+    rawHeaders[i++] = key;
+    rawHeaders[i++] = headers[key];
+  }
+  object.headers = headers;
+  object.rawHeaders = rawHeaders;
+}
+
 export class IncomingMessage extends Readable {
   constructor(req) {
     const method = req.method;
@@ -116,62 +128,35 @@ export class IncomingMessage extends Readable {
     this._socket = undefined;
 
     this.url = url.pathname;
-    this.#inputRequest = req;
+    assignHeaders(this, req);
   }
-  #inputRequest;
-  #headers;
-  #rawHeaders;
+
+  headers;
+  rawHeaders;
   _consuming = false;
   _dumped = false;
-
-  #constructHeaders() {
-    const rawHeaders = [];
-    const headers = Object.create(null);
-    var req = this.#inputRequest;
-    this.#inputRequest = undefined;
-    for (const [key, value] of req.headers.entries()) {
-      headers[key] = value;
-      rawHeaders.push(key, value);
-    }
-    this.#headers = headers;
-    this.#rawHeaders = rawHeaders;
-  }
-
-  get headers() {
-    var _headers = this.#headers;
-    if (_headers) return _headers;
-    this.#constructHeaders();
-    return this.#headers;
-  }
-
-  set headers(val) {
-    this.#headers = val;
-    return true;
-  }
-
-  get rawHeaders() {
-    var _rawHeaders = this.#rawHeaders;
-    if (_rawHeaders) return _rawHeaders;
-    this.#constructHeaders();
-    return this.#rawHeaders;
-  }
-
-  set rawHeaders(val) {
-    this.#rawHeaders = val;
-    return true;
-  }
+  _body;
+  _body_offset;
+  _socket;
+  _no_body;
+  _req;
+  url;
 
   _construct(callback) {
     // TODO: streaming
-    (async () => {
-      if (!this._no_body)
-        try {
-          this._body = Buffer.from(await this._req.arrayBuffer());
+    if (this._no_body) {
+      callback();
+      return;
+    }
 
-          callback();
-        } catch (err) {
-          callback(err);
-        }
+    (async () => {
+      try {
+        this._body = Buffer.from(await this._req.arrayBuffer());
+
+        callback();
+      } catch (err) {
+        callback(err);
+      }
     })();
   }
 
@@ -254,7 +239,7 @@ export class ServerResponse extends Writable {
     this._reply = reply;
     this.sendDate = true;
     this.statusCode = 200;
-    this.#headers = undefined;
+    this.#headers = new Headers();
     this.headersSent = false;
     this.statusMessage = undefined;
     this.#controller = undefined;
@@ -290,6 +275,7 @@ export class ServerResponse extends Writable {
   }
 
   _writev(chunks, callback) {
+    console.trace("typeof chunk " + chunks[0].chunk);
     if (chunks.length === 1 && !this.headersSent && !this.#firstWrite) {
       this.#firstWrite = chunks[0].chunk;
       callback();
@@ -411,27 +397,27 @@ export class ServerResponse extends Writable {
   flushHeaders() {}
 
   removeHeader(name) {
-    var headers = (this.#headers ||= new Headers());
+    var headers = this.#headers;
     headers.delete(name);
   }
 
   getHeader(name) {
-    var headers = (this.#headers ||= new Headers());
+    var headers = this.#headers;
     return headers.get(name);
   }
 
   hasHeader(name) {
-    var headers = (this.#headers ||= new Headers());
+    var headers = this.#headers;
     return headers.has(name);
   }
 
   getHeaderNames() {
-    var headers = (this.#headers ||= new Headers());
+    var headers = this.#headers;
     return Array.from(headers.keys());
   }
 
   setHeader(name, value) {
-    var headers = (this.#headers ||= new Headers());
+    var headers = this.#headers;
 
     headers.set(name, value);
 
@@ -446,7 +432,7 @@ export class ServerResponse extends Writable {
 
   getHeaders() {
     if (!this.#headers) return {};
-    return Object.fromEntries(this.#headers.entries());
+    return this.#headers.toJSON();
   }
 }
 

@@ -73,7 +73,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_forEach);
 
 // Non-standard functions
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_toJSON);
-static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_size);
+static JSC_DECLARE_CUSTOM_GETTER(jsFetchHeadersPrototypeFunction_size);
 
 // Attributes
 
@@ -166,6 +166,19 @@ template<> void JSFetchHeadersDOMConstructor::initializeProperties(VM& vm, JSDOM
     putDirect(vm, vm.propertyNames->prototype, JSFetchHeaders::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
+/**
+ * Non standard function.
+ **/
+JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersGetterCount, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSFetchHeaders* castedThis = jsCast<JSFetchHeaders*>(JSValue::decode(thisValue));
+
+    auto& impl = castedThis->wrapped();
+    auto count = impl.size();
+    return JSValue::encode(jsNumber(count));
+}
+
 /* Hash table for prototype */
 
 static const HashTableValue JSFetchHeadersPrototypeTableValues[] = {
@@ -180,7 +193,7 @@ static const HashTableValue JSFetchHeadersPrototypeTableValues[] = {
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_values), (intptr_t)(0) } },
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_forEach), (intptr_t)(1) } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_toJSON), (intptr_t)(0) } },
-    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_size), (intptr_t)(0) } },
+    { "count"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsFetchHeadersGetterCount), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
 };
 
 const ClassInfo JSFetchHeadersPrototype::s_info = { "Headers"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFetchHeadersPrototype) };
@@ -303,23 +316,6 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_toJSONBody(JSC
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
-}
-
-/**
- * Non standard function.
- **/
-static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_sizeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSFetchHeaders>::ClassParameter castedThis)
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-
-    auto& impl = castedThis->wrapped();
-    auto size = impl.size();
-    return JSValue::encode(jsNumber(size));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_size, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_sizeBody>(*lexicalGlobalObject, *callFrame, "size");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_append, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

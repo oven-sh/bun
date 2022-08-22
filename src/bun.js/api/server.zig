@@ -1619,7 +1619,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var needs_content_type = true;
             const content_type: MimeType = brk: {
                 if (response.body.init.headers) |headers_| {
-                    if (headers_.get("content-type")) |content| {
+                    if (headers_.fastGet(.ContentType)) |content| {
                         needs_content_type = false;
                         break :brk MimeType.init(content);
                     }

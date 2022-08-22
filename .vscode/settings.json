@@ -172,7 +172,9 @@
     "shared_mutex": "cpp",
     "cinttypes": "cpp",
     "variant": "cpp",
-    "sysctl.h": "c"
+    "sysctl.h": "c",
+    "interface_adresses.h": "c",
+    "interface_addresses.h": "c"
   },
   "cmake.configureOnOpen": false
 }

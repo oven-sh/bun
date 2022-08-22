@@ -527,6 +527,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         has_marked_complete: bool = false,
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
+        response_protected: bool = false,
         response_ptr: ?*JSC.WebCore.Response = null,
         blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
         promise: ?*JSC.JSValue = null,
@@ -813,7 +814,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (!this.response_jsvalue.isEmpty()) {
-                this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
+                if (this.response_protected) {
+                    this.response_jsvalue.unprotect();
+                    this.response_protected = false;
+                }
                 this.response_jsvalue = JSC.JSValue.zero;
             }
 
@@ -1619,13 +1623,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var needs_content_type = true;
             const content_type: MimeType = brk: {
                 if (response.body.init.headers) |headers_| {
-                    if (headers_.get("content-type")) |content| {
+                    if (headers_.fastGet(.ContentType)) |content| {
                         needs_content_type = false;
-                        break :brk MimeType.init(content);
+                        break :brk MimeType.byName(content.slice());
                     }
                 }
                 break :brk if (this.blob.content_type.len > 0)
-                    MimeType.init(this.blob.content_type)
+                    MimeType.byName(this.blob.content_type)
                 else if (MimeType.sniff(this.blob.sharedView())) |content|
                     content
                 else if (this.blob.is_all_ascii orelse false)
@@ -1824,7 +1828,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         vm: *JSC.VirtualMachine = undefined,
         globalThis: *JSGlobalObject,
         base_url_string_for_joining: string = "",
-        response_objects_pool: JSC.WebCore.Response.Pool = JSC.WebCore.Response.Pool{},
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: std.mem.Allocator = undefined,
@@ -1913,12 +1916,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn deinit(this: *ThisServer) void {
-            if (this.vm.response_objects_pool) |pool| {
-                if (pool == &this.response_objects_pool) {
-                    this.vm.response_objects_pool = null;
-                }
-            }
-
             this.app.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);
@@ -1948,9 +1945,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         noinline fn onListenFailed(this: *ThisServer) void {
-            var zig_str: ZigString = ZigString.init("Failed to start server");
+            var zig_str: ZigString = ZigString.init("");
+            var output_buf: [4096]u8 = undefined;
+
             if (comptime ssl_enabled) {
-                var output_buf: [4096]u8 = undefined;
                 output_buf[0] = 0;
                 var written: usize = 0;
                 var ssl_error = BoringSSL.ERR_get_error();
@@ -2002,8 +2000,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     zig_str.withEncoding().mark();
                 }
             }
+
+            if (zig_str.len == 0) {
+                zig_str = ZigString.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{this.config.port}) catch "Failed to start server");
+            }
+
             // store the exception in here
+            // toErrorInstance clones the string
             this.thisObject = zig_str.toErrorInstance(this.globalThis);
+
+            // reference it in stack memory
+            this.thisObject.ensureStillAlive();
             return;
         }
 
@@ -2015,7 +2022,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.listener = socket;
             const needs_post_handler = this.vm.uws_event_loop == null;
             this.vm.uws_event_loop = uws.Loop.get();
-            this.vm.response_objects_pool = &this.response_objects_pool;
             this.listen_callback = JSC.AnyTask.New(ThisServer, run).init(this);
             this.vm.eventLoop().enqueueTask(JSC.Task.init(&this.listen_callback));
             if (needs_post_handler) {
@@ -2140,7 +2146,20 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (response_value.as(JSC.WebCore.Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
-                response_value.protect();
+                ctx.response_protected = false;
+                switch (response.body.value) {
+                    .Blob => |*blob| {
+                        if (blob.needsToReadFile()) {
+                            response_value.protect();
+                            ctx.response_protected = true;
+                        }
+                    },
+                    .Locked => {
+                        response_value.protect();
+                        ctx.response_protected = true;
+                    },
+                    else => {},
+                }
                 ctx.render(response);
                 return;
             }

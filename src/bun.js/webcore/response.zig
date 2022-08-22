@@ -46,43 +46,6 @@ const uws = @import("uws");
 
 pub const Response = struct {
     pub usingnamespace JSC.Codegen.JSResponse;
-    pub const Pool = struct {
-        response_objects_pool: [127]JSC.JSValue = undefined,
-        response_objects_used: u8 = 0,
-
-        pub fn get(this: *Pool, ptr: *Response) ?JSValue {
-            if (comptime JSC.is_bindgen)
-                unreachable;
-            if (this.response_objects_used > 0) {
-                var result = this.response_objects_pool[this.response_objects_used - 1];
-                this.response_objects_used -= 1;
-                if (Response.dangerouslySetPtr(result, ptr)) {
-                    return result;
-                } else {
-                    JSC.C.JSValueUnprotect(VirtualMachine.vm.global.ref(), result.asObjectRef());
-                }
-            }
-
-            return null;
-        }
-
-        pub fn push(this: *Pool, globalThis: *JSC.JSGlobalObject, object: JSC.JSValue) void {
-            var remaining = this.response_objects_pool[@minimum(this.response_objects_used, this.response_objects_pool.len)..];
-            if (remaining.len == 0) {
-                JSC.C.JSValueUnprotect(globalThis.ref(), object.asObjectRef());
-                return;
-            }
-
-            if (object.as(Response)) |resp| {
-                _ = Response.dangerouslySetPtr(object, null);
-
-                _ = resp.body.use();
-                resp.finalize();
-                remaining[0] = object;
-                this.response_objects_used += 1;
-            }
-        }
-    };
 
     allocator: std.mem.Allocator,
     body: Body,

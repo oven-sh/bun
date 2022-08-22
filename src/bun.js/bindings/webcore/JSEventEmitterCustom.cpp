@@ -44,7 +44,7 @@ std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(VM& vm, JSC::JSGlobalO
 template<typename Visitor>
 void JSEventEmitter::visitAdditionalChildren(Visitor& visitor)
 {
-    wrapped().visitJSEventListeners(visitor);
+    wrapped().eventListenerMap().visitJSEventListeners(visitor);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN(JSEventEmitter);

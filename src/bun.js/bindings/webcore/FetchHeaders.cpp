@@ -76,20 +76,6 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     return {};
 }
 
-static void appendToHeaderMapFast(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
-{
-    String combinedValue;
-    if (headers.contains(name)) {
-        combinedValue = makeString(headers.get(name), ", ", value);
-    } else {
-        combinedValue = value.isolatedCopy();
-    }
-
-    headers.append(name.isolatedCopy(), WTFMove(combinedValue));
-    // if (guard == FetchHeaders::Guard::RequestNoCors)
-    //     removePrivilegedNoCORSRequestHeaders(headers);
-}
-
 static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
     String normalizedValue = stripLeadingAndTrailingHTTPSpaces(header.value);

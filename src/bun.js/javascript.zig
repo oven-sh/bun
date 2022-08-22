@@ -346,7 +346,6 @@ pub const VirtualMachine = struct {
     file_blobs: JSC.WebCore.Blob.Store.Map,
 
     source_mappings: SavedSourceMap = undefined,
-    response_objects_pool: ?*Response.Pool = null,
 
     rare_data: ?*JSC.RareData = null,
     poller: JSC.Poller = JSC.Poller{},

@@ -275,7 +275,6 @@ export class ServerResponse extends Writable {
   }
 
   _writev(chunks, callback) {
-    console.trace("typeof chunk " + chunks[0].chunk);
     if (chunks.length === 1 && !this.headersSent && !this.#firstWrite) {
       this.#firstWrite = chunks[0].chunk;
       callback();

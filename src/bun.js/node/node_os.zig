@@ -42,21 +42,22 @@ pub const Os = struct {
     pub const EOL = if (Environment.isWindows) "\\r\\n" else "\\n";
     pub const devNull = if (Environment.isWindows) "\\\\.\nul" else "/dev/null";
 
-    pub fn arch(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn arch(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         return JSC.ZigString.init(Global.arch_name).withEncoding().toValue(globalThis);
     }
 
-    pub fn cpus(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isLinux) {
             const allocator = JSC.getAllocator(globalThis.ref());
-            const cpus_ = C.linux.get_cpu_infos(allocator) catch {
+            const cpus_ = C.linux.get_cpu_infos(heap_allocator) catch {
                 @setCold(true);
                 return JSC.JSArray.from(globalThis, &.{});
             };
+            std.debug.print("popo, {any}", .{cpus_});
             var result = std.ArrayList(JSC.JSValue).init(allocator);
             defer result.deinit();
 
@@ -65,15 +66,16 @@ pub const Os = struct {
                 object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(cpus_[index].model).withEncoding().toValueGC(globalThis));
                 object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(cpus_[index].speed));
 
-                _ = result.append(object) catch unreachable;
+                //_ = result.append(object) catch unreachable;
             }
 
-            return JSC.JSArray.from(globalThis, result.items[0..result.items.len]);
+            std.debug.print("aa, {any}, bb {any}\n", .{ result.items, result.items.len });
+            return JSC.JSArray.from(globalThis, &.{});
         }
         return JSC.JSArray.from(globalThis, &.{});
     }
 
-    pub fn endianness(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         switch (comptime builtin.target.cpu.arch.endian()) {
@@ -86,7 +88,7 @@ pub const Os = struct {
         }
     }
 
-    pub fn freemem(_: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn freemem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isLinux) {
@@ -96,23 +98,49 @@ pub const Os = struct {
         }
     }
 
-    pub fn getPriority(globalThis: *JSC.JSGlobalObject, _: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+    pub fn getPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        //var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
-        //var allocator = stack_fallback.get();
+        var args_ = callframe.arguments(1);
+        var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
-        var arguments: []JSC.JSValue = args_ptr[0..args_len];
-        std.debug.print("test, {any}", .{arguments});
-        //var pid_ = arguments[0].toSlice(globalThis, allocator); //else JSC.ZigString.init("0").toSlice(allocator);
-        //defer pid_.deinit();
+        if (arguments.len > 0 and !arguments[0].isNumber()) {
+            const err = JSC.toTypeError(
+                JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+                "getPriority() expects a number",
+                .{},
+                globalThis,
+            );
+            globalThis.vm().throwError(globalThis, err);
+            return JSC.JSValue.jsUndefined();
+        }
 
-        const pid = "0"; //pid_.slice();
+        var pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
 
-        return JSC.ZigString.init(pid).withEncoding().toValueGC(globalThis);
+        const priority = C.get_process_priority(pid);
+        if (priority == -1) {
+            //const info = JSC.JSValue.createEmptyObject(globalThis, 4);
+            //info.put(globalThis, &JSC.ZigString.init("errno"), JSC.JSValue.jsNumberFromInt32(-3));
+            //info.put(globalThis, &JSC.ZigString.init("code"), JSC.ZigString.init("ESRCH").withEncoding().toValueGC(globalThis));
+            //info.put(globalThis, &JSC.ZigString.init("message"), JSC.ZigString.init("no such process").withEncoding().toValueGC(globalThis));
+            //info.put(globalThis, &JSC.ZigString.init("syscall"), JSC.ZigString.init("uv_os_getpriority").withEncoding().toValueGC(globalThis));
+
+            const err = JSC.SystemError{
+                .message = JSC.ZigString.init("A system error occurred: uv_os_getpriority returned ESRCH (no such process)"),
+                .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                //.info = info,
+                .errno = -3,
+                .syscall = JSC.ZigString.init("uv_os_getpriority"),
+            };
+
+            globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+            return JSC.JSValue.jsUndefined();
+        }
+
+        return JSC.JSValue.jsNumberFromInt32(priority);
     }
 
-    pub fn homedir(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn homedir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         var dir: string = "unknown";
@@ -124,7 +152,7 @@ pub const Os = struct {
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
 
-    pub fn hostname(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn hostname(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
@@ -132,7 +160,7 @@ pub const Os = struct {
         return JSC.ZigString.init(std.os.gethostname(&name_buffer) catch "unknown").withEncoding().toValueGC(globalThis);
     }
 
-    pub fn loadavg(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn loadavg(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isLinux) {
@@ -151,13 +179,13 @@ pub const Os = struct {
         }
     }
 
-    pub fn platform(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
     }
 
-    pub fn release(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn release(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
@@ -168,7 +196,7 @@ pub const Os = struct {
         return JSC.ZigString.init(name_buffer[0..result.len]).withEncoding().toValueGC(globalThis);
     }
 
-    pub fn tmpdir(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn tmpdir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         var dir: string = "unknown";
@@ -189,7 +217,7 @@ pub const Os = struct {
         return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
     }
 
-    pub fn totalmem(_: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn totalmem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isLinux) {
@@ -199,7 +227,7 @@ pub const Os = struct {
         }
     }
 
-    pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isWindows)
@@ -212,7 +240,7 @@ pub const Os = struct {
         return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
     }
 
-    pub fn uptime(_: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn uptime(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isLinux) {
@@ -222,10 +250,10 @@ pub const Os = struct {
         }
     }
 
-    pub fn userInfo(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
+    pub fn userInfo(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const result = JSC.JSValue.createEmptyObject(globalThis, 5);
 
-        result.put(globalThis, &JSC.ZigString.init("homedir"), homedir(globalThis, isWindows, args_ptr, args_len));
+        result.put(globalThis, &JSC.ZigString.init("homedir"), homedir(globalThis, callframe));
 
         if (comptime Environment.isWindows) {
             result.put(globalThis, &JSC.ZigString.init("username"), JSC.ZigString.init(std.os.getenv("USERNAME") orelse "unknown").withEncoding().toValueGC(globalThis));
@@ -250,7 +278,7 @@ pub const Os = struct {
         return result;
     }
 
-    pub fn version(globalThis: *JSC.JSGlobalObject, _: bool, _: [*]JSC.JSValue, _: u16) callconv(.C) JSC.JSValue {
+    pub fn version(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;

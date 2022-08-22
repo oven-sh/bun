@@ -305,3 +305,16 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
 ///     The posix_madvise() behaves same as madvise() except that it uses values
 ///     with POSIX_ prefix for the advice system call argument.
 pub extern "c" fn posix_madvise(ptr: *anyopaque, len: usize, advice: i32) c_int;
+
+// System related
+pub fn get_process_priority(pid_: i32) i32 {
+    const pid = @intCast(c_uint, pid_);
+
+    if (comptime Environment.isLinux) {
+        return linux.get_process_priority_l(pid);
+    } else if (comptime Environment.isMac) {
+        return darwin.get_process_priority_d(pid);
+    } else {
+        return -1;
+    }
+}

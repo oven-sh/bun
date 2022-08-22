@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const unistd = @cImport(@cInclude("unistd.h"));
+const sysResource = @cImport(@cInclude("sys/resource.h"));
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
@@ -495,4 +496,8 @@ pub fn getuid() uid_t {
 
 pub fn getgid() gid_t {
     return unistd.getuid();
+}
+
+pub fn get_process_priority_d(pid: c_uint) i32 {
+    return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);
 }

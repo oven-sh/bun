@@ -1,4 +1,5 @@
 const std = @import("std");
+const sysResource = @cImport(@cInclude("sys/resource.h"));
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -349,6 +350,10 @@ pub fn get_system_loadavg() [3]f64 {
         };
     }
     return [3]f64{ 0, 0, 0 };
+}
+
+pub fn get_process_priority_l(pid: c_uint) i32 {
+    return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);
 }
 
 pub const CpuInfo = struct {

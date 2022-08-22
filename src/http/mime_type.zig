@@ -2494,6 +2494,12 @@ pub const all = struct {
     pub const @"x-shader/x-vertex": MimeType = MimeType{ .category = .@"x-shader", .value = "x-shader/x-vertex" };
 };
 
+// TODO: do a comptime static hash map for this
+// its too many branches to use ComptimeStringMap
+pub fn byName(name: []const u8) MimeType {
+    return MimeType.init(name);
+}
+
 pub const extensions = ComptimeStringMap(MimeType, .{
     .{ "123", all.@"application/vnd.lotus-1-2-3" },
     .{ "1km", all.@"application/vnd.1000minds.decision-model+xml" },

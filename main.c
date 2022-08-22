@@ -27,10 +27,9 @@ int main()
     freeifaddrs(ifap);*/
     NetworkInterface* arr = getNetworkInterfaces();
     int arrLength = getNetworkInterfaceArrayLen(arr);
-    printf("%s", arr[0].address);
-    printf("%d", arrLength);
-    for (int i = 0; 0 < arrLength; i++) {
-        printf("%s\n", arr[i].address);
+
+    for (int i = 0; i < arrLength; i++) {
+        printf("Interface: %s | Address: %s | Family: %s\n", arr[i].interface, arr[i].address, arr[i].family);
     }
 
     return 0;

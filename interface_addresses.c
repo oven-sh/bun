@@ -7,7 +7,7 @@
 #include <string.h>
 #include <ctype.h>
 
-#include "interface_adresses.h"
+#include "interface_addresses.h"
 
 NetworkInterface *getNetworkInterfaces() {
     NetworkInterface *interfaces = (NetworkInterface*) malloc(sizeof(NetworkInterface));
@@ -19,16 +19,16 @@ NetworkInterface *getNetworkInterfaces() {
 
     getifaddrs (&ifap);
     for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
-        interfacesIndex++;
-        if (interfacesIndex > 0)  {
-            interfaces = (NetworkInterface*) realloc(interfaces, (interfacesIndex+1) * sizeof(NetworkInterface));
-            if (interfaces == NULL) return NULL;
-        }
-
         if (ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET) {
             struct sockaddr_in *sa = (struct sockaddr_in *) ifa->ifa_addr;
             char *addr = inet_ntoa(sa->sin_addr);
             char *interface_name = ifa->ifa_name;
+
+            interfacesIndex++;
+            if (interfacesIndex > 0)  {
+                interfaces = (NetworkInterface*) realloc(interfaces, (interfacesIndex+1) * sizeof(NetworkInterface));
+                if (interfaces == NULL) return NULL;
+            }
 
             interfaces[interfacesIndex].address = (char*) malloc(strlen(addr)+1);
             if (interfaces[interfacesIndex].address == NULL) return NULL;
@@ -37,11 +37,11 @@ NetworkInterface *getNetworkInterfaces() {
 
             interfaces[interfacesIndex].interface = (char*) malloc(strlen(interface_name)+1);
             if (interfaces[interfacesIndex].interface == NULL) return NULL;
-            memcpy(interfaces[interfacesIndex].interface, addr, strlen(interface_name));
+            memcpy(interfaces[interfacesIndex].interface, interface_name, strlen(interface_name));
             interfaces[interfacesIndex].interface[strlen(interface_name)] = '\0';
 
             interfaces[interfacesIndex].family = (char*) malloc(strlen("IPv4")+1);
-            memcpy(interfaces[interfacesIndex].family, addr, strlen("IPv4"));
+            memcpy(interfaces[interfacesIndex].family, "IPv4", strlen("IPv4"));
             interfaces[interfacesIndex].family[strlen("IPv4")] = '\0';
         } else if (ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET6) {
             struct sockaddr_in6 *sa = (struct sockaddr_in6 *) ifa->ifa_addr;
@@ -49,6 +49,12 @@ NetworkInterface *getNetworkInterfaces() {
             inet_ntop(AF_INET6, &in6addr, addr, sizeof(addr));
             char *interface_name = ifa->ifa_name;
 
+            interfacesIndex++;
+            if (interfacesIndex > 0)  {
+                interfaces = (NetworkInterface*) realloc(interfaces, (interfacesIndex+1) * sizeof(NetworkInterface));
+                if (interfaces == NULL) return NULL;
+            }
+
             interfaces[interfacesIndex].address = (char*) malloc(strlen(addr)+1);
             if (interfaces[interfacesIndex].address == NULL) return NULL;
             memcpy(interfaces[interfacesIndex].address, addr, strlen(addr));
@@ -56,11 +62,11 @@ NetworkInterface *getNetworkInterfaces() {
 
             interfaces[interfacesIndex].interface = (char*) malloc(strlen(interface_name)+1);
             if (interfaces[interfacesIndex].interface == NULL) return NULL;
-            memcpy(interfaces[interfacesIndex].interface, addr, strlen(interface_name));
+            memcpy(interfaces[interfacesIndex].interface, interface_name, strlen(interface_name));
             interfaces[interfacesIndex].interface[strlen(interface_name)] = '\0';
 
             interfaces[interfacesIndex].family = (char*) malloc(strlen("IPv6")+1);
-            memcpy(interfaces[interfacesIndex].family, addr, strlen("IPv6"));
+            memcpy(interfaces[interfacesIndex].family, "IPv6", strlen("IPv6"));
             interfaces[interfacesIndex].family[strlen("IPv6")] = '\0';
         }
     }

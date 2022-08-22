@@ -1948,9 +1948,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         noinline fn onListenFailed(this: *ThisServer) void {
-            var zig_str: ZigString = ZigString.init("Failed to start server");
+            var zig_str: ZigString = ZigString.init("");
+            var output_buf: [4096]u8 = undefined;
+
             if (comptime ssl_enabled) {
-                var output_buf: [4096]u8 = undefined;
                 output_buf[0] = 0;
                 var written: usize = 0;
                 var ssl_error = BoringSSL.ERR_get_error();
@@ -2002,8 +2003,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     zig_str.withEncoding().mark();
                 }
             }
+
+            if (zig_str.len == 0) {
+                zig_str = ZigString.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{this.config.port}) catch "Failed to start server");
+            }
+
             // store the exception in here
+            // toErrorInstance clones the string
             this.thisObject = zig_str.toErrorInstance(this.globalThis);
+
+            // reference it in stack memory
+            this.thisObject.ensureStillAlive();
             return;
         }
 

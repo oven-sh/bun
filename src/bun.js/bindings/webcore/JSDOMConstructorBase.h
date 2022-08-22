@@ -54,7 +54,7 @@ public:
 protected:
     JSDOMConstructorBase(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction functionForConstruct)
         : Base(vm, structure,
-            functionForConstruct ? callThrowTypeErrorForJSDOMConstructor : callThrowTypeErrorForJSDOMConstructorNotConstructable,
+            functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructorNotConstructable,
             functionForConstruct ? functionForConstruct : callThrowTypeErrorForJSDOMConstructorNotConstructable)
     {
     }

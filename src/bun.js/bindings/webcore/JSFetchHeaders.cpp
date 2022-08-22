@@ -71,6 +71,10 @@ static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_keys);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_values);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_forEach);
 
+// Non-standard functions
+static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_toJSON);
+static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_size);
+
 // Attributes
 
 static JSC_DECLARE_CUSTOM_GETTER(jsFetchHeadersConstructor);
@@ -116,7 +120,21 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor:
     auto* castedThis = jsCast<JSFetchHeadersDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     EnsureStillAliveScope argument0 = callFrame->argument(0);
-    auto init = argument0.value().isUndefined() ? std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>() : std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>(convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, argument0.value()));
+
+    auto init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>();
+
+    if (argument0.value() && !argument0.value().isUndefined()) {
+        if (auto* existingJsFetchHeaders = jsDynamicCast<JSFetchHeaders*>(argument0.value())) {
+            auto newHeaders = FetchHeaders::create(existingJsFetchHeaders->wrapped());
+            auto jsValue = toJSNewlyCreated<IDLInterface<FetchHeaders>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(newHeaders));
+            if constexpr (IsExceptionOr<decltype(jsValue)>)
+                RETURN_IF_EXCEPTION(throwScope, {});
+            setSubclassStructureIfNeeded<FetchHeaders>(lexicalGlobalObject, callFrame, asObject(jsValue));
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+        init = std::optional<Converter<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>::ReturnType>(convert<IDLUnion<IDLSequence<IDLSequence<IDLByteString>>, IDLRecord<IDLByteString, IDLByteString>>>(*lexicalGlobalObject, argument0.value()));
+    }
+
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto object = FetchHeaders::create(WTFMove(init));
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -161,6 +179,8 @@ static const HashTableValue JSFetchHeadersPrototypeTableValues[] = {
     { "keys"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_keys), (intptr_t)(0) } },
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_values), (intptr_t)(0) } },
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_forEach), (intptr_t)(1) } },
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_toJSON), (intptr_t)(0) } },
+    { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsFetchHeadersPrototypeFunction_size), (intptr_t)(0) } },
 };
 
 const ClassInfo JSFetchHeadersPrototype::s_info = { "Headers"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFetchHeadersPrototype) };
@@ -235,6 +255,71 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_appendBody(JSC
     auto value = convert<IDLByteString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.append(WTFMove(name), WTFMove(value)); })));
+}
+
+/**
+ * Non standard function.
+ **/
+static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_toJSONBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSFetchHeaders>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto& impl = castedThis->wrapped();
+    size_t size = impl.size();
+    JSObject* obj;
+    if (size == 0) {
+        obj = constructEmptyObject(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
+    } else if (size < 64) {
+        obj = constructEmptyObject(lexicalGlobalObject, lexicalGlobalObject->objectPrototype(), size);
+    } else {
+        obj = constructEmptyObject(lexicalGlobalObject);
+    }
+
+    auto& internal = impl.internalHeaders();
+    {
+        auto& vec = internal.commonHeaders();
+        for (auto it = vec.begin(); it != vec.end(); ++it) {
+            auto& name = it->key;
+            auto& value = it->value;
+            obj->putDirect(vm, Identifier::fromString(vm, String(WTF::httpHeaderNameStringImpl(name))), jsString(vm, value), 0);
+        }
+    }
+
+    {
+        auto& vec = internal.uncommonHeaders();
+        for (auto it = vec.begin(); it != vec.end(); ++it) {
+            auto& name = it->key;
+            auto& value = it->value;
+            obj->putDirect(vm, Identifier::fromString(vm, name), jsString(vm, value), 0);
+        }
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(obj));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
+}
+
+/**
+ * Non standard function.
+ **/
+static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_sizeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSFetchHeaders>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+
+    auto& impl = castedThis->wrapped();
+    auto size = impl.size();
+    return JSValue::encode(jsNumber(size));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_size, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_sizeBody>(*lexicalGlobalObject, *callFrame, "size");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_append, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -498,5 +583,4 @@ FetchHeaders* JSFetchHeaders::toWrapped(JSC::VM& vm, JSC::JSValue value)
         return &wrapper->wrapped();
     return nullptr;
 }
-
 }

@@ -1621,11 +1621,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (response.body.init.headers) |headers_| {
                     if (headers_.fastGet(.ContentType)) |content| {
                         needs_content_type = false;
-                        break :brk MimeType.init(content);
+                        break :brk MimeType.byName(content.slice());
                     }
                 }
                 break :brk if (this.blob.content_type.len > 0)
-                    MimeType.init(this.blob.content_type)
+                    MimeType.byName(this.blob.content_type)
                 else if (MimeType.sniff(this.blob.sharedView())) |content|
                     content
                 else if (this.blob.is_all_ascii orelse false)

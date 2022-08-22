@@ -248,7 +248,9 @@ extern "C" CpuInfo *getCpuTime()
 
 extern "C" CpuInfo *getCpuInfoAndTime() {
     CpuInfo* arr = getCpuInfo();
+    if (arr == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
     CpuInfo* arr2 = getCpuTime();
+    if (arr2 == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
 
     for (int i = 0; arr2[i].userTime > 0; i++) {
         arr2[i].manufacturer = arr[i].manufacturer;

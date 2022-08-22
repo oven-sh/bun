@@ -27,6 +27,7 @@
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -217,12 +218,12 @@ static inline JSC::EncodedJSValue addListener(JSC::JSGlobalObject* lexicalGlobal
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    auto eventType = argument0.value().toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener", "EventEmitter", "addListener"); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addListenerForBindings(WTFMove(type), WTFMove(listener), once, prepend); }));
+    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addListenerForBindings(WTFMove(eventType), WTFMove(listener), once, prepend); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     return result;
@@ -278,12 +279,12 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeListener
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    auto eventType = argument0.value().toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener", "EventEmitter", "removeListener"); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeListenerForBindings(WTFMove(type), WTFMove(listener)); }));
+    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeListenerForBindings(WTFMove(eventType), WTFMove(listener)); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     return result;
@@ -304,9 +305,9 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_removeAllListe
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    auto eventType = argument0.value().toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeAllListenersForBindings(WTFMove(type)); }));
+    auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeAllListenersForBindings(WTFMove(eventType)); }));
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     return result;
 }
@@ -326,13 +327,12 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_emitBody(JSC::
     size_t argumentCount = callFrame->argumentCount();
     if (UNLIKELY(argumentCount < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    auto* argument0 = callFrame->uncheckedArgument(0).toString(lexicalGlobalObject);
+    auto eventType = callFrame->uncheckedArgument(0).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     JSC::MarkedArgumentBuffer args;
     for (size_t i = 1; i < argumentCount; ++i) {
         args.append(callFrame->uncheckedArgument(i));
     }
-    auto eventType = argument0->toAtomString(lexicalGlobalObject);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.emitForBindings(eventType, args))));
 }
 
@@ -350,7 +350,7 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_eventNamesBody
     auto& impl = castedThis->wrapped();
     JSC::MarkedArgumentBuffer args;
     for (auto& name : impl.getEventNames()) {
-        args.append(jsOwnedString(vm, name));
+        args.append(JSC::identifierToSafePublicJSValue(vm, name));
     }
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), WTFMove(args))));
 }
@@ -369,9 +369,8 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenerCountB
     auto& impl = castedThis->wrapped();
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    auto* argument0 = callFrame->uncheckedArgument(0).toString(lexicalGlobalObject);
+    auto eventType = callFrame->uncheckedArgument(0).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto eventType = argument0->toAtomString(lexicalGlobalObject);
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(impl.listenerCount(eventType))));
 }
 
@@ -389,9 +388,8 @@ static inline JSC::EncodedJSValue jsEventEmitterPrototypeFunction_listenersBody(
     auto& impl = castedThis->wrapped();
     if (UNLIKELY(callFrame->argumentCount() < 1))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-    auto* argument0 = callFrame->uncheckedArgument(0).toString(lexicalGlobalObject);
+    auto eventType = callFrame->uncheckedArgument(0).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto eventType = argument0->toAtomString(lexicalGlobalObject);
     JSC::MarkedArgumentBuffer args;
     for (auto* listener : impl.getListeners(eventType)) {
         args.append(listener);
@@ -480,9 +478,8 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionGetEventListeners,
         return JSValue::encode(JSC::jsUndefined());
     }
     auto* impl = JSEventEmitter::toWrapped(vm, argument0);
-    auto* argument1 = callFrame->uncheckedArgument(1).toString(lexicalGlobalObject);
+    auto eventType = callFrame->uncheckedArgument(1).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto eventType = argument1->toAtomString(lexicalGlobalObject);
     JSC::MarkedArgumentBuffer args;
     for (auto* listener : impl->getListeners(eventType)) {
         args.append(listener);
@@ -505,9 +502,8 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionListenerCount,
         return JSValue::encode(JSC::jsUndefined());
     }
     auto* impl = JSEventEmitter::toWrapped(vm, argument0);
-    auto* argument1 = callFrame->uncheckedArgument(1).toString(lexicalGlobalObject);
+    auto eventType = callFrame->uncheckedArgument(1).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto eventType = argument1->toAtomString(lexicalGlobalObject);
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(impl->listenerCount(eventType))));
 }
 
@@ -527,9 +523,8 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionOnce,
         return JSValue::encode(JSC::jsUndefined());
     }
     auto* impl = JSEventEmitter::toWrapped(vm, argument0);
-    auto* argument1 = callFrame->uncheckedArgument(1).toString(lexicalGlobalObject);
+    auto eventType = callFrame->uncheckedArgument(1).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto eventType = argument1->toAtomString(lexicalGlobalObject);
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument2.value(), *argument0, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 2, "listener", "EventEmitter", "removeListener"); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
@@ -555,9 +550,8 @@ JSC_DEFINE_HOST_FUNCTION(Events_functionOn,
         return JSValue::encode(JSC::jsUndefined());
     }
     auto* impl = JSEventEmitter::toWrapped(vm, argument0);
-    auto* argument1 = callFrame->uncheckedArgument(1).toString(lexicalGlobalObject);
+    auto eventType = callFrame->uncheckedArgument(1).toPropertyKey(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    auto eventType = argument1->toAtomString(lexicalGlobalObject);
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument2.value(), *argument0, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 2, "listener", "EventEmitter", "removeListener"); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());

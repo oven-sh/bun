@@ -129,21 +129,6 @@ bool EventListenerMap::add(const AtomString& eventType, Ref<EventListener>&& lis
     return true;
 }
 
-bool EventListenerMap::prepend(const AtomString& eventType, Ref<EventListener>&& listener, const RegisteredEventListener::Options& options)
-{
-    Locker locker { m_lock };
-
-    if (auto* listeners = find(eventType)) {
-        if (findListener(*listeners, listener, options.capture) != notFound)
-            return false; // Duplicate listener.
-        listeners->insert(0, RegisteredEventListener::create(WTFMove(listener), options));
-        return true;
-    }
-
-    m_entries.append({ eventType, EventListenerVector { RegisteredEventListener::create(WTFMove(listener), options) } });
-    return true;
-}
-
 static bool removeListenerFromVector(EventListenerVector& listeners, EventListener& listener, bool useCapture)
 {
     size_t indexOfRemovedListener = findListener(listeners, listener, useCapture);
@@ -165,20 +150,6 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
             if (m_entries[i].second.isEmpty())
                 m_entries.remove(i);
             return wasRemoved;
-        }
-    }
-
-    return false;
-}
-
-bool EventListenerMap::removeAll(const AtomString& eventType)
-{
-    Locker locker { m_lock };
-
-    for (unsigned i = 0; i < m_entries.size(); ++i) {
-        if (m_entries[i].first == eventType) {
-            m_entries.remove(i);
-            return true;
         }
     }
 

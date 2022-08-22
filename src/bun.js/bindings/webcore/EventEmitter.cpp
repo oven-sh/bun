@@ -4,7 +4,6 @@
 
 #include "EventEmitter.h"
 
-#include "AddEventListenerOptions.h"
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
 #include "JSErrorHandler.h"
@@ -26,15 +25,15 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
     return adoptRef(*new EventEmitter(context));
 }
 
-bool EventEmitter::addListener(const AtomString& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
+bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
     bool listenerCreatedFromScript = is<JSEventListener>(listener) && !downcast<JSEventListener>(listener.get()).wasCreatedFromMarkup();
 
     if (prepend) {
-        if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), { false, false, once }))
+        if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), once))
             return false;
     } else {
-        if (!ensureEventEmitterData().eventListenerMap.add(eventType, listener.copyRef(), { false, false, once }))
+        if (!ensureEventEmitterData().eventListenerMap.add(eventType, listener.copyRef(), once))
             return false;
     }
 
@@ -43,7 +42,7 @@ bool EventEmitter::addListener(const AtomString& eventType, Ref<EventListener>&&
     return true;
 }
 
-void EventEmitter::addListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&& listener, bool once, bool prepend)
+void EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener, bool once, bool prepend)
 {
     if (!listener)
         return;
@@ -51,7 +50,7 @@ void EventEmitter::addListenerForBindings(const AtomString& eventType, RefPtr<Ev
     addListener(eventType, listener.releaseNonNull(), once, prepend);
 }
 
-void EventEmitter::removeListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&& listener)
+void EventEmitter::removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener)
 {
     if (!listener)
         return;
@@ -59,50 +58,44 @@ void EventEmitter::removeListenerForBindings(const AtomString& eventType, RefPtr
     removeListener(eventType, *listener);
 }
 
-bool EventEmitter::removeListener(const AtomString& eventType, EventListener& listener)
+bool EventEmitter::removeListener(const Identifier& eventType, EventListener& listener)
 {
     auto* data = eventTargetData();
     if (!data)
         return false;
 
-    if (data->eventListenerMap.remove(eventType, listener, false)) {
-        if (eventNames().isWheelEventType(eventType))
-            invalidateEventListenerRegions();
-
+    if (data->eventListenerMap.remove(eventType, listener)) {
         eventListenersDidChange();
         return true;
     }
     return false;
 }
 
-void EventEmitter::removeAllListenersForBindings(const AtomString& eventType)
+void EventEmitter::removeAllListenersForBindings(const Identifier& eventType)
 {
     removeAllListeners(eventType);
 }
 
-bool EventEmitter::removeAllListeners(const AtomString& eventType)
+bool EventEmitter::removeAllListeners(const Identifier& eventType)
 {
     auto* data = eventTargetData();
     if (!data)
         return false;
 
     if (data->eventListenerMap.removeAll(eventType)) {
-        if (eventNames().isWheelEventType(eventType))
-            invalidateEventListenerRegions();
-
         eventListenersDidChange();
         return true;
     }
     return false;
 }
 
-bool EventEmitter::hasActiveEventListeners(const AtomString& eventType) const
+bool EventEmitter::hasActiveEventListeners(const Identifier& eventType) const
 {
     auto* data = eventTargetData();
     return data && data->eventListenerMap.containsActive(eventType);
 }
 
-bool EventEmitter::emitForBindings(const AtomString& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     if (!scriptExecutionContext())
         return false;
@@ -111,7 +104,7 @@ bool EventEmitter::emitForBindings(const AtomString& eventType, const MarkedArgu
     return true;
 }
 
-void EventEmitter::emit(const AtomString& eventType, const MarkedArgumentBuffer& arguments)
+void EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     fireEventListeners(eventType, arguments);
 }
@@ -120,7 +113,7 @@ void EventEmitter::uncaughtExceptionInEventHandler()
 {
 }
 
-Vector<AtomString> EventEmitter::getEventNames()
+Vector<Identifier> EventEmitter::getEventNames()
 {
     auto* data = eventTargetData();
     if (!data)
@@ -128,7 +121,7 @@ Vector<AtomString> EventEmitter::getEventNames()
     return data->eventListenerMap.eventTypes();
 }
 
-int EventEmitter::listenerCount(const AtomString& eventType)
+int EventEmitter::listenerCount(const Identifier& eventType)
 {
     auto* data = eventTargetData();
     if (!data)
@@ -147,7 +140,7 @@ int EventEmitter::listenerCount(const AtomString& eventType)
     return result;
 }
 
-Vector<JSObject*> EventEmitter::getListeners(const AtomString& eventType)
+Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 {
     auto* data = eventTargetData();
     if (!data)
@@ -166,14 +159,8 @@ Vector<JSObject*> EventEmitter::getListeners(const AtomString& eventType)
     return listeners;
 }
 
-static const AtomString& legacyType(const Event& event)
-{
-
-    return nullAtom();
-}
-
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-void EventEmitter::fireEventListeners(const AtomString& eventType, const MarkedArgumentBuffer& arguments)
+void EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     ASSERT_WITH_SECURITY_IMPLICATION(ScriptDisallowedScope::isEventAllowedInMainThread());
 
@@ -192,7 +179,7 @@ void EventEmitter::fireEventListeners(const AtomString& eventType, const MarkedA
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
 // https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-void EventEmitter::innerInvokeEventListeners(const AtomString& eventType, EventListenerVector listeners, const MarkedArgumentBuffer& arguments)
+void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -223,18 +210,18 @@ void EventEmitter::innerInvokeEventListeners(const AtomString& eventType, EventL
     }
 }
 
-Vector<AtomString> EventEmitter::eventTypes()
+Vector<Identifier> EventEmitter::eventTypes()
 {
     if (auto* data = eventTargetData())
         return data->eventListenerMap.eventTypes();
     return {};
 }
 
-const EventListenerVector& EventEmitter::eventListeners(const AtomString& eventType)
+const SimpleEventListenerVector& EventEmitter::eventListeners(const Identifier& eventType)
 {
     auto* data = eventTargetData();
     auto* listenerVector = data ? data->eventListenerMap.find(eventType) : nullptr;
-    static NeverDestroyed<EventListenerVector> emptyVector;
+    static NeverDestroyed<SimpleEventListenerVector> emptyVector;
     return listenerVector ? *listenerVector : emptyVector.get();
 }
 

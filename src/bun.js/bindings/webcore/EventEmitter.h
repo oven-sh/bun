@@ -1,7 +1,6 @@
 #pragma once
 
-#include "EventListenerMap.h"
-#include "EventListenerOptions.h"
+#include "IdentifierEventListenerMap.h"
 #include "ExceptionOr.h"
 #include "ContextDestructionObserver.h"
 #include "ScriptWrappable.h"
@@ -20,7 +19,6 @@ class JSObject;
 
 namespace WebCore {
 
-struct AddEventListenerOptions;
 class DOMWrapperWorld;
 class JSEventListener;
 
@@ -30,7 +28,7 @@ struct EventEmitterData {
 
 public:
     EventEmitterData() = default;
-    EventListenerMap eventListenerMap;
+    IdentifierEventListenerMap eventListenerMap;
     bool isFiringEventListeners { false };
 };
 
@@ -48,34 +46,32 @@ public:
 
     WEBCORE_EXPORT bool isNode() const { return false; };
 
-    WEBCORE_EXPORT void addListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&&, bool, bool);
-    WEBCORE_EXPORT void removeListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&&);
-    WEBCORE_EXPORT void removeAllListenersForBindings(const AtomString& eventType);
-    WEBCORE_EXPORT bool emitForBindings(const AtomString&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
+    WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
+    WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
 
-    WEBCORE_EXPORT bool addListener(const AtomString& eventType, Ref<EventListener>&&, bool, bool);
-    WEBCORE_EXPORT bool removeListener(const AtomString& eventType, EventListener&);
-    WEBCORE_EXPORT bool removeAllListeners(const AtomString& eventType);
+    WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
+    WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
 
-    WEBCORE_EXPORT void emit(const AtomString&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT void emit(const Identifier&, const MarkedArgumentBuffer&);
     WEBCORE_EXPORT void uncaughtExceptionInEventHandler();
 
-    WEBCORE_EXPORT Vector<AtomString> getEventNames();
-    WEBCORE_EXPORT Vector<JSObject*> getListeners(const AtomString& eventType);
-    WEBCORE_EXPORT int listenerCount(const AtomString& eventType);
+    WEBCORE_EXPORT Vector<Identifier> getEventNames();
+    WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
+    WEBCORE_EXPORT int listenerCount(const Identifier& eventType);
 
     bool hasEventListeners() const;
-    bool hasEventListeners(const AtomString& eventType) const;
-    bool hasCapturingEventListeners(const AtomString& eventType);
-    bool hasActiveEventListeners(const AtomString& eventType) const;
+    bool hasEventListeners(const Identifier& eventType) const;
+    bool hasActiveEventListeners(const Identifier& eventType) const;
 
-    Vector<AtomString> eventTypes();
-    const EventListenerVector& eventListeners(const AtomString& eventType);
+    Vector<Identifier> eventTypes();
+    const SimpleEventListenerVector& eventListeners(const Identifier& eventType);
 
-    void fireEventListeners(const AtomString& eventName, const MarkedArgumentBuffer& arguments);
+    void fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
     bool isFiringEventListeners() const;
 
-    template<typename Visitor> void visitJSEventListeners(Visitor&);
     void invalidateJSEventListeners(JSC::JSObject*);
 
     const EventEmitterData* eventTargetData() const;
@@ -90,7 +86,7 @@ private:
     EventEmitterData& ensureEventEmitterData() { return m_eventTargetData; }
     void eventListenersDidChange() {}
 
-    void innerInvokeEventListeners(const AtomString&, EventListenerVector, const MarkedArgumentBuffer& arguments);
+    void innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
     void invalidateEventListenerRegions();
 
     EventEmitterData m_eventTargetData;
@@ -113,23 +109,10 @@ inline bool EventEmitter::hasEventListeners() const
     return data && !data->eventListenerMap.isEmpty();
 }
 
-inline bool EventEmitter::hasEventListeners(const AtomString& eventType) const
+inline bool EventEmitter::hasEventListeners(const Identifier& eventType) const
 {
     auto* data = eventTargetData();
     return data && data->eventListenerMap.contains(eventType);
-}
-
-inline bool EventEmitter::hasCapturingEventListeners(const AtomString& eventType)
-{
-    auto* data = eventTargetData();
-    return data && data->eventListenerMap.containsCapturing(eventType);
-}
-
-template<typename Visitor>
-void EventEmitter::visitJSEventListeners(Visitor& visitor)
-{
-    if (auto* data = eventTargetDataConcurrently())
-        data->eventListenerMap.visitJSEventListeners(visitor);
 }
 
 } // namespace WebCore

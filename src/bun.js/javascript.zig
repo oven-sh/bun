@@ -813,6 +813,15 @@ pub const VirtualMachine = struct {
                         .tag = ResolvedSource.Tag.@"node:buffer",
                     };
                 },
+                .@"node:stream" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile("streams.exports.js")),
+                        .specifier = ZigString.init("node:stream"),
+                        .source_url = ZigString.init("node:stream"),
+                        .hash = 0,
+                    };
+                },
                 .@"node:events" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -882,7 +891,7 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("url.exports.js")),
+                            @as(string, jsModuleFromFile("url.exports.js")),
                         ),
                         .specifier = ZigString.init("node:url"),
                         .source_url = ZigString.init("node:url"),
@@ -893,7 +902,7 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./bindings/sqlite/sqlite.exports.js")),
+                            @as(string, jsModuleFromFile("./bindings/sqlite/sqlite.exports.js")),
                         ),
                         .specifier = ZigString.init("bun:sqlite"),
                         .source_url = ZigString.init("bun:sqlite"),
@@ -904,7 +913,7 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./module.exports.js")),
+                            @as(string, jsModuleFromFile("./module.exports.js")),
                         ),
                         .specifier = ZigString.init("node:module"),
                         .source_url = ZigString.init("node:module"),
@@ -915,7 +924,7 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./perf_hooks.exports.js")),
+                            @as(string, jsModuleFromFile("./perf_hooks.exports.js")),
                         ),
                         .specifier = ZigString.init("node:perf_hooks"),
                         .source_url = ZigString.init("node:perf_hooks"),
@@ -926,7 +935,7 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./ws.exports.js")),
+                            @as(string, jsModuleFromFile("./ws.exports.js")),
                         ),
                         .specifier = ZigString.init("ws"),
                         .source_url = ZigString.init("ws"),
@@ -937,7 +946,7 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./node_timers.exports.js")),
+                            @as(string, jsModuleFromFile("./node_timers.exports.js")),
                         ),
                         .specifier = ZigString.init("node:timers"),
                         .source_url = ZigString.init("node:timers"),
@@ -948,32 +957,32 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./node_timers_promises.exports.js")),
+                            @as(string, jsModuleFromFile("./node_timers_promises.exports.js")),
                         ),
                         .specifier = ZigString.init("node:timers/promises"),
                         .source_url = ZigString.init("node:timers/promises"),
                         .hash = 0,
                     };
                 },
-                .@"node:streams/web" => {
+                .@"node:stream/web" => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./node_streams_web.exports.js")),
+                            @as(string, jsModuleFromFile("./node_streams_web.exports.js")),
                         ),
-                        .specifier = ZigString.init("node:streams/web"),
-                        .source_url = ZigString.init("node:streams/web"),
+                        .specifier = ZigString.init("node:stream/web"),
+                        .source_url = ZigString.init("node:stream/web"),
                         .hash = 0,
                     };
                 },
-                .@"node:streams/consumer" => {
+                .@"node:stream/consumer" => {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./node_streams_consumer.exports.js")),
+                            @as(string, jsModuleFromFile("./node_streams_consumer.exports.js")),
                         ),
-                        .specifier = ZigString.init("node:streams/consumer"),
-                        .source_url = ZigString.init("node:streams/consumer"),
+                        .specifier = ZigString.init("node:stream/consumer"),
+                        .source_url = ZigString.init("node:stream/consumer"),
                         .hash = 0,
                     };
                 },
@@ -981,7 +990,7 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./undici.exports.js")),
+                            @as(string, jsModuleFromFile("./undici.exports.js")),
                         ),
                         .specifier = ZigString.init("undici"),
                         .source_url = ZigString.init("undici"),
@@ -992,7 +1001,7 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./http.exports.js")),
+                            @as(string, jsModuleFromFile("./http.exports.js")),
                         ),
                         .specifier = ZigString.init("node:http"),
                         .source_url = ZigString.init("node:http"),
@@ -1003,7 +1012,7 @@ pub const VirtualMachine = struct {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = ZigString.init(
-                            @as(string, @embedFile("./depd.exports.js")),
+                            @as(string, jsModuleFromFile("./depd.exports.js")),
                         ),
                         .specifier = ZigString.init("depd"),
                         .source_url = ZigString.init("depd"),
@@ -2783,11 +2792,12 @@ pub const HardcodedModule = enum {
     @"node:fs/promises",
     @"node:http",
     @"node:module",
+    @"node:stream",
     @"node:path",
     @"node:perf_hooks",
     @"node:process",
-    @"node:streams/consumer",
-    @"node:streams/web",
+    @"node:stream/consumer",
+    @"node:stream/web",
     @"node:timers",
     @"node:timers/promises",
     @"node:url",
@@ -2820,13 +2830,15 @@ pub const HardcodedModule = enum {
             .{ "node:path/win32", HardcodedModule.@"node:path" },
             .{ "node:perf_hooks", HardcodedModule.@"node:perf_hooks" },
             .{ "node:process", HardcodedModule.@"node:process" },
-            .{ "node:streams/consumer", HardcodedModule.@"node:streams/consumer" },
-            .{ "node:streams/web", HardcodedModule.@"node:streams/web" },
+            .{ "node:stream", HardcodedModule.@"node:stream" },
+            .{ "node:stream/consumer", HardcodedModule.@"node:stream/consumer" },
+            .{ "node:stream/web", HardcodedModule.@"node:stream/web" },
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "path", HardcodedModule.@"node:path" },
             .{ "process", HardcodedModule.@"node:process" },
+            .{ "streams", HardcodedModule.@"node:stream" },
             .{ "undici", HardcodedModule.@"undici" },
             .{ "ws", HardcodedModule.@"ws" },
         },
@@ -2860,8 +2872,9 @@ pub const HardcodedModule = enum {
             .{ "node:path/win32", "node:path" },
             .{ "node:perf_hooks", "node:perf_hooks" },
             .{ "node:process", "node:process" },
-            .{ "node:streams/consumer", "node:streams/consumer" },
-            .{ "node:streams/web", "node:streams/web" },
+            .{ "node:stream/consumer", "node:stream/consumer" },
+            .{ "node:stream/web", "node:stream/web" },
+            .{ "node:stream", "node:stream" },
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
             .{ "node:url", "node:url" },
@@ -2870,8 +2883,9 @@ pub const HardcodedModule = enum {
             .{ "path/win32", "node:path" },
             .{ "perf_hooks", "node:perf_hooks" },
             .{ "process", "node:process" },
-            .{ "streams/consumer", "node:streams/consumer" },
-            .{ "streams/web", "node:streams/web" },
+            .{ "stream/consumer", "node:stream/consumer" },
+            .{ "stream/web", "node:stream/web" },
+            .{ "stream", "node:stream" },
             .{ "timers", "node:timers" },
             .{ "timers/promises", "node:timers/promises" },
             .{ "undici", "undici" },
@@ -2895,3 +2909,29 @@ pub const DisabledModule = bun.ComptimeStringMap(
         .{"worker_threads"},
     },
 );
+
+// This exists to make it so we can reload these quicker in development
+fn jsModuleFromFile(comptime input: string) string {
+    const absolute_path = comptime std.fs.path.dirname(@src().file).? ++ "/" ++ input;
+    const Holder = struct {
+        pub const file = @embedFile(absolute_path);
+    };
+
+    if (comptime !Environment.allow_assert) {
+        return Holder.file;
+    }
+
+    var file = std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only }) catch {
+        const WarnOnce = struct {
+            pub var warned = false;
+        };
+        if (!WarnOnce.warned) {
+            WarnOnce.warned = true;
+            Output.prettyErrorln("Could not find file: " ++ absolute_path ++ " - using embedded version", .{});
+        }
+        return Holder.file;
+    };
+
+    var contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file: " ++ absolute_path);
+    return contents;
+}

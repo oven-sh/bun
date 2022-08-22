@@ -1,12 +1,49 @@
-import { describe, it, expect } from "bun:test";
+import { it, expect } from "bun:test";
 import * as os from "node:os";
 
 it("arch", () => {
     expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
 });
 
+it("endianness", () => {
+    expect(/[BL]E/.test(os.endianness())).toBe(true);
+});
+
+it("freemem", () => {
+    expect(os.freemem() > 0).toBe(true);
+});
+
+it("totalmem", () => {
+    expect(os.totalmem() > 0).toBe(true);
+});
+
+it("getPriority", () => {
+    expect(os.getPriority()).toBe(0);
+    expect(os.getPriority(0)).toBe(0);
+});
+
+it("setPriority", () => {
+    expect(os.setPriority(0, 2)).toBe(undefined);
+    expect(os.getPriority()).toBe(2);
+    expect(os.setPriority(5)).toBe(undefined);
+    expect(os.getPriority()).toBe(5);
+});
+
+it("loadavg", () => {
+    expect(os.loadavg().length === 3).toBe(true);
+});
+
 it("homedir", () => {
     expect(os.homedir() !== "unknown").toBe(true);
+});
+
+it("tmpdir", () => {
+    if (process.platform === 'win32') {
+        expect(os.tmpdir()).toBe((process.env.TEMP || process.env.TMP));
+        expect(os.tmpdir()).toBe(`${(process.env.SystemRoot || process.env.windir)}\\temp`);
+    } else {
+        expect(os.tmpdir()).toBe((process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp"));
+    }
 });
 
 it("hostname", () => {
@@ -17,6 +54,44 @@ it("platform", () => {
     expect(["win32", "darwin", "linux", "wasm"].some(platform => os.platform() === platform)).toBe(true);
 });
 
+it("release", () => {
+    expect(os.release().length > 1).toBe(true);
+});
+
 it("type", () => {
     expect(["Windows_NT", "Darwin", "Linux"].some(type => os.type() === type)).toBe(true);
+});
+
+it("uptime", () => {
+    expect(os.uptime() > 0).toBe(true);
+});
+
+it("version", () => {
+    expect(typeof os.version() === "string").toBe(true);
+});
+
+it("userInfo", () => {
+    const info = os.userInfo();
+
+    if (process.platform !== 'win32') {
+        expect(info.username).toBe(process.env.USER);
+        expect(info.shell).toBe(process.env.SHELL);
+        expect(info.uid >= 0).toBe(true);
+        expect(info.gid >= 0).toBe(true);
+    } else {
+        expect(info.username).toBe(process.env.USERNAME);
+        expect(info.shell).toBe(null);
+        expect(info.uid).toBe(-1);
+        expect(info.gid).toBe(-1);
+    }
+});
+
+it("EOL", () => {
+    if (process.platform === 'win32') expect(os.EOL).toBe("\\r\\n");
+    else  expect(os.EOL).toBe("\\n");
+});
+
+it("devNull", () => {
+    if (process.platform === 'win32') expect(os.devNull).toBe("\\\\.\\nul");
+    else  expect(os.devNull).toBe("/dev/null");
 });

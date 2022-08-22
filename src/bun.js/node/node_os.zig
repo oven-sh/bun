@@ -354,27 +354,32 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isLinux) {
-            //const allocator = JSC.getAllocator(globalThis.ref());
-            const cpus_ = C.linux.get_cpu_infos(heap_allocator) catch {
-                @setCold(true);
-                return JSC.JSArray.from(globalThis, &.{});
-            };
-            std.debug.print("popo, {any}", .{cpus_.items});
-            //var result = std.ArrayList(JSC.JSValue).init(allocator);
-            //defer result.deinit();
+            const cpus_ = C.linux.get_cpu_info_and_time();
 
-            //for (cpus_) |_, index| {
-            //    var object = JSC.JSValue.createEmptyObject(globalThis, 2);
-            //    object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(cpus_[index].model).withEncoding().toValueGC(globalThis));
-            //    object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(cpus_[index].speed));
+            var result = std.ArrayList(JSC.JSValue).init(heap_allocator);
+            defer result.deinit();
 
-            //    _ = result.append(object) catch unreachable;
-            //}
+            for (cpus_) |_, index| {
+                var object = JSC.JSValue.createEmptyObject(globalThis, 3);
+                var timesObject = JSC.JSValue.createEmptyObject(globalThis, 5);
 
-            //std.debug.print("aa, {any}, bb {any}\n", .{ result.items, result.items.len });
-            return JSC.JSValue.jsUndefined(); //JSC.JSArray.from(globalThis, &.{});
+                timesObject.put(globalThis, &JSC.ZigString.init("user"), JSC.JSValue.jsNumber(cpus_[index].userTime));
+                timesObject.put(globalThis, &JSC.ZigString.init("nice"), JSC.JSValue.jsNumber(cpus_[index].niceTime));
+                timesObject.put(globalThis, &JSC.ZigString.init("sys"), JSC.JSValue.jsNumber(cpus_[index].systemTime));
+                timesObject.put(globalThis, &JSC.ZigString.init("idle"), JSC.JSValue.jsNumber(cpus_[index].idleTime));
+                timesObject.put(globalThis, &JSC.ZigString.init("irq"), JSC.JSValue.jsNumber(cpus_[index].irqTime));
+
+                object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(std.mem.span(cpus_[index].manufacturer)).withEncoding().toValueGC(globalThis));
+                object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(@floatToInt(i32, cpus_[index].clockSpeed)));
+                object.put(globalThis, &JSC.ZigString.init("times"), timesObject);
+
+                _ = result.append(object) catch unreachable;
+            }
+
+            return JSC.JSArray.from(globalThis, result.items);
         }
-        return JSC.JSValue.jsUndefined(); //JSC.JSArray.from(globalThis, &.{});
+
+        return JSC.JSArray.from(globalThis, &.{});
     }
 
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

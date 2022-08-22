@@ -361,37 +361,23 @@ pub fn set_process_priority_l(pid: c_uint, priority: c_int) i32 {
     return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
 }
 
-pub const CpuInfo = struct {
-    model: []const u8 = undefined,
-    speed: i64 = undefined,
+pub const struct_CpuInfo = extern struct {
+    manufacturer: [*c]u8,
+    clockSpeed: f32,
+    userTime: c_int,
+    niceTime: c_int,
+    systemTime: c_int,
+    idleTime: c_int,
+    iowaitTime: c_int,
+    irqTime: c_int,
 };
+pub extern fn getCpuInfo() [*c]struct_CpuInfo;
+pub extern fn getCpuTime() [*c]struct_CpuInfo;
+pub extern fn getCpuInfoAndTime() [*c]struct_CpuInfo;
+pub extern fn getCpuArrayLen(arr: [*c]struct_CpuInfo) usize;
 
-pub fn get_cpu_infos(allocator: std.mem.Allocator) anyerror!std.ArrayListAligned(CpuInfo, null) {
-    var file = std.fs.openFileAbsolute("/proc/cpuinfo", .{ .intended_io_mode = .blocking }) catch |err| return err;
-    defer file.close();
-
-    const reader = file.reader();
-    const cpu_count = unistd.sysconf(unistd._SC_NPROCESSORS_ONLN);
-
-    var line_buf: [8024]u8 = undefined;
-
-    var cores = std.ArrayList(CpuInfo).init(allocator);
-    defer cores.deinit();
-
-    while (true) {
-        const line = (try reader.readUntilDelimiterOrEof(&line_buf, '\n')) orelse break;
-        const colon_pos = std.mem.indexOfScalar(u8, line, ':') orelse continue;
-        const key = std.mem.trimRight(u8, line[0..colon_pos], " \t");
-        const value = std.mem.trimLeft(u8, line[colon_pos + 1 ..], " \t");
-
-        if (std.mem.eql(u8, key, "processor")) {
-            _ = cores.append(.{}) catch unreachable;
-        } else if (std.mem.eql(u8, key, "model name") or std.mem.eql(u8, key, "cpu")) {
-            cores.items[cores.items.len - 1].model = allocator.dupe(u8, value) catch "0";
-        } else if (std.mem.eql(u8, key, "cpu MHz") or std.mem.eql(u8, key, "clock")) {
-            cores.items[cores.items.len - 1].speed = @floatToInt(i64, std.fmt.parseFloat(f64, value) catch 0);
-        } else if (cores.items.len > cpu_count) break;
-    }
-
-    return cores;
+pub fn get_cpu_info_and_time() []struct_CpuInfo {
+    const cpuInfoAndTime = getCpuInfoAndTime();
+    const len = getCpuArrayLen(cpuInfoAndTime);
+    return cpuInfoAndTime[0..len];
 }

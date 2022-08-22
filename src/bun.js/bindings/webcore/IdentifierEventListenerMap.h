@@ -56,6 +56,7 @@ public:
     WEBCORE_EXPORT SimpleEventListenerVector* find(const JSC::Identifier& eventType);
     const SimpleEventListenerVector* find(const JSC::Identifier& eventType) const { return const_cast<IdentifierEventListenerMap*>(this)->find(eventType); }
     Vector<JSC::Identifier> eventTypes() const;
+    template<typename Visitor> void visitJSEventListeners(Visitor&);
 
     Lock& lock() { return m_lock; }
 
@@ -63,5 +64,15 @@ private:
     Vector<std::pair<JSC::Identifier, SimpleEventListenerVector>> m_entries;
     Lock m_lock;
 };
+
+template<typename Visitor>
+void IdentifierEventListenerMap::visitJSEventListeners(Visitor& visitor)
+{
+    Locker locker { m_lock };
+    for (auto& entry : m_entries) {
+        for (auto& eventListener : entry.second)
+            eventListener->callback().visitJSFunction(visitor);
+    }
+}
 
 } // namespace WebCore

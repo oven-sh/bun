@@ -76,8 +76,11 @@ public:
 
     const EventEmitterData* eventTargetData() const;
 
+    IdentifierEventListenerMap& eventListenerMap() { return ensureEventEmitterData().eventListenerMap; }
+
 private:
-    EventEmitter(ScriptExecutionContext& context) : ContextDestructionObserver(&context)
+    EventEmitter(ScriptExecutionContext& context)
+        : ContextDestructionObserver(&context)
     {
     }
 

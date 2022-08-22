@@ -1,6 +1,5 @@
 const { EventEmitter } = import.meta.require("node:events");
 const { Readable, Writable } = import.meta.require("node:stream");
-
 export function createServer(options, callback) {
   return new Server(options, callback);
 }
@@ -36,8 +35,8 @@ export class Server extends EventEmitter {
   listen(...args) {
     const server = this;
     const [options, listening_cb] = _normalizeArgs(args);
-    const res_class = this.#options.ServerResponse || ServerResponse;
-    const req_class = this.#options.IncomingMessage || IncomingMessage;
+    const ResponseClass = this.#options.ServerResponse || ServerResponse;
+    const RequestClass = this.#options.IncomingMessage || IncomingMessage;
 
     try {
       this.#server = Bun.serve({
@@ -45,14 +44,39 @@ export class Server extends EventEmitter {
         hostname: options.host,
 
         fetch(req) {
-          return new Promise((reply, reject) => {
-            const http_req = new req_class(req);
-            const http_res = new res_class({ reply, req: http_req });
+          var pendingResponse;
+          var pendingError;
+          var rejectFunction, resolveFunction;
+          var reject = (err) => {
+            if (pendingError) return;
+            pendingError = err;
+            if (rejectFunction) rejectFunction(err);
+          };
 
-            http_req.once("error", (err) => reject(err));
-            http_res.once("error", (err) => reject(err));
+          var reply = function (resp) {
+            if (pendingResponse) return;
+            pendingResponse = resp;
+            if (resolveFunction) resolveFunction(resp);
+          };
 
-            server.emit("request", http_req, http_res);
+          const http_req = new RequestClass(req);
+          const http_res = new ResponseClass({ reply, req: http_req });
+
+          http_req.once("error", (err) => reject(err));
+          http_res.once("error", (err) => reject(err));
+          server.emit("request", http_req, http_res);
+
+          if (pendingError) {
+            throw pendingError;
+          }
+
+          if (pendingResponse) {
+            return pendingResponse;
+          }
+
+          return new Promise((resolve, reject) => {
+            resolveFunction = resolve;
+            rejectFunction = reject;
           });
         },
       });
@@ -69,38 +93,72 @@ export class Server extends EventEmitter {
 
 export class IncomingMessage extends Readable {
   constructor(req) {
-    const rawHeaders = [];
     const method = req.method;
-    const headers = Object.create(null);
-
-    for (const key of req.headers.keys()) {
-      const value = req.headers.get(key);
-
-      headers[key] = value;
-      rawHeaders.push(key, value);
-    }
 
     super();
 
     const url = new URL(req.url);
-    // TODO: reuse trailer object?
-    // TODO: get hostname and port from Bun.serve and calculate substring() offset
 
-    this._req = req;
-    this.method = method;
-    this.complete = false;
-    this._body_offset = 0;
-    this.headers = headers;
-    this._body = undefined;
-    this._socket = undefined;
-    this.rawHeaders = rawHeaders;
-    this.url = url.pathname + url.search;
     this._no_body =
       "GET" === method ||
       "HEAD" === method ||
       "TRACE" === method ||
       "CONNECT" === method ||
-      "OPTIONS" === method;
+      "OPTIONS" === method ||
+      (parseInt(req.headers.get("Content-Length") || "") || 0) === 0;
+
+    this._req = req;
+    this.method = method;
+    this.complete = !!this._no_body;
+    this._body_offset = 0;
+
+    this._body = undefined;
+    this._socket = undefined;
+
+    this.url = url.pathname;
+    this.#inputRequest = req;
+  }
+  #inputRequest;
+  #headers;
+  #rawHeaders;
+  _consuming = false;
+  _dumped = false;
+
+  #constructHeaders() {
+    const rawHeaders = [];
+    const headers = Object.create(null);
+    var req = this.#inputRequest;
+    this.#inputRequest = undefined;
+    for (const [key, value] of req.headers.entries()) {
+      headers[key] = value;
+      rawHeaders.push(key, value);
+    }
+    this.#headers = headers;
+    this.#rawHeaders = rawHeaders;
+  }
+
+  get headers() {
+    var _headers = this.#headers;
+    if (_headers) return _headers;
+    this.#constructHeaders();
+    return this.#headers;
+  }
+
+  set headers(val) {
+    this.#headers = val;
+    return true;
+  }
+
+  get rawHeaders() {
+    var _rawHeaders = this.#rawHeaders;
+    if (_rawHeaders) return _rawHeaders;
+    this.#constructHeaders();
+    return this.#rawHeaders;
+  }
+
+  set rawHeaders(val) {
+    this.#rawHeaders = val;
+    return true;
   }
 
   _construct(callback) {
@@ -134,6 +192,10 @@ export class IncomingMessage extends Readable {
   }
 
   get aborted() {
+    return false;
+  }
+
+  abort() {
     throw new Error("not implemented");
   }
 
@@ -170,13 +232,14 @@ export class IncomingMessage extends Readable {
   }
 
   get socket() {
-    if (this._socket) return this._socket;
+    var _socket = this._socket;
+    if (_socket) return _socket;
 
-    this._socket = new EventEmitter();
-    this.on("end", () => duplex.emit("end"));
-    this.on("close", () => duplex.emit("close"));
+    this._socket = _socket = new EventEmitter();
+    this.on("end", () => _socket.emit("end"));
+    this.on("close", () => _socket.emit("close"));
 
-    return this._socket;
+    return _socket;
   }
 
   setTimeout(msecs, callback) {
@@ -186,53 +249,107 @@ export class IncomingMessage extends Readable {
 
 export class ServerResponse extends Writable {
   constructor({ req, reply }) {
-    const headers = new Headers();
-    const sink = new Bun.ArrayBufferSink();
-    sink.start({ stream: false, asUint8Array: true });
-
     super();
     this.req = req;
-    this._sink = sink;
     this._reply = reply;
     this.sendDate = true;
     this.statusCode = 200;
-    this._headers = headers;
+    this.#headers = undefined;
     this.headersSent = false;
     this.statusMessage = undefined;
+    this.#controller = undefined;
+    this.#firstWrite = undefined;
+    this._writableState.decodeStrings = false;
   }
 
-  _write(chunk, encoding, callback) {
-    this.headersSent = true;
-    this._sink.write(chunk);
+  req;
+  _reply;
+  sendDate;
+  statusCode;
+  #headers;
+  headersSent = false;
+  statusMessage;
+  #controller;
+  #firstWrite;
+  _sent100 = false;
+  _defaultKeepAlive = false;
+  _removedConnection = false;
+  _removedContLen = false;
 
-    callback();
+  _write(chunk, encoding, callback) {
+    if (!this.#firstWrite && !this.headersSent) {
+      this.#firstWrite = chunk;
+      callback();
+      return;
+    }
+
+    this.#ensureReadableStreamController((controller) => {
+      controller.write(chunk);
+      callback();
+    });
   }
 
   _writev(chunks, callback) {
-    this.headersSent = true;
-
-    for (const chunk of chunks) {
-      this._sink.write(chunk.chunk);
+    if (chunks.length === 1 && !this.headersSent && !this.#firstWrite) {
+      this.#firstWrite = chunks[0].chunk;
+      callback();
+      return;
     }
 
-    callback();
+    this.#ensureReadableStreamController((controller) => {
+      for (const chunk of chunks) {
+        controller.write(chunk.chunk);
+      }
+
+      callback();
+    });
+  }
+
+  #ensureReadableStreamController(run) {
+    var thisController = this.#controller;
+    if (thisController) return run(thisController);
+    this.headersSent = true;
+    var firstWrite = this.#firstWrite;
+    this.#firstWrite = undefined;
+    this._reply(
+      new Response(
+        new ReadableStream({
+          type: "direct",
+          pull: (controller) => {
+            this.#controller = controller;
+            if (firstWrite) controller.write(firstWrite);
+            firstWrite = undefined;
+            run(controller);
+          },
+        }),
+        {
+          headers: this.#headers,
+          status: this.statusCode,
+          statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
+        }
+      )
+    );
   }
 
   _final(callback) {
-    callback();
-    this.headersSent = true;
-
-    if (this.sendDate && !this._headers.has("date")) {
-      this._headers.set("date", new Date().toUTCString());
+    if (!this.headersSent) {
+      var data = this.#firstWrite || "";
+      this.#firstWrite = undefined;
+      this._reply(
+        new Response(data, {
+          headers: this.#headers,
+          status: this.statusCode,
+          statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
+        })
+      );
+      callback && callback();
+      return;
     }
 
-    this._reply(
-      new Response(this._sink.end(), {
-        headers: this._headers,
-        status: this.statusCode,
-        statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
-      })
-    );
+    this.#ensureReadableStreamController((controller) => {
+      controller.close();
+      callback();
+    });
   }
 
   get socket() {
@@ -294,23 +411,29 @@ export class ServerResponse extends Writable {
   flushHeaders() {}
 
   removeHeader(name) {
-    this._headers.delete(name);
+    var headers = (this.#headers ||= new Headers());
+    headers.delete(name);
   }
 
   getHeader(name) {
-    return this._headers.get(name);
+    var headers = (this.#headers ||= new Headers());
+    return headers.get(name);
   }
 
   hasHeader(name) {
-    return this._headers.has(name);
+    var headers = (this.#headers ||= new Headers());
+    return headers.has(name);
   }
 
   getHeaderNames() {
-    return Array.from(this._headers.keys());
+    var headers = (this.#headers ||= new Headers());
+    return Array.from(headers.keys());
   }
 
   setHeader(name, value) {
-    this._headers.set(name, value);
+    var headers = (this.#headers ||= new Headers());
+
+    headers.set(name, value);
 
     return this;
   }
@@ -322,13 +445,8 @@ export class ServerResponse extends Writable {
   }
 
   getHeaders() {
-    const headers = Object.create(null);
-
-    for (const key of this._headers.keys()) {
-      headers[key] = this._headers.get(key);
-    }
-
-    return headers;
+    if (!this.#headers) return {};
+    return Object.fromEntries(this.#headers.entries());
   }
 }
 
@@ -529,8 +647,7 @@ function _writeHead(statusCode, reason, obj, response) {
     }
   }
 }
-
-export default {
+var defaultObject = {
   Server,
   METHODS,
   STATUS_CODES,
@@ -538,3 +655,12 @@ export default {
   ServerResponse,
   IncomingMessage,
 };
+
+var wrapper =
+  (0,
+  function () {
+    return defaultObject;
+  });
+
+wrapper[Symbol.for("CommonJS")] = true;
+export default wrapper;

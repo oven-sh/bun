@@ -874,6 +874,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForEvent;
     std::unique_ptr<IsoSubspace> m_subspaceForEventListener;
     std::unique_ptr<IsoSubspace> m_subspaceForEventTarget;
+    std::unique_ptr<IsoSubspace> m_subspaceForEventEmitter;
 
     std::unique_ptr<IsoSubspace> m_subspaceForZigGlobalObject;
 

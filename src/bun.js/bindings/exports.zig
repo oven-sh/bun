@@ -246,6 +246,7 @@ pub const ResolvedSource = extern struct {
 
         @"node:buffer" = 1024,
         @"node:process" = 1025,
+        @"node:events" = 1026,
     };
 };
 

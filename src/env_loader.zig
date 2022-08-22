@@ -890,6 +890,15 @@ pub const Loader = struct {
                     @field(this, base) = logger.Source.initPathString(base, "");
                     return;
                 },
+                error.FileBusy, error.DeviceBusy, error.AccessDenied, error.IsDir => {
+                    if (!this.quiet) {
+                        Output.prettyErrorln("<r><red>{s}<r> error loading {s} file", .{ @errorName(err), base });
+                    }
+
+                    // prevent retrying
+                    @field(this, base) = logger.Source.initPathString(base, "");
+                    return;
+                },
                 else => {
                     return err;
                 },

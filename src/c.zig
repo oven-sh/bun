@@ -318,3 +318,25 @@ pub fn get_process_priority(pid_: i32) i32 {
         return -1;
     }
 }
+
+pub fn set_process_priority(pid_: i32, priority_: i32) std.c.E {
+    if (pid_ < 0) return .SRCH;
+
+    const pid = @intCast(c_uint, pid_);
+    const priority = @intCast(c_int, priority_);
+
+    var code: i32 = 0;
+    if (comptime Environment.isLinux) {
+        code = linux.set_process_priority_l(pid, priority);
+    } else if (comptime Environment.isMac) {
+        code = darwin.set_process_priority_d(pid, priority);
+    } else {
+        code = -2;
+    }
+
+    if (code == -2) return .SRCH;
+    if (code == 0) return .SUCCESS;
+
+    const errcode = std.c.getErrno(code);
+    return errcode;
+}

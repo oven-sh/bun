@@ -26,6 +26,7 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("loadavg"), JSC.NewFunction(globalObject, &JSC.ZigString.init("loadavg"), 0, loadavg));
         module.put(globalObject, &JSC.ZigString.init("platform"), JSC.NewFunction(globalObject, &JSC.ZigString.init("platform"), 0, platform));
         module.put(globalObject, &JSC.ZigString.init("release"), JSC.NewFunction(globalObject, &JSC.ZigString.init("release"), 0, release));
+        module.put(globalObject, &JSC.ZigString.init("setPriority"), JSC.NewFunction(globalObject, &JSC.ZigString.init("setPriority"), 2, setPriority));
         module.put(globalObject, &JSC.ZigString.init("tmpdir"), JSC.NewFunction(globalObject, &JSC.ZigString.init("tmpdir"), 0, tmpdir));
         module.put(globalObject, &JSC.ZigString.init("totalmem"), JSC.NewFunction(globalObject, &JSC.ZigString.init("totalmem"), 0, @"totalmem"));
         module.put(globalObject, &JSC.ZigString.init("type"), JSC.NewFunction(globalObject, &JSC.ZigString.init("type"), 0, @"type"));
@@ -52,24 +53,24 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isLinux) {
-            const allocator = JSC.getAllocator(globalThis.ref());
-            const cpus_ = C.linux.get_cpu_infos(heap_allocator) catch {
+            //const allocator = JSC.getAllocator(globalThis.ref());
+            _ = C.linux.get_cpu_infos(heap_allocator) catch {
                 @setCold(true);
                 return JSC.JSArray.from(globalThis, &.{});
             };
-            std.debug.print("popo, {any}", .{cpus_});
-            var result = std.ArrayList(JSC.JSValue).init(allocator);
-            defer result.deinit();
+            //std.debug.print("popo, {any}", .{cpus_});
+            //var result = std.ArrayList(JSC.JSValue).init(allocator);
+            //defer result.deinit();
 
-            for (cpus_) |_, index| {
-                var object = JSC.JSValue.createEmptyObject(globalThis, 2);
-                object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(cpus_[index].model).withEncoding().toValueGC(globalThis));
-                object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(cpus_[index].speed));
+            //for (cpus_) |_, index| {
+            //    var object = JSC.JSValue.createEmptyObject(globalThis, 2);
+            //    object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(cpus_[index].model).withEncoding().toValueGC(globalThis));
+            //    object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(cpus_[index].speed));
 
-                //_ = result.append(object) catch unreachable;
-            }
+            //_ = result.append(object) catch unreachable;
+            //}
 
-            std.debug.print("aa, {any}, bb {any}\n", .{ result.items, result.items.len });
+            //std.debug.print("aa, {any}, bb {any}\n", .{ result.items, result.items.len });
             return JSC.JSArray.from(globalThis, &.{});
         }
         return JSC.JSArray.from(globalThis, &.{});
@@ -194,6 +195,69 @@ pub const Os = struct {
         std.mem.copy(u8, &name_buffer, result);
 
         return JSC.ZigString.init(name_buffer[0..result.len]).withEncoding().toValueGC(globalThis);
+    }
+
+    pub fn setPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        var args_ = callframe.arguments(2);
+        var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
+
+        if (arguments.len == 0) {
+            const err = JSC.toTypeError(
+                JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+                "The \"priority\" argument must be of type number. Received undefined",
+                .{},
+                globalThis,
+            );
+            globalThis.vm().throwError(globalThis, err);
+            return JSC.JSValue.jsUndefined();
+        }
+
+        var pid = if (arguments.len == 2) arguments[0].asInt32() else 0;
+        var priority = if (arguments.len == 2) arguments[1].asInt32() else arguments[0].asInt32();
+
+        if (priority < -20 or priority > 19) {
+            const err = JSC.toTypeError(
+                JSC.Node.ErrorCode.ERR_OUT_OF_RANGE,
+                "The value of \"priority\" is out of range. It must be >= -20 && <= 19",
+                .{},
+                globalThis,
+            );
+            globalThis.vm().throwError(globalThis, err);
+            return JSC.JSValue.jsUndefined();
+        }
+
+        const errcode = C.set_process_priority(pid, priority);
+        switch (errcode) {
+            .SRCH => {
+                const err = JSC.SystemError{
+                    .message = JSC.ZigString.init("A system error occurred: uv_os_setpriority returned ESRCH (no such process)"),
+                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    //.info = info,
+                    .errno = -3,
+                    .syscall = JSC.ZigString.init("uv_os_setpriority"),
+                };
+
+                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+                return JSC.JSValue.jsUndefined();
+            },
+            .ACCES => {
+                const err = JSC.SystemError{
+                    .message = JSC.ZigString.init("A system error occurred: uv_os_setpriority returned EACCESS (permission denied)"),
+                    .code = JSC.ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    //.info = info,
+                    .errno = -13,
+                    .syscall = JSC.ZigString.init("uv_os_setpriority"),
+                };
+
+                globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
+                return JSC.JSValue.jsUndefined();
+            },
+            else => {},
+        }
+
+        return JSC.JSValue.jsUndefined();
     }
 
     pub fn tmpdir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

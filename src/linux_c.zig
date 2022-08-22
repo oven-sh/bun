@@ -1,4 +1,5 @@
 const std = @import("std");
+const unistd = @cImport(@cInclude("unistd.h"));
 const sysResource = @cImport(@cInclude("sys/resource.h"));
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
@@ -356,6 +357,10 @@ pub fn get_process_priority_l(pid: c_uint) i32 {
     return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);
 }
 
+pub fn set_process_priority_l(pid: c_uint, priority: c_int) i32 {
+    return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
+}
+
 pub const CpuInfo = struct {
     model: []const u8 = undefined,
     speed: i64 = undefined,
@@ -366,6 +371,7 @@ pub fn get_cpu_infos(allocator: std.mem.Allocator) anyerror![]CpuInfo {
     defer file.close();
 
     const reader = file.reader();
+    const cpu_count = unistd.sysconf(unistd._SC_NPROCESSORS_ONLN);
 
     var line_buf: [1024]u8 = undefined;
 
@@ -384,8 +390,9 @@ pub fn get_cpu_infos(allocator: std.mem.Allocator) anyerror![]CpuInfo {
             cores.items[cores.items.len - 1].model = allocator.dupe(u8, value) catch "0";
         } else if (std.mem.eql(u8, key, "cpu MHz") or std.mem.eql(u8, key, "clock")) {
             cores.items[cores.items.len - 1].speed = @floatToInt(i64, std.fmt.parseFloat(f64, value) catch 0);
-        }
+        } else if (cores.items.len > cpu_count) break;
     }
 
+    std.debug.print("all procs, {any}", .{cores.items});
     return cores.items;
 }

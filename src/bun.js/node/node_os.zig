@@ -355,11 +355,11 @@ pub const Os = struct {
 
         if (comptime Environment.isLinux) {
             //const allocator = JSC.getAllocator(globalThis.ref());
-            _ = C.linux.get_cpu_infos(heap_allocator) catch {
+            const cpus_ = C.linux.get_cpu_infos(heap_allocator) catch {
                 @setCold(true);
                 return JSC.JSArray.from(globalThis, &.{});
             };
-            //std.debug.print("popo, {any}", .{cpus_});
+            std.debug.print("popo, {any}", .{cpus_.items});
             //var result = std.ArrayList(JSC.JSValue).init(allocator);
             //defer result.deinit();
 
@@ -368,13 +368,13 @@ pub const Os = struct {
             //    object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(cpus_[index].model).withEncoding().toValueGC(globalThis));
             //    object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(cpus_[index].speed));
 
-            //_ = result.append(object) catch unreachable;
+            //    _ = result.append(object) catch unreachable;
             //}
 
             //std.debug.print("aa, {any}, bb {any}\n", .{ result.items, result.items.len });
-            return JSC.JSArray.from(globalThis, &.{});
+            return JSC.JSValue.jsUndefined(); //JSC.JSArray.from(globalThis, &.{});
         }
-        return JSC.JSArray.from(globalThis, &.{});
+        return JSC.JSValue.jsUndefined(); //JSC.JSArray.from(globalThis, &.{});
     }
 
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

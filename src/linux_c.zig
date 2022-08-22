@@ -366,14 +366,14 @@ pub const CpuInfo = struct {
     speed: i64 = undefined,
 };
 
-pub fn get_cpu_infos(allocator: std.mem.Allocator) anyerror![]CpuInfo {
+pub fn get_cpu_infos(allocator: std.mem.Allocator) anyerror!std.ArrayListAligned(CpuInfo, null) {
     var file = std.fs.openFileAbsolute("/proc/cpuinfo", .{ .intended_io_mode = .blocking }) catch |err| return err;
     defer file.close();
 
     const reader = file.reader();
     const cpu_count = unistd.sysconf(unistd._SC_NPROCESSORS_ONLN);
 
-    var line_buf: [1024]u8 = undefined;
+    var line_buf: [8024]u8 = undefined;
 
     var cores = std.ArrayList(CpuInfo).init(allocator);
     defer cores.deinit();
@@ -393,6 +393,5 @@ pub fn get_cpu_infos(allocator: std.mem.Allocator) anyerror![]CpuInfo {
         } else if (cores.items.len > cpu_count) break;
     }
 
-    std.debug.print("all procs, {any}", .{cores.items});
-    return cores.items;
+    return cores;
 }

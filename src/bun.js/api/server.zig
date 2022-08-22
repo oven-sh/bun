@@ -2150,7 +2150,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (response_value.as(JSC.WebCore.Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
-                response_value.protect();
+                switch (response.body.value) {
+                    .Blob => |*blob| {
+                        if (blob.needsToReadFile()) {
+                            response_value.protect();
+                        }
+                    },
+                    .Locked => {
+                        response_value.protect();
+                    },
+                    else => {},
+                }
                 ctx.render(response);
                 return;
             }

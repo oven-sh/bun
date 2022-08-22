@@ -34,7 +34,7 @@ std::unique_ptr<JSEventEmitterWrapper> jsEventEmitterCast(VM& vm, JSC::JSGlobalO
             value = WebCore::toJSNewlyCreated(lexicalGlobalObject, globalObject, EventEmitter::create(*globalObject->scriptExecutionContext()));
             object->putDirect(vm, emitterTag, value);
         }
-        auto* target = jsDynamicCast<JSEventEmitter*>(value);
+        auto* target = jsCast<JSEventEmitter*>(value);
         return makeUnique<JSEventEmitterWrapper>(target->wrapped(), *target);
     }
 

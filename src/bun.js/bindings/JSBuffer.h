@@ -32,6 +32,8 @@ extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 namespace WebCore {
 
+JSC::EncodedJSValue constructSlowBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+
 class WEBCORE_EXPORT JSBuffer final : public JSDOMWrapper<Buffer> {
 public:
     using Base = JSDOMWrapper<Buffer>;

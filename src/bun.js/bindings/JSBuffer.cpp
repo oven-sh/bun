@@ -379,6 +379,12 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBod
     return jsBufferConstructorFunction_allocUnsafeBody(lexicalGlobalObject, callFrame);
 }
 
+// new SlowBuffer(size)
+EncodedJSValue constructSlowBuffer(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+{
+    return jsBufferConstructorFunction_allocUnsafeSlowBody(lexicalGlobalObject, callFrame);
+}
+
 static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1430,7 +1436,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_concat, (JSGlobalObject * l
 static const HashTableValue JSBufferConstructorTableValues[] = {
     { "alloc"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_alloc), (intptr_t)(3) } },
     { "allocUnsafe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_allocUnsafe), (intptr_t)(1) } },
-    { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_allocUnsafe), (intptr_t)(1) } },
+    { "allocUnsafeSlow"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_allocUnsafeSlow), (intptr_t)(1) } },
     { "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_byteLength), (intptr_t)(2) } },
     { "compare"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_compare), (intptr_t)(2) } },
     { "concat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferConstructorFunction_concat), (intptr_t)(2) } },

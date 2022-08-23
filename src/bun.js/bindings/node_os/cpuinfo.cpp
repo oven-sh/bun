@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <stddef.h>
 
 #include "cpuinfo.h"
 
@@ -18,7 +19,7 @@ extern "C" CpuInfo *getCpuInfo()
         if (strlen(buff) == 0) continue;
 
         short columnSplit = 0;
-        for (int i = 0; i < strlen(buff); i++) {
+        for (int i = 0; i < (int) strlen(buff); i++) {
             if (buff[i] == ':') {
                 columnSplit = i;
                 break;
@@ -54,152 +55,47 @@ extern "C" CpuInfo *getCpuInfo()
 extern "C" CpuInfo *getCpuTime()
 {
     CpuInfo *cores = (CpuInfo*) malloc(sizeof(CpuInfo));
-    if (cores == NULL) return NULL;
-    char *data = (char*) malloc(sizeof(char));
-    if (data == NULL) return NULL;
-    char *line = (char*) malloc(sizeof(char));
-    if (line == NULL) return NULL;
-    char **lines = (char**) malloc(sizeof(char*));
-    if (lines == NULL) return NULL;
-    char temp;
-    short tempLine = 0;
-    short coresIndex = -1;
+    FILE *file = fopen("/proc/stat", "r");
+    if (file == NULL) return NULL;
 
-    FILE* systemData = fopen("/proc/stat", "r");
-    if (systemData == NULL) return NULL;
+    char buff[256];
+    int coresIndex = -1;
+    int j = 0;
 
-    *data = '\0';
-    *line = '\0';
-
-    for (int i = 0; (temp = fgetc(systemData)) != EOF; i++) {
-        data = (char*) realloc(data, i+2);
-        if (data == NULL) return NULL;
-        data[i] = temp;
-        data[i+1] = '\0';
-    }
-    
-    for (int i = 0; i < strlen(data); i++) {
-        for (int j = 0; data[i] != '\n'; i++, j++) {
-            line = (char*) realloc(line, j+2);
-            if (line == NULL) return NULL;
-            line[j] = data[i];
-            line[j+1] = '\0';
-        }
-
-        lines[tempLine] = (char*) malloc(strlen(line)+1);
-        if (lines[tempLine] == NULL) return NULL;
-        memcpy(lines[tempLine], line, strlen(line));
-
-        lines[tempLine][strlen(line)] = '\0';
-        tempLine++;
-        free(line);
-
-        lines = (char**) realloc(lines, (tempLine+1) * sizeof(char*));
-        if (lines == NULL) return NULL;
-        line = (char*) malloc(sizeof(char));
-        if (line == NULL) return NULL;
-    }
-    lines[tempLine] = NULL;
-    tempLine = 0;
-
-    free(data);
-
-    data = (char*) malloc(sizeof(char));
-    if (data == NULL) return NULL;
-
-    while (lines[tempLine] != NULL) {
-
-        char *name = strndup(lines[tempLine], 3);
-
-        if (!strncmp("cpu", name, 3) && isdigit(lines[tempLine][3])) {
+    while (fgets(buff, 256, file)) {
+        char *name = strndup(buff, 3);
+        if (!strncmp("cpu", name, 3) && isdigit(buff[3])) {
             coresIndex++;
             if (coresIndex > 0) {
                 cores = (CpuInfo*) realloc(cores, (coresIndex+1) * sizeof(CpuInfo));
                 if (cores == NULL) return NULL;
             }
-            int space = 0;
-            for (int i = 0; i < strlen(lines[tempLine]); i++) {
-                if (lines[tempLine][i] == ' ') {
+            int space;
+            for (int i = 0; i < (int) strlen(buff); i++) {
+                if (buff[i] == ' ') {
                     space = i;
                     break;
                 }
             }
-            char *cpuData = strndup((lines[tempLine]+space+1), strlen(lines[tempLine]));
-            int iter = 0;
-            for (int i = 0; cpuData[i] != ' '; i++) {
-                data = (char*) realloc(data, i+2);
-                data[i] = cpuData[iter+i];
-                data[i+1] = '\0';
+            char *cpuData = strndup((buff+space+1), strlen(buff));
+            // Time to be smart, What I am about to do is dangerous.
+            char *temp = (char*) &cores[coresIndex];
+            size_t start = offsetof(CpuInfo, userTime); // getting offset from `userTime` member.
+            temp = temp + start;
+            j = 0;
+            for (int i = 0; i < 6; i++, j++) {
+                cpuData = (cpuData+j); // offseting string.
+                for (j = 0; cpuData[j] != ' '; j++);
+                *(int*)temp = atoi(strndup(cpuData, j));
+                temp = temp + sizeof(int); // switching to next int member.
             }
-            iter += strlen(data) + 1;
-            cores[coresIndex].userTime = atoi(data);
-            free(data);
-            data = (char*) malloc(sizeof(char));
-            if (data == NULL) return NULL;
-
-            for (int i = 0; cpuData[i] != ' '; i++) {
-                data = (char*) realloc(data, i+2);
-                data[i] = cpuData[iter+i];
-                data[i+1] = '\0';
-            }
-            iter += strlen(data) + 1;
-            cores[coresIndex].niceTime = atoi(data);
-            free(data);
-            data = (char*) malloc(sizeof(char));
-            if (data == NULL) return NULL;
-
-            for (int i = 0; cpuData[i] != ' '; i++) {
-                data = (char*) realloc(data, i+2);
-                data[i] = cpuData[iter+i];
-                data[i+1] = '\0';
-            }
-            iter += strlen(data) + 1;
-            cores[coresIndex].systemTime = atoi(data);
-            free(data);
-            data = (char*) malloc(sizeof(char));
-            if (data == NULL) return NULL;
-
-            for (int i = 0; cpuData[i] != ' '; i++) {
-                data = (char*) realloc(data, i+2);
-                data[i] = cpuData[iter+i];
-                data[i+1] = '\0';
-            }
-            iter += strlen(data) + 1;
-            cores[coresIndex].idleTime = atoi(data);
-            free(data);
-            data = (char*) malloc(sizeof(char));
-            if (data == NULL) return NULL;
-
-            for (int i = 0; cpuData[i] != ' '; i++) {
-                data = (char*) realloc(data, i+2);
-                data[i] = cpuData[iter+i];
-                data[i+1] = '\0';
-            }
-            iter += strlen(data) + 1;
-            cores[coresIndex].iowaitTime = atoi(data);
-            free(data);
-            data = (char*) malloc(sizeof(char));
-            if (data == NULL) return NULL;
-
-            for (int i = 0; cpuData[i] != ' '; i++) {
-                data = (char*) realloc(data, i+2);
-                data[i] = cpuData[iter+i];
-                data[i+1] = '\0';
-            }
-            iter += strlen(data) + 1;
-            cores[coresIndex].irqTime = atoi(data);
-            free(data);
-            data = (char*) malloc(sizeof(char));
-            if (data == NULL) return NULL;
         }
-
-        tempLine++;
     }
     coresIndex++;
     cores = (CpuInfo*) realloc(cores, (coresIndex+1) * sizeof(CpuInfo));
     if (cores == NULL) return NULL;
     cores[coresIndex] = (CpuInfo) {NULL, 0, 0, 0, 0, 0, 0, 0};
-
+    
     return cores;
 }
 
@@ -210,10 +106,11 @@ extern "C" CpuInfo *getCpuInfoAndTime()
     CpuInfo* arr2 = getCpuTime();
     if (arr2 == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
 
-    for (int i = 0; arr2[i].userTime > 0; i++) {
+    for (int i = 0; arr[i].manufacturer; i++) {
         arr2[i].manufacturer = arr[i].manufacturer;
         arr2[i].clockSpeed = arr[i].clockSpeed;
     }
+    free(arr);
 
     return arr2;
 }
@@ -221,6 +118,6 @@ extern "C" CpuInfo *getCpuInfoAndTime()
 extern "C" int getCpuArrayLen(CpuInfo *arr)
 {
     int i = 0;
-    for (; arr[i].userTime > 0 || arr[i].manufacturer != NULL; i++);
-    return i;
+    for (; arr[i].manufacturer; i++);
+    return i-1;
 }

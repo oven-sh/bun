@@ -24,6 +24,7 @@ pub const Os = struct {
         module.put(globalObject, &JSC.ZigString.init("homedir"), JSC.NewFunction(globalObject, &JSC.ZigString.init("homedir"), 0, homedir));
         module.put(globalObject, &JSC.ZigString.init("hostname"), JSC.NewFunction(globalObject, &JSC.ZigString.init("hostname"), 0, hostname));
         module.put(globalObject, &JSC.ZigString.init("loadavg"), JSC.NewFunction(globalObject, &JSC.ZigString.init("loadavg"), 0, loadavg));
+        module.put(globalObject, &JSC.ZigString.init("networkInterfaces"), JSC.NewFunction(globalObject, &JSC.ZigString.init("networkInterfaces"), 0, networkInterfaces));
         module.put(globalObject, &JSC.ZigString.init("platform"), JSC.NewFunction(globalObject, &JSC.ZigString.init("platform"), 0, platform));
         module.put(globalObject, &JSC.ZigString.init("release"), JSC.NewFunction(globalObject, &JSC.ZigString.init("release"), 0, release));
         module.put(globalObject, &JSC.ZigString.init("setPriority"), JSC.NewFunction(globalObject, &JSC.ZigString.init("setPriority"), 2, setPriority));
@@ -376,7 +377,7 @@ pub const Os = struct {
                 _ = result.append(object) catch unreachable;
             }
 
-            return JSC.JSArray.from(globalThis, result.items);
+            return JSC.JSArray.from(globalThis, result.toOwnedSlice());
         }
 
         return JSC.JSArray.from(globalThis, &.{});
@@ -484,6 +485,53 @@ pub const Os = struct {
                 JSC.JSValue.jsNumber(0),
             });
         }
+    }
+
+    pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
+
+        if (comptime Environment.isLinux) {
+            const interfaces_ = C.linux.get_network_interfaces();
+
+            const object = JSC.JSValue.createEmptyObject(globalThis, 0);
+
+            var map = std.StringArrayHashMap(std.ArrayList(JSC.JSValue)).init(heap_allocator);
+            defer map.deinit();
+
+            for (interfaces_) |_, index| {
+                const interfaceName = std.mem.span(interfaces_[index].interface);
+                var obj = JSC.JSValue.createEmptyObject(globalThis, 4);
+
+                obj.put(globalThis, &JSC.ZigString.init("address"), JSC.ZigString.init(std.mem.span(interfaces_[index].address)).withEncoding().toValueGC(globalThis));
+                obj.put(globalThis, &JSC.ZigString.init("netmask"), JSC.ZigString.init(std.mem.span(interfaces_[index].netmask)).withEncoding().toValueGC(globalThis));
+                obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(std.mem.span(interfaces_[index].family)).withEncoding().toValueGC(globalThis));
+                obj.put(globalThis, &JSC.ZigString.init("mac"), JSC.ZigString.init(std.mem.span(interfaces_[index].mac)).withEncoding().toValueGC(globalThis));
+                //obj.put(globalThis, &JSC.ZigString.init("internal"), JSC.JSValue.jsBoolean(if (interfaces_[index].internal == 0) true else false));
+                //obj.put(globalThis, &JSC.ZigString.init("cidr"), JSC.JSValue.jsNumber(interfaces_[index].cidr));
+
+                if (map.contains(interfaceName)) {
+                    _ = map.get(interfaceName).?.append(obj) catch unreachable;
+                } else {
+                    var arr = std.ArrayList(JSC.JSValue).init(heap_allocator);
+                    defer arr.deinit();
+
+                    _ = arr.append(obj) catch unreachable;
+                    _ = map.put(interfaceName, arr) catch unreachable;
+                }
+            }
+
+            for (map.keys()) |key| {
+                var value = map.get(key);
+                std.debug.print("kolko je tam toho??? {s}\n", .{key});
+                //object.put(globalThis, &JSC.ZigString.init(std.mem.span(interfaces_[index].interface)), obj);
+                object.put(globalThis, &JSC.ZigString.init(key), JSC.JSArray.from(globalThis, &.{value.?.items}));
+                //var array = map.get(key);
+            }
+
+            return object;
+        }
+
+        return JSC.JSArray.from(globalThis, &.{});
     }
 
     pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

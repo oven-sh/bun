@@ -174,7 +174,11 @@
     "variant": "cpp",
     "sysctl.h": "c",
     "interface_adresses.h": "c",
-    "interface_addresses.h": "c"
+    "interface_addresses.h": "c",
+    "ctype.h": "c",
+    "ethernet.h": "c",
+    "inet.h": "c",
+    "packet.h": "c"
   },
   "cmake.configureOnOpen": false
 }

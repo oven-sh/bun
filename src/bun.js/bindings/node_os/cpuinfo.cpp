@@ -8,67 +8,24 @@
 extern "C" CpuInfo *getCpuInfo()
 {
     CpuInfo *cores = (CpuInfo*) malloc(sizeof(CpuInfo));
-    if (cores == NULL) return NULL;
-    char *data = (char*) malloc(sizeof(char));
-    if (data == NULL) return NULL;
-    char *line = (char*) malloc(sizeof(char));
-    if (line == NULL) return NULL;
-    char **lines = (char**) malloc(sizeof(char*));
-    if (lines == NULL) return NULL;
-    char temp;
-    short columnSplit = 0;
-    short tempLine = 0;
-    short coresIndex = -1;
+    FILE *file = fopen("/proc/cpuinfo", "r");
+    if (file == NULL) return NULL;
 
-    FILE* systemData = fopen("/proc/cpuinfo", "r");
-    if (systemData == NULL) return NULL;
+    char buff[256];
+    int coresIndex = -1;
 
-    *data = '\0';
-    *line = '\0';
+    while (fgets(buff, 256, file)) {
+        if (strlen(buff) == 0) continue;
 
-    for (int i = 0; (temp = fgetc(systemData)) != EOF; i++) {
-        data = (char*) realloc(data, i+2);
-        if (data == NULL) return NULL;
-        data[i] = temp;
-        data[i+1] = '\0';
-    }
-    
-    for (int i = 0; i < strlen(data); i++) {
-        for (int j = 0; data[i] != '\n'; i++, j++) {
-            line = (char*) realloc(line, j+2);
-            if (line == NULL) return NULL;
-            line[j] = data[i];
-            line[j+1] = '\0';
-        }
-
-        lines[tempLine] = (char*) malloc(strlen(line)+1);
-        if (lines[tempLine] == NULL) return NULL;
-        memcpy(lines[tempLine], line, strlen(line));
-
-        lines[tempLine][strlen(line)] = '\0';
-        tempLine++;
-        free(line);
-
-        lines = (char**) realloc(lines, (tempLine+1) * sizeof(char*));
-        if (lines == NULL) return NULL;
-        line = (char*) malloc(sizeof(char));
-        if (line == NULL) return NULL;
-    }
-    lines[tempLine] = NULL;
-    tempLine = 0;
-
-    free(data);
-
-    while (lines[tempLine] != NULL) {
-        columnSplit = 0;
-        for (int i = 0; i < strlen(lines[tempLine]); i++) {
-            if (lines[tempLine][i] == ':') {
+        short columnSplit = 0;
+        for (int i = 0; i < strlen(buff); i++) {
+            if (buff[i] == ':') {
                 columnSplit = i;
                 break;
             }
         }
-        char *columnName = strndup(lines[tempLine], columnSplit);
-
+        char *columnName = strndup(buff, columnSplit);
+        
         if (!strncmp("processor", columnName, strlen("processor"))) {
             coresIndex++;
             if (coresIndex > 0)  {
@@ -76,17 +33,17 @@ extern "C" CpuInfo *getCpuInfo()
                 if (cores == NULL) return NULL;
             }
         } else if(!strncmp("model name", columnName, strlen("model name"))) {
-            char *columnData = strndup((lines[tempLine]+columnSplit+2), strlen(lines[tempLine]));
-            cores[coresIndex].manufacturer = (char*) malloc(strlen(columnData)+1);
+            char *columnData = strndup((buff+columnSplit+2), strlen(buff));
+            cores[coresIndex].manufacturer = (char*) malloc(strlen(columnData));
             if (cores[coresIndex].manufacturer == NULL) return NULL;
-            memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData));
+            memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData)-1);
             cores[coresIndex].manufacturer[strlen(columnData)] = '\0';
         } else if(!strncmp("cpu MHz", columnName, strlen("cpu MHz"))) {
-            char *columnData = strndup((lines[tempLine]+columnSplit+2), strlen(lines[tempLine]));
+            char *columnData = strndup((buff+columnSplit+2), strlen(buff));
             cores[coresIndex].clockSpeed = atof(columnData);
         }
-        tempLine++;
     }
+
     coresIndex++;
     cores = (CpuInfo*) realloc(cores, (coresIndex+1) * sizeof(CpuInfo));
     if (cores == NULL) return NULL;
@@ -246,7 +203,8 @@ extern "C" CpuInfo *getCpuTime()
     return cores;
 }
 
-extern "C" CpuInfo *getCpuInfoAndTime() {
+extern "C" CpuInfo *getCpuInfoAndTime()
+{
     CpuInfo* arr = getCpuInfo();
     if (arr == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
     CpuInfo* arr2 = getCpuTime();
@@ -260,7 +218,8 @@ extern "C" CpuInfo *getCpuInfoAndTime() {
     return arr2;
 }
 
-extern "C" int getCpuArrayLen(CpuInfo *arr) {
+extern "C" int getCpuArrayLen(CpuInfo *arr)
+{
     int i = 0;
     for (; arr[i].userTime > 0 || arr[i].manufacturer != NULL; i++);
     return i;

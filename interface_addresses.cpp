@@ -12,10 +12,9 @@
     #include <net/if_dl.h>
 #endif
 
-#include <map>
 #include "interface_addresses.h"
 
-map<char *, NetworkInterface> *getNetworkInterfaces() {
+NetworkInterface *getNetworkInterfaces() {
     NetworkInterface *interfaces = (NetworkInterface*) malloc(sizeof(NetworkInterface));
     if (interfaces == NULL) return NULL;
 
@@ -152,4 +151,58 @@ int getNetworkInterfaceArrayLen(NetworkInterface *arr) {
     int i = 0;
     for (; arr[i].address != NULL; i++);
     return i;
-} 
+}
+
+char **getNetworkInterfaceNames() {
+    char **interfaces = (char**) malloc(sizeof(char*));
+    if (interfaces == NULL) return NULL;
+
+    short interfacesIndex = -1;
+    struct ifaddrs *ifap, *ifa;
+
+    getifaddrs (&ifap);
+    for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET) {
+            char *interface_name = ifa->ifa_name;
+
+            interfacesIndex++;
+            if (interfacesIndex > 0)  {
+                interfaces = (char**) realloc(interfaces, (interfacesIndex+1) * sizeof(char*));
+                if (interfaces == NULL) return NULL;
+            }
+
+            interfaces[interfacesIndex] = (char*) malloc(strlen(interface_name)+1);
+            if (interfaces[interfacesIndex] == NULL) return NULL;
+            memcpy(interfaces[interfacesIndex], interface_name, strlen(interface_name));
+            interfaces[interfacesIndex][strlen(interface_name)] = '\0';
+        } else if (ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET6) {
+            char *interface_name = ifa->ifa_name;
+
+            interfacesIndex++;
+            if (interfacesIndex > 0)  {
+                interfaces = (char**) realloc(interfaces, (interfacesIndex+1) * sizeof(char*));
+                if (interfaces == NULL) return NULL;
+            }
+
+            interfaces[interfacesIndex] = (char*) malloc(strlen(interface_name)+1);
+            if (interfaces[interfacesIndex] == NULL) return NULL;
+            memcpy(interfaces[interfacesIndex], interface_name, strlen(interface_name));
+            interfaces[interfacesIndex][strlen(interface_name)] = '\0';
+        } 
+    }
+
+    interfacesIndex++;
+    interfaces = (char**) realloc(interfaces, (interfacesIndex+1) * sizeof(char*));
+    if (interfaces == NULL) return NULL;
+    interfaces[interfacesIndex] = (char*) {NULL};
+
+    freeifaddrs(ifap);
+
+    return interfaces;
+}
+
+int getNetworkInterfaceNameArrayLen(char **arr) {
+    int i = 0;
+    for (; arr[i] != NULL; i++);
+    return i;
+}

@@ -381,20 +381,3 @@ pub fn get_cpu_info_and_time() []struct_CpuInfo {
     const len = getCpuArrayLen(cpuInfoAndTime);
     return cpuInfoAndTime[0..len];
 }
-
-pub const struct_InterfaceAddresses = extern struct {
-    interface: [*c]u8,
-    address: [*c]u8,
-    netmask: [*c]u8,
-    family: [*c]u8,
-    mac: [*c]u8,
-    internal: c_int,
-};
-pub extern fn getNetworkInterfaces() [*c]struct_InterfaceAddresses;
-pub extern fn getNetworkInterfaceArrayLen(arr: [*c]struct_InterfaceAddresses) usize;
-
-pub fn get_network_interfaces() []struct_InterfaceAddresses {
-    const networkInterfaces = getNetworkInterfaces();
-    const len = getNetworkInterfaceArrayLen(networkInterfaces);
-    return networkInterfaces[0..len];
-}

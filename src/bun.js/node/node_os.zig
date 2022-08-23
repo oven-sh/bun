@@ -9,6 +9,17 @@ const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const heap_allocator = bun.default_allocator;
 
+pub const struct_InterfaceAddresses = extern struct {
+    interface: [*c]u8,
+    address: [*c]u8,
+    netmask: [*c]u8,
+    family: [*c]u8,
+    mac: [*c]u8,
+    internal: c_int,
+};
+pub extern fn getNetworkInterfaces() [*c]struct_InterfaceAddresses;
+pub extern fn getNetworkInterfaceArrayLen(arr: [*c]struct_InterfaceAddresses) usize;
+
 pub const Os = struct {
     pub const name = "Bun__Os";
     pub const code = @embedFile("../os.exports.js");
@@ -491,47 +502,41 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         if (comptime Environment.isLinux) {
-            const interfaces_ = C.linux.get_network_interfaces();
+            const networkInterfaces_ = getNetworkInterfaces();
+            const len = getNetworkInterfaceArrayLen(networkInterfaces_);
+            const arr = networkInterfaces_[0..len];
 
             const object = JSC.JSValue.createEmptyObject(globalThis, 0);
-
             var map = std.StringArrayHashMap(std.ArrayList(JSC.JSValue)).init(heap_allocator);
             defer map.deinit();
 
-            for (interfaces_) |_, index| {
-                const interfaceName = std.mem.span(interfaces_[index].interface);
-                var obj = JSC.JSValue.createEmptyObject(globalThis, 4);
+            for (arr) |part| {
+                const interface = std.mem.span(part.interface);
 
-                obj.put(globalThis, &JSC.ZigString.init("address"), JSC.ZigString.init(std.mem.span(interfaces_[index].address)).withEncoding().toValueGC(globalThis));
-                obj.put(globalThis, &JSC.ZigString.init("netmask"), JSC.ZigString.init(std.mem.span(interfaces_[index].netmask)).withEncoding().toValueGC(globalThis));
-                obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(std.mem.span(interfaces_[index].family)).withEncoding().toValueGC(globalThis));
-                obj.put(globalThis, &JSC.ZigString.init("mac"), JSC.ZigString.init(std.mem.span(interfaces_[index].mac)).withEncoding().toValueGC(globalThis));
-                //obj.put(globalThis, &JSC.ZigString.init("internal"), JSC.JSValue.jsBoolean(if (interfaces_[index].internal == 0) true else false));
-                //obj.put(globalThis, &JSC.ZigString.init("cidr"), JSC.JSValue.jsNumber(interfaces_[index].cidr));
+                var list = map.get(interface) orelse std.ArrayList(JSC.JSValue).init(heap_allocator);
+                var obj = JSC.JSValue.createEmptyObject(globalThis, 5);
+                obj.put(globalThis, &JSC.ZigString.init("address"), JSC.ZigString.init(std.mem.span(part.address)).withEncoding().toValueGC(globalThis));
+                obj.put(globalThis, &JSC.ZigString.init("netmask"), JSC.ZigString.init(std.mem.span(part.netmask)).withEncoding().toValueGC(globalThis));
+                obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(std.mem.span(part.family)).withEncoding().toValueGC(globalThis));
+                obj.put(globalThis, &JSC.ZigString.init("mac"), JSC.ZigString.init(std.mem.span(part.mac)).withEncoding().toValueGC(globalThis));
+                obj.put(globalThis, &JSC.ZigString.init("internal"), JSC.JSValue.jsBoolean(if (part.internal == 0) true else false));
+                obj.put(globalThis, &JSC.ZigString.init("cidr"), JSC.JSValue.jsNull());
 
-                if (map.contains(interfaceName)) {
-                    _ = map.get(interfaceName).?.append(obj) catch unreachable;
-                } else {
-                    var arr = std.ArrayList(JSC.JSValue).init(heap_allocator);
-                    defer arr.deinit();
-
-                    _ = arr.append(obj) catch unreachable;
-                    _ = map.put(interfaceName, arr) catch unreachable;
-                }
+                _ = list.append(obj) catch unreachable;
+                _ = map.put(interface, list) catch unreachable;
             }
 
             for (map.keys()) |key| {
                 var value = map.get(key);
-                std.debug.print("kolko je tam toho??? {s}\n", .{key});
-                //object.put(globalThis, &JSC.ZigString.init(std.mem.span(interfaces_[index].interface)), obj);
-                object.put(globalThis, &JSC.ZigString.init(key), JSC.JSArray.from(globalThis, &.{value.?.items}));
-                //var array = map.get(key);
+                if (!value) return JSC.JSValue.createEmptyObject(globalThis, 0);
+
+                object.put(globalThis, &JSC.ZigString.init(key), JSC.JSArray.from(globalThis, value.?.toOwnedSlice()));
             }
 
             return object;
         }
 
-        return JSC.JSArray.from(globalThis, &.{});
+        return JSC.JSValue.createEmptyObject(globalThis, 0);
     }
 
     pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

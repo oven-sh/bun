@@ -1,8 +1,6 @@
 #ifndef INTERFACE_ADDRESSES_LIB
 #define INTERFACE_ADDRESSES_LIB
 
-#include <map>
-
 typedef struct {
     char *interface;
     char *address;
@@ -12,7 +10,9 @@ typedef struct {
     int internal;
 } NetworkInterface;
 
-map<char *, NetworkInterface> *getNetworkInterfaces();
+NetworkInterface *getNetworkInterfaces();
 int getNetworkInterfaceArrayLen(NetworkInterface *arr);
+char **getNetworkInterfaceNames();
+int getNetworkInterfaceNameArrayLen(char **arr);
 
 #endif

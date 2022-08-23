@@ -528,7 +528,6 @@ pub const Os = struct {
 
             for (map.keys()) |key| {
                 var value = map.get(key);
-                if (!value) return JSC.JSValue.createEmptyObject(globalThis, 0);
 
                 object.put(globalThis, &JSC.ZigString.init(key), JSC.JSArray.from(globalThis, value.?.toOwnedSlice()));
             }

@@ -86,6 +86,35 @@ it("userInfo", () => {
     }
 });
 
+it("cpus", () => {
+    const cpus = os.cpus();
+
+    for (const cpu of cpus) {
+        expect(typeof cpu.model === 'string').toBe(true);
+        expect(typeof cpu.speed === 'number').toBe(true);
+        expect(typeof cpu.times.idle === 'number').toBe(true);
+        expect(typeof cpu.times.irq === 'number').toBe(true);
+        expect(typeof cpu.times.nice === 'number').toBe(true);
+        expect(typeof cpu.times.sys === 'number').toBe(true);
+        expect(typeof cpu.times.user === 'number').toBe(true);
+    }
+})
+
+it("networkInterfaces", () => {
+    const networkInterfaces = os.networkInterfaces();
+
+    for (const networkInterface of Object.values(networkInterfaces)) {
+        for (const nI of networkInterface) {
+            expect(typeof nI.address === 'string').toBe(true);
+            expect(typeof nI.netmask === 'string').toBe(true);
+            expect(typeof nI.family === 'string').toBe(true);
+            expect(typeof nI.mac === 'string').toBe(true);
+            expect(typeof nI.internal === 'boolean').toBe(true);
+            expect(nI.cidr === null).toBe(true);
+        }
+    }
+})
+
 it("EOL", () => {
     if (process.platform === 'win32') expect(os.EOL).toBe("\\r\\n");
     else  expect(os.EOL).toBe("\\n");

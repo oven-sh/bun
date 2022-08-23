@@ -514,7 +514,7 @@ pub const Os = struct {
                 const interface = std.mem.span(part.interface);
 
                 var list = map.get(interface) orelse std.ArrayList(JSC.JSValue).init(heap_allocator);
-                var obj = JSC.JSValue.createEmptyObject(globalThis, 5);
+                var obj = JSC.JSValue.createEmptyObject(globalThis, 6);
                 obj.put(globalThis, &JSC.ZigString.init("address"), JSC.ZigString.init(std.mem.span(part.address)).withEncoding().toValueGC(globalThis));
                 obj.put(globalThis, &JSC.ZigString.init("netmask"), JSC.ZigString.init(std.mem.span(part.netmask)).withEncoding().toValueGC(globalThis));
                 obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(std.mem.span(part.family)).withEncoding().toValueGC(globalThis));

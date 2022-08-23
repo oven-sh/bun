@@ -12,10 +12,10 @@ extern "C" CpuInfo *getCpuInfo()
     FILE *file = fopen("/proc/cpuinfo", "r");
     if (file == NULL) return NULL;
 
-    char buff[256];
+    char buff[2048];
     int coresIndex = -1;
 
-    while (fgets(buff, 256, file)) {
+    while (fgets(buff, 2048, file)) {
         if (strlen(buff) == 0) continue;
 
         short columnSplit = 0;

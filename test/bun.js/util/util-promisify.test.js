@@ -29,6 +29,27 @@ import assert from "assert";
 
 const stat = promisify(fs.stat);
 
+// A helper function to simplify checking for ERR_INVALID_ARG_TYPE output.
+function invalidArgTypeHelper(input) {
+  if (input == null) {
+    return ` Received ${input}`;
+  }
+  if (typeof input === 'function' && input.name) {
+    return ` Received function ${input.name}`;
+  }
+  if (typeof input === 'object') {
+    if (input.constructor?.name) {
+      return ` Received an instance of ${input.constructor.name}`;
+    }
+    return ` Received ${inspect(input, { depth: -1 })}`;
+  }
+
+  let inspected = inspect(input, { colors: false });
+  if (inspected.length > 28) { inspected = `${inspected.slice(inspected, 0, 25)}...`; }
+
+  return ` Received type ${typeof input} (${inspected})`;
+}
+
 describe("util.promisify", () => {
   describe("promisify fs calls", () => {
     // TODO: common.mustCall is not implemented here yet
@@ -270,7 +291,7 @@ describe("util.promisify", () => {
           {
             code: 'ERR_INVALID_ARG_TYPE',
             name: 'TypeError',
-            message: 'The "original" argument must be of type function.'
+            message: 'The "original" argument must be of type function.' + invalidArgTypeHelper(input)
           });
       });
     })

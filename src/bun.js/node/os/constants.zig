@@ -36,7 +36,7 @@ fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, comp
         .ERRNO => {
             const constant = getErrnoConstant(name);
             if (comptime constant != -1)
-                object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(constant));
+                object.put(globalObject, &JSC.ZigString.init("E" ++ name), JSC.JSValue.jsNumber(constant));
         },
         .ERRNO_WIN => {
             const constant = getWindowsErrnoConstant(name);
@@ -46,7 +46,7 @@ fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, comp
         .SIG => {
             const constant = getSignalsConstant(name);
             if (comptime constant != -1)
-                object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(constant));
+                object.put(globalObject, &JSC.ZigString.init("SIG" ++ name), JSC.JSValue.jsNumber(constant));
         },
         .PRIORITY => {
             object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumberFromInt32(value.?));

@@ -8,7 +8,7 @@ fn getSignalsConstant(comptime name: []const u8) comptime_int {
 }
 
 fn getPriorityConstant(comptime name: []const u8) comptime_int {
-    return if (@hasDecl(std.os.PR, name))
+    return if (@hasDecl(std.os.dl_phdr_info, name))
         return @field(std.os.PR, name)
     else
         return -1;
@@ -17,6 +17,6 @@ fn getPriorityConstant(comptime name: []const u8) comptime_int {
 pub fn main() void {
     std.debug.print(
         "hello, {}",
-        .{std.os.PR},
+        .{std.os.dl_phdr_info},
     );
 }

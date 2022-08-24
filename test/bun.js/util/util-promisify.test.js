@@ -22,6 +22,8 @@
 // Tests adapted from https://github.com/nodejs/node/blob/main/test/parallel/test-util-promisify.js
 import { describe, it } from "bun:test";
 import fs from 'node:fs';
+// TODO: vm module not implemented by bun yet
+// import vm from 'node:vm';
 import { promisify } from 'util';
 import assert from "assert";
 
@@ -56,7 +58,6 @@ describe("util.promisify", () => {
       assert.strictEqual(promisify(promisify(fn)), promisifedFn);
     })
 
-    // TODO: remove skip when shared symbol is test-able
     it.skip("should register shared promisify symbol", () => {
       function fn() {}
 
@@ -85,19 +86,193 @@ describe("util.promisify", () => {
     );
   })
   
-  // TODO: common.mustCall
-  it.skip("should call custom promised promised function with proper args", () => {
+  it("should call custom promised promised function with proper args", () => {
     const firstValue = 5;
     const secondValue = 17;
+    var called = false;
 
     function fn(callback) {
+      called = true
       callback(null, firstValue, secondValue);
     }
 
-    fn[customPromisifyArgs] = ['first', 'second'];
+    fn[Symbol('customPromisifyArgs')] = ['first', 'second'];
 
-    promisify(fn)().then(common.mustCall((obj) => {
-      assert.deepStrictEqual(obj, { first: firstValue, second: secondValue });
-    }));
+    promisify(fn)().then((firstValue, secondValue) => {
+      assert.strictEqual(called, true);
+      assert.strictEqual(firstValue, 5);
+      assert.strictEqual(secondValue, 17);
+    });
+  })
+
+  // TODO: unable to test since vm module not implemented
+  // it("should run in new vm context", () => {
+  //   const fn = vm.runInNewContext('(function() {})');
+  //   assert.notStrictEqual(Object.getPrototypeOf(promisify(fn)),Function.prototype);
+  // });
+
+  describe("callback cases", () => {
+    it('should run basic callback', async () => {
+      var called = false;
+      function fn(callback) {
+        called = true;
+        callback(null, 'foo', 'bar');
+      }
+      await promisify(fn)().then((value) => {
+        assert.strictEqual(value, 'foo');
+        assert.strictEqual(called, true);
+      });
+    })
+
+    it("should not require value to be returned in callback", async () => {
+      var called = false;
+      function fn(callback) {
+        called = true;
+        callback(null);
+      }
+      await promisify(fn)().then((value) => {
+        assert.strictEqual(value, undefined);
+        assert.strictEqual(called, true);
+      });
+    })
+
+    it("should not require error to be passed", async () => {
+      var called = false;
+      function fn(callback) {
+        called = true;
+        callback();
+      }
+      await promisify(fn)().then((value) => {
+        assert.strictEqual(value, undefined);
+        assert.strictEqual(called, true);
+      });
+    })
+
+    it("custom callback", async () => {
+      var called = false;
+      function fn(err, val, callback) {
+        called = true;
+        callback(err, val);
+      }
+      await promisify(fn)(null, 42).then((value) => {
+        assert.strictEqual(value, 42);
+        assert.strictEqual(called, true);
+      });
+    })
+
+    it("should catch error", async () => {
+      var called = false;
+      function fn(err, val, callback) {
+        called = true;
+        callback(err, val);
+      }
+      await promisify(fn)(new Error('oops'), null).catch(err => {
+        assert.strictEqual(err.message, 'oops')
+        assert.strictEqual(called, true);
+      });
+    })
+    
+    it("should call promisify properly inside async block", async () => {
+      var called = false;
+      function fn(err, val, callback) {
+        called = true;
+        callback(err, val);
+      }
+
+      await (async () => {
+        const value = await promisify(fn)(null, 42);
+        assert.strictEqual(value, 42);
+      })().then(() => {
+        assert.strictEqual(called, true);
+      });
+    })
+
+    it("should not break this reference", async () => {
+      const o = {};
+      var called = false;
+      const fn = promisify(function(cb) {
+        called = true;
+        cb(null, this === o);
+      });
+
+      o.fn = fn;
+
+      await o.fn().then((val) => {
+        assert.strictEqual(called, true)
+        assert.strictEqual(val, true);
+      });
+    })
+
+    it("should not have called callback with error", async() => {
+      const err = new Error('Should not have called the callback with the error.');
+      const stack = err.stack;
+      var called = false;
+    
+      const fn = promisify(function(cb) {
+        called = true;
+        cb(null);
+        cb(err);
+      });
+    
+      await (async () => {
+        await fn();
+        await Promise.resolve();
+        return assert.strictEqual(stack, err.stack);
+      })().then(() => {
+        assert.strictEqual(called, true);
+      });
+    })
+    
+    it('should compare promised objects properly', () => {
+      function c() { }
+      const a = promisify(function() { });
+      const b = promisify(a);
+      assert.notStrictEqual(c, a);
+      assert.strictEqual(a, b);
+    })
+
+    it("should throw error", async () => {
+      let errToThrow;
+      const thrower = promisify(function(a, b, c, cb) {
+        errToThrow = new Error();
+        throw errToThrow;
+      });
+      await thrower(1, 2, 3)
+        .then(assert.fail)
+        .then(assert.fail, (e) => assert.strictEqual(e, errToThrow));
+    })
+
+    it("should also throw error inside Promise.all", async () => {
+      const err = new Error();
+
+      const a = promisify((cb) => cb(err))();
+      const b = promisify(() => { throw err; })();
+
+      await Promise.all([
+        a.then(assert.fail, function(e) {
+          assert.strictEqual(err, e);
+        }),
+        b.then(assert.fail, function(e) {
+          assert.strictEqual(err, e);
+        }),
+      ]);
+    })
+  })
+
+  describe("invalid input", () => {
+    // This test is failing because 'code' property
+    // is not thrown in the error. does it have different
+    // throw error implementation in bun?
+    it("should throw on invalid inputs for promisify", () => {
+      [undefined, null, true, 0, 'str', {}, [], Symbol()].forEach((input) => {
+        assert.throws(
+          () => promisify(input),
+          {
+            code: 'ERR_INVALID_ARG_TYPE',
+            name: 'TypeError',
+            message: 'The "original" argument must be of type function.'
+          });
+      });
+    })
   })
 });

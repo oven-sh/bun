@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("../../global.zig");
+const bun = @import("../../../global.zig");
 const string = bun.string;
 const Environment = bun.Environment;
 const JSC = @import("../../../jsc.zig");
@@ -25,7 +25,11 @@ fn getSignalsConstant(comptime name: []const u8) comptime_int {
         return -1;
 }
 
-pub fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: enum { ERRNO, ERRNO_WIN, SIG }, name: string) void {
+fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: enum { ERRNO, ERRNO_WIN, SIG, PRIORITY }, name: string) void {
+    return __defineConstant(globalObject, object, ctype, name, null);
+}
+
+fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: enum { ERRNO, ERRNO_WIN, SIG, PRIORITY }, name: string, value: ?u16) void {
     switch (ctype) {
         .ERRNO => {
             const constant = getErrnoConstant(name);
@@ -42,14 +46,18 @@ pub fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ct
             if (comptime constant != -1)
                 object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(constant));
         },
+        .PRIORITY => {
+            object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(value.?));
+        },
     }
 }
 
 pub fn create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    const object = JSC.JSValue.createEmptyObject(globalObject, 2);
+    const object = JSC.JSValue.createEmptyObject(globalObject, 3);
 
     object.put(globalObject, &JSC.ZigString.init("errno"), createErrno(globalObject));
     object.put(globalObject, &JSC.ZigString.init("signals"), createSignals(globalObject));
+    object.put(globalObject, &JSC.ZigString.init("priority"), createPriority(globalObject));
 
     return object;
 }
@@ -241,6 +249,19 @@ pub fn createSignals(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     defineConstant(globalObject, object, .SIG, "INFO");
     defineConstant(globalObject, object, .SIG, "SYS");
     defineConstant(globalObject, object, .SIG, "UNUSED");
+
+    return object;
+}
+
+pub fn createPriority(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    const object = JSC.JSValue.createEmptyObject(globalObject, 6);
+
+    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_LOW", 19);
+    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_BELOW_NORMAL:", 10);
+    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_NORMAL", 0);
+    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_ABOVE_NORMAL", -7);
+    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_HIGH", -14);
+    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_HIGHEST", -20);
 
     return object;
 }

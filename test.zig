@@ -1,15 +1,15 @@
 const std = @import("std");
 
-fn getErrnoConstants(comptime name: []const u8) comptime_int {
-    return if (@hasField(std.os.E, name))
-        return @enumToInt(@field(std.os.E, name))
+fn getSignalsConstant(comptime name: []const u8) comptime_int {
+    return if (@hasDecl(std.os.SIG, name))
+        return @field(std.os.SIG, name)
     else
-        return 0;
+        return -1;
 }
 
 pub fn main() void {
     std.debug.print(
-        "hello, {}",
-        .{getErrnoConstants("2BIG")},
+        "hello, {}, {}",
+        .{ std.os.SIG.@"BUS", getSignalsConstant("STKFLT") },
     );
 }

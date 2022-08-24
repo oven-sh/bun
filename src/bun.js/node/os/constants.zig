@@ -19,8 +19,8 @@ fn getWindowsErrnoConstant(comptime name: []const u8) comptime_int {
 }
 
 fn getSignalsConstant(comptime name: []const u8) comptime_int {
-    return if (@hasField(std.os.SIG, name))
-        return @enumToInt(@field(std.os.SIG, name))
+    return if (@hasDecl(std.os.SIG, name))
+        return @field(std.os.SIG, name)
     else
         return -1;
 }
@@ -205,6 +205,42 @@ pub fn createSignals(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const object = JSC.JSValue.createEmptyObject(globalObject, 0);
 
     defineConstant(globalObject, object, .SIG, "HUP");
+    defineConstant(globalObject, object, .SIG, "INT");
+    defineConstant(globalObject, object, .SIG, "QUIT");
+    defineConstant(globalObject, object, .SIG, "ILL");
+    defineConstant(globalObject, object, .SIG, "TRAP");
+    defineConstant(globalObject, object, .SIG, "ABRT");
+    defineConstant(globalObject, object, .SIG, "IOT");
+    defineConstant(globalObject, object, .SIG, "BUS");
+    defineConstant(globalObject, object, .SIG, "FPE");
+    defineConstant(globalObject, object, .SIG, "KILL");
+    defineConstant(globalObject, object, .SIG, "USR1");
+    defineConstant(globalObject, object, .SIG, "SEGV");
+    defineConstant(globalObject, object, .SIG, "USR2");
+    defineConstant(globalObject, object, .SIG, "PIPE");
+    defineConstant(globalObject, object, .SIG, "ALRM");
+    defineConstant(globalObject, object, .SIG, "TERM");
+    defineConstant(globalObject, object, .SIG, "CHLD");
+    defineConstant(globalObject, object, .SIG, "STKFLT");
+    defineConstant(globalObject, object, .SIG, "CONT");
+    defineConstant(globalObject, object, .SIG, "STOP");
+    defineConstant(globalObject, object, .SIG, "TSTP");
+    defineConstant(globalObject, object, .SIG, "BREAK");
+    defineConstant(globalObject, object, .SIG, "TTIN");
+    defineConstant(globalObject, object, .SIG, "TTOU");
+    defineConstant(globalObject, object, .SIG, "URG");
+    defineConstant(globalObject, object, .SIG, "XCPU");
+    defineConstant(globalObject, object, .SIG, "XFSZ");
+    defineConstant(globalObject, object, .SIG, "VTALRM");
+    defineConstant(globalObject, object, .SIG, "PROF");
+    defineConstant(globalObject, object, .SIG, "WINCH");
+    defineConstant(globalObject, object, .SIG, "IO");
+    defineConstant(globalObject, object, .SIG, "POLL");
+    defineConstant(globalObject, object, .SIG, "LOST");
+    defineConstant(globalObject, object, .SIG, "PWR");
+    defineConstant(globalObject, object, .SIG, "INFO");
+    defineConstant(globalObject, object, .SIG, "SYS");
+    defineConstant(globalObject, object, .SIG, "UNUSED");
 
     return object;
 }

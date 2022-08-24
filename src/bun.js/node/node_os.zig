@@ -8,6 +8,7 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const heap_allocator = bun.default_allocator;
+const constants = @import("./os/constants.zig");
 
 pub const struct_InterfaceAddresses = extern struct {
     interface: [*c]u8,
@@ -48,6 +49,8 @@ pub const Os = struct {
 
         module.put(globalObject, &JSC.ZigString.init("devNull"), JSC.ZigString.init(devNull).withEncoding().toValue(globalObject));
         module.put(globalObject, &JSC.ZigString.init("EOL"), JSC.ZigString.init(EOL).withEncoding().toValue(globalObject));
+
+        module.put(globalObject, &JSC.ZigString.init("constants"), constants.create(globalObject));
 
         return module;
     }

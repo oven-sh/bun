@@ -482,8 +482,24 @@ pub fn get_total_memory() u64 {
     return @bitCast(u64, pages) * @bitCast(u64, page_size);
 }
 
+pub const struct_BootTime = struct {
+    sec: u32,
+};
 pub fn get_system_uptime() u64 {
-    return 0;
+    var uptime_: [16]struct_BootTime = undefined;
+    var size: usize = uptime_.len;
+
+    std.os.sysctlbynameZ(
+        "kern.boottime",
+        &uptime_,
+        &size,
+        null,
+        0,
+    ) catch |err| switch (err) {
+        else => return 0,
+    };
+
+    return @bitCast(u64, std.time.timestamp() - uptime_[0].sec);
 }
 
 pub const struct_LoadAvg = struct {

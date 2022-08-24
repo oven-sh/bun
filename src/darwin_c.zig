@@ -471,15 +471,26 @@ pub const uid_t = u32;
 pub const gid_t = u32;
 
 // System related
+extern fn getFreeMemoryDarwin_B() u64;
 pub fn get_free_memory() u64 {
-    return 0;
+    return getFreeMemoryDarwin_B();
 }
 
 pub fn get_total_memory() u64 {
-    const pages = unistd.sysconf(unistd._SC_PHYS_PAGES);
-    const page_size = unistd.sysconf(unistd._SC_PAGE_SIZE);
+    var memory_: [32]c_ulonglong = undefined;
+    var size: usize = memory_.len;
 
-    return @bitCast(u64, pages) * @bitCast(u64, page_size);
+    std.os.sysctlbynameZ(
+        "hw.memsize",
+        &memory_,
+        &size,
+        null,
+        0,
+    ) catch |err| switch (err) {
+        else => return 0,
+    };
+
+    return memory_[0];
 }
 
 pub const struct_BootTime = struct {

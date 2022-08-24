@@ -27,11 +27,11 @@ fn getSignalsConstant(comptime name: []const u8) comptime_int {
         return -1;
 }
 
-fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: ConstantType, name: string) void {
+fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, comptime ctype: ConstantType, comptime name: string) void {
     return __defineConstant(globalObject, object, ctype, name, null);
 }
 
-fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: ConstantType, name: string, value: ?i16) void {
+fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, comptime ctype: ConstantType, comptime name: string, comptime value: ?i32) void {
     switch (ctype) {
         .ERRNO => {
             const constant = getErrnoConstant(name);
@@ -49,7 +49,7 @@ fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctyp
                 object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(constant));
         },
         .PRIORITY => {
-            object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(value.?));
+            object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumberFromInt32(value.?));
         },
     }
 }

@@ -273,7 +273,7 @@ fn createPriority(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const object = JSC.JSValue.createEmptyObject(globalObject, 6);
 
     __defineConstant(globalObject, object, .OTHER, "PRIORITY_LOW", 19);
-    __defineConstant(globalObject, object, .OTHER, "PRIORITY_BELOW_NORMAL:", 10);
+    __defineConstant(globalObject, object, .OTHER, "PRIORITY_BELOW_NORMAL", 10);
     __defineConstant(globalObject, object, .OTHER, "PRIORITY_NORMAL", 0);
     __defineConstant(globalObject, object, .OTHER, "PRIORITY_ABOVE_NORMAL", -7);
     __defineConstant(globalObject, object, .OTHER, "PRIORITY_HIGH", -14);

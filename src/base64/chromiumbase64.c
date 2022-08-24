@@ -270,7 +270,7 @@ static const uint32_t d3[256] = {
  * using it should only be for compatability with a 3rd party.
  * Also, 'no padding' is not tested!
  */
-// #define DOPAD 1
+#define DOPAD 1
 
 /*
  * if we aren't doing padding
@@ -307,8 +307,8 @@ size_t chromium_base64_encode(char *dest, const char *str, size_t len) {
     t1 = str[i];
     *p++ = e0[t1];
     *p++ = e1[(t1 & 0x03) << 4];
-    // *p++ = CHARPAD;
-    // *p++ = CHARPAD;
+    *p++ = CHARPAD;
+    *p++ = CHARPAD;
     break;
   default: /* case 2 */
     t1 = str[i];
@@ -316,7 +316,7 @@ size_t chromium_base64_encode(char *dest, const char *str, size_t len) {
     *p++ = e0[t1];
     *p++ = e1[((t1 & 0x03) << 4) | ((t2 >> 4) & 0x0F)];
     *p++ = e2[(t2 & 0x0F) << 2];
-    // *p++ = CHARPAD;
+    *p++ = CHARPAD;
   }
 
   // Commented out because it already returns the length

@@ -1,4 +1,5 @@
 #include "../bindings/ZigGlobalObject.h"
+#include "../bindings/JSBuffer.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 
 namespace Zig {
@@ -9,6 +10,11 @@ inline void generateBufferSourceCode(JSC::JSGlobalObject* lexicalGlobalObject, J
 
     exportNames.append(JSC::Identifier::fromString(vm, "Buffer"_s));
     exportValues.append(WebCore::JSBuffer::getConstructor(vm, globalObject));
+
+    auto* slowBuffer = JSC::JSFunction::create(vm, globalObject, 0, "SlowBuffer"_s, WebCore::constructSlowBuffer, ImplementationVisibility::Public, NoIntrinsic, WebCore::constructSlowBuffer);
+    slowBuffer->putDirect(vm, vm.propertyNames->prototype, WebCore::JSBuffer::prototype(vm, *jsCast<JSDOMGlobalObject*>(lexicalGlobalObject)), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    exportNames.append(JSC::Identifier::fromString(vm, "SlowBuffer"_s));
+    exportValues.append(slowBuffer);
 
     // substitute after JSBlob is implemented.
     exportNames.append(JSC::Identifier::fromString(vm, "Blob"_s));

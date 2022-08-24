@@ -576,20 +576,20 @@ pub fn get_cpu_info_and_time() []struct_CpuInfo {
 }
 
 pub fn get_version() []const u8 {
-    var release: [100]u8 = undefined;
-    std.mem.set(u8, std.mem.span(&release), 0);
+    var version: [100]u8 = undefined;
+    std.mem.set(u8, std.mem.span(&version), 0);
 
-    var size: usize = release.len;
+    var size: usize = version.len;
 
-    if (std.os.sysctlbyname(
+    if (std.c.sysctlbyname(
         "kern.version",
-        &release,
+        &version,
         &size,
         null,
         0,
     ) == -1) return "unknown";
 
-    return std.mem.span(std.mem.sliceTo(std.mem.span(&release), @as(u8, 0)));
+    return std.mem.span(std.mem.sliceTo(std.mem.span(&version), @as(u8, 0)));
 }
 
 pub fn get_release() []const u8 {
@@ -598,7 +598,7 @@ pub fn get_release() []const u8 {
 
     var size: usize = release.len;
 
-    if (std.os.sysctlbyname(
+    if (std.c.sysctlbyname(
         "kern.osrelease",
         &release,
         &size,

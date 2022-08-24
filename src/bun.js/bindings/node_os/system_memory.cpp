@@ -1,5 +1,7 @@
 #include "system_memory.h"
 
+#include <stdint.h>
+
 #if __APPLE__
 #include <mach/mach.h>
 #include <sys/resource.h>

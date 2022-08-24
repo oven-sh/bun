@@ -467,8 +467,6 @@ pub const kFSEventStreamEventFlagMount: c_int = 64;
 pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
-pub const uid_t = u32;
-pub const gid_t = u32;
 
 // System related
 extern fn getFreeMemoryDarwin_B() u64;
@@ -540,11 +538,11 @@ pub fn get_system_loadavg() [3]f64 {
     };
 }
 
-pub fn getuid() uid_t {
+pub fn getuid() u32 {
     return unistd.getuid();
 }
 
-pub fn getgid() gid_t {
+pub fn getgid() u32 {
     return unistd.getuid();
 }
 

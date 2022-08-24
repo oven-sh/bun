@@ -13,10 +13,10 @@ extern "C" {
         int irqTime;    
     } CpuInfo;
 
-    CpuInfo *getCpuInfo();
-    CpuInfo *getCpuTime();
-    CpuInfo *getCpuInfoAndTime();
-    int getCpuArrayLen(CpuInfo *arr);
+    CpuInfo *getCpuInfo_B();
+    CpuInfo *getCpuTime_B();
+    CpuInfo *getCpuInfoAndTime_B();
+    int getCpuArrayLen_B(CpuInfo *arr);
 }
 
 #endif

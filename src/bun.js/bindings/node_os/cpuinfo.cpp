@@ -6,7 +6,7 @@
 
 #include "cpuinfo.h"
 
-extern "C" CpuInfo *getCpuInfo()
+extern "C" CpuInfo *getCpuInfo_B()
 {
     CpuInfo *cores = (CpuInfo*) malloc(sizeof(CpuInfo));
     FILE *file = fopen("/proc/cpuinfo", "r");
@@ -52,7 +52,7 @@ extern "C" CpuInfo *getCpuInfo()
     return cores;
 }
 
-extern "C" CpuInfo *getCpuTime()
+extern "C" CpuInfo *getCpuTime_B()
 {
     CpuInfo *cores = (CpuInfo*) malloc(sizeof(CpuInfo));
     FILE *file = fopen("/proc/stat", "r");
@@ -99,11 +99,11 @@ extern "C" CpuInfo *getCpuTime()
     return cores;
 }
 
-extern "C" CpuInfo *getCpuInfoAndTime()
+extern "C" CpuInfo *getCpuInfoAndTime_B()
 {
-    CpuInfo* arr = getCpuInfo();
+    CpuInfo* arr = getCpuInfo_B();
     if (arr == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
-    CpuInfo* arr2 = getCpuTime();
+    CpuInfo* arr2 = getCpuTime_B();
     if (arr2 == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
 
     for (int i = 0; arr[i].manufacturer; i++) {
@@ -115,7 +115,7 @@ extern "C" CpuInfo *getCpuInfoAndTime()
     return arr2;
 }
 
-extern "C" int getCpuArrayLen(CpuInfo *arr)
+extern "C" int getCpuArrayLen_B(CpuInfo *arr)
 {
     int i = 0;
     for (; arr[i].manufacturer; i++);

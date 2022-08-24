@@ -371,13 +371,13 @@ pub const struct_CpuInfo = extern struct {
     iowaitTime: c_int,
     irqTime: c_int,
 };
-pub extern fn getCpuInfo() [*c]struct_CpuInfo;
-pub extern fn getCpuTime() [*c]struct_CpuInfo;
-pub extern fn getCpuInfoAndTime() [*c]struct_CpuInfo;
-pub extern fn getCpuArrayLen(arr: [*c]struct_CpuInfo) usize;
+pub extern fn getCpuInfo_B() [*c]struct_CpuInfo;
+pub extern fn getCpuTime_B() [*c]struct_CpuInfo;
+pub extern fn getCpuInfoAndTime_B() [*c]struct_CpuInfo;
+pub extern fn getCpuArrayLen_B(arr: [*c]struct_CpuInfo) usize;
 
 pub fn get_cpu_info_and_time() []struct_CpuInfo {
-    const cpuInfoAndTime = getCpuInfoAndTime();
-    const len = getCpuArrayLen(cpuInfoAndTime);
+    const cpuInfoAndTime = getCpuInfoAndTime_B();
+    const len = getCpuArrayLen_B(cpuInfoAndTime);
     return cpuInfoAndTime[0..len];
 }

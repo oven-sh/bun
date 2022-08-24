@@ -4,21 +4,21 @@ const string = bun.string;
 const Environment = bun.Environment;
 const JSC = @import("../../../jsc.zig");
 
-fn getErrnoConstants(comptime name: []const u8) comptime_int {
+fn getErrnoConstant(comptime name: []const u8) comptime_int {
     return if (@hasField(std.os.E, name))
         return @enumToInt(@field(std.os.E, name))
     else
         return -1;
 }
 
-fn getWindowsErrnoConstants(comptime name: []const u8) comptime_int {
+fn getWindowsErrnoConstant(comptime name: []const u8) comptime_int {
     return if (@hasField(std.os.E, name))
         return @enumToInt(@field(std.os.windows.ws2_32.WinsockError, name))
     else
         return -1;
 }
 
-fn getSignalsConstants(comptime name: []const u8) comptime_int {
+fn getSignalsConstant(comptime name: []const u8) comptime_int {
     return if (@hasField(std.os.SIG, name))
         return @enumToInt(@field(std.os.SIG, name))
     else
@@ -28,17 +28,17 @@ fn getSignalsConstants(comptime name: []const u8) comptime_int {
 pub fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: enum { ERRNO, ERRNO_WIN, SIG }, name: string) void {
     switch (ctype) {
         .ERRNO => {
-            const constant = getErrnoConstants(name);
+            const constant = getErrnoConstant(name);
             if (comptime constant != -1)
                 object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(constant));
         },
         .ERRNO_WIN => {
-            const constant = getWindowsErrnoConstants(name);
+            const constant = getWindowsErrnoConstant(name);
             if (comptime constant != -1)
                 object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(constant));
         },
         .SIG => {
-            const constant = getSignalsConstants(name);
+            const constant = getSignalsConstant(name);
             if (comptime constant != -1)
                 object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(constant));
         },
@@ -57,7 +57,6 @@ pub fn create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
 pub fn createErrno(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const object = JSC.JSValue.createEmptyObject(globalObject, 0);
 
-    defineConstant(globalObject, object, .ERRNO, "2BIG");
     defineConstant(globalObject, object, .ERRNO, "2BIG");
     defineConstant(globalObject, object, .ERRNO, "ACCES");
     defineConstant(globalObject, object, .ERRNO, "ADDRINUSE");

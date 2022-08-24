@@ -1,12 +1,17 @@
 const std = @import("std");
 
+const loadavgStruct = struct {
+    ldavg: [3]c_ulong,
+    scale: c_ulong,
+};
+
 pub fn main() void {
-    var product_version: [32]u8 = undefined;
-    var size: usize = product_version.len;
+    var loadavg_: [24]loadavgStruct = undefined;
+    var size: usize = loadavg_.len;
 
     std.os.sysctlbynameZ(
-        "kern.osproductversion",
-        &product_version,
+        "vm.loadavg",
+        &loadavg_,
         &size,
         null,
         0,
@@ -15,6 +20,10 @@ pub fn main() void {
         else => unreachable,
     };
 
-    const string_version = product_version[0 .. size - 1 :0];
-    std.debug.print("test, {s}", .{string_version});
+    const loadavg = loadavg_[0];
+    const scale = @intToFloat(f64, loadavg.scale);
+    const avg1 = @intToFloat(f64, loadavg.ldavg[0]) / scale;
+    const avg2 = @intToFloat(f64, loadavg.ldavg[1]) / scale;
+    const avg3 = @intToFloat(f64, loadavg.ldavg[2]) / scale;
+    std.debug.print("test, {s} {s} {s}", .{ avg1, avg2, avg3 });
 }

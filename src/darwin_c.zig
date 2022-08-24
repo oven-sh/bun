@@ -486,8 +486,31 @@ pub fn get_system_uptime() u64 {
     return 0;
 }
 
+pub const struct_LoadAvg = struct {
+    ldavg: [3]u32,
+    fscale: c_long,
+};
 pub fn get_system_loadavg() [3]f64 {
-    return [3]f64{ 0, 0, 0 };
+    var loadavg_: [24]struct_LoadAvg = undefined;
+    var size: usize = loadavg_.len;
+
+    std.os.sysctlbynameZ(
+        "vm.loadavg",
+        &loadavg_,
+        &size,
+        null,
+        0,
+    ) catch |err| switch (err) {
+        else => return [3]f64{ 0, 0, 0 },
+    };
+
+    const loadavg = loadavg_[0];
+    const scale = @intToFloat(f64, loadavg.scale);
+    return [3]f64{
+        @intToFloat(f64, loadavg.ldavg[0]) / scale,
+        @intToFloat(f64, loadavg.ldavg[1]) / scale,
+        @intToFloat(f64, loadavg.ldavg[2]) / scale,
+    };
 }
 
 pub fn getuid() uid_t {
@@ -516,10 +539,10 @@ pub const struct_CpuInfo = extern struct {
     iowaitTime: c_int,
     irqTime: c_int,
 };
-pub extern fn getCpuInfo_B() [*c]struct_CpuInfo;
-pub extern fn getCpuTime_B() [*c]struct_CpuInfo;
-pub extern fn getCpuInfoAndTime_B() [*c]struct_CpuInfo;
-pub extern fn getCpuArrayLen_B(arr: [*c]struct_CpuInfo) usize;
+extern fn getCpuInfo_B() [*c]struct_CpuInfo;
+extern fn getCpuTime_B() [*c]struct_CpuInfo;
+extern fn getCpuInfoAndTime_B() [*c]struct_CpuInfo;
+extern fn getCpuArrayLen_B(arr: [*c]struct_CpuInfo) usize;
 
 pub fn get_cpu_info_and_time() []struct_CpuInfo {
     const cpuInfoAndTime = getCpuInfoAndTime_B();

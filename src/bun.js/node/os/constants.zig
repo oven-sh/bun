@@ -4,7 +4,7 @@ const string = bun.string;
 const Environment = bun.Environment;
 const JSC = @import("../../../jsc.zig");
 
-const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, PRIORITY, DLOPEN };
+const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, DLOPEN, OTHER };
 
 fn getErrnoConstant(comptime name: []const u8) comptime_int {
     return if (@hasField(std.os.E, name))
@@ -60,7 +60,7 @@ fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, comp
             if (comptime constant != -1)
                 object.put(globalObject, &JSC.ZigString.init("RTLD_" ++ name), JSC.JSValue.jsNumber(constant));
         },
-        .PRIORITY => {
+        .OTHER => {
             object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumberFromInt32(value.?));
         },
     }
@@ -73,6 +73,7 @@ pub fn create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     object.put(globalObject, &JSC.ZigString.init("signals"), createSignals(globalObject));
     object.put(globalObject, &JSC.ZigString.init("priority"), createPriority(globalObject));
     object.put(globalObject, &JSC.ZigString.init("dlopen"), createDlopen(globalObject));
+    __defineConstant(globalObject, object, .OTHER, "UV_UDP_REUSEADDR", 4);
 
     return object;
 }
@@ -271,12 +272,12 @@ fn createSignals(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
 fn createPriority(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const object = JSC.JSValue.createEmptyObject(globalObject, 6);
 
-    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_LOW", 19);
-    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_BELOW_NORMAL:", 10);
-    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_NORMAL", 0);
-    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_ABOVE_NORMAL", -7);
-    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_HIGH", -14);
-    __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_HIGHEST", -20);
+    __defineConstant(globalObject, object, .OTHER, "PRIORITY_LOW", 19);
+    __defineConstant(globalObject, object, .OTHER, "PRIORITY_BELOW_NORMAL:", 10);
+    __defineConstant(globalObject, object, .OTHER, "PRIORITY_NORMAL", 0);
+    __defineConstant(globalObject, object, .OTHER, "PRIORITY_ABOVE_NORMAL", -7);
+    __defineConstant(globalObject, object, .OTHER, "PRIORITY_HIGH", -14);
+    __defineConstant(globalObject, object, .OTHER, "PRIORITY_HIGHEST", -20);
 
     return object;
 }

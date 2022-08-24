@@ -4,8 +4,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <ifaddrs.h>
+#include <arpa/inet.h>
+
 #ifdef __linux__
-    #include <arpa/inet.h>
     #include <netpacket/packet.h>
     #include <net/ethernet.h>
 #else
@@ -20,6 +21,7 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
 
     short interfacesIndex = -1;
     struct ifaddrs *ifap, *ifa;
+    unsigned char *ptr;
 
     getifaddrs (&ifap);
     for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
@@ -126,8 +128,7 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
         #else
         if (ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_LINK) {
             char macp[18];
-            struct sockaddr_ll *s = (struct sockaddr_dl *) ifa->ifa_addr;
-            ptr = (unsigned char *)LLADDR(s);
+            ptr = (unsigned char *)LLADDR((struct sockaddr_dl *)(ifa)->ifa_addr);
             sprintf(macp, "%02x:%02x:%02x:%02x:%02x:%02x", *ptr, *(ptr+1), *(ptr+2), *(ptr+3), *(ptr+4), *(ptr+5));
 
             int arrLength = getNetworkInterfaceArrayLen(interfaces);
@@ -151,4 +152,4 @@ extern "C" int getNetworkInterfaceArrayLen(NetworkInterface *arr) {
     int i = 0;
     for (; arr[i].address != NULL; i++);
     return i;
-} 
+}

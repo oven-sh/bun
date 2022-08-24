@@ -2188,8 +2188,6 @@ pub const Timer = struct {
                     this.io_task.?.deinit();
                     var task = Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, global, this) catch unreachable;
                     VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, this.id, this) catch unreachable;
-                    VirtualMachine.vm.timer.active +|= 1;
-                    VirtualMachine.vm.active_tasks +|= 1;
                     this.io_task = task;
                     task.schedule();
                 }
@@ -2198,6 +2196,13 @@ pub const Timer = struct {
 
                 if (this.repeat)
                     return;
+
+                VirtualMachine.vm.timer.active -|= 1;
+                VirtualMachine.vm.active_tasks -|= 1;
+            } else {
+                // the active tasks count is already cleared for canceled timeout,
+                // add one here to neutralize the `-|= 1` in event loop.
+                VirtualMachine.vm.active_tasks +|= 1;
             }
 
             this.clear(global);
@@ -2214,8 +2219,6 @@ pub const Timer = struct {
                 task.deinit();
             }
             VirtualMachine.vm.allocator.destroy(this);
-            VirtualMachine.vm.timer.active -|= 1;
-            VirtualMachine.vm.active_tasks -|= 1;
         }
     };
 
@@ -2270,6 +2273,9 @@ pub const Timer = struct {
         if (comptime is_bindgen) unreachable;
         var timer: *Timeout = VirtualMachine.vm.timer.timeouts.get(id.toInt32()) orelse return;
         timer.cancelled = true;
+        VirtualMachine.vm.timer.active -|= 1;
+        // here we also remove the active task count added in event_loop.
+        VirtualMachine.vm.active_tasks -|= 2;
     }
 
     pub fn clearTimeout(

@@ -3,9 +3,18 @@
 #include <string.h>
 #include <ctype.h>
 #include <stddef.h>
+#include <unistd.h>
+
+#ifdef __APPLE__
+#include <dlfcn.h>
+#include <mach/mach.h>
+#include <sys/resource.h>
+#include <sys/sysctl.h>
+#endif
 
 #include "cpuinfo.h"
 
+#ifdef __linux__
 extern "C" CpuInfo *getCpuInfo_B()
 {
     CpuInfo *cores = (CpuInfo*) malloc(sizeof(CpuInfo));
@@ -33,13 +42,21 @@ extern "C" CpuInfo *getCpuInfo_B()
                 cores = (CpuInfo*) realloc(cores, (coresIndex+1) * sizeof(CpuInfo));
                 if (cores == NULL) return NULL;
             }
+#ifdef __linux__
         } else if(!strncmp("model name", columnName, strlen("model name"))) {
+#else
+        } else if(!strncmp("cpu", columnName, 3)) {
+#endif
             char *columnData = strndup((buff+columnSplit+2), strlen(buff));
             cores[coresIndex].manufacturer = (char*) malloc(strlen(columnData));
             if (cores[coresIndex].manufacturer == NULL) return NULL;
             memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData)-1);
             cores[coresIndex].manufacturer[strlen(columnData)] = '\0';
+#ifdef __linux__
         } else if(!strncmp("cpu MHz", columnName, strlen("cpu MHz"))) {
+#else
+        } else if(!strncmp("clock", columnName, strlen("clock"))) {
+#endif
             char *columnData = strndup((buff+columnSplit+2), strlen(buff));
             cores[coresIndex].clockSpeed = atof(columnData);
         }
@@ -51,6 +68,62 @@ extern "C" CpuInfo *getCpuInfo_B()
     cores[coresIndex] = (CpuInfo) {NULL, 0, 0, 0, 0, 0, 0, 0};
     return cores;
 }
+#elif __APPLE__
+extern "C" CpuInfo *getCpuInfo_B()
+{
+    unsigned int ticks = (unsigned int) sysconf(_SC_CLK_TCK), multiplier = ((uint64_t)1000L / ticks);
+    char model[512];
+
+    unsigned int freq;
+    int mib[] = { CTL_HW, HW_CPU_FREQ };
+    size_t freqSize = sizeof(freq);
+    sysctl(mib, 2, &freq, &freqSize, NULL, 0);
+
+    size_t size;
+    unsigned int i;
+    natural_t numcpus;
+    mach_msg_type_number_t msg_type;
+    processor_cpu_load_info_data_t *info;
+    CpuInfo *cores;
+
+    size = sizeof(model);
+    if (sysctlbyname("machdep.cpu.brand_string", model, &size, NULL, 0) &&
+        sysctlbyname("hw.model", model, &size, NULL, 0)) {
+        return NULL;
+    }
+
+    if (host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &numcpus,
+                          (processor_info_array_t*) &info,
+                          &msg_type) != KERN_SUCCESS) {
+        return NULL;
+    }
+
+    freq = freq / 1000000; // Hz to MHz
+    cores = (CpuInfo*) malloc(sizeof(CpuInfo) * numcpus);
+
+    if (cores == NULL) return NULL;
+
+    for (i = 0; i < numcpus; i++) {
+
+        cores[i].manufacturer = (char*) malloc(strlen(model)+1);
+        if(cores[i].manufacturer == NULL) return NULL;
+        memcpy(cores[i].manufacturer, model, strlen(model));
+        cores[i].manufacturer[strlen(model)] = '\0';
+        cores[i].clockSpeed = freq;
+        
+        cores[i].userTime = info[i].cpu_ticks[0] * multiplier;
+        cores[i].niceTime = info[i].cpu_ticks[3] * multiplier;
+        cores[i].systemTime = info[i].cpu_ticks[1] * multiplier;
+        cores[i].idleTime = info[i].cpu_ticks[2] * multiplier;
+        cores[i].iowaitTime = 0;
+        cores[i].irqTime = 0;
+    }
+    cores[numcpus] = (CpuInfo) { NULL, 0, 0, 0, 0, 0, 0, 0 };
+    sysctlbyname("machdep.cpu.brand_string", model, &size, NULL, 0);
+    memcpy(cores[0].manufacturer, model, strlen(model));  // Manufacturer of the first core dissapears for some reason
+    return cores;
+}
+#endif
 
 extern "C" CpuInfo *getCpuTime_B()
 {
@@ -101,6 +174,11 @@ extern "C" CpuInfo *getCpuTime_B()
 
 extern "C" CpuInfo *getCpuInfoAndTime_B()
 {
+#ifdef __APPLE__
+    CpuInfo* arr = getCpuInfo_B();
+    if (arr == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
+    return arr;
+#elif __linux__
     CpuInfo* arr = getCpuInfo_B();
     if (arr == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
     CpuInfo* arr2 = getCpuTime_B();
@@ -113,6 +191,7 @@ extern "C" CpuInfo *getCpuInfoAndTime_B()
     free(arr);
 
     return arr2;
+#endif
 }
 
 extern "C" int getCpuArrayLen_B(CpuInfo *arr)

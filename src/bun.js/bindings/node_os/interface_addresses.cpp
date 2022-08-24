@@ -15,6 +15,20 @@
 
 #include "interface_addresses.h"
 
+extern "C" uint32_t getBitCountFromIPv4Mask(uint32_t mask) {
+    return __builtin_popcount(mask);
+}
+
+extern "C" uint32_t getBitCountFromIPv6Mask(const in6_addr &mask) {
+    uint32_t bitCount = 0;
+
+    for (uint32_t ii = 0; ii < 4; ii++) {
+        bitCount += __builtin_popcount(mask.s6_addr32[ii]);
+    }
+
+    return bitCount;
+}
+
 extern "C" NetworkInterface *getNetworkInterfaces() {
     NetworkInterface *interfaces = (NetworkInterface*) malloc(sizeof(NetworkInterface));
     if (interfaces == NULL) return NULL;
@@ -58,6 +72,7 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
             memcpy(interfaces[interfacesIndex].family, "IPv4", strlen("IPv4"));
             interfaces[interfacesIndex].family[strlen("IPv4")] = '\0';
 
+            interfaces[interfacesIndex].cidr = getBitCountFromIPv4Mask(((struct sockaddr_in *) ifa->ifa_netmask)->sin_addr.s_addr);
             interfaces[interfacesIndex].internal = !!(ifa->ifa_flags & 0x8);
         } else if (ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET6) {
             struct sockaddr_in6 *sa = (struct sockaddr_in6 *) ifa->ifa_addr;
@@ -92,6 +107,7 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
             memcpy(interfaces[interfacesIndex].family, "IPv6", strlen("IPv6"));
             interfaces[interfacesIndex].family[strlen("IPv6")] = '\0';
 
+            interfaces[interfacesIndex].cidr = getBitCountFromIPv6Mask(sa->sin6_addr);
             interfaces[interfacesIndex].scopeid = sa->sin6_scope_id;
             interfaces[interfacesIndex].internal = !!(ifa->ifa_flags & 0x8);
         } 

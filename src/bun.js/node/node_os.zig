@@ -16,6 +16,7 @@ pub const struct_InterfaceAddresses = extern struct {
     netmask: [*c]u8,
     family: [*c]u8,
     mac: [*c]u8,
+    cidr: c_int,
     scopeid: u32,
     internal: c_int,
 };
@@ -188,43 +189,42 @@ pub const Os = struct {
     pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        if (comptime Environment.isLinux) {
-            const networkInterfaces_ = getNetworkInterfaces();
-            const len = getNetworkInterfaceArrayLen(networkInterfaces_);
-            const arr = networkInterfaces_[0..len];
+        const networkInterfaces_ = getNetworkInterfaces();
+        const len = getNetworkInterfaceArrayLen(networkInterfaces_);
+        const arr = networkInterfaces_[0..len];
 
-            const object = JSC.JSValue.createEmptyObject(globalThis, 0);
-            var map = std.StringArrayHashMap(std.ArrayList(JSC.JSValue)).init(heap_allocator);
-            defer map.deinit();
+        const object = JSC.JSValue.createEmptyObject(globalThis, 0);
+        var map = std.StringArrayHashMap(std.ArrayList(JSC.JSValue)).init(heap_allocator);
+        defer map.deinit();
 
-            for (arr) |part| {
-                const interface = std.mem.span(part.interface);
-                const family = std.mem.span(part.family);
+        for (arr) |part| {
+            const interface = std.mem.span(part.interface);
+            const family = std.mem.span(part.family);
+            const netmask = std.mem.span(part.netmask);
+            const allocator = JSC.getAllocator(globalThis.ref());
+            const cidr = std.fmt.allocPrint(allocator, "{s}/{}", .{ netmask, part.cidr }) catch unreachable;
 
-                var list = map.get(interface) orelse std.ArrayList(JSC.JSValue).init(heap_allocator);
-                var obj = JSC.JSValue.createEmptyObject(globalThis, 6);
-                obj.put(globalThis, &JSC.ZigString.init("address"), JSC.ZigString.init(std.mem.span(part.address)).withEncoding().toValueGC(globalThis));
-                obj.put(globalThis, &JSC.ZigString.init("netmask"), JSC.ZigString.init(std.mem.span(part.netmask)).withEncoding().toValueGC(globalThis));
-                obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(family).withEncoding().toValueGC(globalThis));
-                obj.put(globalThis, &JSC.ZigString.init("mac"), JSC.ZigString.init(std.mem.span(part.mac)).withEncoding().toValueGC(globalThis));
-                if (std.mem.eql(u8, family, "IPv6")) obj.put(globalThis, &JSC.ZigString.init("scopeid"), JSC.JSValue.jsNumber(part.scopeid));
-                obj.put(globalThis, &JSC.ZigString.init("internal"), JSC.JSValue.jsBoolean(if (part.internal == 0) true else false));
-                obj.put(globalThis, &JSC.ZigString.init("cidr"), JSC.JSValue.jsNull());
+            var list = map.get(interface) orelse std.ArrayList(JSC.JSValue).init(heap_allocator);
+            var obj = JSC.JSValue.createEmptyObject(globalThis, if (std.mem.eql(u8, family, "IPv6")) 7 else 6);
+            obj.put(globalThis, &JSC.ZigString.init("address"), JSC.ZigString.init(std.mem.span(part.address)).withEncoding().toValueGC(globalThis));
+            obj.put(globalThis, &JSC.ZigString.init("netmask"), JSC.ZigString.init(netmask).withEncoding().toValueGC(globalThis));
+            obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(family).withEncoding().toValueGC(globalThis));
+            obj.put(globalThis, &JSC.ZigString.init("mac"), JSC.ZigString.init(std.mem.span(part.mac)).withEncoding().toValueGC(globalThis));
+            obj.put(globalThis, &JSC.ZigString.init("cidr"), JSC.ZigString.init(cidr).withEncoding().toValueGC(globalThis));
+            if (std.mem.eql(u8, family, "IPv6")) obj.put(globalThis, &JSC.ZigString.init("scopeid"), JSC.JSValue.jsNumber(part.scopeid));
+            obj.put(globalThis, &JSC.ZigString.init("internal"), JSC.JSValue.jsBoolean(if (part.internal == 0) true else false));
 
-                _ = list.append(obj) catch unreachable;
-                _ = map.put(interface, list) catch unreachable;
-            }
-
-            for (map.keys()) |key| {
-                var value = map.get(key);
-
-                object.put(globalThis, &JSC.ZigString.init(key), JSC.JSArray.from(globalThis, value.?.toOwnedSlice()));
-            }
-
-            return object;
+            _ = list.append(obj) catch unreachable;
+            _ = map.put(interface, list) catch unreachable;
         }
 
-        return JSC.JSValue.createEmptyObject(globalThis, 0);
+        for (map.keys()) |key| {
+            var value = map.get(key);
+
+            object.put(globalThis, &JSC.ZigString.init(key), JSC.JSArray.from(globalThis, value.?.toOwnedSlice()));
+        }
+
+        return object;
     }
 
     pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {

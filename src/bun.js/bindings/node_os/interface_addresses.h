@@ -9,6 +9,7 @@ extern "C" {
         char *netmask;
         char *family;
         char *mac;
+        int cidr;
         uint32_t scopeid;
         int internal;
     } NetworkInterface;

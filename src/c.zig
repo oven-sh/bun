@@ -307,19 +307,63 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
 pub extern "c" fn posix_madvise(ptr: *anyopaque, len: usize, advice: i32) c_int;
 
 // System related
-pub fn get_process_priority(pid_: i32) i32 {
-    const pid = @intCast(c_uint, pid_);
-
+pub fn getFreeMemory() u64 {
     if (comptime Environment.isLinux) {
-        return linux.get_process_priority_l(pid);
+        return linux.get_free_memory();
     } else if (comptime Environment.isMac) {
-        return darwin.get_process_priority_d(pid);
+        return darwin.get_free_memory();
     } else {
         return -1;
     }
 }
 
-pub fn set_process_priority(pid_: i32, priority_: i32) std.c.E {
+pub fn getTotalMemory() u64 {
+    if (comptime Environment.isLinux) {
+        return linux.get_total_memory();
+    } else if (comptime Environment.isMac) {
+        return darwin.get_total_memory();
+    } else {
+        return -1;
+    }
+}
+
+pub fn getSystemUptime() u64 {
+    if (comptime Environment.isLinux) {
+        return linux.get_system_uptime();
+    } else {
+        return darwin.get_system_uptime();
+    }
+}
+
+pub fn getSystemLoadavg() [3]f64 {
+    if (comptime Environment.isLinux) {
+        return linux.get_system_loadavg();
+    } else {
+        return darwin.get_system_loadavg();
+    }
+}
+
+pub fn getCpuInfoAndTime() []PlatformSpecific.struct_CpuInfo {
+    if (comptime Environment.isLinux) {
+        return linux.get_cpu_info_and_time();
+    } else {
+        return darwin.get_cpu_info_and_time();
+    }
+}
+
+pub fn getProcessPriority(pid_: i32) i32 {
+    const pid = @intCast(c_uint, pid_);
+
+    if (comptime Environment.isLinux) {
+        return linux.get_process_priority(pid);
+    } else if (comptime Environment.isMac) {
+        return darwin.get_process_priority(pid);
+    } else {
+        return -1;
+    }
+}
+
+pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     if (pid_ < 0) return .SRCH;
 
     const pid = @intCast(c_uint, pid_);
@@ -327,9 +371,9 @@ pub fn set_process_priority(pid_: i32, priority_: i32) std.c.E {
 
     var code: i32 = 0;
     if (comptime Environment.isLinux) {
-        code = linux.set_process_priority_l(pid, priority);
+        code = linux.set_process_priority(pid, priority);
     } else if (comptime Environment.isMac) {
-        code = darwin.set_process_priority_d(pid, priority);
+        code = darwin.set_process_priority(pid, priority);
     } else {
         code = -2;
     }

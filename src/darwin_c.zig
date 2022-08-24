@@ -498,10 +498,31 @@ pub fn getgid() gid_t {
     return unistd.getuid();
 }
 
-pub fn get_process_priority_d(pid: c_uint) i32 {
+pub fn get_process_priority(pid: c_uint) i32 {
     return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);
 }
 
-pub fn set_process_priority_d(pid: c_uint, priority: c_int) i32 {
+pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
     return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
+}
+
+pub const struct_CpuInfo = extern struct {
+    manufacturer: [*c]u8,
+    clockSpeed: f32,
+    userTime: c_int,
+    niceTime: c_int,
+    systemTime: c_int,
+    idleTime: c_int,
+    iowaitTime: c_int,
+    irqTime: c_int,
+};
+pub extern fn getCpuInfo() [*c]struct_CpuInfo;
+pub extern fn getCpuTime() [*c]struct_CpuInfo;
+pub extern fn getCpuInfoAndTime() [*c]struct_CpuInfo;
+pub extern fn getCpuArrayLen(arr: [*c]struct_CpuInfo) usize;
+
+pub fn get_cpu_info_and_time() []struct_CpuInfo {
+    const cpuInfoAndTime = getCpuInfoAndTime();
+    const len = getCpuArrayLen(cpuInfoAndTime);
+    return cpuInfoAndTime[0..len];
 }

@@ -67,33 +67,29 @@ pub const Os = struct {
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        if (comptime Environment.isLinux) {
-            const cpus_ = C.linux.get_cpu_info_and_time();
+        const cpus_ = C.getCpuInfoAndTime();
 
-            var result = std.ArrayList(JSC.JSValue).init(heap_allocator);
-            defer result.deinit();
+        var result = std.ArrayList(JSC.JSValue).init(heap_allocator);
+        defer result.deinit();
 
-            for (cpus_) |_, index| {
-                var object = JSC.JSValue.createEmptyObject(globalThis, 3);
-                var timesObject = JSC.JSValue.createEmptyObject(globalThis, 5);
+        for (cpus_) |_, index| {
+            var object = JSC.JSValue.createEmptyObject(globalThis, 3);
+            var timesObject = JSC.JSValue.createEmptyObject(globalThis, 5);
 
-                timesObject.put(globalThis, &JSC.ZigString.init("user"), JSC.JSValue.jsNumber(cpus_[index].userTime));
-                timesObject.put(globalThis, &JSC.ZigString.init("nice"), JSC.JSValue.jsNumber(cpus_[index].niceTime));
-                timesObject.put(globalThis, &JSC.ZigString.init("sys"), JSC.JSValue.jsNumber(cpus_[index].systemTime));
-                timesObject.put(globalThis, &JSC.ZigString.init("idle"), JSC.JSValue.jsNumber(cpus_[index].idleTime));
-                timesObject.put(globalThis, &JSC.ZigString.init("irq"), JSC.JSValue.jsNumber(cpus_[index].irqTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("user"), JSC.JSValue.jsNumber(cpus_[index].userTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("nice"), JSC.JSValue.jsNumber(cpus_[index].niceTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("sys"), JSC.JSValue.jsNumber(cpus_[index].systemTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("idle"), JSC.JSValue.jsNumber(cpus_[index].idleTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("irq"), JSC.JSValue.jsNumber(cpus_[index].irqTime));
 
-                object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(std.mem.span(cpus_[index].manufacturer)).withEncoding().toValueGC(globalThis));
-                object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(@floatToInt(i32, cpus_[index].clockSpeed)));
-                object.put(globalThis, &JSC.ZigString.init("times"), timesObject);
+            object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(std.mem.span(cpus_[index].manufacturer)).withEncoding().toValueGC(globalThis));
+            object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(@floatToInt(i32, cpus_[index].clockSpeed)));
+            object.put(globalThis, &JSC.ZigString.init("times"), timesObject);
 
-                _ = result.append(object) catch unreachable;
-            }
-
-            return JSC.JSArray.from(globalThis, result.toOwnedSlice());
+            _ = result.append(object) catch unreachable;
         }
 
-        return JSC.JSArray.from(globalThis, &.{});
+        return JSC.JSArray.from(globalThis, result.toOwnedSlice());
     }
 
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -112,11 +108,7 @@ pub const Os = struct {
     pub fn freemem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        if (comptime Environment.isLinux) {
-            return JSC.JSValue.jsNumberFromUint64(C.linux.get_free_memory());
-        } else {
-            return JSC.JSValue.jsNumber(0);
-        }
+        return JSC.JSValue.jsNumberFromUint64(C.getFreeMemory());
     }
 
     pub fn getPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -138,7 +130,7 @@ pub const Os = struct {
 
         var pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
 
-        const priority = C.get_process_priority(pid);
+        const priority = C.getProcessPriority(pid);
         if (priority == -1) {
             //const info = JSC.JSValue.createEmptyObject(globalThis, 4);
             //info.put(globalThis, &JSC.ZigString.init("errno"), JSC.JSValue.jsNumberFromInt32(-3));
@@ -184,20 +176,12 @@ pub const Os = struct {
     pub fn loadavg(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        if (comptime Environment.isLinux) {
-            const result = C.linux.get_system_loadavg();
-            return JSC.JSArray.from(globalThis, &.{
-                JSC.JSValue.jsDoubleNumber(result[0]),
-                JSC.JSValue.jsDoubleNumber(result[1]),
-                JSC.JSValue.jsDoubleNumber(result[2]),
-            });
-        } else {
-            return JSC.JSArray.from(globalThis, &.{
-                JSC.JSValue.jsNumber(0),
-                JSC.JSValue.jsNumber(0),
-                JSC.JSValue.jsNumber(0),
-            });
-        }
+        const result = C.getSystemLoadavg();
+        return JSC.JSArray.from(globalThis, &.{
+            JSC.JSValue.jsDoubleNumber(result[0]),
+            JSC.JSValue.jsDoubleNumber(result[1]),
+            JSC.JSValue.jsDoubleNumber(result[2]),
+        });
     }
 
     pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -288,7 +272,7 @@ pub const Os = struct {
             return JSC.JSValue.jsUndefined();
         }
 
-        const errcode = C.set_process_priority(pid, priority);
+        const errcode = C.setProcessPriority(pid, priority);
         switch (errcode) {
             .SRCH => {
                 const err = JSC.SystemError{
@@ -344,11 +328,7 @@ pub const Os = struct {
     pub fn totalmem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        if (comptime Environment.isLinux) {
-            return JSC.JSValue.jsNumberFromUint64(C.linux.get_total_memory());
-        } else {
-            return JSC.JSValue.jsNumber(C.darwin.get_total_memory());
-        }
+        return JSC.JSValue.jsNumberFromUint64(C.getTotalMemory());
     }
 
     pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -367,11 +347,7 @@ pub const Os = struct {
     pub fn uptime(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        if (comptime Environment.isLinux) {
-            return JSC.JSValue.jsNumberFromUint64(C.linux.get_system_uptime());
-        } else {
-            return JSC.JSValue.jsNumber(0);
-        }
+        return JSC.JSValue.jsNumberFromUint64(C.getSystemUptime());
     }
 
     pub fn userInfo(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {

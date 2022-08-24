@@ -353,11 +353,11 @@ pub fn get_system_loadavg() [3]f64 {
     return [3]f64{ 0, 0, 0 };
 }
 
-pub fn get_process_priority_l(pid: c_uint) i32 {
+pub fn get_process_priority(pid: c_uint) i32 {
     return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);
 }
 
-pub fn set_process_priority_l(pid: c_uint, priority: c_int) i32 {
+pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
     return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
 }
 

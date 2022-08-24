@@ -1,22 +1,20 @@
 const std = @import("std");
 
-fn getPriorityConstant(comptime name: []const u8) comptime_int {
-    return if (@hasDecl(std.os.dl_phdr_info, name))
-        return @field(std.os.PR, name)
-    else
-        return -1;
-}
-
-fn getDlopenConstant(comptime name: []const u8) comptime_int {
-    return if (@hasDecl(std.os.system.RTLD, name))
-        return @field(std.os.system.RTLD, name)
-    else
-        return -1;
-}
-
 pub fn main() void {
-    std.debug.print(
-        "hello, {}",
-        .{getDlopenConstant("GLOBAL")},
-    );
+    var product_version: [32]u8 = undefined;
+    var size: usize = product_version.len;
+
+    std.os.sysctlbynameZ(
+        "kern.osproductversion",
+        &product_version,
+        &size,
+        null,
+        0,
+    ) catch |err| switch (err) {
+        error.UnknownName => unreachable,
+        else => unreachable,
+    };
+
+    const string_version = product_version[0 .. size - 1 :0];
+    std.debug.print("test, {s}", .{string_version});
 }

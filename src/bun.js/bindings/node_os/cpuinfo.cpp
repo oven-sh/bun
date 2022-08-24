@@ -42,20 +42,20 @@ extern "C" CpuInfo *getCpuInfo_B()
                 cores = (CpuInfo*) realloc(cores, (coresIndex+1) * sizeof(CpuInfo));
                 if (cores == NULL) return NULL;
             }
-#ifdef __linux__
-        } else if(!strncmp("model name", columnName, strlen("model name"))) {
-#else
+#ifdef __PPC__
         } else if(!strncmp("cpu", columnName, 3)) {
+#else
+        } else if(!strncmp("model name", columnName, strlen("model name"))) {
 #endif
             char *columnData = strndup((buff+columnSplit+2), strlen(buff));
             cores[coresIndex].manufacturer = (char*) malloc(strlen(columnData));
             if (cores[coresIndex].manufacturer == NULL) return NULL;
             memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData)-1);
             cores[coresIndex].manufacturer[strlen(columnData)] = '\0';
-#ifdef __linux__
-        } else if(!strncmp("cpu MHz", columnName, strlen("cpu MHz"))) {
-#else
+#ifdef __PPC__
         } else if(!strncmp("clock", columnName, strlen("clock"))) {
+#else
+        } else if(!strncmp("cpu MHz", columnName, strlen("cpu MHz"))) {
 #endif
             char *columnData = strndup((buff+columnSplit+2), strlen(buff));
             cores[coresIndex].clockSpeed = atof(columnData);

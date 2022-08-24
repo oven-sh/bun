@@ -4,7 +4,7 @@ const string = bun.string;
 const Environment = bun.Environment;
 const JSC = @import("../../../jsc.zig");
 
-const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, PRIORITY };
+const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, PRIORITY, DLOPEN };
 
 fn getErrnoConstant(comptime name: []const u8) comptime_int {
     return if (@hasField(std.os.E, name))
@@ -23,6 +23,13 @@ fn getWindowsErrnoConstant(comptime name: []const u8) comptime_int {
 fn getSignalsConstant(comptime name: []const u8) comptime_int {
     return if (@hasDecl(std.os.SIG, name))
         return @field(std.os.SIG, name)
+    else
+        return -1;
+}
+
+fn getDlopenConstant(comptime name: []const u8) comptime_int {
+    return if (@hasDecl(std.os.system.RTLD, name))
+        return @field(std.os.system.RTLD, name)
     else
         return -1;
 }
@@ -48,6 +55,11 @@ fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, comp
             if (comptime constant != -1)
                 object.put(globalObject, &JSC.ZigString.init("SIG" ++ name), JSC.JSValue.jsNumber(constant));
         },
+        .DLOPEN => {
+            const constant = getDlopenConstant(name);
+            if (comptime constant != -1)
+                object.put(globalObject, &JSC.ZigString.init("RTLD_" ++ name), JSC.JSValue.jsNumber(constant));
+        },
         .PRIORITY => {
             object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumberFromInt32(value.?));
         },
@@ -55,11 +67,12 @@ fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, comp
 }
 
 pub fn create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    const object = JSC.JSValue.createEmptyObject(globalObject, 3);
+    const object = JSC.JSValue.createEmptyObject(globalObject, 4);
 
     object.put(globalObject, &JSC.ZigString.init("errno"), createErrno(globalObject));
     object.put(globalObject, &JSC.ZigString.init("signals"), createSignals(globalObject));
     object.put(globalObject, &JSC.ZigString.init("priority"), createPriority(globalObject));
+    object.put(globalObject, &JSC.ZigString.init("dlopen"), createDlopen(globalObject));
 
     return object;
 }
@@ -264,6 +277,18 @@ pub fn createPriority(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_ABOVE_NORMAL", -7);
     __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_HIGH", -14);
     __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_HIGHEST", -20);
+
+    return object;
+}
+
+fn createDlopen(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    const object = JSC.JSValue.createEmptyObject(globalObject, 6);
+
+    defineConstant(globalObject, object, .DLOPEN, "LAZY");
+    defineConstant(globalObject, object, .DLOPEN, "NOW");
+    defineConstant(globalObject, object, .DLOPEN, "GLOBAL");
+    defineConstant(globalObject, object, .DLOPEN, "LOCAL");
+    defineConstant(globalObject, object, .DLOPEN, "DEEPBIND");
 
     return object;
 }

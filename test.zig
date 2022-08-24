@@ -17,6 +17,6 @@ fn getDlopenConstant(comptime name: []const u8) comptime_int {
 pub fn main() void {
     std.debug.print(
         "hello, {}",
-        .{getDlopenConstant("LAZY")},
+        .{getDlopenConstant("GLOBAL")},
     );
 }

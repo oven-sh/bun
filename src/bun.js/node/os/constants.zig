@@ -77,7 +77,7 @@ pub fn create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     return object;
 }
 
-pub fn createErrno(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+fn createErrno(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const object = JSC.JSValue.createEmptyObject(globalObject, 0);
 
     defineConstant(globalObject, object, .ERRNO, "2BIG");
@@ -224,7 +224,7 @@ pub fn createErrno(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     return object;
 }
 
-pub fn createSignals(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+fn createSignals(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const object = JSC.JSValue.createEmptyObject(globalObject, 0);
 
     defineConstant(globalObject, object, .SIG, "HUP");
@@ -268,7 +268,7 @@ pub fn createSignals(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     return object;
 }
 
-pub fn createPriority(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+fn createPriority(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
     const object = JSC.JSValue.createEmptyObject(globalObject, 6);
 
     __defineConstant(globalObject, object, .PRIORITY, "PRIORITY_LOW", 19);

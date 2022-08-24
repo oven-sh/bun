@@ -92,6 +92,7 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
             memcpy(interfaces[interfacesIndex].family, "IPv6", strlen("IPv6"));
             interfaces[interfacesIndex].family[strlen("IPv6")] = '\0';
 
+            interfaces[interfacesIndex].scopeid = sa->sin6_scope_id;
             interfaces[interfacesIndex].internal = !!(ifa->ifa_flags & 0x8);
         } 
     }

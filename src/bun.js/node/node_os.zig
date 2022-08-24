@@ -16,6 +16,7 @@ pub const struct_InterfaceAddresses = extern struct {
     netmask: [*c]u8,
     family: [*c]u8,
     mac: [*c]u8,
+    scopeid: u32,
     internal: c_int,
 };
 pub extern fn getNetworkInterfaces() [*c]struct_InterfaceAddresses;
@@ -198,13 +199,15 @@ pub const Os = struct {
 
             for (arr) |part| {
                 const interface = std.mem.span(part.interface);
+                const family = std.mem.span(part.family);
 
                 var list = map.get(interface) orelse std.ArrayList(JSC.JSValue).init(heap_allocator);
                 var obj = JSC.JSValue.createEmptyObject(globalThis, 6);
                 obj.put(globalThis, &JSC.ZigString.init("address"), JSC.ZigString.init(std.mem.span(part.address)).withEncoding().toValueGC(globalThis));
                 obj.put(globalThis, &JSC.ZigString.init("netmask"), JSC.ZigString.init(std.mem.span(part.netmask)).withEncoding().toValueGC(globalThis));
-                obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(std.mem.span(part.family)).withEncoding().toValueGC(globalThis));
+                obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(family).withEncoding().toValueGC(globalThis));
                 obj.put(globalThis, &JSC.ZigString.init("mac"), JSC.ZigString.init(std.mem.span(part.mac)).withEncoding().toValueGC(globalThis));
+                if (std.mem.eql(u8, family, "IPv6")) obj.put(globalThis, &JSC.ZigString.init("scopeid"), JSC.JSValue.jsNumber(part.scopeid));
                 obj.put(globalThis, &JSC.ZigString.init("internal"), JSC.JSValue.jsBoolean(if (part.internal == 0) true else false));
                 obj.put(globalThis, &JSC.ZigString.init("cidr"), JSC.JSValue.jsNull());
 

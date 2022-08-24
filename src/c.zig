@@ -384,3 +384,23 @@ pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
     const errcode = std.c.getErrno(code);
     return errcode;
 }
+
+pub fn getVersion() []u8 {
+    if (comptime Environment.isLinux) {
+        return linux.get_version();
+    } else if (comptime Environment.isMac) {
+        return darwin.get_version();
+    } else {
+        return "unknown";
+    }
+}
+
+pub fn getRelease() []u8 {
+    if (comptime Environment.isLinux) {
+        return linux.get_release();
+    } else if (comptime Environment.isMac) {
+        return darwin.get_release();
+    } else {
+        return "unknown";
+    }
+}

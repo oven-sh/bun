@@ -381,3 +381,21 @@ pub fn get_cpu_info_and_time() []struct_CpuInfo {
     const len = getCpuArrayLen_B(cpuInfoAndTime);
     return cpuInfoAndTime[0..len];
 }
+
+pub fn get_version() []u8 {
+    var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+    const uts = std.os.uname();
+    const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.version, 0), 0);
+    std.mem.copy(u8, &name_buffer, result);
+
+    return name_buffer[0..result.len];
+}
+
+pub fn get_release() []u8 {
+    var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+    const uts = std.os.uname();
+    const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.release, 0), 0);
+    std.mem.copy(u8, &name_buffer, result);
+
+    return name_buffer[0..result.len];
+}

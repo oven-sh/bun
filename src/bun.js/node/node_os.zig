@@ -233,12 +233,7 @@ pub const Os = struct {
     pub fn release(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
-        const uts = std.os.uname();
-        const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.release, 0), 0);
-        std.mem.copy(u8, &name_buffer, result);
-
-        return JSC.ZigString.init(name_buffer[0..result.len]).withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(C.getRelease()).withEncoding().toValueGC(globalThis);
     }
 
     pub fn setPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -381,12 +376,7 @@ pub const Os = struct {
     pub fn version(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
-        const uts = std.os.uname();
-        const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.version, 0), 0);
-        std.mem.copy(u8, &name_buffer, result);
-
-        return JSC.ZigString.init(name_buffer[0..result.len]).withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(C.getVersion()).withEncoding().toValueGC(globalThis);
     }
 };
 

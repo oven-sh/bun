@@ -31,7 +31,7 @@ fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype:
     return __defineConstant(globalObject, object, ctype, name, null);
 }
 
-fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: ConstantType, name: string, value: ?u16) void {
+fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: ConstantType, name: string, value: ?i16) void {
     switch (ctype) {
         .ERRNO => {
             const constant = getErrnoConstant(name);

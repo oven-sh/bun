@@ -4,6 +4,8 @@ const string = bun.string;
 const Environment = bun.Environment;
 const JSC = @import("../../../jsc.zig");
 
+const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, PRIORITY };
+
 fn getErrnoConstant(comptime name: []const u8) comptime_int {
     return if (@hasField(std.os.E, name))
         return @enumToInt(@field(std.os.E, name))
@@ -25,11 +27,11 @@ fn getSignalsConstant(comptime name: []const u8) comptime_int {
         return -1;
 }
 
-fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: enum { ERRNO, ERRNO_WIN, SIG, PRIORITY }, name: string) void {
+fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: ConstantType, name: string) void {
     return __defineConstant(globalObject, object, ctype, name, null);
 }
 
-fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: enum { ERRNO, ERRNO_WIN, SIG, PRIORITY }, name: string, value: ?u16) void {
+fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, ctype: ConstantType, name: string, value: ?u16) void {
     switch (ctype) {
         .ERRNO => {
             const constant = getErrnoConstant(name);

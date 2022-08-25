@@ -257,7 +257,7 @@ pub const Os = struct {
         }
 
         var pid = if (arguments.len == 2) arguments[0].asInt32() else 0;
-        var priority = if (arguments.len == 2) arguments[1].asInt32() else arguments[0].asInt32();
+        const priority = if (arguments.len == 2) arguments[1].toInt32(globalThis) else arguments[0].toInt32(globalThis);
 
         if (priority < -20 or priority > 19) {
             const err = JSC.toTypeError(

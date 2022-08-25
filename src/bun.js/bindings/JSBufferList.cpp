@@ -82,31 +82,16 @@ JSC::JSValue JSBufferList::join(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalO
         RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
     }
     Entry* p = m_head;
-    size_t totalSize = 0;
-    Vector<CString> cstrs;
-    CString cs = s->value(lexicalGlobalObject).utf8();
+    JSRopeString::RopeBuilder<RecordOverflow> ropeBuilder(vm);
     while (p != nullptr) {
         auto str = JSC::jsCast<JSC::JSString*>(p->m_data.get());
         if (str) {
-            CString cstr = str->value(lexicalGlobalObject).utf8();
-            if (cstrs.size() && cs.length()) {
-                totalSize += cs.length();
-                cstrs.append(cs);
-            }
-            totalSize += cstr.length();
-            cstrs.append(WTFMove(cstr));
+            if (!ropeBuilder.append(str))
+                return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         }
         p = p->m_next;
     }
-    char* cstrBuffer = nullptr;
-    CString cstrConcated = CString::newUninitialized(totalSize, cstrBuffer);
-    size_t offset = 0;
-    for (auto& cstr : cstrs) {
-      memcpy(cstrBuffer + offset, cstr.data(), cstr.length());
-      offset += cstr.length();
-    }
-    String strConcated = String::fromUTF8(cstrConcated);
-    RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTFMove(strConcated)));
+    RELEASE_AND_RETURN(throwScope, ropeBuilder.release());
 }
 
 JSC::JSValue JSBufferList::consume(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, int32_t n, bool hasString)
@@ -124,8 +109,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
     }
     Entry* p = m_head;
-    size_t totalSize = 0;
-    Vector<CString> cstrs;
+    JSRopeString::RopeBuilder<RecordOverflow> ropeBuilder(vm);
     while (p != nullptr && n > 0)
     {
         JSC::JSString* str = JSC::jsCast<JSC::JSString*>(p->m_data.get());
@@ -136,31 +120,19 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         size_t length = str->length();
         if (length > n) {
             JSString* firstHalf = JSC::jsSubstring(lexicalGlobalObject, str, 0, n);
-            CString cstr = firstHalf->value(lexicalGlobalObject).utf8();
-            totalSize += cstr.length();
-            cstrs.append(WTFMove(cstr));
+            ropeBuilder.append(firstHalf);
 
             JSString* secondHalf = JSC::jsSubstring(lexicalGlobalObject, str, n, length - n);
             p->m_data = JSC::Strong<JSCell>(vm, secondHalf);
             p = p->m_next;
         } else {
-            CString cstr = str->value(lexicalGlobalObject).utf8();
-            totalSize += cstr.length();
-            cstrs.append(WTFMove(cstr));
+            ropeBuilder.append(str);
             p = p->m_next;
             shift();
         }
         n -= static_cast<int32_t>(length);
     }
-    char* cstrBuffer = nullptr;
-    CString cstrConcated = CString::newUninitialized(totalSize, cstrBuffer);
-    size_t offset = 0;
-    for (auto& cstr : cstrs) {
-      memcpy(cstrBuffer + offset, cstr.data(), cstr.length());
-      offset += cstr.length();
-    }
-    String strConcated = String::fromUTF8(cstrConcated);
-    RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTFMove(strConcated)));
+    RELEASE_AND_RETURN(throwScope, ropeBuilder.release());
 }
 
 JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, int32_t n)

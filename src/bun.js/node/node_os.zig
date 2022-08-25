@@ -73,7 +73,7 @@ pub const Os = struct {
         const cpus_ = C.getCpuInfoAndTime();
 
         var buf: [256]JSC.JSValue = undefined;
-        var result = std.ArrayListUmanaged(JSC.JSValue){ .capacity = buf.len, .items = buf[0..0] };
+        var result = std.ArrayListUnmanaged(JSC.JSValue){ .capacity = buf.len, .items = buf[0..0] };
 
         for (cpus_) |_, index| {
             var object = JSC.JSValue.createEmptyObject(globalThis, 3);
@@ -92,7 +92,7 @@ pub const Os = struct {
             _ = result.appendAssumeCapacity(object);
         }
 
-        return JSC.JSArray.from(globalThis, result.toOwnedSlice());
+        return JSC.JSArray.from(globalThis, result.toOwnedSlice(heap_allocator));
     }
 
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -195,7 +195,9 @@ pub const Os = struct {
         const arr = networkInterfaces_[0..len];
 
         const object = JSC.JSValue.createEmptyObject(globalThis, 0);
-        var map = try std.StringArrayHashMap(std.ArrayList(JSC.JSValue)).initCapacity(heap_allocator, len);
+        var map = std.StringArrayHashMap(std.ArrayList(JSC.JSValue)).init(heap_allocator);
+        _ = map.ensureUnusedCapacity(len) catch unreachable;
+
         defer map.deinit();
 
         for (arr) |part| {
@@ -206,7 +208,7 @@ pub const Os = struct {
             const cidr = std.fmt.allocPrint(allocator, "{s}/{}", .{ netmask, part.cidr }) catch unreachable;
 
             var list = map.get(interface) orelse std.ArrayList(JSC.JSValue).init(heap_allocator);
-            var obj = JSC.JSValue.createEmptyObject(globalThis, if (std.mem.eql(u8, family, "IPv6")) 7 else 6);
+            var obj = JSC.JSValue.createEmptyObject(globalThis, if (strings.eqlComptime(family, "IPv6")) 7 else 6);
             obj.put(globalThis, &JSC.ZigString.init("address"), JSC.ZigString.init(std.mem.span(part.address)).withEncoding().toValueGC(globalThis));
             obj.put(globalThis, &JSC.ZigString.init("netmask"), JSC.ZigString.init(netmask).withEncoding().toValueGC(globalThis));
             obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(family).withEncoding().toValueGC(globalThis));
@@ -257,8 +259,8 @@ pub const Os = struct {
             return JSC.JSValue.jsUndefined();
         }
 
-        const pid = if (arguments.len == 2) arguments[0].toInt32(globalThis) else 0;
-        const priority = if (arguments.len == 2) arguments[1].toInt32(globalThis) else arguments[0].toInt32(globalThis);
+        const pid = if (arguments.len == 2) arguments[0].toInt32() else 0;
+        const priority = if (arguments.len == 2) arguments[1].toInt32() else arguments[0].toInt32();
 
         if (priority < -20 or priority > 19) {
             const err = JSC.toTypeError(

@@ -71,7 +71,9 @@ pub const Os = struct {
 
         const cpus_ = C.getCpuInfoAndTime();
 
-        var result = std.ArrayList(JSC.JSValue).init(heap_allocator);
+        var buf: [256]JSC.JSValue = undefined; 
+        var result = std.ArrayListUmanaged(JSC.JSValue){ .capacity = buf.len, .items = buf[0..0]};
+          
 
         for (cpus_) |_, index| {
             var object = JSC.JSValue.createEmptyObject(globalThis, 3);

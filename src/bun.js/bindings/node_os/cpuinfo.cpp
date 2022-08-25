@@ -48,13 +48,15 @@ extern "C" CpuInfo *getCpuInfo()
 #else
         } else if(!strncmp("model name", columnName, strlen("model name"))) {
 #endif
-            char *columnData = strndup((buff+columnSplit+2), strlen(buff) - 3 - columnSplit);
+            char *columnData = strndup((buff+columnSplit+2), strlen(buff) - 2 - columnSplit);
             if (columnData == NULL) return NULL;
             cores[coresIndex].manufacturer = (char*) malloc(strlen(columnData));
             if (cores[coresIndex].manufacturer == NULL) return NULL;
             memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData)-1);
             cores[coresIndex].manufacturer[strlen(columnData)] = '\0';
             free(columnData);
+            
+            if(cores[coresIndex].manufacturer[strlen(cores[coresIndex].manufacturer)-1] == '\n') cores[coresIndex].manufacturer[strlen(cores[coresIndex].manufacturer)-1] = '\0';
 #ifdef __PPC__
         } else if(!strncmp("clock", columnName, strlen("clock"))) {
 #else
@@ -138,11 +140,11 @@ extern "C" CpuInfo *getCpuTime()
     FILE *file = fopen("/proc/stat", "r");
     if (file == NULL) return NULL;
 
-    char buff[256];
+    char buff[2048];
     int coresIndex = -1;
     int j = 0;
 
-    while (fgets(buff, 256, file)) {
+    while (fgets(buff, 2048, file)) {
         char *name = strndup(buff, 3);
         if (name == NULL) return NULL;
         if (!strncmp("cpu", name, 3) && isdigit(buff[3])) {

@@ -1,8 +1,8 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
-#include <stddef.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <cstddef>
 #include <unistd.h>
 
 #ifdef __APPLE__
@@ -60,12 +60,14 @@ extern "C" CpuInfo *getCpuInfo()
             char *columnData = strndup((buff+columnSplit+2), strlen(buff));
             cores[coresIndex].clockSpeed = atof(columnData);
         }
+        free(columnName);
     }
 
     coresIndex++;
     cores = (CpuInfo*) realloc(cores, (coresIndex+1) * sizeof(CpuInfo));
     if (cores == NULL) return NULL;
     cores[coresIndex] = (CpuInfo) {NULL, 0, 0, 0, 0, 0, 0, 0};
+    fclose(file);
     return cores;
 }
 #elif __APPLE__

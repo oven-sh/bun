@@ -195,7 +195,7 @@ pub const Os = struct {
         const arr = networkInterfaces_[0..len];
 
         const object = JSC.JSValue.createEmptyObject(globalThis, 0);
-        var map = std.StringArrayHashMap(std.ArrayList(JSC.JSValue)).init(heap_allocator);
+        var map = try std.StringArrayHashMap(std.ArrayList(JSC.JSValue)).initCapacity(heap_allocator, len);
         defer map.deinit();
 
         for (arr) |part| {

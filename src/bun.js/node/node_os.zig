@@ -89,6 +89,8 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         const cpus_ = getCpuInfoAndTime();
+        if (cpus_ == null) return JSC.JSArray.from(globalThis, &.{});
+
         const len = getCpuArrayLen(cpus_);
         const arr = cpus_[0..len];
 

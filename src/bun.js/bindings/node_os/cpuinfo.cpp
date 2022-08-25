@@ -23,6 +23,7 @@ extern "C" CpuInfo *getCpuInfo()
 
     char buff[2048];
     int coresIndex = -1;
+    char *columnData;
 
     while (fgets(buff, 2048, file)) {
         if (strlen(buff) == 0) continue;
@@ -47,24 +48,23 @@ extern "C" CpuInfo *getCpuInfo()
 #else
         } else if(!strncmp("model name", columnName, strlen("model name"))) {
 #endif
-            char *columnData = strndup((buff+columnSplit+2), strlen(buff));
+            columnData = strndup((buff+columnSplit+2), strlen(buff));
             cores[coresIndex].manufacturer = (char*) malloc(strlen(columnData));
             if (cores[coresIndex].manufacturer == NULL) return NULL;
             memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData)-1);
             cores[coresIndex].manufacturer[strlen(columnData)] = '\0';
-            free(columnData);
 #ifdef __PPC__
         } else if(!strncmp("clock", columnName, strlen("clock"))) {
 #else
         } else if(!strncmp("cpu MHz", columnName, strlen("cpu MHz"))) {
 #endif
-            char *columnData = strndup((buff+columnSplit+2), strlen(buff));
+            columnData = strndup((buff+columnSplit+2), strlen(buff));
             cores[coresIndex].clockSpeed = atof(columnData);
-            free(columnData);
         }
         free(columnName);
     }
-
+    free(columnData);
+    
     coresIndex++;
     cores = (CpuInfo*) realloc(cores, (coresIndex+1) * sizeof(CpuInfo));
     if (cores == NULL) return NULL;
@@ -154,7 +154,8 @@ extern "C" CpuInfo *getCpuTime()
                     break;
                 }
             }
-            char *cpuData = strndup((buff+space+1), strlen(buff));
+            char *cpuDataStart = strndup((buff+space+1), strlen(buff));
+            char *cpuData = cpuDataStart;
             // Time to be smart, What I am about to do is dangerous.
             char *temp = (char*) &cores[coresIndex];
             size_t start = offsetof(CpuInfo, userTime); // getting offset from `userTime` member.
@@ -168,7 +169,7 @@ extern "C" CpuInfo *getCpuTime()
                 free(parseStr);
                 temp = temp + sizeof(int); // switching to next int member.
             }
-            free(cpuData);
+            free(cpuDataStart);
         }
         free(name);
     }
@@ -188,9 +189,18 @@ extern "C" CpuInfo *getCpuInfoAndTime()
     return arr;
 #elif __linux__
     CpuInfo* arr = getCpuInfo();
-    if (arr == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
+    if (arr == NULL) {
+        CpuInfo* empty = (CpuInfo*) malloc(sizeof(CpuInfo));
+        *empty = (CpuInfo) {NULL, 0, 0, 0, 0, 0, 0, 0};
+        return empty;
+    }
+
     CpuInfo* arr2 = getCpuTime();
-    if (arr2 == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
+    if (arr2 == NULL) {
+        CpuInfo* empty = (CpuInfo*) malloc(sizeof(CpuInfo));
+        *empty = (CpuInfo) {NULL, 0, 0, 0, 0, 0, 0, 0};
+        return empty;
+    }
 
     for (int i = 0; arr[i].manufacturer; i++) {
         arr2[i].manufacturer = arr[i].manufacturer;
@@ -209,9 +219,9 @@ extern "C" int getCpuArrayLen(CpuInfo *arr)
     return i-1;
 }
 
-extern "C" void freeCpuInfoArray(CpuInfo *arr, int len)
+extern "C" void freeCpuInfoArray(CpuInfo *arr)
 {
-    for (int i = 0; i < len; i++) {
+    for (int i = 0; i < getCpuArrayLen(arr); i++) {
         free(arr[i].manufacturer);
     }
     

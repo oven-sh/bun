@@ -17,7 +17,7 @@ extern "C" {
     CpuInfo *getCpuTime();
     CpuInfo *getCpuInfoAndTime();
     int getCpuArrayLen(CpuInfo *arr);
-    void freeCpuInfoArray(CpuInfo *arr, int len);
+    void freeCpuInfoArray(CpuInfo *arr);
 }
 
 #endif

@@ -52,6 +52,7 @@ extern "C" CpuInfo *getCpuInfo()
             if (cores[coresIndex].manufacturer == NULL) return NULL;
             memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData)-1);
             cores[coresIndex].manufacturer[strlen(columnData)] = '\0';
+            free(columnData);
 #ifdef __PPC__
         } else if(!strncmp("clock", columnName, strlen("clock"))) {
 #else
@@ -59,6 +60,7 @@ extern "C" CpuInfo *getCpuInfo()
 #endif
             char *columnData = strndup((buff+columnSplit+2), strlen(buff));
             cores[coresIndex].clockSpeed = atof(columnData);
+            free(columnData);
         }
         free(columnName);
     }
@@ -161,16 +163,20 @@ extern "C" CpuInfo *getCpuTime()
             for (int i = 0; i < 6; i++, j++) {
                 cpuData = (cpuData+j); // offseting string.
                 for (j = 0; cpuData[j] != ' '; j++);
-                *(int*)temp = atoi(strndup(cpuData, j));
+                char *parseStr = strndup(cpuData, j);
+                *(int*) temp = atoi(parseStr);
+                free(parseStr);
                 temp = temp + sizeof(int); // switching to next int member.
             }
+            free(cpuData);
         }
+        free(name);
     }
     coresIndex++;
     cores = (CpuInfo*) realloc(cores, (coresIndex+1) * sizeof(CpuInfo));
     if (cores == NULL) return NULL;
     cores[coresIndex] = (CpuInfo) {NULL, 0, 0, 0, 0, 0, 0, 0};
-    
+    fclose(file);
     return cores;
 }
 

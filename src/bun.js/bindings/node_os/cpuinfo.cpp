@@ -23,7 +23,6 @@ extern "C" CpuInfo *getCpuInfo()
 
     char buff[2048];
     int coresIndex = -1;
-    char *columnData;
 
     while (fgets(buff, 2048, file)) {
         if (strlen(buff) == 0) continue;
@@ -49,24 +48,25 @@ extern "C" CpuInfo *getCpuInfo()
 #else
         } else if(!strncmp("model name", columnName, strlen("model name"))) {
 #endif
-            columnData = strndup((buff+columnSplit+2), strlen(buff));
+            char *columnData = strndup((buff+columnSplit+2), strlen(buff) - 3 - columnSplit);
             if (columnData == NULL) return NULL;
             cores[coresIndex].manufacturer = (char*) malloc(strlen(columnData));
             if (cores[coresIndex].manufacturer == NULL) return NULL;
             memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData)-1);
             cores[coresIndex].manufacturer[strlen(columnData)] = '\0';
+            free(columnData);
 #ifdef __PPC__
         } else if(!strncmp("clock", columnName, strlen("clock"))) {
 #else
         } else if(!strncmp("cpu MHz", columnName, strlen("cpu MHz"))) {
 #endif
-            columnData = strndup((buff+columnSplit+2), strlen(buff)-1);
+            char *columnData = strndup((buff+columnSplit+2), strlen(buff) - 3 - columnSplit);
             if (columnData == NULL) return NULL;
             cores[coresIndex].clockSpeed = atof(columnData);
+            free(columnData);
         }
         free(columnName);
     }
-    free(columnData);
     
     coresIndex++;
     cores = (CpuInfo*) realloc(cores, (coresIndex+1) * sizeof(CpuInfo));

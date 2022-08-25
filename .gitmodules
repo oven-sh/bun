@@ -69,4 +69,3 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
-

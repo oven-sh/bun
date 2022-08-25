@@ -65,7 +65,7 @@ public:
         m_head = entry;
         m_length++;
     }
-    JSValue shift()
+    JSC::JSValue shift()
     {
         if (m_length == 0) return JSC::jsUndefined();
         Entry* entry = m_head;
@@ -88,13 +88,19 @@ public:
         m_tail = nullptr;
         m_length = 0;
     }
-    JSValue first()
+    JSC::JSValue first()
     {
         // should raise error?
         if (UNLIKELY(m_length == 0))
             return JSC::jsUndefined();
         return JSC::JSValue(m_head->m_data.get());
     }
+
+    JSC::JSValue concat(JSC::VM&, JSC::JSGlobalObject*, int32_t);
+    JSC::JSValue join(JSC::VM&, JSC::JSGlobalObject*, JSString*);
+    JSC::JSValue consume(JSC::VM&, JSC::JSGlobalObject*, int32_t, bool);
+    JSC::JSValue _getBuffer(JSC::VM&, JSC::JSGlobalObject*, int32_t);
+    JSC::JSValue _getString(JSC::VM&, JSC::JSGlobalObject*, int32_t);
 
 private:
     struct Entry {

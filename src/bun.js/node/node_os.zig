@@ -256,7 +256,7 @@ pub const Os = struct {
             return JSC.JSValue.jsUndefined();
         }
 
-        var pid = if (arguments.len == 2) arguments[0].asInt32() else 0;
+        const pid = if (arguments.len == 2) arguments[0].toInt32(globalThis) else 0;
         const priority = if (arguments.len == 2) arguments[1].toInt32(globalThis) else arguments[0].toInt32(globalThis);
 
         if (priority < -20 or priority > 19) {

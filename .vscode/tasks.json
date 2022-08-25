@@ -1,34 +1,34 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "build",
-      "type": "process",
-      "command": "zig",
-      "args": ["build"],
-      "presentation": {
-        "echo": true,
-        "reveal": "silent",
-        "focus": false,
-        "panel": "shared",
-        "showReuseMessage": false,
-        "clear": false
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "build",
+        "type": "process",
+        "command": "zig",
+        "args": ["build"],
+        "presentation": {
+          "echo": true,
+          "reveal": "silent",
+          "focus": false,
+          "panel": "shared",
+          "showReuseMessage": false,
+          "clear": false
+        },
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        }
       },
-      "group": {
-        "kind": "build",
-        "isDefault": true
+      {
+        "label": "run",
+        "type": "process",
+        "command": "zig",
+        "args": ["run", "${file}"],
+        "group": "build",
+        "presentation": {
+          "showReuseMessage": false,
+          "clear": true
+        }
       }
-    },
-    {
-      "label": "run",
-      "type": "process",
-      "command": "zig",
-      "args": ["run", "${file}"],
-      "group": "build",
-      "presentation": {
-        "showReuseMessage": false,
-        "clear": true
-      }
-    }
-  ]
+    ]
 }

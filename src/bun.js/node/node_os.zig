@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const bun = @import("../../global.zig");
 const C = bun.C;
 const string = bun.string;
+const strings = bun.strings;
 const JSC = @import("../../jsc.zig");
 const Environment = bun.Environment;
 const Global = bun.Global;
@@ -71,9 +72,8 @@ pub const Os = struct {
 
         const cpus_ = C.getCpuInfoAndTime();
 
-        var buf: [256]JSC.JSValue = undefined; 
-        var result = std.ArrayListUmanaged(JSC.JSValue){ .capacity = buf.len, .items = buf[0..0]};
-          
+        var buf: [256]JSC.JSValue = undefined;
+        var result = std.ArrayListUmanaged(JSC.JSValue){ .capacity = buf.len, .items = buf[0..0] };
 
         for (cpus_) |_, index| {
             var object = JSC.JSValue.createEmptyObject(globalThis, 3);

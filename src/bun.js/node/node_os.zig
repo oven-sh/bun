@@ -211,7 +211,7 @@ pub const Os = struct {
             obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(family).withEncoding().toValueGC(globalThis));
             obj.put(globalThis, &JSC.ZigString.init("mac"), JSC.ZigString.init(std.mem.span(part.mac)).withEncoding().toValueGC(globalThis));
             obj.put(globalThis, &JSC.ZigString.init("cidr"), JSC.ZigString.init(cidr).withEncoding().toValueGC(globalThis));
-            if (std.mem.eql(u8, family, "IPv6")) obj.put(globalThis, &JSC.ZigString.init("scopeid"), JSC.JSValue.jsNumber(part.scopeid));
+            if (strings.eqlComptime(family, "IPV6")) obj.put(globalThis, &JSC.ZigString.init("scopeid"), JSC.JSValue.jsNumber(part.scopeid));
             obj.put(globalThis, &JSC.ZigString.init("internal"), JSC.JSValue.jsBoolean(if (part.internal == 0) true else false));
 
             _ = list.append(obj) catch unreachable;

@@ -343,14 +343,6 @@ pub fn getSystemLoadavg() [3]f64 {
     }
 }
 
-pub fn getCpuInfoAndTime() []PlatformSpecific.struct_CpuInfo {
-    if (comptime Environment.isLinux) {
-        return linux.get_cpu_info_and_time();
-    } else {
-        return darwin.get_cpu_info_and_time();
-    }
-}
-
 pub fn getProcessPriority(pid_: i32) i32 {
     const pid = @intCast(c_uint, pid_);
 

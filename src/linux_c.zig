@@ -361,27 +361,6 @@ pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
     return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
 }
 
-pub const struct_CpuInfo = extern struct {
-    manufacturer: [*c]u8,
-    clockSpeed: f32,
-    userTime: c_int,
-    niceTime: c_int,
-    systemTime: c_int,
-    idleTime: c_int,
-    iowaitTime: c_int,
-    irqTime: c_int,
-};
-extern fn getCpuInfo_B() [*c]struct_CpuInfo;
-extern fn getCpuTime_B() [*c]struct_CpuInfo;
-extern fn getCpuInfoAndTime_B() [*c]struct_CpuInfo;
-extern fn getCpuArrayLen_B(arr: [*c]struct_CpuInfo) usize;
-
-pub fn get_cpu_info_and_time() []struct_CpuInfo {
-    const cpuInfoAndTime = getCpuInfoAndTime_B();
-    const len = getCpuArrayLen_B(cpuInfoAndTime);
-    return cpuInfoAndTime[0..len];
-}
-
 pub fn get_version() []u8 {
     var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
     const uts = std.os.uname();

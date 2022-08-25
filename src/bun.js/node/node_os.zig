@@ -11,6 +11,7 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const heap_allocator = bun.default_allocator;
 const constants = @import("./os/constants.zig");
 
+// From C ; bindings/node_os/
 pub const struct_InterfaceAddresses = extern struct {
     interface: [*c]u8,
     address: [*c]u8,
@@ -23,6 +24,23 @@ pub const struct_InterfaceAddresses = extern struct {
 };
 pub extern fn getNetworkInterfaces() [*c]struct_InterfaceAddresses;
 pub extern fn getNetworkInterfaceArrayLen(arr: [*c]struct_InterfaceAddresses) usize;
+extern fn freeNetworkInterfaceArray(arr: [*c]struct_InterfaceAddresses, len: c_int) void;
+
+pub const struct_CpuInfo = extern struct {
+    manufacturer: [*c]u8,
+    clockSpeed: f32,
+    userTime: c_int,
+    niceTime: c_int,
+    systemTime: c_int,
+    idleTime: c_int,
+    iowaitTime: c_int,
+    irqTime: c_int,
+};
+extern fn getCpuInfo() [*c]struct_CpuInfo;
+extern fn getCpuTime() [*c]struct_CpuInfo;
+extern fn getCpuInfoAndTime() [*c]struct_CpuInfo;
+extern fn getCpuArrayLen(arr: [*c]struct_CpuInfo) usize;
+extern fn freeCpuInfoArray(arr: [*c]struct_CpuInfo, len: c_int) void;
 
 pub const Os = struct {
     pub const name = "Bun__Os";
@@ -70,28 +88,33 @@ pub const Os = struct {
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        const cpus_ = C.getCpuInfoAndTime();
+        const cpus_ = getCpuInfoAndTime();
+        const len = getCpuArrayLen(cpus_);
+        const arr = cpus_[0..len];
 
         var buf: [256]JSC.JSValue = undefined;
-        var result = std.ArrayListUnmanaged(JSC.JSValue){ .capacity = buf.len, .items = buf[0..0] };
+        var result = std.ArrayListUnmanaged(JSC.JSValue){ .capacity = buf.len, .items = buf[0..1] };
+        result.items.len = 0;
 
-        for (cpus_) |_, index| {
+        for (arr) |_, index| {
             var object = JSC.JSValue.createEmptyObject(globalThis, 3);
             var timesObject = JSC.JSValue.createEmptyObject(globalThis, 5);
 
-            timesObject.put(globalThis, &JSC.ZigString.init("user"), JSC.JSValue.jsNumber(cpus_[index].userTime));
-            timesObject.put(globalThis, &JSC.ZigString.init("nice"), JSC.JSValue.jsNumber(cpus_[index].niceTime));
-            timesObject.put(globalThis, &JSC.ZigString.init("sys"), JSC.JSValue.jsNumber(cpus_[index].systemTime));
-            timesObject.put(globalThis, &JSC.ZigString.init("idle"), JSC.JSValue.jsNumber(cpus_[index].idleTime));
-            timesObject.put(globalThis, &JSC.ZigString.init("irq"), JSC.JSValue.jsNumber(cpus_[index].irqTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("user"), JSC.JSValue.jsNumber(arr[index].userTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("nice"), JSC.JSValue.jsNumber(arr[index].niceTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("sys"), JSC.JSValue.jsNumber(arr[index].systemTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("idle"), JSC.JSValue.jsNumber(arr[index].idleTime));
+            timesObject.put(globalThis, &JSC.ZigString.init("irq"), JSC.JSValue.jsNumber(arr[index].irqTime));
 
-            object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(std.mem.span(cpus_[index].manufacturer)).withEncoding().toValueGC(globalThis));
-            object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(@floatToInt(i32, cpus_[index].clockSpeed)));
+            object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(std.mem.span(arr[index].manufacturer)).withEncoding().toValueGC(globalThis));
+            object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(@floatToInt(i32, arr[index].clockSpeed)));
             object.put(globalThis, &JSC.ZigString.init("times"), timesObject);
 
             _ = result.appendAssumeCapacity(object);
         }
 
+        freeCpuInfoArray(cpus_, @intCast(c_int, len));
+        heap_allocator.free(arr);
         return JSC.JSArray.from(globalThis, result.toOwnedSlice(heap_allocator));
     }
 
@@ -227,6 +250,8 @@ pub const Os = struct {
             object.put(globalThis, &JSC.ZigString.init(key), JSC.JSArray.from(globalThis, value.?.toOwnedSlice()));
         }
 
+        freeNetworkInterfaceArray(networkInterfaces_, @intCast(c_int, len));
+        heap_allocator.free(arr);
         return object;
     }
 

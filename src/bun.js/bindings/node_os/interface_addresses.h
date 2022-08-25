@@ -16,6 +16,7 @@ extern "C" {
 
     NetworkInterface *getNetworkInterfaces();
     int getNetworkInterfaceArrayLen(NetworkInterface *arr);
-    }
+    void freeNetworkInterfaceArray(NetworkInterface *arr, int len);
+}
 
 #endif

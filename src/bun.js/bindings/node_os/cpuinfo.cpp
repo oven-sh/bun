@@ -15,7 +15,7 @@
 #include "cpuinfo.h"
 
 #ifdef __linux__
-extern "C" CpuInfo *getCpuInfo_B()
+extern "C" CpuInfo *getCpuInfo()
 {
     CpuInfo *cores = (CpuInfo*) malloc(sizeof(CpuInfo));
     FILE *file = fopen("/proc/cpuinfo", "r");
@@ -69,7 +69,7 @@ extern "C" CpuInfo *getCpuInfo_B()
     return cores;
 }
 #elif __APPLE__
-extern "C" CpuInfo *getCpuInfo_B()
+extern "C" CpuInfo *getCpuInfo()
 {
     unsigned int ticks = (unsigned int) sysconf(_SC_CLK_TCK), multiplier = ((uint64_t)1000L / ticks);
     char model[512];
@@ -125,7 +125,7 @@ extern "C" CpuInfo *getCpuInfo_B()
 }
 #endif
 
-extern "C" CpuInfo *getCpuTime_B()
+extern "C" CpuInfo *getCpuTime()
 {
     CpuInfo *cores = (CpuInfo*) malloc(sizeof(CpuInfo));
     FILE *file = fopen("/proc/stat", "r");
@@ -172,16 +172,16 @@ extern "C" CpuInfo *getCpuTime_B()
     return cores;
 }
 
-extern "C" CpuInfo *getCpuInfoAndTime_B()
+extern "C" CpuInfo *getCpuInfoAndTime()
 {
 #ifdef __APPLE__
-    CpuInfo* arr = getCpuInfo_B();
+    CpuInfo* arr = getCpuInfo();
     if (arr == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
     return arr;
 #elif __linux__
-    CpuInfo* arr = getCpuInfo_B();
+    CpuInfo* arr = getCpuInfo();
     if (arr == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
-    CpuInfo* arr2 = getCpuTime_B();
+    CpuInfo* arr2 = getCpuTime();
     if (arr2 == NULL) return (CpuInfo*) malloc(sizeof(CpuInfo));
 
     for (int i = 0; arr[i].manufacturer; i++) {
@@ -194,9 +194,18 @@ extern "C" CpuInfo *getCpuInfoAndTime_B()
 #endif
 }
 
-extern "C" int getCpuArrayLen_B(CpuInfo *arr)
+extern "C" int getCpuArrayLen(CpuInfo *arr)
 {
     int i = 0;
     for (; arr[i].manufacturer; i++);
     return i-1;
+}
+
+extern "C" void freeCpuInfoArray(CpuInfo *arr, int len)
+{
+    for (int i = 0; i < len; i++) {
+        free(arr[i].manufacturer);
+    }
+    
+    free(arr);
 }

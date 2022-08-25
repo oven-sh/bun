@@ -170,3 +170,16 @@ extern "C" int getNetworkInterfaceArrayLen(NetworkInterface *arr) {
     for (; arr[i].address != NULL; i++);
     return i;
 }
+
+extern "C" void freeNetworkInterfaceArray(NetworkInterface *arr, int len)
+{
+    for (int i = 0; i < len; i++) {
+        free(arr[i].address);
+        free(arr[i].family);
+        free(arr[i].interface);
+        free(arr[i].mac);
+        free(arr[i].netmask);
+    }
+    
+    free(arr);
+}

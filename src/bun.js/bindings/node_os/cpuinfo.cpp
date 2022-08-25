@@ -48,15 +48,8 @@ extern "C" CpuInfo *getCpuInfo()
 #else
         } else if(!strncmp("model name", columnName, strlen("model name"))) {
 #endif
-            char *columnData = strndup((buff+columnSplit+2), strlen(buff) - 2 - columnSplit);
-            if (columnData == NULL) return NULL;
-            cores[coresIndex].manufacturer = (char*) malloc(strlen(columnData));
-            if (cores[coresIndex].manufacturer == NULL) return NULL;
-            memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData)-1);
-            cores[coresIndex].manufacturer[strlen(columnData)] = '\0';
-            free(columnData);
-            
-            if(cores[coresIndex].manufacturer[strlen(cores[coresIndex].manufacturer)-1] == '\n') cores[coresIndex].manufacturer[strlen(cores[coresIndex].manufacturer)-1] = '\0';
+            cores[coresIndex].manufacturer = strndup((buff+columnSplit+2), strlen(buff) - 3 - columnSplit);
+            if (cores[coresIndex].manufacturer == NULL) return NULL;     
 #ifdef __PPC__
         } else if(!strncmp("clock", columnName, strlen("clock"))) {
 #else

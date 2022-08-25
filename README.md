@@ -70,6 +70,7 @@ If using Linux, kernel version 5.6 or higher is strongly recommended, but the mi
   - [bun not running on an M1 (or Apple Silicon)](#bun-not-running-on-an-m1-or-apple-silicon)
   - [error: Unexpected](#error-unexpected)
   - [bun install is stuck](#bun-install-is-stuck)
+  - [bun subcommands run without output in wsl](#bun-subcommands-run-without-output-in-wsl)
   - [Unzip is required](#unzip-is-required)
     - [Debian / Ubuntu / Mint](#debian--ubuntu--mint)
     - [RedHat / CentOS / Fedora](#redhat--centos--fedora)
@@ -937,6 +938,19 @@ To fix this issue:
 2. Try again, and if the error still occurs, try setting `ulimit -n` to an absurdly high number, such as `ulimit -n 2147483646`
 3. Try again, and if that still doesn’t fix it, open an issue
 
+### bun install is stuck
+
+Please run `bun install --verbose 2> logs.txt` and send them to me in bun's discord. If you're on Linux, it would also be helpful if you run `sudo perf trace bun install --silent` and attach the logs.
+
+### bun subcommands run without output in wsl
+
+Please update your WSL by running,
+
+```
+wsl --update
+wsl --shutdown
+```
+
 ### Unzip is required
 
 Unzip is required to install bun on Linux. You can use one of the following commands to install `unzip`:
@@ -964,10 +978,6 @@ sudo pacman -S unzip
 ```sh
 sudo zypper install unzip
 ```
-
-### bun install is stuck
-
-Please run `bun install --verbose 2> logs.txt` and send them to me in bun's discord. If you're on Linux, it would also be helpful if you run `sudo perf trace bun install --silent` and attach the logs.
 
 ## Reference
 

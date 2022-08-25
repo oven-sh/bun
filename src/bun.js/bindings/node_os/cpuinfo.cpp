@@ -60,7 +60,7 @@ extern "C" CpuInfo *getCpuInfo()
 #else
         } else if(!strncmp("cpu MHz", columnName, strlen("cpu MHz"))) {
 #endif
-            columnData = strndup((buff+columnSplit+2), strlen(buff));
+            columnData = strndup((buff+columnSplit+2), strlen(buff)-1);
             if (columnData == NULL) return NULL;
             cores[coresIndex].clockSpeed = atof(columnData);
         }

@@ -1771,8 +1771,8 @@ pub const Resolver = struct {
             const original_paths = entry.value_ptr.*;
 
             if (strings.indexOfChar(key, '*')) |star| {
-                const prefix = key[0 .. star - 1];
-                const suffix = key[star + 1 ..];
+                const prefix = if (star == 0) "" else key[0..star];
+                const suffix = if (star == key.len - 1) "" else key[star + 1 ..];
 
                 // Find the match with the longest prefix. If two matches have the same
                 // prefix length, pick the one with the longest suffix. This second edge
@@ -2697,6 +2697,46 @@ pub const Resolver = struct {
                     }
                     break :brk null;
                 };
+                if (info.tsconfig_json) |tsconfig_json| {
+                    var parentConfigs = std.ArrayList(*TSConfigJSON).init(r.allocator);
+                    defer parentConfigs.deinit();
+                    try parentConfigs.append(tsconfig_json);
+                    var current = tsconfig_json;
+                    while (current.extends) |extends| {
+                        var tsDirName = Dirname.dirname(current.abs_path);
+                        // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
+                        var absPath = ResolvePath.joinAbsString(tsDirName, &[_]string{ tsDirName, extends }, ResolvePath.Platform.auto);
+                        var parentConfigMaybe = try r.parseTSConfig(absPath, 0);
+                        if (parentConfigMaybe) |parentConfig| {
+                            try parentConfigs.append(parentConfig);
+                            current = parentConfig;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    var mergedConfig = parentConfigs.pop();
+                    // starting from the base config (end of the list)
+                    // successively apply the inheritable attributes to the next config
+                    while (parentConfigs.popOrNull()) |parentConfig| {
+                        if (parentConfig.base_url.len > 0) {
+                            mergedConfig.base_url = parentConfig.base_url;
+                            mergedConfig.base_url_for_paths = parentConfig.base_url_for_paths;
+                        }
+                        mergedConfig.jsx = parentConfig.mergeJSX(mergedConfig.jsx);
+
+                        if (parentConfig.preserve_imports_not_used_as_values) |value| {
+                            mergedConfig.preserve_imports_not_used_as_values = value;
+                        }
+
+                        var iter = parentConfig.paths.iterator();
+                        while (iter.next()) |c| {
+                            mergedConfig.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                        }
+                        // todo deinit these parent configs somehow?
+                    }
+                    info.tsconfig_json = mergedConfig;
+                }
                 info.enclosing_tsconfig_json = info.tsconfig_json;
             }
         }

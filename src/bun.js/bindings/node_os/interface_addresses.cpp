@@ -53,20 +53,14 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
                 if (interfaces == NULL) return NULL;
             }
 
-            interfaces[interfacesIndex].address = (char*) malloc(strlen(addr)+1);
+            interfaces[interfacesIndex].address = strdup(addr);
             if (interfaces[interfacesIndex].address == NULL) return NULL;
-            memcpy(interfaces[interfacesIndex].address, addr, strlen(addr));
-            interfaces[interfacesIndex].address[strlen(addr)] = '\0';
 
-            interfaces[interfacesIndex].netmask = (char*) malloc(strlen(netmask)+1);
+            interfaces[interfacesIndex].netmask = strdup(netmask);
             if (interfaces[interfacesIndex].netmask == NULL) return NULL;
-            memcpy(interfaces[interfacesIndex].netmask, netmask, strlen(netmask));
-            interfaces[interfacesIndex].netmask[strlen(netmask)] = '\0';
 
-            interfaces[interfacesIndex].interface = (char*) malloc(strlen(interface_name)+1);
+            interfaces[interfacesIndex].interface = strdup(interface_name);
             if (interfaces[interfacesIndex].interface == NULL) return NULL;
-            memcpy(interfaces[interfacesIndex].interface, interface_name, strlen(interface_name));
-            interfaces[interfacesIndex].interface[strlen(interface_name)] = '\0';
 
             interfaces[interfacesIndex].family = (char*) malloc(strlen("IPv4")+1);
             memcpy(interfaces[interfacesIndex].family, "IPv4", strlen("IPv4"));
@@ -88,20 +82,14 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
                 if (interfaces == NULL) return NULL;
             }
 
-            interfaces[interfacesIndex].address = (char*) malloc(strlen(addr)+1);
+            interfaces[interfacesIndex].address = strdup(addr);
             if (interfaces[interfacesIndex].address == NULL) return NULL;
-            memcpy(interfaces[interfacesIndex].address, addr, strlen(addr));
-            interfaces[interfacesIndex].address[strlen(addr)] = '\0';
 
-            interfaces[interfacesIndex].netmask = (char*) malloc(strlen(netmask)+1);
+            interfaces[interfacesIndex].netmask = strdup(netmask);
             if (interfaces[interfacesIndex].netmask == NULL) return NULL;
-            memcpy(interfaces[interfacesIndex].netmask, netmask, strlen(netmask));
-            interfaces[interfacesIndex].netmask[strlen(netmask)] = '\0';
 
-            interfaces[interfacesIndex].interface = (char*) malloc(strlen(interface_name)+1);
+            interfaces[interfacesIndex].interface = interface_name;
             if (interfaces[interfacesIndex].interface == NULL) return NULL;
-            memcpy(interfaces[interfacesIndex].interface, interface_name, strlen(interface_name));
-            interfaces[interfacesIndex].interface[strlen(interface_name)] = '\0';
 
             interfaces[interfacesIndex].family = (char*) malloc(strlen("IPv6")+1);
             memcpy(interfaces[interfacesIndex].family, "IPv6", strlen("IPv6"));
@@ -136,9 +124,8 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
 
             for (; i < arrLength; i++) {
                 if (strcmp(interfaces[i].interface, (ifa)->ifa_name) == 0) {
-                    interfaces[i].mac = (char*) malloc(strlen(macp)+1);
-                    memcpy(interfaces[i].mac, macp, strlen(macp));
-                    interfaces[i].mac[strlen(macp)] = '\0';
+                    interfaces[i].mac = strdup(macp);
+                    if (interfaces[i].mac == NULL) return NULL;
                 }
             }
         }
@@ -151,9 +138,8 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
             int arrLength = getNetworkInterfaceArrayLen(interfaces);
             for (int i = 0; i < arrLength; i++) {
                 if (strcmp(interfaces[i].interface, (ifa)->ifa_name) == 0) {
-                    interfaces[i].mac = (char*) malloc(strlen(macp)+1);
-                    memcpy(interfaces[i].mac, macp, strlen(macp));
-                    interfaces[i].mac[strlen(macp)] = '\0';
+                    interfaces[i].mac = strdup(macp);
+                    if (interfaces[i].mac == NULL) return NULL;
                 }
             }
         }

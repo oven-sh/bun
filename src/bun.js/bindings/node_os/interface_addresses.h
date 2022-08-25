@@ -1,6 +1,8 @@
 #ifndef INTERFACE_ADDRESSES_LIB
 #define INTERFACE_ADDRESSES_LIB
 
+#include <stdint.h>
+
 extern "C" {
     
     typedef struct {

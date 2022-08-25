@@ -87,7 +87,7 @@ pub const Os = struct {
             object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(@floatToInt(i32, cpus_[index].clockSpeed)));
             object.put(globalThis, &JSC.ZigString.init("times"), timesObject);
 
-            _ = result.append(object) catch unreachable;
+            _ = result.appendAssumeCapacity(object);
         }
 
         return JSC.JSArray.from(globalThis, result.toOwnedSlice());

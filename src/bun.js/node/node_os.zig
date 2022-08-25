@@ -216,6 +216,8 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         const networkInterfaces_ = getNetworkInterfaces();
+        if (networkInterfaces_ == null) return JSC.JSValue.createEmptyObject(globalThis, 0);
+
         const len = getNetworkInterfaceArrayLen(networkInterfaces_);
         const arr = networkInterfaces_[0..len];
 
@@ -229,8 +231,7 @@ pub const Os = struct {
             const interface = std.mem.span(part.interface);
             const family = std.mem.span(part.family);
             const netmask = std.mem.span(part.netmask);
-            const allocator = JSC.getAllocator(globalThis.ref());
-            const cidr = std.fmt.allocPrint(allocator, "{s}/{}", .{ netmask, part.cidr }) catch unreachable;
+            const cidr = std.fmt.allocPrint(heap_allocator, "{s}/{}", .{ netmask, part.cidr }) catch unreachable;
 
             var list = map.get(interface) orelse std.ArrayList(JSC.JSValue).init(heap_allocator);
             var obj = JSC.JSValue.createEmptyObject(globalThis, if (strings.eqlComptime(family, "IPv6")) 7 else 6);

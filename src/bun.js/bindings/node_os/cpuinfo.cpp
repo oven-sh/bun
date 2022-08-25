@@ -36,6 +36,7 @@ extern "C" CpuInfo *getCpuInfo()
             }
         }
         char *columnName = strndup(buff, columnSplit);
+        if (columnName == NULL) return NULL;
         
         if (!strncmp("processor", columnName, strlen("processor"))) {
             coresIndex++;
@@ -49,6 +50,7 @@ extern "C" CpuInfo *getCpuInfo()
         } else if(!strncmp("model name", columnName, strlen("model name"))) {
 #endif
             columnData = strndup((buff+columnSplit+2), strlen(buff));
+            if (columnData == NULL) return NULL;
             cores[coresIndex].manufacturer = (char*) malloc(strlen(columnData));
             if (cores[coresIndex].manufacturer == NULL) return NULL;
             memcpy(cores[coresIndex].manufacturer, columnData, strlen(columnData)-1);
@@ -59,6 +61,7 @@ extern "C" CpuInfo *getCpuInfo()
         } else if(!strncmp("cpu MHz", columnName, strlen("cpu MHz"))) {
 #endif
             columnData = strndup((buff+columnSplit+2), strlen(buff));
+            if (columnData == NULL) return NULL;
             cores[coresIndex].clockSpeed = atof(columnData);
         }
         free(columnName);
@@ -141,6 +144,7 @@ extern "C" CpuInfo *getCpuTime()
 
     while (fgets(buff, 256, file)) {
         char *name = strndup(buff, 3);
+        if (name == NULL) return NULL;
         if (!strncmp("cpu", name, 3) && isdigit(buff[3])) {
             coresIndex++;
             if (coresIndex > 0) {
@@ -155,6 +159,7 @@ extern "C" CpuInfo *getCpuTime()
                 }
             }
             char *cpuDataStart = strndup((buff+space+1), strlen(buff));
+            if (cpuDataStart == NULL) return NULL;
             char *cpuData = cpuDataStart;
             // Time to be smart, What I am about to do is dangerous.
             char *temp = (char*) &cores[coresIndex];
@@ -165,6 +170,7 @@ extern "C" CpuInfo *getCpuTime()
                 cpuData = (cpuData+j); // offseting string.
                 for (j = 0; cpuData[j] != ' '; j++);
                 char *parseStr = strndup(cpuData, j);
+                if (parseStr == NULL) return NULL;
                 *(int*) temp = atoi(parseStr);
                 free(parseStr);
                 temp = temp + sizeof(int); // switching to next int member.
@@ -189,18 +195,10 @@ extern "C" CpuInfo *getCpuInfoAndTime()
     return arr;
 #elif __linux__
     CpuInfo* arr = getCpuInfo();
-    if (arr == NULL) {
-        CpuInfo* empty = (CpuInfo*) malloc(sizeof(CpuInfo));
-        *empty = (CpuInfo) {NULL, 0, 0, 0, 0, 0, 0, 0};
-        return empty;
-    }
+    if (arr == NULL) return NULL;
 
     CpuInfo* arr2 = getCpuTime();
-    if (arr2 == NULL) {
-        CpuInfo* empty = (CpuInfo*) malloc(sizeof(CpuInfo));
-        *empty = (CpuInfo) {NULL, 0, 0, 0, 0, 0, 0, 0};
-        return empty;
-    }
+    if (arr2 == NULL) return NULL;
 
     for (int i = 0; arr[i].manufacturer; i++) {
         arr2[i].manufacturer = arr[i].manufacturer;

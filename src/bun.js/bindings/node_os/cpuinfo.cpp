@@ -217,9 +217,9 @@ extern "C" int getCpuArrayLen(CpuInfo *arr)
     return i-1;
 }
 
-extern "C" void freeCpuInfoArray(CpuInfo *arr)
+extern "C" void freeCpuInfoArray(CpuInfo *arr, int len)
 {
-    for (int i = 0; i < getCpuArrayLen(arr); i++) {
+    for (int i = 0; i < len; i++) {
         free(arr[i].manufacturer);
     }
     

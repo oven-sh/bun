@@ -674,26 +674,33 @@ pub const RequestContext = struct {
     }
 
     const AsyncIO = @import("io");
-    pub fn writeSocket(ctx: *RequestContext, buf: anytype, _: anytype) !usize {
-        switch (Syscall.send(ctx.conn.client.socket.fd, buf, SOCKET_FLAGS)) {
-            .err => |err| {
-                const erro = AsyncIO.asError(err.getErrno());
-                if (erro == error.EBADF or erro == error.ECONNABORTED or erro == error.ECONNREFUSED) {
-                    return error.SocketClosed;
-                }
+    pub fn writeSocket(ctx: *RequestContext, buf_: anytype, _: anytype) !usize {
+        var total: usize = 0;
+        var buf: []const u8 = buf_;
+        while (buf.len > 0) {
+            switch (Syscall.send(ctx.conn.client.socket.fd, buf, SOCKET_FLAGS)) {
+                .err => |err| {
+                    const erro = AsyncIO.asError(err.getErrno());
+                    if (erro == error.EBADF or erro == error.ECONNABORTED or erro == error.ECONNREFUSED) {
+                        return error.SocketClosed;
+                    }
 
-                Output.prettyErrorln("send() error: {s}", .{err.toSystemError().message.slice()});
+                    Output.prettyErrorln("send() error: {s}", .{err.toSystemError().message.slice()});
 
-                return erro;
-            },
-            .result => |written| {
-                if (written == 0) {
-                    return error.SocketClosed;
-                }
+                    return erro;
+                },
+                .result => |written| {
+                    if (written == 0) {
+                        return error.SocketClosed;
+                    }
 
-                return written;
-            },
+                    buf = buf[written..];
+                    total += written;
+                },
+            }
         }
+
+        return total;
     }
 
     pub fn writeBodyBuf(ctx: *RequestContext, body: []const u8) !void {
@@ -3478,6 +3485,7 @@ pub const Server = struct {
                         },
                     }
                 };
+
                 break :restart;
             }
 
@@ -3499,11 +3507,11 @@ pub const Server = struct {
 
         try listener.listen(1280);
         const addr = try listener.getLocalAddress();
-        if (server.bundler.options.origin.getPort()) |_port| {
-            if (_port != addr.ipv4.port) {
-                server.bundler.options.origin.port = try std.fmt.allocPrint(server.allocator, "{d}", .{addr.ipv4.port});
-            }
+
+        if (port != addr.ipv4.port) {
+            server.bundler.options.origin.port = try std.fmt.allocPrint(server.allocator, "{d}", .{addr.ipv4.port});
         }
+
         const start_time = Global.getStartTime();
         const now = std.time.nanoTimestamp();
         Output.printStartEnd(start_time, now);

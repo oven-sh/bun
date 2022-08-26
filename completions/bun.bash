@@ -106,7 +106,7 @@ _bun_completions() {
         --backend)
             case "${COMP_WORDS[1]}" in
                 a|add|remove|rm|install|i)
-                    COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir" -- "${cur_word}") );
+                    COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
                     ;;
             esac
             return ;;
@@ -117,7 +117,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
             return;;
         --platform)
-            COMPREPLY=( $(compgen -W "browser node" -- "${cur_word}") );
+            COMPREPLY=( $(compgen -W "browser node bun" -- "${cur_word}") );
             return;;
         -l|--loader)
             [[ "${cur_word}" =~ (:) ]] && {
@@ -134,7 +134,7 @@ _bun_completions() {
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}"
             return;;
-        remove|rm|i|install)
+        remove|rm|i|install|link|unlink)
             _long_short_completion \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";

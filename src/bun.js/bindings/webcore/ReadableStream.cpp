@@ -197,24 +197,30 @@ static inline bool checkReadableStream(JSDOMGlobalObject& globalObject, JSReadab
 
 bool ReadableStream::isLocked() const
 {
-    return checkReadableStream(*globalObject(), readableStream(), globalObject()->builtinInternalFunctions().readableStreamInternals().m_isReadableStreamLockedFunction.get());
+    auto clientData = WebCore::clientData(m_globalObject->vm());
+    auto& privateName = clientData->builtinNames().readerPrivateName();
+    return readableStream()->getDirect(m_globalObject->vm(), privateName).isTrue();
 }
 
 bool ReadableStream::isLocked(JSGlobalObject* globalObject, JSReadableStream* readableStream)
 {
-    auto* dom = reinterpret_cast<JSDOMGlobalObject*>(globalObject);
-    return checkReadableStream(*dom, readableStream, dom->builtinInternalFunctions().readableStreamInternals().m_isReadableStreamLockedFunction.get());
+    auto clientData = WebCore::clientData(globalObject->vm());
+    auto& privateName = clientData->builtinNames().readerPrivateName();
+    return readableStream->getDirect(globalObject->vm(), privateName).isTrue();
 }
 
 bool ReadableStream::isDisturbed(JSGlobalObject* globalObject, JSReadableStream* readableStream)
 {
-    auto* dom = reinterpret_cast<JSDOMGlobalObject*>(globalObject);
-    return checkReadableStream(*dom, readableStream, dom->builtinInternalFunctions().readableStreamInternals().m_isReadableStreamDisturbedFunction.get());
+    auto clientData = WebCore::clientData(globalObject->vm());
+    auto& privateName = clientData->builtinNames().disturbedPrivateName();
+    return readableStream->getDirect(globalObject->vm(), privateName).isTrue();
 }
 
 bool ReadableStream::isDisturbed() const
 {
-    return checkReadableStream(*globalObject(), readableStream(), globalObject()->builtinInternalFunctions().readableStreamInternals().m_isReadableStreamDisturbedFunction.get());
+    auto clientData = WebCore::clientData(globalObject()->vm());
+    auto& privateName = clientData->builtinNames().disturbedPrivateName();
+    return readableStream()->getDirect(globalObject()->vm(), privateName).isTrue();
 }
 
 }

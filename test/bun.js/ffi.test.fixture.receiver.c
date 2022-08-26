@@ -15,6 +15,8 @@
 #define USE_JSVALUE64 1
 #define USE_JSVALUE32_64 0
 
+#define ZIG_REPR_TYPE int64_t
+
 
 // /* 7.18.1.1  Exact-width integer types */
 typedef unsigned char uint8_t;
@@ -82,6 +84,8 @@ typedef union EncodedJSValue {
 
   void* asPtr;
   double asDouble;
+
+  ZIG_REPR_TYPE asZigRepr;
 } EncodedJSValue;
 
 EncodedJSValue ValueUndefined = { TagValueUndefined };
@@ -246,7 +250,7 @@ static EncodedJSValue INT64_TO_JSVALUE(void* globalObject, int64_t val) {
 }
 
 #ifndef IS_CALLBACK
-void* JSFunctionCall(void* globalObject, void* callFrame);
+ZIG_REPR_TYPE JSFunctionCall(void* globalObject, void* callFrame);
 
 #endif
 
@@ -257,12 +261,12 @@ float not_a_callback(float arg0);
 
 
 /* ---- Your Wrapper Function ---- */
-void* JSFunctionCall(void* globalObject, void* callFrame) {
+ZIG_REPR_TYPE JSFunctionCall(void* globalObject, void* callFrame) {
   LOAD_ARGUMENTS_FROM_CALL_FRAME;
   EncodedJSValue arg0;
   arg0.asInt64 = *argsPtr;
     float return_value = not_a_callback(    JSVALUE_TO_FLOAT(arg0));
 
-    return FLOAT_TO_JSVALUE(return_value).asPtr;
+    return FLOAT_TO_JSVALUE(return_value).asZigRepr;
 }
 

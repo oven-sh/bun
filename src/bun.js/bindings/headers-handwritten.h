@@ -160,9 +160,12 @@ typedef void WebSocketClientTLS;
 
 #ifndef __cplusplus
 typedef struct Bun__ArrayBuffer Bun__ArrayBuffer;
+typedef struct Uint8Array_alias Uint8Array_alias;
 #endif
 
 #ifdef __cplusplus
+
+using Uint8Array_alias = JSC::JSUint8Array;
 
 typedef struct {
     char* ptr;
@@ -171,7 +174,14 @@ typedef struct {
     uint32_t byte_len;
     uint8_t cell_type;
     uint64_t _value;
+    bool shared;
 } Bun__ArrayBuffer;
+
+enum SyntheticModuleType : uint64_t {
+    Buffer = 1024,
+    Process = 1025,
+    Events = 1026,
+};
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 

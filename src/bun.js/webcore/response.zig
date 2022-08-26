@@ -45,114 +45,7 @@ const StringJoiner = @import("../../string_joiner.zig");
 const uws = @import("uws");
 
 pub const Response = struct {
-    pub const Pool = struct {
-        response_objects_pool: [127]JSC.C.JSObjectRef = undefined,
-        response_objects_used: u8 = 0,
-
-        pub fn get(this: *Pool, ptr: *Response) ?JSC.C.JSObjectRef {
-            if (comptime JSC.is_bindgen)
-                unreachable;
-            if (this.response_objects_used > 0) {
-                var result = this.response_objects_pool[this.response_objects_used - 1];
-                this.response_objects_used -= 1;
-                if (JSC.C.JSObjectSetPrivate(result, JSPrivateDataPtr.init(ptr).ptr())) {
-                    return result;
-                } else {
-                    JSC.C.JSValueUnprotect(VirtualMachine.vm.global.ref(), result);
-                }
-            }
-
-            return null;
-        }
-
-        pub fn push(this: *Pool, globalThis: *JSC.JSGlobalObject, object: JSC.JSValue) void {
-            var remaining = this.response_objects_pool[@minimum(this.response_objects_used, this.response_objects_pool.len)..];
-            if (remaining.len == 0) {
-                JSC.C.JSValueUnprotect(globalThis.ref(), object.asObjectRef());
-                return;
-            }
-
-            if (object.as(Response)) |resp| {
-                _ = JSC.C.JSObjectSetPrivate(object.asObjectRef(), null);
-
-                _ = resp.body.use();
-                resp.finalize();
-                remaining[0] = object.asObjectRef();
-                this.response_objects_used += 1;
-            }
-        }
-    };
-
-    pub const Constructor = JSC.NewConstructor(
-        Response,
-        .{
-            .@"constructor" = constructor,
-            .@"json" = .{ .rfn = constructJSON },
-            .@"redirect" = .{ .rfn = constructRedirect },
-            .@"error" = .{ .rfn = constructError },
-        },
-        .{},
-    );
-
-    pub const Class = NewClass(
-        Response,
-        .{ .name = "Response" },
-        .{
-            .@"finalize" = finalize,
-            .@"text" = .{
-                .rfn = Response.getText,
-                .ts = d.ts{},
-            },
-            .@"json" = .{
-                .rfn = Response.getJSON,
-                .ts = d.ts{},
-            },
-            .@"arrayBuffer" = .{
-                .rfn = Response.getArrayBuffer,
-                .ts = d.ts{},
-            },
-            .@"blob" = .{
-                .rfn = Response.getBlob,
-                .ts = d.ts{},
-            },
-
-            .@"clone" = .{
-                .rfn = doClone,
-                .ts = d.ts{},
-            },
-        },
-        .{
-            .@"url" = .{
-                .@"get" = getURL,
-                .ro = true,
-            },
-
-            .@"ok" = .{
-                .@"get" = getOK,
-                .ro = true,
-            },
-            .@"status" = .{
-                .@"get" = getStatus,
-                .ro = true,
-            },
-            .@"statusText" = .{
-                .@"get" = getStatusText,
-                .ro = true,
-            },
-            .@"headers" = .{
-                .@"get" = getHeaders,
-                .ro = true,
-            },
-            .@"bodyUsed" = .{
-                .@"get" = getBodyUsed,
-                .ro = true,
-            },
-            .@"type" = .{
-                .@"get" = getResponseType,
-                .ro = true,
-            },
-        },
-    );
+    pub usingnamespace JSC.Codegen.JSResponse;
 
     allocator: std.mem.Allocator,
     body: Body,
@@ -171,11 +64,14 @@ pub const Response = struct {
     }
 
     pub fn redirectLocation(this: *const Response) ?[]const u8 {
-        return this.header("location");
+        return this.header(.Location);
     }
 
-    pub fn header(this: *const Response, comptime name: []const u8) ?[]const u8 {
-        return (this.body.init.headers orelse return null).get(name);
+    pub fn header(this: *const Response, name: JSC.FetchHeaders.HTTPHeaderName) ?[]const u8 {
+        return if ((this.body.init.headers orelse return null).fastGet(name)) |str|
+            str.slice()
+        else
+            null;
     }
 
     pub const Props = struct {};
@@ -225,59 +121,44 @@ pub const Response = struct {
 
     pub fn getURL(
         this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
-        return ZigString.init(this.url).toValueGC(ctx.ptr()).asObjectRef();
+        return ZigString.init(this.url).toValueGC(globalThis);
     }
 
     pub fn getResponseType(
         this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
         if (this.body.init.status_code < 200) {
-            return ZigString.init("error").toValue(ctx.ptr()).asObjectRef();
+            return ZigString.init("error").toValue(globalThis);
         }
 
-        return ZigString.init("basic").toValue(ctx.ptr()).asObjectRef();
+        return ZigString.init("basic").toValue(globalThis);
     }
 
     pub fn getBodyUsed(
         this: *Response,
-        _: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return JSC.JSValue.jsBoolean(this.body.value == .Used).asRef();
+        _: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSValue.jsBoolean(this.body.value == .Used);
     }
 
     pub fn getStatusText(
         this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
-        return ZigString.init(this.status_text).withEncoding().toValueGC(ctx.ptr()).asObjectRef();
+        return ZigString.init(this.status_text).withEncoding().toValueGC(globalThis);
     }
 
     pub fn getOK(
         this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
+        _: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
-        return js.JSValueMakeBoolean(ctx, this.isOK());
+        return JSValue.jsBoolean(this.isOK());
     }
 
     fn getOrCreateHeaders(this: *Response) *FetchHeaders {
@@ -289,24 +170,18 @@ pub const Response = struct {
 
     pub fn getHeaders(
         this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return this.getOrCreateHeaders().toJS(ctx.ptr()).asObjectRef();
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return this.getOrCreateHeaders().toJS(globalThis);
     }
 
     pub fn doClone(
         this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        var cloned = this.clone(getAllocator(ctx), ctx.ptr());
-        var val = Response.makeMaybePooled(ctx, cloned);
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        var cloned = this.clone(getAllocator(globalThis), globalThis);
+        const val = Response.makeMaybePooled(globalThis, cloned);
         if (this.body.init.headers) |headers| {
             cloned.body.init.headers = headers.cloneThis();
         }
@@ -314,18 +189,8 @@ pub const Response = struct {
         return val;
     }
 
-    pub fn makeMaybePooled(ctx: js.JSContextRef, ptr: *Response) JSC.C.JSObjectRef {
-        if (comptime JSC.is_bindgen)
-            unreachable;
-        var vm = ctx.bunVM();
-        if (vm.response_objects_pool) |pool| {
-            if (pool.get(ptr)) |object| {
-                JSC.C.JSValueUnprotect(ctx, object);
-                return object;
-            }
-        }
-
-        return Response.Class.make(ctx, ptr);
+    pub fn makeMaybePooled(globalObject: *JSC.JSGlobalObject, ptr: *Response) JSValue {
+        return ptr.toJS(globalObject);
     }
 
     pub fn cloneInto(
@@ -349,22 +214,19 @@ pub const Response = struct {
         return new_response;
     }
 
-    pub usingnamespace BlobInterface(@This());
+    pub usingnamespace NewBlobInterface(@This());
 
     pub fn getStatus(
         this: *Response,
-        ctx: js.JSContextRef,
-        _: js.JSValueRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
+        _: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
-        return js.JSValueMakeNumber(ctx, @intToFloat(f64, this.body.init.status_code));
+        return JSValue.jsNumber(this.body.init.status_code);
     }
 
     pub fn finalize(
         this: *Response,
-    ) void {
+    ) callconv(.C) void {
         this.body.deinit(this.allocator);
 
         var allocator = this.allocator;
@@ -385,7 +247,7 @@ pub const Response = struct {
     }
 
     pub fn mimeTypeWithDefault(response: *const Response, default: MimeType, request_ctx_: ?*const RequestContext) string {
-        if (response.header("content-type")) |content_type| {
+        if (response.header(.ContentType)) |content_type| {
             // Remember, we always lowercase it
             // hopefully doesn't matter here tho
             return content_type;
@@ -410,16 +272,13 @@ pub const Response = struct {
     }
 
     pub fn constructJSON(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSObjectRef {
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        const args_list = callframe.arguments(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
-        // var response = getAllocator(ctx).create(Response) catch unreachable;
+        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
+        // var response = getAllocator(globalThis).create(Response) catch unreachable;
 
         var response = Response{
             .body = Body{
@@ -428,7 +287,7 @@ pub const Response = struct {
                 },
                 .value = Body.Value.empty,
             },
-            .allocator = getAllocator(ctx),
+            .allocator = getAllocator(globalThis),
             .url = "",
         };
 
@@ -438,18 +297,18 @@ pub const Response = struct {
             var zig_str = JSC.ZigString.init("");
             // calling JSON.stringify on an empty string adds extra quotes
             // so this is correct
-            json_value.jsonStringify(ctx.ptr(), 0, &zig_str);
+            json_value.jsonStringify(globalThis.ptr(), 0, &zig_str);
 
             if (zig_str.len > 0) {
-                var zig_str_slice = zig_str.toSlice(getAllocator(ctx));
+                var zig_str_slice = zig_str.toSlice(getAllocator(globalThis));
 
                 if (zig_str_slice.allocated) {
                     response.body.value = .{
-                        .Blob = Blob.initWithAllASCII(zig_str_slice.mut(), zig_str_slice.allocator, ctx.ptr(), false),
+                        .Blob = Blob.initWithAllASCII(zig_str_slice.mut(), zig_str_slice.allocator, globalThis.ptr(), false),
                     };
                 } else {
                     response.body.value = .{
-                        .Blob = Blob.initWithAllASCII(getAllocator(ctx).dupe(u8, zig_str_slice.slice()) catch unreachable, zig_str_slice.allocator, ctx.ptr(), true),
+                        .Blob = Blob.initWithAllASCII(getAllocator(globalThis).dupe(u8, zig_str_slice.slice()) catch unreachable, zig_str_slice.allocator, globalThis.ptr(), true),
                     };
                 }
             }
@@ -459,7 +318,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
-                if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
+                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
                 }
             }
@@ -470,19 +329,16 @@ pub const Response = struct {
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
-        return Response.makeMaybePooled(ctx, ptr);
+        return ptr.toJS(globalThis);
     }
     pub fn constructRedirect(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSObjectRef {
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        var args_list = callframe.arguments(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
-        var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
-        // var response = getAllocator(ctx).create(Response) catch unreachable;
+        var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
+        // var response = getAllocator(globalThis).create(Response) catch unreachable;
 
         var response = Response{
             .body = Body{
@@ -491,7 +347,7 @@ pub const Response = struct {
                 },
                 .value = Body.Value.empty,
             },
-            .allocator = getAllocator(ctx),
+            .allocator = getAllocator(globalThis),
             .url = "",
         };
 
@@ -499,16 +355,16 @@ pub const Response = struct {
         var url_string = ZigString.init("");
 
         if (@enumToInt(url_string_value) != 0) {
-            url_string = url_string_value.getZigString(ctx.ptr());
+            url_string = url_string_value.getZigString(globalThis.ptr());
         }
-        var url_string_slice = url_string.toSlice(getAllocator(ctx));
+        var url_string_slice = url_string.toSlice(getAllocator(globalThis));
         defer url_string_slice.deinit();
 
         if (args.nextEat()) |init| {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.body.init.status_code = @intCast(u16, @minimum(@maximum(0, init.toInt32()), std.math.maxInt(u16)));
             } else {
-                if (Body.Init.init(getAllocator(ctx), ctx, init.asObjectRef()) catch null) |_init| {
+                if (Body.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
                     response.body.init = _init;
                     response.body.init.status_code = 302;
                 }
@@ -521,17 +377,13 @@ pub const Response = struct {
         var ptr = response.allocator.create(Response) catch unreachable;
         ptr.* = response;
 
-        return Response.makeMaybePooled(ctx, ptr);
+        return ptr.toJS(globalThis);
     }
     pub fn constructError(
-        _: void,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSObjectRef {
-        var response = getAllocator(ctx).create(Response) catch unreachable;
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        var response = getAllocator(globalThis).create(Response) catch unreachable;
         response.* = Response{
             .body = Body{
                 .init = Body.Init{
@@ -539,51 +391,45 @@ pub const Response = struct {
                 },
                 .value = Body.Value.empty,
             },
-            .allocator = getAllocator(ctx),
+            .allocator = getAllocator(globalThis),
             .url = "",
         };
 
-        return Response.makeMaybePooled(
-            ctx,
-            response,
-        );
+        return response.toJS(globalThis);
     }
 
     pub fn constructor(
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
-        const body: Body = brk: {
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) ?*Response {
+        const args_list = callframe.arguments(4);
+        const arguments = args_list.ptr[0..args_list.len];
+        const body: Body = @as(?Body, brk: {
             switch (arguments.len) {
                 0 => {
-                    break :brk Body.@"200"(ctx);
+                    break :brk Body.@"200"(globalThis);
                 },
                 1 => {
-                    break :brk Body.extract(ctx, arguments[0], exception);
+                    break :brk Body.extract(globalThis, arguments[0]);
                 },
                 else => {
-                    if (js.JSValueGetType(ctx, arguments[1]) == js.JSType.kJSTypeObject) {
-                        break :brk Body.extractWithInit(ctx, arguments[0], arguments[1], exception);
+                    if (arguments[1].jsType().isObject()) {
+                        break :brk Body.extractWithInit(globalThis, arguments[0], arguments[1]);
                     } else {
-                        break :brk Body.extract(ctx, arguments[0], exception);
+                        break :brk Body.extract(globalThis, arguments[0]);
                     }
                 },
             }
             unreachable;
-        };
+        }) orelse return null;
 
-        var response = getAllocator(ctx).create(Response) catch unreachable;
+        var response = getAllocator(globalThis).create(Response) catch unreachable;
         response.* = Response{
             .body = body,
-            .allocator = getAllocator(ctx),
+            .allocator = getAllocator(globalThis),
             .url = "",
         };
-        return Response.makeMaybePooled(
-            ctx,
-            response,
-        );
+        return response;
     }
 };
 
@@ -780,7 +626,7 @@ pub const Fetch = struct {
                     },
                 },
             };
-            return JSValue.fromRef(Response.makeMaybePooled(@ptrCast(js.JSContextRef, this.global_this), response));
+            return Response.makeMaybePooled(@ptrCast(js.JSContextRef, this.global_this), response);
         }
 
         pub fn get(
@@ -826,13 +672,14 @@ pub const Fetch = struct {
             timeout: usize,
             request_body_store: ?*Blob.Store,
         ) !*FetchTasklet.Pool.Node {
+            try NetworkThread.init();
             var node = try get(allocator, method, url, headers, headers_buf, request_body, timeout, request_body_store);
 
             node.data.global_this = global;
             node.data.http.callback = callback;
             var batch = NetworkThread.Batch{};
             node.data.http.schedule(allocator, &batch);
-            NetworkThread.global.pool.schedule(batch);
+            NetworkThread.global.schedule(batch);
             VirtualMachine.vm.active_tasks +|= 1;
             return node;
         }
@@ -885,15 +732,15 @@ pub const Fetch = struct {
             NetworkThread.init() catch @panic("Failed to start network thread");
             url = ZigURL.parse(url_str);
 
-            if (arguments.len >= 2 and js.JSValueIsObject(ctx, arguments[1])) {
+            if (arguments.len >= 2 and arguments[1].?.value().isObject()) {
                 var options = JSValue.fromRef(arguments[1]);
-                if (options.get(ctx.ptr(), "method")) |method_| {
+                if (options.fastGet(ctx.ptr(), .method)) |method_| {
                     var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
                     defer slice_.deinit();
                     method = Method.which(slice_.slice()) orelse .GET;
                 }
 
-                if (options.get(ctx.ptr(), "headers")) |headers_| {
+                if (options.fastGet(ctx.ptr(), .headers)) |headers_| {
                     if (headers_.as(FetchHeaders)) |headers__| {
                         headers = Headers.from(headers__, bun.default_allocator) catch unreachable;
                         // TODO: make this one pass
@@ -903,7 +750,7 @@ pub const Fetch = struct {
                     }
                 }
 
-                if (options.get(ctx.ptr(), "body")) |body__| {
+                if (options.fastGet(ctx.ptr(), .body)) |body__| {
                     if (Blob.fromJS(ctx.ptr(), body__, true, false)) |new_blob| {
                         if (new_blob.size > 0) {
                             body = MutableString{
@@ -922,7 +769,7 @@ pub const Fetch = struct {
                     }
                 }
             }
-        } else if (first_arg.asCheckLoaded(Request)) |request| {
+        } else if (first_arg.as(Request)) |request| {
             url = ZigURL.parse(request.url.dupe(getAllocator(ctx)) catch unreachable);
             method = request.method;
             if (request.headers) |head| {
@@ -2758,11 +2605,11 @@ pub const Blob = struct {
         Blob,
         .{ .name = "Blob" },
         .{ .finalize = finalize, .text = .{
-            .rfn = getText,
+            .rfn = getText_c,
         }, .json = .{
-            .rfn = getJSON,
+            .rfn = getJSON_c,
         }, .arrayBuffer = .{
-            .rfn = getArrayBuffer,
+            .rfn = getArrayBuffer_c,
         }, .slice = .{
             .rfn = getSlice,
         }, .stream = .{
@@ -2815,10 +2662,20 @@ pub const Blob = struct {
         if (value.jsType() == .JSPromise)
             return value;
 
-        return JSC.JSPromise.resolvedPromiseValue(global, value);
+        return JSPromise.resolvedPromiseValue(
+            global,
+            value,
+        );
     }
 
     pub fn getText(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSC.JSValue {
+        return promisified(this.toString(globalThis, .clone), globalThis);
+    }
+
+    pub fn getText_c(
         this: *Blob,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
@@ -2831,12 +2688,27 @@ pub const Blob = struct {
 
     pub fn getTextTransfer(
         this: *Blob,
+        globalObject: *JSC.JSGlobalObject,
+    ) JSC.JSValue {
+        return promisified(this.toString(globalObject, .transfer), globalObject);
+    }
+
+    pub fn getTextTransfer_c(
+        this: *Blob,
         ctx: js.JSContextRef,
     ) JSC.C.JSObjectRef {
-        return promisified(this.toString(ctx.ptr(), .transfer), ctx.ptr()).asObjectRef();
+        return this.getTextTransfer(ctx).asObjectRef();
     }
 
     pub fn getJSON(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        return promisified(this.toJSON(globalThis, .share), globalThis);
+    }
+
+    pub fn getJSON_c(
         this: *Blob,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
@@ -2849,12 +2721,27 @@ pub const Blob = struct {
 
     pub fn getArrayBufferTransfer(
         this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSC.JSValue {
+        return promisified(this.toArrayBuffer(globalThis, .transfer), globalThis);
+    }
+
+    pub fn getArrayBufferTransfer_c(
+        this: *Blob,
         ctx: js.JSContextRef,
     ) JSC.C.JSObjectRef {
         return promisified(this.toArrayBuffer(ctx.ptr(), .transfer), ctx.ptr()).asObjectRef();
     }
 
     pub fn getArrayBuffer(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        return promisified(this.toArrayBuffer(globalThis, .clone), globalThis);
+    }
+
+    pub fn getArrayBuffer_c(
         this: *Blob,
         ctx: js.JSContextRef,
         _: js.JSObjectRef,
@@ -3470,24 +3357,8 @@ pub const Blob = struct {
             fromJSCloneOptionalArray
         else
             fromJSClone;
-        const DeferCtx = struct {
-            args: std.meta.ArgsTuple(@TypeOf(FromJSFunction)),
-            ret: anyerror!Blob = undefined,
 
-            pub fn run(ctx: ?*anyopaque) callconv(.C) void {
-                var that = bun.cast(*@This(), ctx.?);
-                that.ret = @call(.{}, FromJSFunction, that.args);
-            }
-        };
-        var ctx = DeferCtx{
-            .args = .{
-                global,
-                arg,
-            },
-            .ret = undefined,
-        };
-        global.vm().deferGC(&ctx, DeferCtx.run);
-        return ctx.ret;
+        return FromJSFunction(global, arg);
     }
 
     fn fromJSWithoutDeferGC(
@@ -3503,6 +3374,8 @@ pub const Blob = struct {
 
         var top_value = current;
         var might_only_be_one_thing = false;
+        arg.ensureStillAlive();
+        defer arg.ensureStillAlive();
         switch (current.jsTypeLoose()) {
             .Array, .DerivedArray => {
                 var top_iter = JSC.JSArrayIterator.init(current, global);
@@ -3561,23 +3434,25 @@ pub const Blob = struct {
                     return Blob.init(buf, bun.default_allocator, global);
                 },
 
-                else => {
-                    if (JSC.C.JSObjectGetPrivate(top_value.asObjectRef())) |priv| {
-                        var data = JSC.JSPrivateDataPtr.from(priv);
-                        switch (data.tag()) {
-                            .Blob => {
-                                var blob: *Blob = data.as(Blob);
-                                if (comptime move) {
-                                    var _blob = blob.*;
-                                    _blob.allocator = null;
-                                    blob.transfer();
-                                    return _blob;
-                                } else {
-                                    return blob.dupe();
-                                }
-                            },
+                else => |tag| {
+                    if (tag != .DOMWrapper) {
+                        if (JSC.C.JSObjectGetPrivate(top_value.asObjectRef())) |priv| {
+                            var data = JSC.JSPrivateDataPtr.from(priv);
+                            switch (data.tag()) {
+                                .Blob => {
+                                    var blob: *Blob = data.as(Blob);
+                                    if (comptime move) {
+                                        var _blob = blob.*;
+                                        _blob.allocator = null;
+                                        blob.transfer();
+                                        return _blob;
+                                    } else {
+                                        return blob.dupe();
+                                    }
+                                },
 
-                            else => return Blob.initEmpty(global),
+                                else => return Blob.initEmpty(global),
+                            }
                         }
                     }
                 },
@@ -3681,6 +3556,8 @@ pub const Blob = struct {
                         stack.appendAssumeCapacity(item);
                     }
                 },
+
+                .DOMWrapper => {},
 
                 JSC.JSValue.JSType.ArrayBuffer,
                 JSC.JSValue.JSType.Int8Array,
@@ -3811,44 +3688,31 @@ pub const Body = struct {
             return that;
         }
 
-        pub fn init(_: std.mem.Allocator, ctx: js.JSContextRef, init_ref: js.JSValueRef) !?Init {
+        pub fn init(allocator: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
             var result = Init{ .status_code = 200 };
-            var array = js.JSObjectCopyPropertyNames(ctx, init_ref);
-            defer js.JSPropertyNameArrayRelease(array);
-            const count = js.JSPropertyNameArrayGetCount(array);
 
-            var i: usize = 0;
-            while (i < count) : (i += 1) {
-                var property_name_ref = js.JSPropertyNameArrayGetNameAtIndex(array, i);
-                switch (js.JSStringGetLength(property_name_ref)) {
-                    "headers".len => {
-                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "headers")) {
-                            // only support headers as an object for now.
-                            if (js.JSObjectGetProperty(ctx, init_ref, property_name_ref, null)) |header_prop| {
-                                const header_val = JSValue.fromRef(header_prop);
-                                if (header_val.as(FetchHeaders)) |orig| {
-                                    result.headers = orig.cloneThis();
-                                } else {
-                                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), header_val);
-                                }
-                            }
-                        }
-                    },
+            if (!response_init.isCell())
+                return null;
 
-                    "method".len => {
-                        if (js.JSStringIsEqualToUTF8CString(property_name_ref, "status")) {
-                            var value_ref = js.JSObjectGetProperty(ctx, init_ref, property_name_ref, null);
-                            var exception: js.JSValueRef = null;
-                            const number = js.JSValueToNumber(ctx, value_ref, &exception);
-                            if (exception != null or !std.math.isFinite(number)) continue;
-                            result.status_code = @truncate(u16, @floatToInt(u64, number));
-                        } else if (js.JSStringIsEqualToUTF8CString(property_name_ref, "method")) {
-                            result.method = Method.which(
-                                JSC.JSValue.fromRef(init_ref).get(ctx.ptr(), "method").?.getZigString(ctx.ptr()).slice(),
-                            ) orelse Method.GET;
-                        }
-                    },
-                    else => {},
+            if (response_init.fastGet(ctx, .headers)) |headers| {
+                if (headers.as(FetchHeaders)) |orig| {
+                    result.headers = orig.cloneThis();
+                } else {
+                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
+                }
+            }
+
+            if (response_init.fastGet(ctx, .status)) |status_value| {
+                const number = status_value.to(i32);
+                if (number > 0)
+                    result.status_code = @truncate(u16, @intCast(u32, number));
+            }
+
+            if (response_init.fastGet(ctx, .method)) |method_value| {
+                var method_str = method_value.toSlice(ctx, allocator);
+                defer method_str.deinit();
+                if (method_str.len > 0) {
+                    result.method = Method.which(method_str.slice()) orelse .GET;
                 }
             }
 
@@ -3976,14 +3840,14 @@ pub const Body = struct {
 
                     switch (locked.action) {
                         .getText => {
-                            promise.asPromise().?.resolve(global, JSValue.fromRef(blob.getTextTransfer(global.ref())));
+                            promise.asPromise().?.resolve(global, blob.getTextTransfer(global.ref()));
                         },
                         .getJSON => {
                             promise.asPromise().?.resolve(global, blob.toJSON(global, .share));
                             blob.detach();
                         },
                         .getArrayBuffer => {
-                            promise.asPromise().?.resolve(global, JSValue.fromRef(blob.getArrayBufferTransfer(global.ref())));
+                            promise.asPromise().?.resolve(global, blob.getArrayBufferTransfer(global));
                         },
                         .getBlob => {
                             var ptr = bun.default_allocator.create(Blob) catch unreachable;
@@ -4119,53 +3983,56 @@ pub const Body = struct {
         };
     }
 
-    pub fn extract(ctx: js.JSContextRef, body_ref: js.JSObjectRef, exception: js.ExceptionRef) Body {
+    pub fn extract(
+        globalThis: *JSGlobalObject,
+        value: JSValue,
+    ) ?Body {
         return extractBody(
-            ctx,
-            body_ref,
+            globalThis,
+            value,
             false,
-            null,
-            exception,
+            JSValue.zero,
         );
     }
 
-    pub fn extractWithInit(ctx: js.JSContextRef, body_ref: js.JSObjectRef, init_ref: js.JSValueRef, exception: js.ExceptionRef) Body {
+    pub fn extractWithInit(
+        globalThis: *JSGlobalObject,
+        value: JSValue,
+        init: JSValue,
+    ) ?Body {
         return extractBody(
-            ctx,
-            body_ref,
+            globalThis,
+            value,
             true,
-            init_ref,
-            exception,
+            init,
         );
     }
 
     // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
     inline fn extractBody(
-        ctx: js.JSContextRef,
-        body_ref: js.JSObjectRef,
+        globalThis: *JSGlobalObject,
+        value: JSValue,
         comptime has_init: bool,
-        init_ref: js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) Body {
+        init: JSValue,
+    ) ?Body {
         var body = Body{
             .init = Init{ .headers = null, .status_code = 200 },
         };
-        const value = JSC.JSValue.fromRef(body_ref);
-        var allocator = getAllocator(ctx);
+        var allocator = getAllocator(globalThis);
 
         if (comptime has_init) {
-            if (Init.init(allocator, ctx, init_ref.?)) |maybeInit| {
+            if (Init.init(allocator, globalThis, init)) |maybeInit| {
                 if (maybeInit) |init_| {
                     body.init = init_;
                 }
             } else |_| {}
         }
 
-        if (JSC.WebCore.ReadableStream.fromJS(value, ctx)) |readable| {
+        if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {
             switch (readable.ptr) {
                 .Blob => |blob| {
                     body.value = .{
-                        .Blob = Blob.initWithStore(blob.store, ctx),
+                        .Blob = Blob.initWithStore(blob.store, globalThis),
                     };
                     blob.store.ref();
 
@@ -4180,19 +4047,19 @@ pub const Body = struct {
                 else => {},
             }
 
-            body.value = Body.Value.fromReadableStream(readable, ctx);
+            body.value = Body.Value.fromReadableStream(readable, globalThis);
             return body;
         }
 
         body.value = .{
-            .Blob = Blob.fromJS(ctx.ptr(), value, true, false) catch |err| {
+            .Blob = Blob.fromJS(globalThis, value, true, false) catch |err| {
                 if (err == error.InvalidArguments) {
-                    JSC.JSError(allocator, "Expected an Array", .{}, ctx, exception);
-                    return body;
+                    globalThis.throwInvalidArguments("Expected an Array", .{});
+                    return null;
                 }
 
-                JSC.JSError(allocator, "Out of memory", .{}, ctx, exception);
-                return body;
+                globalThis.throwInvalidArguments("Invalid Body object", .{});
+                return null;
             },
         };
 
@@ -4209,6 +4076,8 @@ pub const Request = struct {
     body: Body.Value = Body.Value{ .Empty = .{} },
     method: Method = Method.GET,
     uws_request: ?*uws.Request = null,
+
+    pub usingnamespace JSC.Codegen.JSRequest;
 
     pub fn writeFormat(this: *const Request, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
@@ -4252,10 +4121,8 @@ pub const Request = struct {
 
     pub fn mimeType(this: *const Request) string {
         if (this.headers) |headers| {
-            // Remember, we always lowercase it
-            // hopefully doesn't matter here tho
-            if (headers.get("content-type")) |content_type| {
-                return content_type;
+            if (headers.fastGet(.ContentType)) |content_type| {
+                return content_type.slice();
             }
         }
 
@@ -4271,134 +4138,36 @@ pub const Request = struct {
         }
     }
 
-    pub const Constructor = JSC.NewConstructor(
-        Request,
-        .{
-            .constructor = .{ .rfn = constructor },
-        },
-        .{},
-    );
-
-    pub const Class = NewClass(
-        Request,
-        .{
-            .name = "Request",
-            .read_only = true,
-        },
-        .{
-            .finalize = finalize,
-            .text = .{
-                .rfn = Request.getText,
-            },
-            .json = .{
-                .rfn = Request.getJSON,
-            },
-            .arrayBuffer = .{
-                .rfn = Request.getArrayBuffer,
-            },
-            .blob = .{
-                .rfn = Request.getBlob,
-            },
-            .clone = .{
-                .rfn = Request.doClone,
-            },
-        },
-        .{
-            .@"cache" = .{
-                .@"get" = getCache,
-                .@"ro" = true,
-            },
-            .@"credentials" = .{
-                .@"get" = getCredentials,
-                .@"ro" = true,
-            },
-            .@"destination" = .{
-                .@"get" = getDestination,
-                .@"ro" = true,
-            },
-            .@"headers" = .{
-                .@"get" = getHeaders,
-                .@"ro" = true,
-            },
-            .@"integrity" = .{
-                .@"get" = getIntegrity,
-                .@"ro" = true,
-            },
-            .@"method" = .{
-                .@"get" = getMethod,
-                .@"ro" = true,
-            },
-            .@"mode" = .{
-                .@"get" = getMode,
-                .@"ro" = true,
-            },
-            .@"redirect" = .{
-                .@"get" = getRedirect,
-                .@"ro" = true,
-            },
-            .@"referrer" = .{
-                .@"get" = getReferrer,
-                .@"ro" = true,
-            },
-            .@"referrerPolicy" = .{
-                .@"get" = getReferrerPolicy,
-                .@"ro" = true,
-            },
-            .@"url" = .{
-                .@"get" = getUrl,
-                .@"ro" = true,
-            },
-            .@"bodyUsed" = .{
-                .@"get" = getBodyUsed,
-                .@"ro" = true,
-            },
-        },
-    );
-
     pub fn getCache(
         _: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.default).toValueGC(ctx.ptr()).asRef());
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return ZigString.init(Properties.UTF8.default).toValueGC(globalThis);
     }
     pub fn getCredentials(
         _: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, ZigString.init(Properties.UTF8.include).toValueGC(ctx.ptr()).asRef());
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return ZigString.init(Properties.UTF8.include).toValueGC(globalThis);
     }
     pub fn getDestination(
         _: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return js.JSValueMakeString(ctx, ZigString.init("").toValueGC(ctx.ptr()).asRef());
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return ZigString.init("").toValueGC(globalThis);
     }
 
     pub fn getIntegrity(
         _: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.Empty.toValueGC(ctx.ptr()).asRef();
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return ZigString.Empty.toValueGC(globalThis);
     }
+
     pub fn getMethod(
         this: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
         const string_contents: string = switch (this.method) {
             .GET => Properties.UTF8.GET,
             .HEAD => Properties.UTF8.HEAD,
@@ -4409,20 +4178,17 @@ pub const Request = struct {
             else => "",
         };
 
-        return ZigString.init(string_contents).toValue(ctx.ptr()).asRef();
+        return ZigString.init(string_contents).toValueGC(globalThis);
     }
 
     pub fn getMode(
         _: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(Properties.UTF8.navigate).toValue(ctx.ptr()).asRef();
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return ZigString.init(Properties.UTF8.navigate).toValue(globalThis);
     }
 
-    pub fn finalize(this: *Request) void {
+    pub fn finalize(this: *Request) callconv(.C) void {
         if (this.headers) |headers| {
             headers.deref();
             this.headers = null;
@@ -4432,127 +4198,114 @@ pub const Request = struct {
             bun.default_allocator.free(bun.constStrToU8(this.url.slice()));
         }
 
+        this.body.deinit();
+
         bun.default_allocator.destroy(this);
     }
 
     pub fn getRedirect(
         _: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(Properties.UTF8.follow).toValueGC(ctx.ptr()).asRef();
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return ZigString.init(Properties.UTF8.follow).toValueGC(globalThis);
     }
     pub fn getReferrer(
         this: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
+        globalObject: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
         if (this.headers) |headers_ref| {
             if (headers_ref.get("referrer")) |referrer| {
-                return ZigString.init(referrer).toValueGC(ctx.ptr()).asRef();
+                return ZigString.init(referrer).toValueGC(globalObject);
             }
         }
 
-        return ZigString.init("").toValueGC(ctx.ptr()).asRef();
+        return ZigString.init("").toValueGC(globalObject);
     }
     pub fn getReferrerPolicy(
         _: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init("").toValueGC(ctx.ptr()).asRef();
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return ZigString.init("").toValueGC(globalThis);
     }
     pub fn getUrl(
         this: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return this.url.toValueGC(ctx.ptr()).asObjectRef();
+        globalObject: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return this.url.toValueGC(globalObject);
     }
 
     pub fn constructor(
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) ?*Request {
         var request = Request{};
+        const arguments_ = callframe.arguments(2);
+        const arguments = arguments_.ptr[0..arguments_.len];
 
         switch (arguments.len) {
             0 => {},
             1 => {
-                const urlOrObject = JSC.JSValue.c(arguments[0]);
+                const urlOrObject = arguments[0];
                 if (urlOrObject.isString()) {
-                    request.url = urlOrObject.getZigString(ctx.ptr());
+                    request.url = urlOrObject.getZigString(globalThis);
                 } else {
-                    if (Body.Init.init(getAllocator(ctx), ctx, arguments[0]) catch null) |req_init| {
+                    if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[0]) catch null) |req_init| {
                         request.headers = req_init.headers;
                         request.method = req_init.method;
                     }
 
-                    if (urlOrObject.get(ctx.ptr(), "url")) |url| {
-                        request.url = url.getZigString(ctx.ptr()).clone(bun.default_allocator) catch {
-                            return js.JSValueMakeUndefined(ctx.ptr());
+                    if (urlOrObject.fastGet(globalThis, .url)) |url| {
+                        request.url = url.getZigString(globalThis).clone(bun.default_allocator) catch {
+                            return null;
                         };
                     }
 
-                    if (urlOrObject.get(ctx.ptr(), "body")) |body_| {
-                        if (Blob.fromJS(ctx.ptr(), body_, true, false)) |blob| {
+                    if (urlOrObject.fastGet(globalThis, .body)) |body_| {
+                        if (Blob.fromJS(globalThis, body_, true, false)) |blob| {
                             if (blob.size > 0) {
                                 request.body = Body.Value{ .Blob = blob };
                             }
                         } else |err| {
                             if (err == error.InvalidArguments) {
-                                JSC.JSError(getAllocator(ctx), "Expected an Array", .{}, ctx, exception);
+                                globalThis.throwInvalidArguments("Expected an Array", .{});
                                 return null;
                             }
 
-                            JSC.JSError(getAllocator(ctx), "Invalid Body", .{}, ctx, exception);
+                            globalThis.throwInvalidArguments("Invalid Body object", .{});
                             return null;
                         }
                     }
                 }
             },
             else => {
-                request.url = JSC.JSValue.fromRef(arguments[0]).getZigString(ctx.ptr());
+                request.url = arguments[0].getZigString(globalThis);
 
-                if (Body.Init.init(getAllocator(ctx), ctx, arguments[1]) catch null) |req_init| {
+                if (Body.Init.init(getAllocator(globalThis), globalThis, arguments[1]) catch null) |req_init| {
                     request.headers = req_init.headers;
                     request.method = req_init.method;
                 }
 
-                if (JSC.JSValue.fromRef(arguments[1]).get(ctx.ptr(), "body")) |body_| {
-                    if (Blob.fromJS(ctx.ptr(), body_, true, false)) |blob| {
+                if (arguments[1].fastGet(globalThis, .body)) |body_| {
+                    if (Blob.fromJS(globalThis, body_, true, false)) |blob| {
                         if (blob.size > 0) {
                             request.body = Body.Value{ .Blob = blob };
                         }
                     } else |err| {
                         if (err == error.InvalidArguments) {
-                            JSC.JSError(getAllocator(ctx), "Expected an Array", .{}, ctx, exception);
+                            globalThis.throwInvalidArguments("Expected an Array", .{});
                             return null;
                         }
 
-                        JSC.JSError(getAllocator(ctx), "Invalid Body", .{}, ctx, exception);
+                        globalThis.throwInvalidArguments("Invalid Body object", .{});
                         return null;
                     }
                 }
             },
         }
 
-        var request_ = getAllocator(ctx).create(Request) catch unreachable;
+        var request_ = getAllocator(globalThis).create(Request) catch unreachable;
         request_.* = request;
-        return Request.Class.make(
-            ctx,
-            request_,
-        );
+        return request_;
     }
 
     pub fn getBodyValue(
@@ -4563,44 +4316,35 @@ pub const Request = struct {
 
     pub fn getBodyUsed(
         this: *Request,
-        _: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return JSC.JSValue.jsBoolean(this.body == .Used).asRef();
+        _: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
+        return JSC.JSValue.jsBoolean(this.body == .Used);
     }
 
-    pub usingnamespace BlobInterface(@This());
+    pub usingnamespace NewBlobInterface(@This());
 
     pub fn doClone(
         this: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        _: []const js.JSValueRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        var cloned = this.clone(getAllocator(ctx), ctx.ptr());
-        return Request.Class.make(ctx, cloned);
+        globalThis: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        var cloned = this.clone(getAllocator(globalThis), globalThis);
+        return cloned.toJS(globalThis);
     }
 
     pub fn getHeaders(
         this: *Request,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSC.JSValue {
         if (this.headers == null) {
             if (this.uws_request) |req| {
-                this.headers = FetchHeaders.createFromUWS(ctx.ptr(), req);
+                this.headers = FetchHeaders.createFromUWS(globalThis, req);
             } else {
                 this.headers = FetchHeaders.createEmpty();
             }
         }
 
-        return this.headers.?.toJS(ctx.ptr()).asObjectRef();
+        return this.headers.?.toJS(globalThis);
     }
 
     pub fn cloneInto(
@@ -4644,7 +4388,7 @@ fn BlobInterface(comptime Type: type) type {
             }
 
             var blob = this.body.use();
-            return blob.getTextTransfer(ctx);
+            return blob.getTextTransfer_c(ctx);
         }
 
         pub fn getJSON(
@@ -4661,7 +4405,7 @@ fn BlobInterface(comptime Type: type) type {
             }
 
             var blob = this.body.use();
-            return blob.getJSON(ctx, null, null, &.{}, exception);
+            return blob.getJSON_c(ctx, null, null, &.{}, exception);
         }
         pub fn getArrayBuffer(
             this: *Type,
@@ -4678,7 +4422,7 @@ fn BlobInterface(comptime Type: type) type {
             }
 
             var blob = this.body.use();
-            return blob.getArrayBufferTransfer(ctx);
+            return blob.getArrayBufferTransfer_c(ctx);
         }
 
         pub fn getBlob(
@@ -4719,13 +4463,95 @@ fn BlobInterface(comptime Type: type) type {
     };
 }
 
+fn NewBlobInterface(comptime Type: type) type {
+    return struct {
+        pub fn getText(
+            this: *Type,
+            globalObject: *JSC.JSGlobalObject,
+            cf: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            std.mem.doNotOptimizeAway(cf);
+            var value: *Body.Value = this.getBodyValue();
+            if (value.* == .Locked) {
+                return value.Locked.setPromise(globalObject, .getText);
+            }
+
+            var blob = value.use();
+            return blob.getTextTransfer(globalObject);
+        }
+
+        pub fn getJSON(
+            this: *Type,
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            var value: *Body.Value = this.getBodyValue();
+            if (value.* == .Locked) {
+                return value.Locked.setPromise(globalThis, .getJSON);
+            }
+
+            var blob: Blob = value.use();
+            return blob.getJSON(globalThis, callframe);
+        }
+        pub fn getArrayBuffer(
+            this: *Type,
+            globalObject: *JSC.JSGlobalObject,
+            cf: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            std.mem.doNotOptimizeAway(cf);
+            var value: *Body.Value = this.getBodyValue();
+
+            if (value.* == .Locked) {
+                return value.Locked.setPromise(globalObject, .getArrayBuffer);
+            }
+
+            var blob: Blob = value.use();
+            return blob.getArrayBufferTransfer(globalObject);
+        }
+
+        pub fn getBlob(
+            this: *Type,
+            globalObject: *JSC.JSGlobalObject,
+            cf: *JSC.CallFrame,
+        ) callconv(.C) JSC.JSValue {
+            std.mem.doNotOptimizeAway(cf);
+            var value: *Body.Value = this.getBodyValue();
+
+            if (value.* == .Locked) {
+                return value.Locked.setPromise(globalObject, .getBlob);
+            }
+
+            var blob = value.use();
+            var ptr = getAllocator(globalObject).create(Blob) catch unreachable;
+            ptr.* = blob;
+            blob.allocator = getAllocator(globalObject);
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, JSValue.fromRef(Blob.Class.make(globalObject, ptr)));
+        }
+
+        // pub fn getBody(
+        //     this: *Type,
+        //     ctx: js.JSContextRef,
+        //     _: js.JSObjectRef,
+        //     _: js.JSObjectRef,
+        //     _: []const js.JSValueRef,
+        //     _: js.ExceptionRef,
+        // ) js.JSValueRef {
+        //     var value: *Body.Value = this.getBodyValue();
+
+        //     switch (value.*) {
+        //         .Empty => {},
+        //     }
+        // }
+    };
+}
+
 // https://github.com/WebKit/WebKit/blob/main/Source/WebCore/workers/service/FetchEvent.h
 pub const FetchEvent = struct {
     started_waiting_at: u64 = 0,
     response: ?*Response = null,
     request_context: ?*RequestContext = null,
     request: Request,
-    pending_promise: ?*JSInternalPromise = null,
+    pending_promise: JSValue = JSValue.zero,
 
     onPromiseRejectionCtx: *anyopaque = undefined,
     onPromiseRejectionHandler: ?fn (ctx: *anyopaque, err: anyerror, fetch_event: *FetchEvent, value: JSValue) void = null,
@@ -4799,10 +4625,9 @@ pub const FetchEvent = struct {
         var req = bun.default_allocator.create(Request) catch unreachable;
         req.* = this.request;
 
-        return Request.Class.make(
+        return req.toJS(
             ctx,
-            req,
-        );
+        ).asObjectRef();
     }
 
     // https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent/respondWith
@@ -4817,9 +4642,8 @@ pub const FetchEvent = struct {
         var request_context = this.request_context orelse return js.JSValueMakeUndefined(ctx);
         if (request_context.has_called_done) return js.JSValueMakeUndefined(ctx);
         var globalThis = ctx.ptr();
-
         // A Response or a Promise that resolves to a Response. Otherwise, a network error is returned to Fetch.
-        if (arguments.len == 0 or !Response.Class.isLoaded() or !js.JSValueIsObject(ctx, arguments[0])) {
+        if (arguments.len == 0) {
             JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
             request_context.sendInternalError(error.respondWithWasEmpty) catch {};
             return js.JSValueMakeUndefined(ctx);
@@ -4827,18 +4651,55 @@ pub const FetchEvent = struct {
 
         var arg = arguments[0];
 
-        if (JSValue.fromRef(arg).as(Response) == null) {
-            this.pending_promise = this.pending_promise orelse JSInternalPromise.resolvedPromise(globalThis, JSValue.fromRef(arguments[0]));
+        var existing_response: ?*Response = arguments[0].?.value().as(Response);
+
+        if (existing_response == null) {
+            switch (JSValue.fromRef(arg).jsType()) {
+                .JSPromise => {
+                    this.pending_promise = JSValue.fromRef(arg);
+                },
+                else => {
+                    JSError(getAllocator(ctx), "event.respondWith() must be a Response or a Promise<Response>.", .{}, ctx, exception);
+                    request_context.sendInternalError(error.respondWithWasNotResponse) catch {};
+                    return js.JSValueMakeUndefined(ctx);
+                },
+            }
         }
 
-        if (this.pending_promise) |promise| {
-            VirtualMachine.vm.event_loop.waitForPromise(promise);
+        if (this.pending_promise.asPromise()) |promise| {
+            switch (promise.status(ctx.vm())) {
+                JSC.JSPromise.Status.Pending => {
+                    while (promise.status(ctx.vm()) == .Pending) {
+                        ctx.bunVM().tick();
+                    }
+                },
+                else => {},
+            }
 
             switch (promise.status(ctx.ptr().vm())) {
                 .Fulfilled => {},
                 else => {
                     this.rejected = true;
-                    this.pending_promise = null;
+                    this.pending_promise = JSValue.zero;
+                    this.onPromiseRejectionHandler.?(
+                        this.onPromiseRejectionCtx,
+                        error.PromiseRejection,
+                        this,
+                        promise.result(globalThis.vm()),
+                    );
+                    return js.JSValueMakeUndefined(ctx);
+                },
+            }
+
+            arg = promise.result(ctx.ptr().vm()).asRef();
+        } else if (this.pending_promise.asInternalPromise()) |promise| {
+            globalThis.bunVM().waitForPromise(promise);
+
+            switch (promise.status(ctx.ptr().vm())) {
+                .Fulfilled => {},
+                else => {
+                    this.rejected = true;
+                    this.pending_promise = JSValue.zero;
                     this.onPromiseRejectionHandler.?(
                         this.onPromiseRejectionCtx,
                         error.PromiseRejection,
@@ -4852,9 +4713,9 @@ pub const FetchEvent = struct {
             arg = promise.result(ctx.ptr().vm()).asRef();
         }
 
-        var response: *Response = GetJSPrivateData(Response, arg) orelse {
+        var response: *Response = JSValue.c(arg.?).as(Response) orelse {
             this.rejected = true;
-            this.pending_promise = null;
+            this.pending_promise = JSValue.zero;
             JSError(getAllocator(ctx), "event.respondWith() expects Response or Promise<Response>", .{}, ctx, exception);
             this.onPromiseRejectionHandler.?(this.onPromiseRejectionCtx, error.RespondWithInvalidTypeInternal, this, JSValue.fromRef(exception.*));
             return js.JSValueMakeUndefined(ctx);
@@ -4875,7 +4736,7 @@ pub const FetchEvent = struct {
             }
         }
 
-        defer this.pending_promise = null;
+        defer this.pending_promise = JSValue.zero;
         var needs_mime_type = true;
         var content_length: ?usize = null;
 

@@ -849,35 +849,36 @@ size_t parseHTTPRequestBody(const uint8_t* data, size_t length, Vector<uint8_t>&
 // Implements <https://fetch.spec.whatwg.org/#forbidden-header-name>.
 bool isForbiddenHeaderName(const String& name)
 {
-    HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName)) {
-        switch (headerName) {
-        case HTTPHeaderName::AcceptCharset:
-        case HTTPHeaderName::AcceptEncoding:
-        case HTTPHeaderName::AccessControlRequestHeaders:
-        case HTTPHeaderName::AccessControlRequestMethod:
-        case HTTPHeaderName::Connection:
-        case HTTPHeaderName::ContentLength:
-        case HTTPHeaderName::Cookie:
-        case HTTPHeaderName::Cookie2:
-        case HTTPHeaderName::Date:
-        case HTTPHeaderName::DNT:
-        case HTTPHeaderName::Expect:
-        case HTTPHeaderName::Host:
-        case HTTPHeaderName::KeepAlive:
-        case HTTPHeaderName::Origin:
-        case HTTPHeaderName::Referer:
-        case HTTPHeaderName::TE:
-        case HTTPHeaderName::Trailer:
-        case HTTPHeaderName::TransferEncoding:
-        case HTTPHeaderName::Upgrade:
-        case HTTPHeaderName::Via:
-            return true;
-        default:
-            break;
-        }
-    }
-    return startsWithLettersIgnoringASCIICase(name, "sec-"_s) || startsWithLettersIgnoringASCIICase(name, "proxy-"_s);
+    return false;
+    // HTTPHeaderName headerName;
+    // if (findHTTPHeaderName(name, headerName)) {
+    //     switch (headerName) {
+    //     case HTTPHeaderName::AcceptCharset:
+    //     case HTTPHeaderName::AcceptEncoding:
+    //     case HTTPHeaderName::AccessControlRequestHeaders:
+    //     case HTTPHeaderName::AccessControlRequestMethod:
+    //     case HTTPHeaderName::Connection:
+    //     case HTTPHeaderName::ContentLength:
+    //     case HTTPHeaderName::Cookie:
+    //     case HTTPHeaderName::Cookie2:
+    //     case HTTPHeaderName::Date:
+    //     case HTTPHeaderName::DNT:
+    //     case HTTPHeaderName::Expect:
+    //     case HTTPHeaderName::Host:
+    //     case HTTPHeaderName::KeepAlive:
+    //     case HTTPHeaderName::Origin:
+    //     case HTTPHeaderName::Referer:
+    //     case HTTPHeaderName::TE:
+    //     case HTTPHeaderName::Trailer:
+    //     case HTTPHeaderName::TransferEncoding:
+    //     case HTTPHeaderName::Upgrade:
+    //     case HTTPHeaderName::Via:
+    //         return true;
+    //     default:
+    //         break;
+    //     }
+    // }
+    // return startsWithLettersIgnoringASCIICase(name, "sec-"_s) || startsWithLettersIgnoringASCIICase(name, "proxy-"_s);
 }
 
 // Implements <https://fetch.spec.whatwg.org/#no-cors-safelisted-request-header-name>.

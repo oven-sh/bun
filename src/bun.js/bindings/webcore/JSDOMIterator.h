@@ -268,7 +268,7 @@ void JSDOMIteratorPrototype<JSWrapper, IteratorTraits>::finishCreation(JSC::VM& 
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->next, next, 0, 0, JSC::NoIntrinsic);
+    JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->next, next, 0, 0, ImplementationVisibility::Public, JSC::NoIntrinsic);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

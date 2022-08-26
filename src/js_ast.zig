@@ -7820,39 +7820,40 @@ pub const Macro = struct {
                             if (_entry.found_existing) {
                                 return _entry.value_ptr.*;
                             }
-                            var private_data = JSCBase.JSPrivateDataPtr.from(JSC.C.JSObjectGetPrivate(value.asObjectRef()).?);
+
                             var blob_: ?JSC.WebCore.Blob = null;
                             var mime_type: ?HTTP.MimeType = null;
 
-                            switch (private_data.tag()) {
-                                .JSNode => {
-                                    var node = private_data.as(JSNode);
-                                    _entry.value_ptr.* = node.toExpr();
-                                    node.visited = true;
-                                    node.updateSymbolsMap(Visitor, this.visitor);
-                                    return _entry.value_ptr.*;
-                                },
-                                .ResolveError, .BuildError => {
-                                    this.macro.vm.runErrorHandler(value, null);
-                                    return error.MacroFailed;
-                                },
-                                .Request => {
-                                    var req: *JSC.WebCore.Request = private_data.as(JSC.WebCore.Request);
-                                    blob_ = req.body.use();
-                                    mime_type = HTTP.MimeType.init(req.mimeType());
-                                },
-                                .Response => {
-                                    var res: *JSC.WebCore.Response = private_data.as(JSC.WebCore.Response);
-                                    blob_ = res.body.use();
-                                    mime_type =
-                                        HTTP.MimeType.init(res.mimeType(null));
-                                },
-                                .Blob => {
-                                    var blob = private_data.as(JSC.WebCore.Blob);
-                                    blob_ = blob.*;
-                                    blob.* = JSC.WebCore.Blob.initEmpty(blob.globalThis);
-                                },
-                                else => {},
+                            if (value.jsType() == .DOMWrapper) {
+                                if (value.as(JSC.WebCore.Response)) |resp| {
+                                    mime_type = HTTP.MimeType.init(resp.mimeType(null));
+                                    blob_ = resp.body.use();
+                                } else if (value.as(JSC.WebCore.Request)) |resp| {
+                                    mime_type = HTTP.MimeType.init(resp.mimeType());
+                                    blob_ = resp.body.use();
+                                }
+                            } else {
+                                var private_data = JSCBase.JSPrivateDataPtr.from(JSC.C.JSObjectGetPrivate(value.asObjectRef()).?);
+
+                                switch (private_data.tag()) {
+                                    .JSNode => {
+                                        var node = private_data.as(JSNode);
+                                        _entry.value_ptr.* = node.toExpr();
+                                        node.visited = true;
+                                        node.updateSymbolsMap(Visitor, this.visitor);
+                                        return _entry.value_ptr.*;
+                                    },
+                                    .ResolveError, .BuildError => {
+                                        this.macro.vm.runErrorHandler(value, null);
+                                        return error.MacroFailed;
+                                    },
+                                    .Blob => {
+                                        var blob = private_data.as(JSC.WebCore.Blob);
+                                        blob_ = blob.*;
+                                        blob.* = JSC.WebCore.Blob.initEmpty(blob.globalThis);
+                                    },
+                                    else => {},
+                                }
                             }
 
                             if (blob_) |*blob| {

@@ -163,32 +163,32 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 }
 
 test "TaggedPointerUnion" {
-    const IntPrimtiive = struct { val: u32 = 0 };
+    const IntPrimitive = struct { val: u32 = 0 };
     const StringPrimitive = struct { val: []const u8 = "" };
     const Object = struct { blah: u32, val: u32 };
     // const Invalid = struct {
     //     wrong: bool = true,
     // };
-    const Union = TaggedPointerUnion(.{ IntPrimtiive, StringPrimitive, Object });
+    const Union = TaggedPointerUnion(.{ IntPrimitive, StringPrimitive, Object });
     var str = try default_allocator.create(StringPrimitive);
     str.* = StringPrimitive{ .val = "hello!" };
     var un = Union.init(str);
     try std.testing.expect(un.is(StringPrimitive));
     try std.testing.expectEqualStrings(un.as(StringPrimitive).val, "hello!");
-    try std.testing.expect(!un.is(IntPrimtiive));
-    const num = try default_allocator.create(IntPrimtiive);
+    try std.testing.expect(!un.is(IntPrimitive));
+    const num = try default_allocator.create(IntPrimitive);
     num.val = 9999;
 
     var un2 = Union.init(num);
 
-    try std.testing.expect(un2.as(IntPrimtiive).val == 9999);
+    try std.testing.expect(un2.as(IntPrimitive).val == 9999);
 
     try std.testing.expect(un.tag() == .StringPrimitive);
-    try std.testing.expect(un2.tag() == .IntPrimtiive);
+    try std.testing.expect(un2.tag() == .IntPrimitive);
 
     un2.repr.data = 0;
-    try std.testing.expect(un2.tag() != .IntPrimtiive);
-    try std.testing.expect(un2.get(IntPrimtiive) == null);
+    try std.testing.expect(un2.tag() != .IntPrimitive);
+    try std.testing.expect(un2.get(IntPrimitive) == null);
     // try std.testing.expect(un2.is(Invalid) == false);
 }
 

@@ -37,6 +37,7 @@
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSModuleLoader.h"
+#include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/JSObject.h"
@@ -77,6 +78,7 @@
 #include "JSURLSearchParams.h"
 #include "JSDOMException.h"
 #include "JSEventTarget.h"
+#include "JSEventEmitter.h"
 #include "EventTargetConcrete.h"
 #include "JSAbortSignal.h"
 #include "JSCustomEvent.h"
@@ -88,9 +90,9 @@
 
 #include "Process.h"
 
-#include "JavaScriptCore/RemoteInspectorServer.h"
 #include "WebCoreJSBuiltinInternals.h"
 #include "JSBuffer.h"
+#include "JSBufferList.h"
 #include "JSFFIFunction.h"
 #include "JavaScriptCore/InternalFunction.h"
 #include "JavaScriptCore/LazyClassStructure.h"
@@ -100,6 +102,12 @@
 #include "JSSQLStatement.h"
 #include "ReadableStreamBuiltins.h"
 #include "BunJSCModule.h"
+
+#include "ZigGeneratedClasses.h"
+
+#if ENABLE(REMOTE_INSPECTOR)
+#include "JavaScriptCore/RemoteInspectorServer.h"
+#endif
 
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
@@ -142,6 +150,17 @@ using JSBuffer = WebCore::JSBuffer;
 #include "JSSink.h"
 #include "ImportMetaObject.h"
 
+#include <JavaScriptCore/DOMJITAbstractHeap.h>
+#include "DOMJITIDLConvert.h"
+#include "DOMJITIDLType.h"
+#include "DOMJITIDLTypeFilter.h"
+#include "DOMJITHelpers.h"
+#include <JavaScriptCore/DFGAbstractHeap.h>
+
+#include "../modules/BufferModule.h"
+#include "../modules/EventsModule.h"
+#include "../modules/ProcessModule.h"
+
 // #include <iostream>
 static bool has_loaded_jsc = false;
 
@@ -167,7 +186,7 @@ extern "C" void JSCInitialize()
         JSC::Options::useSharedArrayBuffer() = true;
         JSC::Options::useJIT() = true;
         JSC::Options::useBBQJIT() = true;
-
+        JSC::Options::useJITCage() = false;
         JSC::Options::ensureOptionsAreCoherent();
     }
 }
@@ -235,7 +254,7 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
             // vm.deleteAllLinkedCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
             // JSC::Heap::PreventCollectionScope(vm.heap);
-            oldMap->clear(globalObject);
+            oldMap->clear(vm);
             JSC::gcUnprotect(oldMap);
             // vm.heap.completeAllJITPlans();
 
@@ -258,6 +277,33 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
     // }
     return true;
 }
+
+extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
+
+#define GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                         \
+    JSC_DECLARE_CUSTOM_GETTER(ConstructorName##_getter);                                      \
+    JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                        \
+        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,            \
+            JSC::PropertyName))                                                               \
+    {                                                                                         \
+        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject); \
+        if (JSValue override = thisObject->m_##ConstructorName##SetterValue.get()) {          \
+            return JSC::JSValue::encode(override);                                            \
+        }                                                                                     \
+        return JSC::JSValue::encode(                                                          \
+            thisObject->ConstructorName##Constructor());                                      \
+    }
+
+#define GENERATED_CONSTRUCTOR_SETTER(ConstructorName)                                                           \
+    JSC_DECLARE_CUSTOM_SETTER(ConstructorName##_setter);                                                        \
+    JSC_DEFINE_CUSTOM_SETTER(ConstructorName##_setter,                                                          \
+        (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,                              \
+            EncodedJSValue value, JSC::PropertyName))                                                           \
+    {                                                                                                           \
+        Zig::GlobalObject* thisObject = JSC::jsCast<Zig::GlobalObject*>(lexicalGlobalObject);                   \
+        thisObject->m_##ConstructorName##SetterValue.set(thisObject->vm(), thisObject, JSValue::decode(value)); \
+        return true;                                                                                            \
+    }
 
 namespace Zig {
 
@@ -302,6 +348,9 @@ extern "C" JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObje
 
     return JSC::JSValue::encode(JSC::JSValue(object));
 }
+
+extern "C" EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, EncodedJSValue input, const LChar* ptr, size_t length);
+extern "C" EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, EncodedJSValue input, const UChar* ptr, size_t length);
 
 const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &supportsRichSourceInfo,
@@ -358,7 +407,7 @@ WebCore::ScriptExecutionContext* GlobalObject::scriptExecutionContext() const
 void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObject,
     JSC::Exception* exception)
 {
-    Zig__GlobalObject__reportUncaughtException(globalObject, exception);
+    Bun__reportError(globalObject, JSValue::encode(JSValue(exception)));
 }
 
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
@@ -374,8 +423,8 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         globalObj->m_aboutToBeNotifiedRejectedPromises.append(JSC::Strong<JSPromise>(obj->vm(), promise));
         break;
     case JSPromiseRejectionOperation::Handle:
-        globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching([&] (Strong<JSPromise>& unhandledPromise) {
-          return unhandledPromise.get() == promise;
+        globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching([&](Strong<JSPromise>& unhandledPromise) {
+            return unhandledPromise.get() == promise;
         });
         break;
     }
@@ -480,6 +529,15 @@ JSC_DEFINE_CUSTOM_GETTER(JSCloseEvent_getter,
     return JSC::JSValue::encode(
         WebCore::JSCloseEvent::getConstructor(JSC::getVM(lexicalGlobalObject), thisObject));
 }
+
+GENERATED_CONSTRUCTOR_GETTER(JSTextDecoder);
+GENERATED_CONSTRUCTOR_SETTER(JSTextDecoder);
+
+GENERATED_CONSTRUCTOR_GETTER(JSResponse);
+GENERATED_CONSTRUCTOR_SETTER(JSResponse);
+
+GENERATED_CONSTRUCTOR_GETTER(JSRequest);
+GENERATED_CONSTRUCTOR_SETTER(JSRequest);
 
 JSC_DECLARE_CUSTOM_GETTER(JSMessageEvent_getter);
 
@@ -817,8 +875,6 @@ static JSC_DEFINE_HOST_FUNCTION(functionHashCode,
     return JSC::JSValue::encode(jsNumber(view.hash()));
 }
 
-extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
-
 static JSC_DECLARE_HOST_FUNCTION(functionReportError);
 static JSC_DEFINE_HOST_FUNCTION(functionReportError,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -911,9 +967,15 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto path = JSC::JSValue::encode(callFrame->argument(0));
+    JSValue arg0 = callFrame->argument(0);
+    auto path = JSC::JSValue::encode(arg0);
     auto* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(path);
     if (!domURL) {
+        if (arg0.isString()) {
+            auto url = WTF::URL(arg0.toWTFString(globalObject));
+            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+            RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.fileSystemPath())));
+        }
         throwTypeError(globalObject, scope, "Argument must be a URL"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
@@ -953,6 +1015,7 @@ JSC:
     default: {
         static NeverDestroyed<const String> sqliteString(MAKE_STATIC_STRING_IMPL("sqlite"));
         static NeverDestroyed<const String> bunJSCString(MAKE_STATIC_STRING_IMPL("bun:jsc"));
+        static NeverDestroyed<const String> bunStreamString(MAKE_STATIC_STRING_IMPL("bun:stream"));
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
 
         JSC::JSValue moduleName = callFrame->argument(0);
@@ -998,11 +1061,19 @@ JSC:
 
         if (string == pathToFileURLString) {
             return JSValue::encode(
-                JSFunction::create(vm, globalObject, 1, pathToFileURLString, functionPathToFileURL, NoIntrinsic));
+                JSFunction::create(vm, globalObject, 1, pathToFileURLString, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic));
         }
         if (string == fileURLToPathString) {
             return JSValue::encode(
-                JSFunction::create(vm, globalObject, 1, fileURLToPathString, functionFileURLToPath, NoIntrinsic));
+                JSFunction::create(vm, globalObject, 1, fileURLToPathString, functionFileURLToPath, ImplementationVisibility::Public, NoIntrinsic));
+        }
+
+        if (string == bunStreamString) {
+            auto* obj = constructEmptyObject(globalObject);
+            auto* bufferList = JSC::JSFunction::create(
+                vm, globalObject, 0, "BufferList"_s, WebCore::constructJSBufferList, ImplementationVisibility::Public, NoIntrinsic, WebCore::constructJSBufferList);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), bufferList, 0);
+            return JSValue::encode(obj);
         }
 
         if (UNLIKELY(string == noopString)) {
@@ -1010,6 +1081,7 @@ JSC:
             obj->putDirectCustomAccessor(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getterSetter"_s)), JSC::CustomGetterSetter::create(vm, noop_getter, noop_setter), 0);
             Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(vm, reinterpret_cast<Zig::GlobalObject*>(globalObject), 0, String(), functionNoop, JSC::NoIntrinsic);
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "function"_s)), function, JSC::PropertyAttribute::Function | 0);
+            obj->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "functionRegular"_s), 1, functionNoop, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
             return JSC::JSValue::encode(obj);
         }
 
@@ -1501,9 +1573,7 @@ JSC_DEFINE_HOST_FUNCTION(functionConcatTypedArrays, (JSGlobalObject * globalObje
 
 extern "C" uint64_t Bun__readOriginTimer(void*);
 
-JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
-
-JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static inline EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalObject)
 {
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     // nanoseconds to seconds
@@ -1512,12 +1582,128 @@ JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject,
     return JSValue::encode(jsNumber(result));
 }
 
+extern "C" {
+class JSPerformanceObject;
+static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformanceObject*));
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunNanosecondsWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSObject*));
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSObject*, JSString*));
+}
+
+class JSPerformanceObject final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+    static JSPerformanceObject* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
+    {
+        JSPerformanceObject* ptr = new (NotNull, JSC::allocateCell<JSPerformanceObject>(vm)) JSPerformanceObject(vm, globalObject, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    DECLARE_INFO;
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSPerformanceObject, Base);
+        return &vm.plainObjectSpace();
+    }
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+private:
+    JSPerformanceObject(JSC::VM& vm, JSC::JSGlobalObject*, JSC::Structure* structure)
+        : JSC::JSNonFinalObject(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        static const JSC::DOMJIT::Signature DOMJITSignatureForPerformanceNow(
+            functionPerformanceNowWithoutTypeCheck,
+            JSPerformanceObject::info(),
+            JSC::DOMJIT::Effect::forWriteKinds(DFG::AbstractHeapKind::SideState),
+            SpecBytecodeDouble);
+
+        JSFunction* function = JSFunction::create(
+            vm,
+            globalObject(),
+            0,
+            String("now"_s),
+            functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceNow,
+            &DOMJITSignatureForPerformanceNow);
+
+        this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), function, JSC::PropertyAttribute::DOMJITFunction | JSC::PropertyAttribute::Function);
+    }
+};
+const ClassInfo JSPerformanceObject::s_info = { "Performance"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceObject) };
+
+JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    return functionPerformanceNowBody(globalObject);
+}
+
+JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformanceObject* castedThis))
+{
+    VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return functionPerformanceNowBody(lexicalGlobalObject);
+}
+
+JSC_DEFINE_JIT_OPERATION(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSObject* castedThis, JSString* string))
+{
+    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    size_t length = string->length();
+    if (!length)
+        return JSValue::encode(string);
+
+    auto resolvedString = string->value(lexicalGlobalObject);
+    if (!resolvedString.is8Bit()) {
+        return Bun__escapeHTML16(lexicalGlobalObject, JSValue::encode(string), resolvedString.characters16(), length);
+    } else {
+        return Bun__escapeHTML8(lexicalGlobalObject, JSValue::encode(string), resolvedString.characters8(), length);
+    }
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionBunEscapeHTML);
+JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    JSC::JSValue argument = callFrame->argument(0);
+    if (argument.isEmpty())
+        return JSValue::encode(jsEmptyString(vm));
+    if (argument.isNumber() || argument.isBoolean())
+        return JSValue::encode(argument.toString(lexicalGlobalObject));
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto string = argument.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    size_t length = string->length();
+    if (!length)
+        RELEASE_AND_RETURN(scope, JSValue::encode(string));
+
+    auto resolvedString = string->value(lexicalGlobalObject);
+    EncodedJSValue encodedInput = JSValue::encode(string);
+    if (!resolvedString.is8Bit()) {
+        RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, resolvedString.characters16(), length));
+    } else {
+        RELEASE_AND_RETURN(scope, Bun__escapeHTML8(lexicalGlobalObject, encodedInput, resolvedString.characters8(), length));
+    }
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
 
 JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* global = reinterpret_cast<GlobalObject*>(globalObject);
-    // nanoseconds to seconds
     uint64_t time = Bun__readOriginTimer(global->bunVM());
     return JSValue::encode(jsNumber(time));
 }
@@ -1687,6 +1873,14 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    // Change prototype from null to object for synthetic modules.
+    m_moduleNamespaceObjectStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    this->initGeneratedLazyClasses();
+
     m_NapiClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
@@ -1712,8 +1906,9 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_performanceObject.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-            JSC::JSObject* object = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 1);
-            object->putDirectNativeFunction(init.vm, init.owner, JSC::Identifier::fromString(init.vm, "now"_s), 1, functionPerformanceNow, NoIntrinsic, 0);
+            JSPerformanceObject* object = JSPerformanceObject::create(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner),
+                JSPerformanceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+
             init.set(object);
         });
 
@@ -1742,14 +1937,22 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_lazyReadableStreamPrototypeMap.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
-            auto* map = JSC::JSMap::create(init.owner, init.vm, init.owner->mapStructure());
+            auto* map = JSC::JSMap::create(init.vm, init.owner->mapStructure());
             init.set(map);
         });
 
     m_requireMap.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
-            auto* map = JSC::JSMap::create(init.owner, init.vm, init.owner->mapStructure());
+            auto* map = JSC::JSMap::create(init.vm, init.owner->mapStructure());
             init.set(map);
+        });
+
+    m_encodeIntoObjectPrototype.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            JSC::JSObject* object = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 2);
+            object->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "read"_s), JSC::jsNumber(0), 0);
+            object->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "written"_s), JSC::jsNumber(0), 0);
+            init.set(object);
         });
 
     m_JSArrayBufferSinkClassStructure.initLater(
@@ -1788,12 +1991,13 @@ void GlobalObject::finishCreation(VM& vm)
         });
 
     addBuiltinGlobals(vm);
+
+#if ENABLE(REMOTE_INSPECTOR)
     setRemoteDebuggingEnabled(false);
+#endif
 
     RELEASE_ASSERT(classInfo());
 }
-
-extern "C" EncodedJSValue Bun__escapeHTML(JSGlobalObject* globalObject, CallFrame* callFrame);
 
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
@@ -1821,6 +2025,28 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
     return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(jsNumber(0)));
 }
 
+EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
+{
+    JSC::VM& vm = this->vm();
+    JSC::JSFunction* function = this->m_assignToStream.get();
+    if (!function) {
+        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsAssignToStreamCodeGenerator(vm)), this);
+        this->m_assignToStream.set(vm, this, function);
+    }
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto callData = JSC::getCallData(function);
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(stream);
+    arguments.append(controller);
+
+    auto result = JSC::call(this, function, callData, JSC::jsUndefined(), arguments);
+    if (scope.exception())
+        return JSC::JSValue::encode(scope.exception());
+
+    return JSC::JSValue::encode(result);
+}
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     m_builtinInternalFunctions.initialize(*this);
@@ -1835,78 +2061,78 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { queueMicrotaskIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 2,
-                "queueMicrotask"_s, functionQueueMicrotask),
+                "queueMicrotask"_s, functionQueueMicrotask, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { JSC::Identifier::fromString(vm, "setImmediate"_s),
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                "setImmediate"_s, functionSetImmediate),
+                "setImmediate"_s, functionSetImmediate, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { JSC::Identifier::fromString(vm, "clearImmediate"_s),
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                "clearImmediate"_s, functionClearTimeout),
+                "clearImmediate"_s, functionClearTimeout, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier setTimeoutIdentifier = JSC::Identifier::fromString(vm, "setTimeout"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setTimeoutIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                "setTimeout"_s, functionSetTimeout),
+                "setTimeout"_s, functionSetTimeout, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier clearTimeoutIdentifier = JSC::Identifier::fromString(vm, "clearTimeout"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearTimeoutIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                "clearTimeout"_s, functionClearTimeout),
+                "clearTimeout"_s, functionClearTimeout, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier setIntervalIdentifier = JSC::Identifier::fromString(vm, "setInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { setIntervalIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                "setInterval"_s, functionSetInterval),
+                "setInterval"_s, functionSetInterval, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier clearIntervalIdentifier = JSC::Identifier::fromString(vm, "clearInterval"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { clearIntervalIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                "clearInterval"_s, functionClearInterval),
+                "clearInterval"_s, functionClearInterval, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier atobIdentifier = JSC::Identifier::fromString(vm, "atob"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { atobIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                "atob"_s, functionATOB),
+                "atob"_s, functionATOB, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     JSC::Identifier btoaIdentifier = JSC::Identifier::fromString(vm, "btoa"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { btoaIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                "btoa"_s, functionBTOA),
+                "btoa"_s, functionBTOA, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
     JSC::Identifier reportErrorIdentifier = JSC::Identifier::fromString(vm, "reportError"_s);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { reportErrorIdentifier,
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                "reportError"_s, functionReportError),
+                "reportError"_s, functionReportError, ImplementationVisibility::Public),
             JSC::PropertyAttribute::DontDelete | 0 });
 
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { builtinNames.startDirectStreamPrivateName(),
             JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 1,
-                String(), functionStartDirectStream),
+                String(), functionStartDirectStream, ImplementationVisibility::Public),
             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0 });
 
     static NeverDestroyed<const String> BunLazyString(MAKE_STATIC_STRING_IMPL("Bun.lazy"));
     static NeverDestroyed<const String> CommonJSSymbolKey(MAKE_STATIC_STRING_IMPL("CommonJS"));
     JSC::Identifier BunLazyIdentifier = JSC::Identifier::fromUid(vm.symbolRegistry().symbolForKey(BunLazyString));
     JSC::JSFunction* lazyLoadFunction = JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalObject()), 0,
-        BunLazyString, functionLazyLoad);
+        BunLazyString, functionLazyLoad, ImplementationVisibility::Public);
     extraStaticGlobals.uncheckedAppend(
         GlobalPropertyInfo { BunLazyIdentifier,
             lazyLoadFunction,
@@ -1917,12 +2143,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             lazyLoadFunction,
             JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::Function | 0 });
 
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.makeThisTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeThisTypeErrorForBuiltins), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.makeGetterTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeGetterTypeErrorForBuiltins), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.makeDOMExceptionPrivateName(), JSFunction::create(vm, this, 2, String(), makeDOMExceptionForBuiltins), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.whenSignalAbortedPrivateName(), JSFunction::create(vm, this, 2, String(), whenSignalAborted), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.cloneArrayBufferPrivateName(), JSFunction::create(vm, this, 3, String(), cloneArrayBuffer), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.structuredCloneForStreamPrivateName(), JSFunction::create(vm, this, 1, String(), structuredCloneForStream), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.makeThisTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeThisTypeErrorForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.makeGetterTypeErrorPrivateName(), JSFunction::create(vm, this, 2, String(), makeGetterTypeErrorForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.makeDOMExceptionPrivateName(), JSFunction::create(vm, this, 2, String(), makeDOMExceptionForBuiltins, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.whenSignalAbortedPrivateName(), JSFunction::create(vm, this, 2, String(), whenSignalAborted, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.cloneArrayBufferPrivateName(), JSFunction::create(vm, this, 3, String(), cloneArrayBuffer, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.structuredCloneForStreamPrivateName(), JSFunction::create(vm, this, 1, String(), structuredCloneForStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(vm.propertyNames->builtinNames().ArrayBufferPrivateName(), arrayBufferConstructor(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.streamClosedPrivateName(), jsNumber(1), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::ConstantInteger));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.streamClosingPrivateName(), jsNumber(2), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::ConstantInteger));
@@ -1930,10 +2156,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.streamReadablePrivateName(), jsNumber(4), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::ConstantInteger));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.streamWaitingPrivateName(), jsNumber(5), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::ConstantInteger));
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.streamWritablePrivateName(), jsNumber(6), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::ConstantInteger));
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.isAbortSignalPrivateName(), JSFunction::create(vm, this, 1, String(), isAbortSignal), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
-    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.isAbortSignalPrivateName(), JSFunction::create(vm, this, 1, String(), isAbortSignal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.getInternalWritableStreamPrivateName(), JSFunction::create(vm, this, 1, String(), getInternalWritableStream, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.createWritableStreamFromInternalPrivateName(), JSFunction::create(vm, this, 1, String(), createWritableStreamFromInternal, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
+    extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function));
 
     extraStaticGlobals.uncheckedAppend(GlobalPropertyInfo(builtinNames.commonJSSymbolPrivateName(), JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey(CommonJSSymbolKey)), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
 
@@ -1945,13 +2171,12 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createEmptyReadableStreamPrivateName(), readableStreamCreateEmptyReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.consumeReadableStreamPrivateName(), readableStreamConsumeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    putDirectBuiltinFunction(vm, this, builtinNames.assignToStreamPrivateName(), readableStreamInternalsAssignToStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     // putDirectBuiltinFunction(vm, this, builtinNames.loadModulePrivateName(), jsZigGlobalObjectInternalsLoadModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     // putDirectBuiltinFunction(vm, this, builtinNames.requireModulePrivateName(), jsZigGlobalObjectInternalsRequireModuleCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
-    putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
+    putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "process"_s), JSC::CustomGetterSetter::create(vm, property_lazyProcessGetter, property_lazyProcessSetter),
         JSC::PropertyAttribute::CustomAccessor | 0);
@@ -1973,6 +2198,15 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "URLSearchParams"_s), JSC::CustomGetterSetter::create(vm, JSURLSearchParams_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Request"_s), JSC::CustomGetterSetter::create(vm, JSRequest_getter, JSRequest_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Response"_s), JSC::CustomGetterSetter::create(vm, JSResponse_getter, JSResponse_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "TextDecoder"_s), JSC::CustomGetterSetter::create(vm, JSTextDecoder_getter, JSTextDecoder_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
@@ -2073,7 +2307,14 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "escapeHTML"_s);
-            object->putDirectNativeFunction(vm, this, identifier, 1, Bun__escapeHTML, NoIntrinsic,
+            static ClassInfo escapeHTMLClassInfo = *object->classInfo();
+            static const JSC::DOMJIT::Signature DOMJITSignatureForEscapeHTML(
+                functionBunEscapeHTMLWithoutTypeCheck,
+                object->classInfo(),
+                JSC::DOMJIT::Effect::forPure(),
+                SpecString,
+                SpecString);
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionBunEscapeHTML, ImplementationVisibility::Public, NoIntrinsic, &DOMJITSignatureForEscapeHTML,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 
@@ -2109,7 +2350,7 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "concatArrayBuffers"_s);
-            object->putDirectNativeFunction(vm, this, identifier, 1, functionConcatTypedArrays, NoIntrinsic,
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionConcatTypedArrays, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 
@@ -2121,26 +2362,26 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "nanoseconds"_s);
-            object->putDirectNativeFunction(vm, this, identifier, 1, functionBunNanoseconds, NoIntrinsic,
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionBunNanoseconds, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 
         {
 
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, pathToFileURLString);
-            object->putDirectNativeFunction(vm, this, identifier, 1, functionPathToFileURL, NoIntrinsic,
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionPathToFileURL, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
         }
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, fileURLToPathString);
-            object->putDirectNativeFunction(vm, this, identifier, 1, functionFileURLToPath, NoIntrinsic,
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionFileURLToPath, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
         }
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "stringHashCode"_s);
-            object->putDirectNativeFunction(vm, this, identifier, 1, functionHashCode, NoIntrinsic,
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionHashCode, ImplementationVisibility::Public, NoIntrinsic,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 
@@ -2194,9 +2435,13 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
 extern "C" bool JSC__JSGlobalObject__startRemoteInspector(JSC__JSGlobalObject* globalObject, unsigned char* host, uint16_t arg1)
 {
+#if !ENABLE(REMOTE_INSPECTOR)
+    return false;
+#else
     globalObject->setRemoteDebuggingEnabled(true);
     auto& server = Inspector::RemoteInspectorServer::singleton();
     return server.start(reinterpret_cast<const char*>(host), arg1);
+#endif
 }
 
 template<typename Visitor>
@@ -2230,11 +2475,14 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_processObject.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
 
+    thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
+
     visitor.append(thisObject->m_readableStreamToArrayBufferResolve);
     visitor.append(thisObject->m_readableStreamToText);
     visitor.append(thisObject->m_readableStreamToJSON);
     visitor.append(thisObject->m_readableStreamToBlob);
     visitor.append(thisObject->m_readableStreamToArrayBuffer);
+    visitor.append(thisObject->m_assignToStream);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
@@ -2377,10 +2625,44 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         return JSValue::encode(JSC::jsUndefined());
     }
 
-    auto provider = Zig::SourceProvider::create(res.result.value);
-    globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    switch (res.result.value.tag) {
+    case SyntheticModuleType::Buffer: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                generateBufferSourceCode,
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:buffer"_s)), WTFMove(moduleKey)));
+
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
+    case SyntheticModuleType::Process: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                generateProcessSourceCode,
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:process"_s)), WTFMove(moduleKey)));
+
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
+    case SyntheticModuleType::Events: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                generateEventsSourceCode,
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:events"_s)), WTFMove(moduleKey)));
+
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
+    default: {
+        auto provider = Zig::SourceProvider::create(res.result.value);
+        globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
+    }
 }
 
 JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
@@ -2399,6 +2681,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
     auto moduleKey = key.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
     if (moduleKey.endsWith(".node"_s)) {
         return rejectWithError(createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
@@ -2417,7 +2700,8 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
     }
 
-    if (res.result.value.tag == 1) {
+    switch (res.result.value.tag) {
+    case 1: {
         auto buffer = Vector<uint8_t>(res.result.value.source_code.ptr, res.result.value.source_code.len);
         auto source = JSC::SourceCode(
             JSC::WebAssemblySourceProvider::create(WTFMove(buffer),
@@ -2432,10 +2716,48 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
         globalObject->vm().drainMicrotasks();
         return promise;
-    } else {
+    }
+    case SyntheticModuleType::Buffer: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(generateBufferSourceCode,
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
+        return promise;
+    }
+    case SyntheticModuleType::Process: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(generateProcessSourceCode,
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
+        return promise;
+    }
+    case SyntheticModuleType::Events: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(generateEventsSourceCode,
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
+        return promise;
+    }
+    default: {
         auto provider = Zig::SourceProvider::create(res.result.value);
         auto jsSourceCode = JSC::JSSourceCode::create(vm, JSC::SourceCode(provider));
         promise->resolve(globalObject, jsSourceCode);
+    }
     }
 
     // if (provider.ptr()->isBytecodeCacheEnabled()) {
@@ -2458,20 +2780,19 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    JSString* keyString = key.toStringOrNull(globalObject);
+    auto view = keyString->value(globalObject);
+    if (UNLIKELY(!keyString)) {
+        RELEASE_AND_RETURN(scope, JSC::constructEmptyObject(globalObject));
+    }
+
     JSC::Structure* structure = WebCore::getDOMStructure<Zig::ImportMetaObject>(vm, *reinterpret_cast<Zig::GlobalObject*>(globalObject));
     Zig::ImportMetaObject* metaProperties = Zig::ImportMetaObject::create(vm, globalObject, structure);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto clientData = WebCore::clientData(vm);
-    JSString* keyString = key.toStringOrNull(globalObject);
-    if (UNLIKELY(!keyString)) {
-        RELEASE_AND_RETURN(scope, metaProperties);
-    }
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
     auto& builtinNames = clientData->builtinNames();
 
-    auto view = keyString->value(globalObject);
     auto index = view.reverseFind('/', view.length());
     if (index != WTF::notFound) {
         metaProperties->putDirect(vm, builtinNames.dirPublicName(),
@@ -2482,8 +2803,12 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     } else {
         metaProperties->putDirect(vm, builtinNames.filePublicName(), keyString);
     }
+    metaProperties->putDirect(
+        vm,
+        builtinNames.pathPublicName(),
+        keyString,
+        0);
 
-    metaProperties->putDirect(vm, builtinNames.pathPublicName(), keyString);
     metaProperties->putDirect(
         vm,
         builtinNames.requirePublicName(),
@@ -2527,5 +2852,7 @@ void GlobalObject::queueMicrotaskToEventLoop(JSC::JSGlobalObject& global,
             &global, &JSMicrotaskCallback::create(global, WTFMove(task)).leakRef());
     }
 }
+
+#include "ZigGeneratedClasses+lazyStructureImpl.h"
 
 } // namespace Zig

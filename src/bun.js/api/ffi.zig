@@ -92,6 +92,7 @@ pub const FFI = struct {
     );
 
     pub fn callback(globalThis: *JSGlobalObject, interface: JSC.JSValue, js_callback: JSC.JSValue) JSValue {
+        JSC.markBinding();
         if (!interface.isObject()) {
             return JSC.toInvalidArguments("Expected object", .{}, globalThis.ref());
         }
@@ -136,6 +137,7 @@ pub const FFI = struct {
     }
 
     pub fn close(this: *FFI) JSValue {
+        JSC.markBinding();
         if (this.closed) {
             return JSC.JSValue.jsUndefined();
         }
@@ -156,6 +158,7 @@ pub const FFI = struct {
     }
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {
+        JSC.markBinding();
         const allocator = VirtualMachine.vm.allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
@@ -200,7 +203,7 @@ pub const FFI = struct {
             symbols.clearAndFree(allocator);
             return val;
         }
-
+        JSC.markBinding();
         var zig_strings = allocator.alloc(ZigString, symbols.count()) catch unreachable;
         for (symbols.values()) |*function, i| {
             var arraylist = std.ArrayList(u8).init(allocator);
@@ -262,6 +265,7 @@ pub const FFI = struct {
     // }
 
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object: JSC.JSValue) JSC.JSValue {
+        JSC.markBinding();
         const allocator = VirtualMachine.vm.allocator;
         var name_slice = name_str.toSlice(allocator);
         defer name_slice.deinit();
@@ -289,7 +293,7 @@ pub const FFI = struct {
         }
 
         var dylib = std.DynLib.open(name) catch {
-            return JSC.toInvalidArguments("Failed to open library", .{}, global.ref());
+            return JSC.toInvalidArguments("Failed to find or open library", .{}, global.ref());
         };
 
         var obj = JSC.JSValue.c(JSC.C.JSObjectMake(global.ref(), null, null));
@@ -351,14 +355,15 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |compiled| {
-                    var cb = JSC.NewFunctionPtr(
+                    const str = ZigString.init(std.mem.span(function_name));
+                    const cb = JSC.NewFunction(
                         global,
-                        &ZigString.init(std.mem.span(function_name)),
+                        &str,
                         @intCast(u32, function.arg_types.items.len),
                         compiled.ptr,
                     );
 
-                    obj.put(global, &ZigString.init(std.mem.span(function_name)), JSC.JSValue.cast(cb));
+                    obj.put(global, &str, cb);
                 },
             }
         }
@@ -375,6 +380,7 @@ pub const FFI = struct {
     }
 
     pub fn linkSymbols(global: *JSGlobalObject, object: JSC.JSValue) JSC.JSValue {
+        JSC.markBinding();
         const allocator = VirtualMachine.vm.allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
@@ -443,14 +449,14 @@ pub const FFI = struct {
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
                 .compiled => |compiled| {
-                    var cb = JSC.NewFunctionPtr(
+                    const cb = JSC.NewFunction(
                         global,
                         &ZigString.init(std.mem.span(function_name)),
                         @intCast(u32, function.arg_types.items.len),
                         compiled.ptr,
                     );
 
-                    obj.put(global, &ZigString.init(std.mem.span(function_name)), JSC.JSValue.cast(cb));
+                    obj.put(global, &ZigString.init(std.mem.span(function_name)), cb);
                 },
             }
         }
@@ -466,6 +472,8 @@ pub const FFI = struct {
         return JSC.JSValue.createObject2(global, &ZigString.init("close"), &ZigString.init("symbols"), close_object, obj);
     }
     pub fn generateSymbolForFunction(global: *JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, function: *Function) !?JSValue {
+        JSC.markBinding();
+
         var abi_types = std.ArrayListUnmanaged(ABIType){};
 
         if (value.get(global, "args")) |args| {
@@ -557,11 +565,12 @@ pub const FFI = struct {
         return null;
     }
     pub fn generateSymbols(global: *JSGlobalObject, symbols: *std.StringArrayHashMapUnmanaged(Function), object: JSC.JSValue) !?JSValue {
+        JSC.markBinding();
         const allocator = VirtualMachine.vm.allocator;
 
         var symbols_iter = JSC.JSPropertyIterator(.{
             .skip_empty_name = true,
-            
+
             .include_value = true,
         }).init(global.ref(), object.asObjectRef());
         defer symbols_iter.deinit();
@@ -628,6 +637,7 @@ pub const FFI = struct {
             pending: void,
             compiled: struct {
                 ptr: *anyopaque,
+                fast_path_ptr: ?*anyopaque = null,
                 buf: []u8,
                 js_function: ?*anyopaque = null,
                 js_context: ?*anyopaque = null,
@@ -686,14 +696,13 @@ pub const FFI = struct {
             bun_call: *const @TypeOf(JSC.C.JSObjectCallAsFunction),
         };
         const headers = @import("../bindings/headers.zig");
-
-        var workaround: MyFunctionSStructWorkAround = .{
+        var workaround: MyFunctionSStructWorkAround = if (!JSC.is_bindgen) .{
             .JSVALUE_TO_INT64 = headers.JSC__JSValue__toInt64,
             .JSVALUE_TO_UINT64 = headers.JSC__JSValue__toUInt64NoTruncate,
             .INT64_TO_JSVALUE = headers.JSC__JSValue__fromInt64NoTruncate,
             .UINT64_TO_JSVALUE = headers.JSC__JSValue__fromUInt64NoTruncate,
             .bun_call = &JSC.C.JSObjectCallAsFunction,
-        };
+        } else undefined;
 
         const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols" ++ if (Environment.isDebug) " -g" else "";
 
@@ -823,6 +832,7 @@ pub const FFI = struct {
             }
 
             pub fn inject(state: *TCC.TCCState) void {
+                JSC.markBinding();
                 _ = TCC.tcc_add_symbol(state, "memset", &memset);
                 _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
 
@@ -836,10 +846,12 @@ pub const FFI = struct {
                     "JSVALUE_TO_UINT64_SLOW",
                     workaround.JSVALUE_TO_UINT64,
                 );
-                std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
-                std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
-                std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
-                std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
+                if (!comptime JSC.is_bindgen) {
+                    std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
+                    std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
+                    std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
+                    std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
+                }
                 _ = TCC.tcc_add_symbol(
                     state,
                     "INT64_TO_JSVALUE_SLOW",
@@ -1202,6 +1214,7 @@ pub const FFI = struct {
         }
     };
 
+    // Must be kept in sync with JSFFIFunction.h version
     pub const ABIType = enum(i32) {
         char = 0,
 

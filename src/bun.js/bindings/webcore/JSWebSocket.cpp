@@ -633,11 +633,11 @@ bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> hand
 {
     auto* jsWebSocket = jsCast<JSWebSocket*>(handle.slot()->asCell());
     auto& wrapped = jsWebSocket->wrapped();
-    // if (!wrapped.isContextStopped() && wrapped.hasPendingActivity()) {
-    //     if (UNLIKELY(reason))
-    //         *reason = "ActiveDOMObject with pending activity";
-    //     return true;
-    // }
+    if (wrapped.hasPendingActivity()) {
+        if (UNLIKELY(reason))
+            *reason = "ActiveDOMObject with pending activity";
+        return true;
+    }
     if (jsWebSocket->wrapped().isFiringEventListeners()) {
         if (UNLIKELY(reason))
             *reason = "EventTarget firing event listeners";

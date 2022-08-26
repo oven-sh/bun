@@ -84,7 +84,26 @@ pub const Batch = struct {
     head: ?*Task = null,
     tail: ?*Task = null,
 
-    /// Create a batch from a single task. 
+    pub fn pop(this: *Batch) ?*Task {
+        const len = @atomicLoad(usize, &this.len, .Monotonic);
+        if (len == 0) {
+            return null;
+        }
+        var task = this.head.?;
+        if (task.node.next) |node| {
+            this.head = @fieldParentPtr(Task, "node", node);
+        } else {
+            this.head = null;
+        }
+
+        this.len -= 1;
+        if (len == 0) {
+            this.tail = null;
+        }
+        return task;
+    }
+
+    /// Create a batch from a single task.
     pub fn from(task: *Task) Batch {
         return Batch{
             .len = 1,
@@ -276,6 +295,9 @@ fn _wait(self: *ThreadPool, _is_waking: bool, comptime sleep_on_idle: bool) erro
             }
         } else {
             if (self.io) |io| {
+                if (comptime Environment.isLinux)
+                    unreachable;
+
                 const HTTP = @import("http");
                 io.tick() catch {};
 
@@ -483,7 +505,7 @@ pub const Thread = struct {
 };
 
 /// An event which stores 1 semaphore token and is multi-threaded safe.
-/// The event can be shutdown(), waking up all wait()ing threads and 
+/// The event can be shutdown(), waking up all wait()ing threads and
 /// making subsequent wait()'s return immediately.
 const Event = struct {
     state: Atomic(u32) = Atomic(u32).init(EMPTY),
@@ -621,7 +643,7 @@ const Event = struct {
 };
 
 /// Linked list intrusive memory node and lock-free data structures to operate with it
-const Node = struct {
+pub const Node = struct {
     next: ?*Node = null,
 
     /// A linked list of Nodes

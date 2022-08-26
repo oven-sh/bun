@@ -25,6 +25,8 @@ using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
+using namespace JSC;
+
 // clang-format off
 #define DEFINE_CALLBACK_FUNCTION_BODY(ZigFunction) JSC::VM& vm = globalObject->vm(); \
     auto* thisObject = JSC::jsDynamicCast<JSC::JSFinalObject*>( callFrame->thisValue()); \
@@ -137,49 +139,49 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 
     path->putDirect(vm, clientData->builtinNames().basenamePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "basename"_s, Path_functionBasename),
+            "basename"_s, Path_functionBasename, ImplementationVisibility::Public),
         0);
     path->putDirect(vm, clientData->builtinNames().dirnamePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "dirname"_s, Path_functionDirname),
+            "dirname"_s, Path_functionDirname, ImplementationVisibility::Public),
         0);
     path->putDirect(vm, clientData->builtinNames().extnamePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "extname"_s, Path_functionExtname),
+            "extname"_s, Path_functionExtname, ImplementationVisibility::Public),
         0);
     path->putDirect(vm, clientData->builtinNames().formatPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "format"_s, Path_functionFormat),
+            "format"_s, Path_functionFormat, ImplementationVisibility::Public),
         0);
     path->putDirect(vm, clientData->builtinNames().isAbsolutePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "isAbsolute"_s, Path_functionIsAbsolute),
+            "isAbsolute"_s, Path_functionIsAbsolute, ImplementationVisibility::Public),
         0);
     path->putDirect(vm, clientData->builtinNames().joinPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "join"_s, Path_functionJoin),
+            "join"_s, Path_functionJoin, ImplementationVisibility::Public),
         0);
     path->putDirect(vm, clientData->builtinNames().normalizePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "normalize"_s, Path_functionNormalize),
+            "normalize"_s, Path_functionNormalize, ImplementationVisibility::Public),
         0);
     path->putDirect(vm, clientData->builtinNames().parsePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "parse"_s, Path_functionParse),
+            "parse"_s, Path_functionParse, ImplementationVisibility::Public),
         0);
     path->putDirect(vm, clientData->builtinNames().relativePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "relative"_s, Path_functionRelative),
+            "relative"_s, Path_functionRelative, ImplementationVisibility::Public),
         0);
     path->putDirect(vm, clientData->builtinNames().resolvePublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
-            "resolve"_s, Path_functionResolve),
+            "resolve"_s, Path_functionResolve, ImplementationVisibility::Public),
         0);
 
     path->putDirect(vm, clientData->builtinNames().toNamespacedPathPublicName(),
         JSC::JSFunction::create(vm, JSC::jsCast<JSC::JSGlobalObject*>(globalThis), 0,
             "toNamespacedPath"_s,
-            Path_functionToNamespacedPath),
+            Path_functionToNamespacedPath, ImplementationVisibility::Public),
         0);
 
     if (isWindows) {

@@ -491,7 +491,7 @@ pub fn hasNoWork(this: *IO) bool {
     return this.pending_count == 0 and this.io_inflight == 0 and this.io_pending.peek() == null and this.completed.peek() == null and this.timeouts.peek() == null;
 }
 
-pub fn init(_: u12, _: u32) !IO {
+pub fn init(_: u12, _: u32, _: anytype) !IO {
     const kq = try os.kqueue();
     assert(kq > -1);
     return IO{ .kq = kq };

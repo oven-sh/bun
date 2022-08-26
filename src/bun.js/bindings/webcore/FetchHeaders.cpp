@@ -67,13 +67,13 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
-        return { };
+        return {};
     headers.set(name, combinedValue);
 
-    if (guard == FetchHeaders::Guard::RequestNoCors)
-        removePrivilegedNoCORSRequestHeaders(headers);
+    // if (guard == FetchHeaders::Guard::RequestNoCors)
+    //     removePrivilegedNoCORSRequestHeaders(headers);
 
-    return { };
+    return {};
 }
 
 static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
@@ -83,16 +83,13 @@ static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapCon
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
-        return { };
+        return {};
     if (header.keyAsHTTPHeaderName)
         headers.add(header.keyAsHTTPHeaderName.value(), header.value);
     else
         headers.add(header.key, header.value);
 
-    if (guard == FetchHeaders::Guard::RequestNoCors)
-        removePrivilegedNoCORSRequestHeaders(headers);
-
-    return { };
+    return {};
 }
 
 // https://fetch.spec.whatwg.org/#concept-headers-fill
@@ -116,7 +113,7 @@ static ExceptionOr<void> fillHeaderMap(HTTPHeaderMap& headers, const FetchHeader
         }
     }
 
-    return { };
+    return {};
 }
 
 ExceptionOr<Ref<FetchHeaders>> FetchHeaders::create(std::optional<Init>&& headersInit)
@@ -145,7 +142,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
             return result.releaseException();
     }
 
-    return { };
+    return {};
 }
 
 ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
@@ -161,18 +158,18 @@ ExceptionOr<void> FetchHeaders::remove(const String& name)
     if (m_guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     if (m_guard == FetchHeaders::Guard::Request && isForbiddenHeaderName(name))
-        return { };
+        return {};
     if (m_guard == FetchHeaders::Guard::RequestNoCors && !isNoCORSSafelistedRequestHeaderName(name) && !isPriviledgedNoCORSRequestHeaderName(name))
-        return { };
+        return {};
     if (m_guard == FetchHeaders::Guard::Response && isForbiddenResponseHeaderName(name))
-        return { };
+        return {};
 
     m_headers.remove(name);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers);
 
-    return { };
+    return {};
 }
 
 ExceptionOr<String> FetchHeaders::get(const String& name) const
@@ -196,14 +193,14 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
-        return { };
+        return {};
 
     m_headers.set(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers);
 
-    return { };
+    return {};
 }
 
 void FetchHeaders::filterAndFill(const HTTPHeaderMap& headers, Guard guard)

@@ -154,6 +154,31 @@ pub fn ObjectPool(
         pub fn has() bool {
             return data().loaded and data().list.first != null;
         }
+
+        pub fn push(allocator: std.mem.Allocator, pooled: Type) void {
+            if (comptime @import("./env.zig").allow_assert)
+                std.debug.assert(!full());
+
+            var new_node = allocator.create(LinkedList.Node) catch unreachable;
+            new_node.* = LinkedList.Node{
+                .allocator = allocator,
+                .data = pooled,
+            };
+            release(new_node);
+        }
+
+        pub fn getIfExists() ?*LinkedList.Node {
+            if (!data().loaded) {
+                return null;
+            }
+
+            var node = data().list.popFirst() orelse return null;
+            if (comptime std.meta.trait.isContainer(Type) and @hasDecl(Type, "reset")) node.data.reset();
+            if (comptime max_count > 0) data().count -|= 1;
+
+            return node;
+        }
+
         pub fn get(allocator: std.mem.Allocator) *LinkedList.Node {
             if (data().loaded) {
                 if (data().list.popFirst()) |node| {

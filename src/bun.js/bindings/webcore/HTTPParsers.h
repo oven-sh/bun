@@ -38,7 +38,7 @@ namespace WebCore {
 
 typedef HashSet<String, ASCIICaseInsensitiveHash> HTTPHeaderSet;
 
-enum class HTTPHeaderName;
+enum class HTTPHeaderName : uint8_t;
 
 enum class XSSProtectionDisposition {
     Invalid,

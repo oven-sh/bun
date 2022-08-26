@@ -2314,8 +2314,6 @@ const Return = struct {
 /// https://nodejs.org/api/fs.html
 /// https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/types/node/fs.d.ts
 pub const NodeFS = struct {
-    async_io: *AsyncIO,
-
     /// Buffer to store a temporary file path that might appear in a returned error message.
     ///
     /// We want to avoid allocating a new path buffer for every error message so that JSC can clone + GC it.
@@ -3015,12 +3013,12 @@ pub const NodeFS = struct {
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime flavor: Flavor) Maybe(Return.Mkdtemp) {
         var prefix_buf = &this.sync_error_buf;
-        prefix_buf[0] = 0;
-        const len = args.prefix.len;
+        const len = @minimum(args.prefix.len, prefix_buf.len - 7);
         if (len > 0) {
             @memcpy(prefix_buf, args.prefix.ptr, len);
-            prefix_buf[len] = 0;
         }
+        prefix_buf[len..][0..6].* = "XXXXXX".*;
+        prefix_buf[len..][6] = 0;
 
         const rc = C.mkdtemp(prefix_buf);
         switch (std.c.getErrno(@ptrToInt(rc))) {

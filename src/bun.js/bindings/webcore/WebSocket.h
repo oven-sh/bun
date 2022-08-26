@@ -103,6 +103,11 @@ public:
     void didReceiveData(const char* data, size_t length);
     void didReceiveBinaryData(Vector<uint8_t>&&);
 
+    bool hasPendingActivity() const
+    {
+        return m_state == State::OPEN || m_state == State::CLOSING || m_pendingActivityCount > 0;
+    }
+
 private:
     typedef union AnyWebSocket {
         WebSocketClient* client;
@@ -157,6 +162,7 @@ private:
     bool m_isSecure { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
+    size_t m_pendingActivityCount { 0 };
 
     bool m_dispatchedErrorEvent { false };
     // RefPtr<PendingActivity<WebSocket>> m_pendingActivity;

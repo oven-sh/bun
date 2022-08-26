@@ -96,6 +96,29 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
+        pub fn getWithLengthAndEql(str: anytype, comptime len: usize, comptime eqls: anytype) ?V {
+            const end = comptime brk: {
+                var i = len_indexes[len];
+                @setEvalBranchQuota(99999);
+
+                while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+
+                break :brk i;
+            };
+
+            comptime var i = len_indexes[len];
+
+            // This benchmarked faster for both small and large lists of strings than using a big switch statement
+            // But only so long as the keys are a sorted list.
+            inline while (i < end) : (i += 1) {
+                if (eqls(str, kvs[i].key)) {
+                    return kvs[i].value;
+                }
+            }
+
+            return null;
+        }
+
         pub fn get(str: []const KeyType) ?V {
             if (str.len < precomputed.min_len or str.len > precomputed.max_len)
                 return null;
@@ -104,6 +127,20 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             inline while (i <= precomputed.max_len) : (i += 1) {
                 if (str.len == i) {
                     return getWithLength(str, i);
+                }
+            }
+
+            return null;
+        }
+
+        pub fn getWithEql(input: anytype, comptime eql: anytype) ?V {
+            if (input.len < precomputed.min_len or input.len > precomputed.max_len)
+                return null;
+
+            comptime var i: usize = precomputed.min_len;
+            inline while (i <= precomputed.max_len) : (i += 1) {
+                if (input.len == i) {
+                    return getWithLengthAndEql(input, i, eql);
                 }
             }
 

@@ -99,6 +99,7 @@ pub extern fn JSC__JSObject__getIndex(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlo
 pub extern fn JSC__JSObject__putRecord(arg0: [*c]JSC__JSObject, arg1: ?*JSC__JSGlobalObject, arg2: [*c]ZigString, arg3: [*c]ZigString, arg4: usize) void;
 pub extern fn ZigString__external(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn (?*anyopaque, ?*anyopaque, usize) callconv(.C) void) JSC__JSValue;
 pub extern fn ZigString__to16BitValue(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
+pub extern fn ZigString__toAtomicValue(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toErrorInstance(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toExternalU16(arg0: [*c]const u16, arg1: usize, arg2: ?*JSC__JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toExternalValue(arg0: [*c]const ZigString, arg1: ?*JSC__JSGlobalObject) JSC__JSValue;
@@ -120,6 +121,9 @@ pub extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*JSC__JSGloba
 pub extern fn WebCore__FetchHeaders__createFromUWS(arg0: ?*JSC__JSGlobalObject, arg1: ?*anyopaque) ?*bindings.FetchHeaders;
 pub extern fn WebCore__FetchHeaders__createValue(arg0: ?*JSC__JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSC__JSValue;
 pub extern fn WebCore__FetchHeaders__deref(arg0: ?*bindings.FetchHeaders) void;
+pub extern fn WebCore__FetchHeaders__fastGet_(arg0: ?*bindings.FetchHeaders, arg1: u8, arg2: [*c]ZigString) void;
+pub extern fn WebCore__FetchHeaders__fastHas_(arg0: ?*bindings.FetchHeaders, arg1: u8) bool;
+pub extern fn WebCore__FetchHeaders__fastRemove_(arg0: ?*bindings.FetchHeaders, arg1: u8) void;
 pub extern fn WebCore__FetchHeaders__get_(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]ZigString) void;
 pub extern fn WebCore__FetchHeaders__has(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString) bool;
 pub extern fn WebCore__FetchHeaders__put_(arg0: ?*bindings.FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString) void;
@@ -190,6 +194,7 @@ pub extern fn JSC__JSGlobalObject__bigIntPrototype(arg0: ?*JSC__JSGlobalObject) 
 pub extern fn JSC__JSGlobalObject__booleanPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__bunVM(arg0: ?*JSC__JSGlobalObject) ?*bindings.VirtualMachine;
 pub extern fn JSC__JSGlobalObject__createAggregateError(arg0: ?*JSC__JSGlobalObject, arg1: [*c]*anyopaque, arg2: u16, arg3: [*c]const ZigString) JSC__JSValue;
+pub extern fn JSC__JSGlobalObject__createSyntheticModule_(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: usize, arg3: [*c]JSC__JSValue, arg4: usize) void;
 pub extern fn JSC__JSGlobalObject__datePrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__deleteModuleRegistryEntry(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString) void;
 pub extern fn JSC__JSGlobalObject__errorPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
@@ -198,6 +203,7 @@ pub extern fn JSC__JSGlobalObject__generateHeapSnapshot(arg0: ?*JSC__JSGlobalObj
 pub extern fn JSC__JSGlobalObject__generatorFunctionPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.GeneratorFunctionPrototype;
 pub extern fn JSC__JSGlobalObject__generatorPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.GeneratorPrototype;
 pub extern fn JSC__JSGlobalObject__getCachedObject(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const ZigString) JSC__JSValue;
+pub extern fn JSC__JSGlobalObject__handleRejectedPromises(arg0: ?*JSC__JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__iteratorPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.IteratorPrototype;
 pub extern fn JSC__JSGlobalObject__jsSetPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__mapIteratorPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.MapIteratorPrototype;
@@ -212,7 +218,6 @@ pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: ?*JSC__JSGlobalObj
 pub extern fn JSC__JSGlobalObject__stringPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.StringPrototype;
 pub extern fn JSC__JSGlobalObject__symbolPrototype(arg0: ?*JSC__JSGlobalObject) [*c]JSC__JSObject;
 pub extern fn JSC__JSGlobalObject__vm(arg0: ?*JSC__JSGlobalObject) [*c]JSC__VM;
-pub extern fn JSC__JSGlobalObject__handleRejectedPromises(arg0: ?*JSC__JSGlobalObject) void;
 pub extern fn WTF__URL__encodedPassword(arg0: [*c]WTF__URL) bWTF__StringView;
 pub extern fn WTF__URL__encodedUser(arg0: [*c]WTF__URL) bWTF__StringView;
 pub extern fn WTF__URL__fileSystemPath(arg0: [*c]WTF__URL) bWTF__String;
@@ -272,6 +277,7 @@ pub extern fn JSC__JSValue__createTypeError(arg0: [*c]const ZigString, arg1: [*c
 pub extern fn JSC__JSValue__createUninitializedUint8Array(arg0: ?*JSC__JSGlobalObject, arg1: usize) JSC__JSValue;
 pub extern fn JSC__JSValue__eqlCell(JSValue0: JSC__JSValue, arg1: [*c]JSC__JSCell) bool;
 pub extern fn JSC__JSValue__eqlValue(JSValue0: JSC__JSValue, JSValue1: JSC__JSValue) bool;
+pub extern fn JSC__JSValue__fastGet_(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: u8) JSC__JSValue;
 pub extern fn JSC__JSValue__forEach(JSValue0: JSC__JSValue, arg1: ?*JSC__JSGlobalObject, arg2: ?*anyopaque, ArgFn3: ?fn ([*c]JSC__VM, ?*JSC__JSGlobalObject, ?*anyopaque, JSC__JSValue) callconv(.C) void) void;
 pub extern fn JSC__JSValue__fromEntries(arg0: ?*JSC__JSGlobalObject, arg1: [*c]ZigString, arg2: [*c]ZigString, arg3: usize, arg4: bool) JSC__JSValue;
 pub extern fn JSC__JSValue__fromInt64NoTruncate(arg0: ?*JSC__JSGlobalObject, arg1: i64) JSC__JSValue;
@@ -404,6 +410,7 @@ pub extern fn WTF__StringView__is16Bit(arg0: [*c]const WTF__StringView) bool;
 pub extern fn WTF__StringView__is8Bit(arg0: [*c]const WTF__StringView) bool;
 pub extern fn WTF__StringView__isEmpty(arg0: [*c]const WTF__StringView) bool;
 pub extern fn WTF__StringView__length(arg0: [*c]const WTF__StringView) usize;
+pub extern fn FFI__ptr__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*anyopaque) ?*JSC__JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: ?*JSC__JSGlobalObject) ?*anyopaque;
 pub extern fn Zig__GlobalObject__resetModuleRegistryMap(arg0: ?*JSC__JSGlobalObject, arg1: ?*anyopaque) bool;

@@ -3013,7 +3013,7 @@ pub const NodeFS = struct {
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime flavor: Flavor) Maybe(Return.Mkdtemp) {
         var prefix_buf = &this.sync_error_buf;
-        const len = args.prefix.len;
+        const len = @minimum(args.prefix.len, prefix_buf.len - 7);
         if (len > 0) {
             @memcpy(prefix_buf, args.prefix.ptr, len);
         }

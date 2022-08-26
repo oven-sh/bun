@@ -5,7 +5,8 @@ pub const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false
 const headers = @import("./headers.zig");
 
 fn isNullableType(comptime Type: type) bool {
-    return @typeInfo(Type) == .Optional;
+    return @typeInfo(Type) == .Optional or
+        (@typeInfo(Type) == .Pointer and @typeInfo(Type).Pointer.is_allowzero);
 }
 
 pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comptime Parent: type) type {

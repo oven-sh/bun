@@ -120,6 +120,7 @@ static const struct HeaderNameString {
     { "Set-Cookie", 10 },
     { "Set-Cookie2", 11 },
     { "SourceMap", 9 },
+    { "Strict-Transport-Security", 25 },
     { "TE", 2 },
     { "Timing-Allow-Origin", 19 },
     { "Trailer", 7 },
@@ -233,6 +234,7 @@ Service-Worker-Navigation-Preload, HTTPHeaderName::ServiceWorkerNavigationPreloa
 Set-Cookie, HTTPHeaderName::SetCookie
 Set-Cookie2, HTTPHeaderName::SetCookie2
 SourceMap, HTTPHeaderName::SourceMap
+Strict-Transport-Security, HTTPHeaderName::StrictTransportSecurity
 TE, HTTPHeaderName::TE
 Timing-Allow-Origin, HTTPHeaderName::TimingAllowOrigin
 Trailer, HTTPHeaderName::Trailer

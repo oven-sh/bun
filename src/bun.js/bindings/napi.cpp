@@ -1111,7 +1111,7 @@ NapiClass* NapiClass::create(VM& vm, Zig::GlobalObject* globalObject, const char
     const napi_property_descriptor* properties)
 {
     WTF::String name = WTF::String::fromUTF8(utf8name, length).isolatedCopy();
-    NativeExecutable* executable = vm.getHostFunction(NapiClass_ConstructorFunction, NapiClass_ConstructorFunction, name);
+    NativeExecutable* executable = vm.getHostFunction(NapiClass_ConstructorFunction, ImplementationVisibility::Public, NapiClass_ConstructorFunction, name);
 
     Structure* structure = globalObject->NapiClassStructure();
     NapiClass* napiClass = new (NotNull, allocateCell<NapiClass>(vm)) NapiClass(vm, executable, globalObject, structure);

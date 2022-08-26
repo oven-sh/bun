@@ -1014,7 +1014,13 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
 }
 
 pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, utf16: Type) ![]u8 {
-    var list = std.ArrayList(u8).initCapacity(allocator, utf16.len) catch unreachable;
+    var list = try std.ArrayList(u8).initCapacity(allocator, utf16.len);
+    list = try toUTF8ListWithType(list, Type, utf16);
+    return list.items;
+}
+
+pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+    var list = list_;
     var utf16_remaining = utf16;
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
@@ -1048,8 +1054,7 @@ pub fn toUTF8AllocWithType(allocator: std.mem.Allocator, comptime Type: type, ut
     list.items.len += utf16_remaining.len;
     copyU16IntoU8(list.items[old_len..], Type, utf16_remaining);
 
-    // don't call toOwnedSlice() because our
-    return list.items;
+    return list;
 }
 
 pub const EncodeIntoResult = struct {
@@ -2824,7 +2829,7 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = @splat(ascii_vector_size, char) != vec;
-            if (@reduce(.Min, @bitCast(AsciiVectorU1, cmp)) > 0) {
+            if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
                 const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
                 const first = @ctz(AsciiVectorInt, bitmask);
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
@@ -3112,12 +3117,14 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
 
 test "indexOfNotChar" {
     {
-        const yes = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        try std.testing.expectEqual(indexOfNotChar(yes, 'a').?, 36);
-    }
-    {
-        const yes = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        try std.testing.expectEqual(indexOfNotChar(yes, 'a').?, 108);
+        var yes: [312]u8 = undefined;
+        var i: usize = 0;
+        while (i < yes.len) {
+            @memset(&yes, 'a', yes.len);
+            yes[i] = 'b';
+            assert(indexOfNotChar(&yes, 'a').? == i);
+            i += 1;
+        }
     }
 }
 

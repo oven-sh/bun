@@ -207,7 +207,7 @@ pub fn main() anyerror!void {
     ctx.http.client.verbose = args.verbose;
 
     ctx.http.verbose = args.verbose;
-    NetworkThread.global.pool.schedule(batch);
+    NetworkThread.global.schedule(batch);
 
     while (true) {
         while (channel.tryReadItem() catch null) |http| {

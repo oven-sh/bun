@@ -1903,7 +1903,7 @@ db.query("SELECT * FROM foo WHERE greeting = $greeting").get({
 
 ### bun:sqlite Benchmark
 
-Database: [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/master/Northwind_large.sqlite.zip).
+Database: [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/46d5f8a64f396f87cd374d1600dbf521523980e8/Northwind_large.sqlite.zip).
 
 This benchmark can be run from [./bench/sqlite](./bench/sqlite).
 
@@ -2932,7 +2932,7 @@ const out = encode_png(
 );
 ```
 
-The [auto-generated wrapper](https://github.com/oven-sh/bun/blob/c6d732eee2721cd6191672cbe2c57fb17c3fffe4/src/bun.js/ffi.exports.js#L146-L148) converts the pointer to a TypedArray
+The [auto-generated wrapper](https://github.com/oven-sh/bun/blob/6a65631cbdcae75bfa1e64323a6ad613a922cd1a/src/bun.js/ffi.exports.js#L180-L182) converts the pointer to a TypedArray
 
 <details>
 
@@ -3031,7 +3031,7 @@ require("./my-node-module.node");
 import.meta.require("./my-node-module.node");
 ```
 
-Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore built-in function](https://github.com/oven-sh/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/bun.js/bindings/builtins/js/JSZigGlobalObject.js#L26).
+Bun doesn't currently support dynamic requires, but `import.meta.require` is an escape hatch for that. It uses a [JavaScriptCore built-in function](https://github.com/oven-sh/bun/blob/aa87d40f4b7fdfb52575f44d151906ddba6a82d0/src/javascript/jsc/bindings/builtins/js/JSZigGlobalObject.js#L26).
 
 ### `Bun.Transpiler`
 
@@ -3408,7 +3408,7 @@ To install the zig binary:
 
 ```bash
 # Custom path for the custom zig install
-mkdir -p ~/.bun-tools
+mkdir -p $HOME/.bun-tools
 
 # Requires jq & grab latest binary
 curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/jul1/zig-macos-$(uname -m).tar.gz
@@ -3417,7 +3417,7 @@ curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/jul1/zig
 tar -xvf zig.tar.gz -C $HOME/.bun-tools/
 
 # Make sure it gets trusted
-xattr -dr com.apple.quarantine .bun-tools/zig/zig
+xattr -dr com.apple.quarantine $HOME/.bun-tools/zig/zig
 ```
 
 Now you'll need to add Zig to your PATH.

@@ -71,8 +71,8 @@ fn NewEVP(
 }
 pub const EVP = struct {
     pub const SHA1 = NewEVP(std.crypto.hash.Sha1.digest_length, "EVP_sha1");
-    pub const MD5 = NewEVP(32, "EVP_md5");
-    pub const MD4 = NewEVP(32, "EVP_md4");
+    pub const MD5 = NewEVP(16, "EVP_md5");
+    pub const MD4 = NewEVP(16, "EVP_md4");
     pub const SHA224 = NewEVP(28, "EVP_sha224");
     pub const SHA512 = NewEVP(std.crypto.hash.sha2.Sha512.digest_length, "EVP_sha512");
     pub const SHA384 = NewEVP(std.crypto.hash.sha2.Sha384.digest_length, "EVP_sha384");

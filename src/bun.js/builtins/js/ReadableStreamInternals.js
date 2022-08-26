@@ -793,7 +793,8 @@ function readDirectStream(stream, sink, underlyingSource) {
   function close(stream, reason) {
     if (reason && underlyingSource?.cancel) {
       try {
-        underlyingSource.cancel(reason);
+        var prom = underlyingSource.cancel(reason);
+        @markPromiseAsHandled(prom);
       } catch (e) {
       }
 
@@ -890,7 +891,7 @@ async function readStreamIntoSink(stream, sink, isNative) {
     }
     var wroteCount = many.value.length;
     const highWaterMark = @getByIdDirectPrivate(stream, "highWaterMark");
-    if (isNative) @startDirectStream.@call(sink, stream, @undefined, () => !didThrow && stream.cancel());
+    if (isNative) @startDirectStream.@call(sink, stream, @undefined, () => !didThrow && @markPromiseAsHandled(stream.cancel()));
 
     if (highWaterMark) sink.start({ highWaterMark });
     
@@ -924,7 +925,8 @@ async function readStreamIntoSink(stream, sink, isNative) {
 
     try {
         reader = @undefined;
-        stream.cancel(e);
+        const prom = stream.cancel(e);
+        @markPromiseAsHandled(prom);
     } catch (j) {}
 
     if (sink && !didClose) {

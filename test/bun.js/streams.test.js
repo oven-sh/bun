@@ -320,7 +320,8 @@ it("new Response(stream).blob() (default)", async () => {
     },
     cancel() {},
   });
-  const blob = await new Response(stream).blob();
+  const response = new Response(stream);
+  const blob = await response.blob();
   expect(await blob.text()).toBe('{"hello":true}');
 });
 

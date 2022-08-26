@@ -39,6 +39,7 @@
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/IdentifierInlines.h>
+#include <JavaScriptCore/ImplementationVisibility.h>
 #include <JavaScriptCore/Intrinsic.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
@@ -509,24 +510,6 @@ const char* const s_jsBufferPrototypeWriteBigUInt64BECode =
     "})\n" \
 ;
 
-const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
-const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind = JSC::ConstructorKind::None;
-const JSC::ImplementationVisibility s_jsBufferPrototypeSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSliceCodeLength = 262;
-static const JSC::Intrinsic s_jsBufferPrototypeSliceCodeIntrinsic = JSC::NoIntrinsic;
-const char* const s_jsBufferPrototypeSliceCode =
-    "(function (start, end) {\n" \
-    "  \"use strict\";\n" \
-    "  if (start === undefined && end === undefined) {\n" \
-    "    return this;\n" \
-    "  }\n" \
-    "\n" \
-    "  Buffer[Symbol.species] ||= Buffer;\n" \
-    "\n" \
-    "  return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));\n" \
-    "})\n" \
-;
-
 const JSC::ConstructAbility s_jsBufferPrototypeUtf8WriteCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeUtf8WriteCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeUtf8WriteCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
@@ -744,6 +727,29 @@ const char* const s_jsBufferPrototypeSubarrayCode =
     "\n" \
     "    Buffer[Symbol.species] ??= Buffer;\n" \
     "    return new Buffer(this.buffer, this.byteOffset + (start || 0), (end || this.byteLength)  - (start || 0));\n" \
+    "})\n" \
+;
+
+const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
+const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind = JSC::ConstructorKind::None;
+const JSC::ImplementationVisibility s_jsBufferPrototypeSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
+const int s_jsBufferPrototypeSliceCodeLength = 308;
+static const JSC::Intrinsic s_jsBufferPrototypeSliceCodeIntrinsic = JSC::NoIntrinsic;
+const char* const s_jsBufferPrototypeSliceCode =
+    "(function (start, end) {\n" \
+    "  \"use strict\";\n" \
+    "  if (start === undefined && end === undefined) {\n" \
+    "    return this;\n" \
+    "  }\n" \
+    "\n" \
+    "  Buffer[Symbol.species] ||= Buffer;\n" \
+    "\n" \
+    "  start = start || 0;\n" \
+    "  if (end !== 0) {\n" \
+    "      end = end || this.byteLength;\n" \
+    "  }\n" \
+    "\n" \
+    "  return new Buffer(this.buffer, this.byteOffset + start, end - start);\n" \
     "})\n" \
 ;
 

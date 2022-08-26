@@ -368,9 +368,7 @@ it("path.normalize", () => {
   strictEqual(path.posix.normalize("bar/foo../../baz"), "bar/baz");
   strictEqual(path.posix.normalize("bar/foo../"), "bar/foo../");
   strictEqual(path.posix.normalize("bar/foo.."), "bar/foo..");
-  console.log("A");
   strictEqual(path.posix.normalize("../foo../../../bar"), "../../bar");
-  console.log("B");
   strictEqual(path.posix.normalize("../.../.././.../../../bar"), "../../bar");
   strictEqual(
     path.posix.normalize("../../../foo/../../../bar"),

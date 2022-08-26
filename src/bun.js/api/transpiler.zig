@@ -816,7 +816,7 @@ pub fn finalize(
     this.arena.deinit();
 }
 
-fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: JSValue) ?Bundler.ParseResult {
+fn getParseResult(this: *Transpiler, allocator: std.mem.Allocator, code: []const u8, loader: ?Loader, macro_js_ctx: Bundler.MacroJSValueType) ?Bundler.ParseResult {
     const name = this.transpiler_options.default_loader.stdinName();
     const source = logger.Source.initPathString(name, code);
 
@@ -862,6 +862,7 @@ pub fn scan(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) JSC.C.JSObjectRef {
+    JSC.markBinding();
     var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
@@ -904,7 +905,7 @@ pub fn scan(
         JSAst.Expr.Data.Store.reset();
     }
 
-    const parse_result = getParseResult(this, arena.allocator(), code, loader, JSC.JSValue.zero) orelse {
+    const parse_result = getParseResult(this, arena.allocator(), code, loader, Bundler.MacroJSValueType.zero) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");
             exception.* = out_exception.asObjectRef();
@@ -953,6 +954,8 @@ pub fn transform(
     arguments: []const js.JSValueRef,
     exception: js.ExceptionRef,
 ) JSC.C.JSObjectRef {
+    JSC.markBinding();
+
     var args = JSC.Node.ArgumentsSlice.init(ctx.bunVM(), @ptrCast([*]const JSC.JSValue, arguments.ptr)[0..arguments.len]);
     defer args.arena.deinit();
     const code_arg = args.next() orelse {
@@ -1066,13 +1069,12 @@ pub fn transformSync(
     defer {
         this.bundler = prev_bundler;
     }
-
     var parse_result = getParseResult(
         this,
         arena.allocator(),
         code,
         loader,
-        js_ctx_value,
+        if (comptime JSC.is_bindgen) Bundler.MacroJSValueType.zero else js_ctx_value,
     ) orelse {
         if ((this.bundler.log.warnings + this.bundler.log.errors) > 0) {
             var out_exception = this.bundler.log.toJS(ctx.ptr(), getAllocator(ctx), "Parse error");

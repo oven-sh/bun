@@ -49,7 +49,6 @@ var controllers;
 export class Statement {
   constructor(raw) {
     this.#raw = raw;
-    this.#columns = undefined;
 
     switch (raw.paramsCount) {
       case 0: {
@@ -70,7 +69,6 @@ export class Statement {
   }
 
   #raw;
-  #columns;
 
   get;
   all;
@@ -164,7 +162,7 @@ export class Statement {
   }
 
   get columnNames() {
-    return (this.#columns ||= this.#raw.columns);
+    return this.#raw.columns;
   }
 
   get paramsCount() {

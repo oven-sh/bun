@@ -162,6 +162,7 @@ pub fn IOTask(comptime Context: type) type {
                 .allocator = allocator,
                 .globalThis = globalThis,
             };
+            VirtualMachine.vm.active_tasks +|= 1;
             return this;
         }
 
@@ -177,7 +178,7 @@ pub fn IOTask(comptime Context: type) type {
 
         pub fn schedule(this: *This) void {
             NetworkThread.init() catch return;
-            NetworkThread.global.pool.schedule(NetworkThread.Batch.from(&this.task));
+            NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
         }
 
         pub fn onFinish(this: *This) void {
@@ -209,6 +210,7 @@ pub fn AsyncNativeCallbackTask(comptime Context: type) type {
                 .allocator = allocator,
                 .globalThis = globalThis,
             };
+            VirtualMachine.vm.active_tasks +|= 1;
             return this;
         }
 

@@ -141,6 +141,7 @@ AR = $(shell which llvm-ar-13 || which llvm-ar || which ar)
 endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
+DEBUG_OPTIMIZATION_LEVEL= -O1 $(MARCH_NATIVE)
 CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(BITCODE_OR_SECTIONS) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE) $(EMBED_OR_EMIT_BITCODE) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
 BUN_TMP_DIR := /tmp/make-bun
@@ -241,20 +242,23 @@ SRC_PATH := $(realpath $(SRC_DIR))
 SRC_FILES := $(wildcard $(SRC_DIR)/*.cpp)
 SRC_WEBCORE_FILES := $(wildcard $(SRC_DIR)/webcore/*.cpp)
 SRC_SQLITE_FILES := $(wildcard $(SRC_DIR)/sqlite/*.cpp)
+SRC_NODE_OS_FILES := $(wildcard $(SRC_DIR)/node_os/*.cpp)
 SRC_BUILTINS_FILES := $(wildcard  src/bun.js/builtins/*.cpp)
 
 OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(OBJ_DIR)/%.o,$(SRC_FILES))
 WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
 SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
+NODE_OS_OBJ_FILES := $(patsubst $(SRC_DIR)/node_os/%.cpp,$(OBJ_DIR)/%.o,$(SRC_NODE_OS_FILES))
 BUILTINS_OBJ_FILES := $(patsubst src/bun.js/builtins/%.cpp,$(OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
 
 DEBUG_OBJ_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_FILES))
 DEBUG_WEBCORE_OBJ_FILES := $(patsubst $(SRC_DIR)/webcore/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_WEBCORE_FILES))
 DEBUG_SQLITE_OBJ_FILES := $(patsubst $(SRC_DIR)/sqlite/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_SQLITE_FILES))
+DEBUG_NODE_OS_OBJ_FILES := $(patsubst $(SRC_DIR)/node_os/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_NODE_OS_FILES))
 DEBUG_BUILTINS_OBJ_FILES := $(patsubst src/bun.js/builtins/%.cpp,$(DEBUG_OBJ_DIR)/%.o,$(SRC_BUILTINS_FILES))
 
-BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
-DEBUG_BINDINGS_OBJ := $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES)
+BINDINGS_OBJ := $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+DEBUG_BINDINGS_OBJ := $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES)
 
 MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-I$(WEBKIT_RELEASE_DIR)/WTF/Headers \
@@ -265,6 +269,8 @@ MAC_INCLUDE_DIRS := -I$(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders \
 		-Isrc/bun.js/bindings/webcore \
 		-Isrc/bun.js/bindings/sqlite \
 		-Isrc/bun.js/builtins/cpp \
+		-Isrc/bun.js/bindings/node_os \
+		-Isrc/bun.js/modules \
 		-I$(WEBKIT_DIR)/Source/bmalloc  \
 		-I$(WEBKIT_DIR)/Source \
 		-I$(JSC_INCLUDE_DIR)
@@ -275,6 +281,8 @@ LINUX_INCLUDE_DIRS := -I$(JSC_INCLUDE_DIR) \
 					  -Isrc/bun.js/bindings/webcore \
 					  -Isrc/bun.js/bindings/sqlite \
 					  -Isrc/bun.js/builtins/cpp \
+					  -Isrc/bun.js/bindings/node_os \
+						-Isrc/bun.js/modules \
 					  -I$(ZLIB_INCLUDE_DIR)
 
 
@@ -333,7 +341,6 @@ CLANG_FLAGS = $(INCLUDE_DIRS) \
 		-DNDEBUG=1 \
 		-DNOMINMAX \
 		-DIS_BUILD \
-		-DENABLE_INSPECTOR_ALTERNATE_DISPATCHERS=1 \
 		-DBUILDING_JSCONLY__ \
 		-DASSERT_ENABLED=0 \
 		-fvisibility=hidden \
@@ -763,12 +770,12 @@ fetch-debug:
 .PHONY: httpbench-debug
 httpbench-debug:
 	$(ZIG) build httpbench-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(DEBUG_PACKAGE_DIR)/httpbench.o -fuse-ld=lld -g -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 
 .PHONY: httpbench-release
 httpbench-release:
 	$(ZIG) build -Drelease-fast httpbench-obj
-	$(CXX) $(PACKAGE_DIR)/httpbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/httpbench.o -march=native -mtune=native -fuse-ld=lld  -g $(OPTIMIZATION_LEVEL) -o ./misctools/http_bench $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/httpbench.o
 
 .PHONY: check-glibc-version-dependency
@@ -1114,6 +1121,7 @@ jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/LazyPropertyInlines.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/LazyPropertyInlines.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSTypedArrayViewPrototype.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSTypedArrayViewPrototype.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSTypedArrayPrototypes.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSTypedArrayPrototypes.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSModuleNamespaceObject.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JIT.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JIT.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StructureStubInfo.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StructureStubInfo.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/PolymorphicAccess.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/PolymorphicAccess.h
@@ -1144,6 +1152,10 @@ jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JSInterfaceJIT.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSInterfaceJIT.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/llint/LLIntData.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/LLIntData.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/FunctionCodeBlock.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/FunctionCodeBlock.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/dfg/DFGAbstractHeap.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DFGAbstractHeap.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/OperandsInlines.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/OperandsInlines.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/Operands.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/Operands.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/domjit/DOMJITHeapRange.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DOMJITHeapRange.h
 	find $(WEBKIT_RELEASE_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
 # This is a workaround for a JSC bug that impacts aarch64
@@ -1170,7 +1182,6 @@ jsc-build-mac-compile:
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
 			-DPTHREAD_JIT_PERMISSIONS_API=1 \
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
-			-DENABLE_REMOTE_INSPECTOR=ON \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR) && \
 	CFLAGS="$(CFLAGS) $(BITCODE_OR_SECTIONS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) $(BITCODE_OR_SECTIONS)  -ffat-lto-objects" \
@@ -1194,7 +1205,6 @@ jsc-build-mac-compile-lto:
 			$(CMAKE_FLAGS_WITHOUT_RELEASE) \
 			-DPTHREAD_JIT_PERMISSIONS_API=1 \
 			-DUSE_PTHREAD_JIT_PERMISSIONS_API=ON \
-			-DENABLE_REMOTE_INSPECTOR=ON \
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR_LTO) && \
 	CFLAGS="$(CFLAGS) -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -ffat-lto-objects" \
@@ -1277,8 +1287,8 @@ clean: clean-bindings
 	(cd $(BUN_DEPS_DIR)/picohttp && make clean) || echo "";
 	(cd $(BUN_DEPS_DIR)/zlib && make clean) || echo "";
 
-release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(BUILTINS_OBJ_FILES)
-bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES)
+release-bindings: $(OBJ_DIR) $(OBJ_FILES) $(WEBCORE_OBJ_FILES) $(SQLITE_OBJ_FILES) $(NODE_OS_OBJ_FILES) $(BUILTINS_OBJ_FILES)
+bindings: $(DEBUG_OBJ_DIR) $(DEBUG_OBJ_FILES) $(DEBUG_WEBCORE_OBJ_FILES) $(DEBUG_SQLITE_OBJ_FILES) $(DEBUG_NODE_OS_OBJ_FILES) $(DEBUG_BUILTINS_OBJ_FILES)
 
 .PHONY: jsc-bindings-mac
 jsc-bindings-mac: bindings
@@ -1404,12 +1414,18 @@ bun-relink-fast: bun-relink-copy bun-link-lld-release-no-lto
 wasm-return1:
 	zig build-lib -OReleaseSmall test/bun.js/wasm-return-1-test.zig -femit-bin=test/bun.js/wasm-return-1-test.wasm -target wasm32-freestanding
 
+generate-classes:
+	bun src/bun.js/scripts/generate-classes.ts
+	$(ZIG) fmt src/bun.js/bindings/generated_classes.zig
+
 generate-sink:
-	bun src/bun.js/generate-jssink.js
+	bun src/bun.js/scripts/generate-jssink.js
 	$(WEBKIT_DIR)/Source/JavaScriptCore/create_hash_table src/bun.js/bindings/JSSink.cpp > src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/#include "Lookup.h"//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/namespace JSC {//' src/bun.js/bindings/JSSinkLookupTable.h
 	$(SED) -i -e 's/} \/\/ namespace JSC//' src/bun.js/bindings/JSSinkLookupTable.h
+
+codegen: generate-sink generate-classes
 
 EMIT_LLVM_FOR_RELEASE=-emit-llvm -flto="full"
 EMIT_LLVM_FOR_DEBUG=
@@ -1431,7 +1447,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM) \
-		-g3 -c -o $@ $<
+		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
@@ -1441,7 +1457,7 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM) \
-		-g3 -c -o $@ $<
+		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
@@ -1451,7 +1467,17 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM) \
-		-g3 -c -o $@ $<
+		-c -o $@ $<
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM) \
+		-c -o $@ $<
 
 $(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
@@ -1461,14 +1487,14 @@ $(OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 		-fno-rtti \
 		-ferror-limit=1000 \
 		$(EMIT_LLVM) \
-		-g3 -c -o $@ $<
+		-c -o $@ $<
 
 # $(DEBUG_OBJ_DIR) is not included here because it breaks
 # detecting if a file needs to be rebuilt
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) $(CLANG_FLAGS) $(UWS_INCLUDE) \
 		$(MACOS_MIN_FLAG) \
-		$(OPTIMIZATION_LEVEL) \
+		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1480,7 +1506,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
-		$(OPTIMIZATION_LEVEL) \
+		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1492,7 +1518,19 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/webcore/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
-		$(OPTIMIZATION_LEVEL) \
+		$(DEBUG_OPTIMIZATION_LEVEL) \
+		-fno-exceptions \
+		-fno-rtti \
+		-ferror-limit=1000 \
+		$(EMIT_LLVM_FOR_DEBUG) \
+		-g3 -c -o $@ $<
+
+# $(DEBUG_OBJ_DIR) is not included here because it breaks
+# detecting if a file needs to be rebuilt
+$(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/node_os/%.cpp
+	$(CXX) $(CLANG_FLAGS) \
+		$(MACOS_MIN_FLAG) \
+		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1504,7 +1542,7 @@ $(DEBUG_OBJ_DIR)/%.o: $(SRC_DIR)/sqlite/%.cpp
 $(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 	$(CXX) $(CLANG_FLAGS) \
 		$(MACOS_MIN_FLAG) \
-		$(OPTIMIZATION_LEVEL) \
+		$(DEBUG_OPTIMIZATION_LEVEL) \
 		-fno-exceptions \
 		-fno-rtti \
 		-ferror-limit=1000 \
@@ -1512,7 +1550,8 @@ $(DEBUG_OBJ_DIR)/%.o: src/bun.js/builtins/%.cpp
 		-g3 -c -o $@ $<
 
 sizegen:
-	$(CXX) src/bun.js/headergen/sizegen.cpp -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1
+	mkdir -p $(BUN_TMP_DIR)
+	$(CXX) src/bun.js/headergen/sizegen.cpp -Wl,-dead_strip -Wl,-dead_strip_dylibs -fuse-ld=lld -o $(BUN_TMP_DIR)/sizegen $(CLANG_FLAGS) -O1 
 	$(BUN_TMP_DIR)/sizegen > src/bun.js/bindings/sizes.zig
 
 

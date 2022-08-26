@@ -328,7 +328,7 @@ pub fn build(b: *std.build.Builder) !void {
                 break :sha;
             };
 
-            git_sha = std.heap.page_allocator.dupeZ(u8, result.stdout) catch unreachable;
+            git_sha = std.heap.page_allocator.dupeZ(u8, std.mem.trim(u8, result.stdout, "\n \t")) catch unreachable;
         }
     }
 

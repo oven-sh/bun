@@ -129,12 +129,6 @@ template<> void JSAbortSignalDOMConstructor::initializeProperties(VM& vm, JSDOMG
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     putDirect(vm, vm.propertyNames->prototype, JSAbortSignal::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
     reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalConstructorTableValues, *this);
-    if (!(jsCast<JSDOMGlobalObject*>(&globalObject)->scriptExecutionContext()->isDocument() || jsCast<JSDOMGlobalObject*>(&globalObject)->scriptExecutionContext()->isWorkerGlobalScope())) {
-        auto propertyName = Identifier::fromString(vm, reinterpret_cast<const LChar*>("timeout"), strlen("timeout"));
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, &globalObject, propertyName, slot);
-    }
 }
 
 /* Hash table for prototype */
@@ -153,7 +147,7 @@ void JSAbortSignalPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSAbortSignal::info(), JSAbortSignalPrototypeTableValues, *this);
-    putDirect(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().whenSignalAbortedPrivateName(), JSFunction::create(vm, globalObject(), 0, String(), jsAbortSignalConstructorFunction_whenSignalAborted), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
+    putDirect(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().whenSignalAbortedPrivateName(), JSFunction::create(vm, globalObject(), 0, String(), jsAbortSignalConstructorFunction_whenSignalAborted, ImplementationVisibility::Public), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 

@@ -148,6 +148,16 @@ static const WTF::String toString(ZigString str)
             reinterpret_cast<const UChar*>(untag(str.ptr)), str.len));
 }
 
+static WTF::AtomString toAtomString(ZigString str)
+{
+
+    if (!isTaggedUTF16Ptr(str.ptr)) {
+        return makeAtomString(untag(str.ptr), str.len);
+    } else {
+        return makeAtomString(reinterpret_cast<const UChar*>(untag(str.ptr)), str.len);
+    }
+}
+
 static const WTF::String toString(ZigString str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {

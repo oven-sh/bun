@@ -37,7 +37,6 @@ fn notimpl() noreturn {
 pub var emptyJavaScriptString = ([_]u16{0});
 
 pub const JSONOptions = struct {
-
     /// Enable JSON-specific warnings/errors
     is_json: bool = false,
 
@@ -46,7 +45,7 @@ pub const JSONOptions = struct {
     allow_trailing_commas: bool = false,
 
     /// Loading JSON-in-JSON may start like \\""\\"
-    /// This is technically invalid, since we parse from the first value of the string 
+    /// This is technically invalid, since we parse from the first value of the string
     ignore_leading_escape_sequences: bool = false,
     ignore_trailing_escape_sequences: bool = false,
 

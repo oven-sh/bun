@@ -17,6 +17,7 @@ public:
 
     /* --- bun --- */
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBuffer;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBufferList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiPrototype;
@@ -25,6 +26,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSinkConstructor;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSinkController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSink;
+#include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMException;
@@ -880,5 +882,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEvent;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventListener;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventTarget;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventEmitter;
 };
 } // namespace WebCore

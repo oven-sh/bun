@@ -1,12 +1,14 @@
 // --- FFIType ---
 
-export const ptr = globalThis.Bun.FFI.ptr;
-export const toBuffer = globalThis.Bun.FFI.toBuffer;
-export const toArrayBuffer = globalThis.Bun.FFI.toArrayBuffer;
-export const viewSource = globalThis.Bun.FFI.viewSource;
+var ffi = globalThis.Bun.FFI;
+export const ptr = (arg1, arg2) =>
+  typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2);
+export const toBuffer = ffi.toBuffer;
+export const toArrayBuffer = ffi.toArrayBuffer;
+export const viewSource = ffi.viewSource;
 
-const BunCString = globalThis.Bun.FFI.CString;
-const nativeLinkSymbols = globalThis.Bun.FFI.linkSymbols;
+const BunCString = ffi.CString;
+const nativeLinkSymbols = ffi.linkSymbols;
 
 export class CString extends String {
   constructor(ptr, byteOffset, byteLength) {
@@ -289,8 +291,8 @@ function FFIBuilder(params, returnType, functionToCall, name) {
   return wrap;
 }
 
-const nativeDLOpen = globalThis.Bun.FFI.dlopen;
-const nativeCallback = globalThis.Bun.FFI.callback;
+const nativeDLOpen = ffi.dlopen;
+const nativeCallback = ffi.callback;
 export const native = {
   dlopen: nativeDLOpen,
   callback: nativeCallback,

@@ -20,7 +20,7 @@ extern "C" JSC::EncodedJSValue Bun__encoding__toStringLatin1(const uint8_t* inpu
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringHex(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringBase64(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringURLSafeBase64(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
-extern "C" void Bun__Buffer_fill(JSC::JSGlobalObject*, Bun__ArrayBuffer*, ZigString*, uint32_t, uint32_t, WebCore::BufferEncodingType);
+extern "C" void Bun__Buffer_fill(ZigString*, void*, size_t, WebCore::BufferEncodingType);
 
 namespace WebCore {
 

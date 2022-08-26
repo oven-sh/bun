@@ -389,7 +389,7 @@ var out_buffer: MutableString = undefined;
 var event_list: EventList = undefined;
 fn readloop() anyerror!void {
     defer disabled = true;
-    Output.Source.configureNamedThread(thread, "Analytics");
+    Output.Source.configureNamedThread("Analytics");
     defer Output.flush();
 
     event_list = EventList.init();

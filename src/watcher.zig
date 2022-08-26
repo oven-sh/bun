@@ -348,7 +348,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         // This must only be called from the watcher thread
         pub fn watchLoop(this: *Watcher) !void {
             this.watchloop_handle = std.Thread.getCurrentId();
-            Output.Source.configureNamedThread(this.thread, "File Watcher");
+            Output.Source.configureNamedThread("File Watcher");
 
             defer Output.flush();
             if (FeatureFlags.verbose_watcher) Output.prettyln("Watcher started", .{});

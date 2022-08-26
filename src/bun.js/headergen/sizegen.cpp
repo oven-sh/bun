@@ -14,6 +14,7 @@ using namespace std;
 #include "headers-cpp.h"
 
 #include "JavaScriptCore/CallFrame.h"
+#include "JavaScriptCore/JSArrayBufferViewInlines.h"
 
 int main() {
   time_t rawtime;
@@ -49,12 +50,40 @@ int main() {
           "in the output. That's how all the bJSC__.* types are created - from "
           "these values. \n";
   int i = 0;
-  int len = sizeof(sizes) / sizeof(sizes[0]);
+  int len = 31 - 3;
   for (i = 0; i < len; i++) {
     cout << "pub const " << names[i] << " = " << sizes[i] << ";\n";
     cout << "pub const " << names[i] << "_align = " << aligns[i] << ";\n";
   }
-  cout << "pub const Bun_FFI_PointerOffsetToArgumentsList = << "
+  cout << "pub const Bun_FFI_PointerOffsetToArgumentsList = "
        << JSC::CallFrame::argumentOffset(0) << ";\n";
+  cout << "pub const Bun_FFI_PointerOffsetToTypedArrayVector = "
+       << JSC::JSArrayBufferView::offsetOfVector() << ";\n";
+  cout << "pub const Bun_FFI_PointerOffsetToTypedArrayLength = "
+       << JSC::JSArrayBufferView::offsetOfLength() << ";\n";
+  cout << "pub const Bun_CallFrame__codeBlock = ";
+
+  cout << static_cast<int>(JSC::CallFrameSlot::codeBlock) << ";\n";
+  cout << "pub const Bun_CallFrame__callee = ";
+
+  cout << static_cast<int>(JSC::CallFrameSlot::callee) << ";\n";
+  cout << "pub const Bun_CallFrame__argumentCountIncludingThis = ";
+
+  cout << static_cast<int>(JSC::CallFrameSlot::argumentCountIncludingThis)
+       << ";\n";
+  cout << "pub const Bun_CallFrame__thisArgument = ";
+
+  cout << static_cast<int>(JSC::CallFrameSlot::thisArgument) << ";\n";
+  cout << "pub const Bun_CallFrame__firstArgument = ";
+
+  cout << static_cast<int>(JSC::CallFrameSlot::firstArgument) << ";\n";
+
+  cout << "pub const Bun_CallFrame__size = ";
+
+  cout << sizeof(JSC::CallFrame) << ";\n";
+
+  cout << "pub const Bun_CallFrame__align = ";
+
+  cout << alignof(JSC::CallFrame) << ";\n";
   return 0;
 }

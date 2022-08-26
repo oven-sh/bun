@@ -88,7 +88,7 @@ pub const Source = struct {
         source = Source.init(stdout_stream, stderr_stream);
     }
 
-    pub fn configureNamedThread(_: std.Thread, name: StringTypes.stringZ) void {
+    pub fn configureNamedThread(name: StringTypes.stringZ) void {
         Global.setThreadName(name);
         configureThread();
     }

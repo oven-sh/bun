@@ -2149,7 +2149,7 @@ const GitHandler = struct {
         PATH: string,
         verbose: bool,
     ) void {
-        Output.Source.configureNamedThread(thread, "git");
+        Output.Source.configureNamedThread("git");
         defer Output.flush();
         const outcome = if (verbose)
             run(destination, PATH, true) catch false

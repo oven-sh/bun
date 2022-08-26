@@ -694,14 +694,16 @@ pub const UpgradeCommand = struct {
                     \\
                     \\    https://github.com/oven-sh/bun/issues
                     \\
-                    \\What's new:
+                    \\Changelog:
                     \\
-                    \\    <cyan>https://github.com/oven-sh/bun/releases/tag/{s}<r>
+                    \\    https://github.com/oven-sh/bun/compare/{s}...main
                     \\
                 ,
-                    .{version.tag},
+                    .{Environment.git_sha},
                 );
             } else {
+                const bun_v = "bun-v" ++ Global.package_json_version;
+
                 Output.prettyErrorln(
                     \\<r> Upgraded.
                     \\
@@ -715,8 +717,12 @@ pub const UpgradeCommand = struct {
                     \\
                     \\    <cyan>https://github.com/oven-sh/bun/releases/tag/{s}<r>
                     \\
+                    \\Changelog:
+                    \\
+                    \\    https://github.com/oven-sh/bun/compare/{s}...{s}
+                    \\
                 ,
-                    .{ version_name, version.tag },
+                    .{ version_name, version.tag, bun_v, version.tag },
                 );
             }
 

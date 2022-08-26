@@ -1,5 +1,5 @@
-/* C++ code produced by gperf version 3.0.3 */
-/* Command-line: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/gperf --key-positions='*' -D -n -s 2 --output-file=HTTPHeaderNames.cpp HTTPHeaderNames.gperf  */
+/* C++ code produced by gperf version 3.1 */
+/* Command-line: /opt/homebrew/bin/gperf --key-positions='*' -D -n -s 2 --output-file=HTTPHeaderNames.cpp HTTPHeaderNames.gperf  */
 
 #if !((' ' == 32) && ('!' == 33) && ('"' == 34) && ('#' == 35) \
       && ('%' == 37) && ('&' == 38) && ('\'' == 39) && ('(' == 40) \
@@ -25,7 +25,7 @@
       && ('w' == 119) && ('x' == 120) && ('y' == 121) && ('z' == 122) \
       && ('{' == 123) && ('|' == 124) && ('}' == 125) && ('~' == 126))
 /* The character set is not based on ISO-646.  */
-#error "gperf generated tables don't work with this execution character set. Please report a bug to <bug-gnu-gperf@gnu.org>."
+#error "gperf generated tables don't work with this execution character set. Please report a bug to <bug-gperf@gnu.org>."
 #endif
 
 #line 2 "HTTPHeaderNames.gperf"
@@ -150,6 +150,7 @@ static const struct HeaderNameString {
     { "Set-Cookie", 10 },
     { "Set-Cookie2", 11 },
     { "SourceMap", 9 },
+    { "Strict-Transport-Security", 25 },
     { "TE", 2 },
     { "Timing-Allow-Origin", 19 },
     { "Trailer", 7 },
@@ -168,21 +169,21 @@ static const struct HeaderNameString {
 };
 
 
-#line 149 "HTTPHeaderNames.gperf"
+#line 150 "HTTPHeaderNames.gperf"
 struct HeaderNameHashEntry {
     const char* name;
     HTTPHeaderName headerName;
 };
 enum
   {
-    TOTAL_KEYWORDS = 92,
+    TOTAL_KEYWORDS = 93,
     MIN_WORD_LENGTH = 2,
     MAX_WORD_LENGTH = 40,
     MIN_HASH_VALUE = 5,
-    MAX_HASH_VALUE = 815
+    MAX_HASH_VALUE = 709
   };
 
-/* maximum key range = 811, duplicates = 0 */
+/* maximum key range = 705, duplicates = 0 */
 
 #ifndef GPERF_DOWNCASE
 #define GPERF_DOWNCASE 1
@@ -212,7 +213,7 @@ static unsigned char gperf_downcase[256] =
 #ifndef GPERF_CASE_STRNCMP
 #define GPERF_CASE_STRNCMP 1
 static int
-gperf_case_strncmp (register const char *s1, register const char *s2, register unsigned int n)
+gperf_case_strncmp (const char *s1, const char *s2, size_t n)
 {
   for (; n > 0;)
     {
@@ -232,166 +233,166 @@ gperf_case_strncmp (register const char *s1, register const char *s2, register u
 class HTTPHeaderNamesHash
 {
 private:
-  static inline unsigned int header_name_hash_function (const char *str, unsigned int len);
+  static inline unsigned int header_name_hash_function (const char *str, size_t len);
 public:
-  static const struct HeaderNameHashEntry *findHeaderNameImpl (const char *str, unsigned int len);
+  static const struct HeaderNameHashEntry *findHeaderNameImpl (const char *str, size_t len);
 };
 
 inline unsigned int
-HTTPHeaderNamesHash::header_name_hash_function (register const char *str, register unsigned int len)
+HTTPHeaderNamesHash::header_name_hash_function (const char *str, size_t len)
 {
   static const unsigned short asso_values[] =
     {
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816,   0, 816, 816, 816, 816,
-        5, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816,   0,  40,   0, 115,   0,
-      120,  10, 155,   5, 816,   4,  45, 155,   5,   0,
-       30,   0,   5,  60,   5,   5, 135,  55,  50,  15,
-       60, 816, 816, 816, 816, 816, 816,   0,  40,   0,
-      115,   0, 120,  10, 155,   5, 816,   4,  45, 155,
-        5,   0,  30,   0,   5,  60,   5,   5, 135,  55,
-       50,  15,  60, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816, 816, 816, 816, 816,
-      816, 816, 816, 816, 816, 816
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710,   0, 710, 710, 710, 710,
+        5, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710,   0,  35,   0,  95,   0,
+      120,  10, 210,   5, 710,   4,  45, 115,   5,   0,
+       30,   0,   5,  20,   5,  25, 195,  65, 115,  30,
+       50, 710, 710, 710, 710, 710, 710,   0,  35,   0,
+       95,   0, 120,  10, 210,   5, 710,   4,  45, 115,
+        5,   0,  30,   0,   5,  20,   5,  25, 195,  65,
+      115,  30,  50, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710, 710, 710, 710, 710,
+      710, 710, 710, 710, 710, 710
     };
-  register unsigned int hval = 0;
+  unsigned int hval = 0;
 
   switch (len)
     {
       default:
-        hval += asso_values[(unsigned char)str[39]];
+        hval += asso_values[static_cast<unsigned char>(str[39])];
       /*FALLTHROUGH*/
       case 39:
-        hval += asso_values[(unsigned char)str[38]];
+        hval += asso_values[static_cast<unsigned char>(str[38])];
       /*FALLTHROUGH*/
       case 38:
-        hval += asso_values[(unsigned char)str[37]];
+        hval += asso_values[static_cast<unsigned char>(str[37])];
       /*FALLTHROUGH*/
       case 37:
-        hval += asso_values[(unsigned char)str[36]];
+        hval += asso_values[static_cast<unsigned char>(str[36])];
       /*FALLTHROUGH*/
       case 36:
-        hval += asso_values[(unsigned char)str[35]];
+        hval += asso_values[static_cast<unsigned char>(str[35])];
       /*FALLTHROUGH*/
       case 35:
-        hval += asso_values[(unsigned char)str[34]];
+        hval += asso_values[static_cast<unsigned char>(str[34])];
       /*FALLTHROUGH*/
       case 34:
-        hval += asso_values[(unsigned char)str[33]];
+        hval += asso_values[static_cast<unsigned char>(str[33])];
       /*FALLTHROUGH*/
       case 33:
-        hval += asso_values[(unsigned char)str[32]];
+        hval += asso_values[static_cast<unsigned char>(str[32])];
       /*FALLTHROUGH*/
       case 32:
-        hval += asso_values[(unsigned char)str[31]];
+        hval += asso_values[static_cast<unsigned char>(str[31])];
       /*FALLTHROUGH*/
       case 31:
-        hval += asso_values[(unsigned char)str[30]];
+        hval += asso_values[static_cast<unsigned char>(str[30])];
       /*FALLTHROUGH*/
       case 30:
-        hval += asso_values[(unsigned char)str[29]];
+        hval += asso_values[static_cast<unsigned char>(str[29])];
       /*FALLTHROUGH*/
       case 29:
-        hval += asso_values[(unsigned char)str[28]];
+        hval += asso_values[static_cast<unsigned char>(str[28])];
       /*FALLTHROUGH*/
       case 28:
-        hval += asso_values[(unsigned char)str[27]];
+        hval += asso_values[static_cast<unsigned char>(str[27])];
       /*FALLTHROUGH*/
       case 27:
-        hval += asso_values[(unsigned char)str[26]];
+        hval += asso_values[static_cast<unsigned char>(str[26])];
       /*FALLTHROUGH*/
       case 26:
-        hval += asso_values[(unsigned char)str[25]];
+        hval += asso_values[static_cast<unsigned char>(str[25])];
       /*FALLTHROUGH*/
       case 25:
-        hval += asso_values[(unsigned char)str[24]];
+        hval += asso_values[static_cast<unsigned char>(str[24])];
       /*FALLTHROUGH*/
       case 24:
-        hval += asso_values[(unsigned char)str[23]];
+        hval += asso_values[static_cast<unsigned char>(str[23])];
       /*FALLTHROUGH*/
       case 23:
-        hval += asso_values[(unsigned char)str[22]];
+        hval += asso_values[static_cast<unsigned char>(str[22])];
       /*FALLTHROUGH*/
       case 22:
-        hval += asso_values[(unsigned char)str[21]];
+        hval += asso_values[static_cast<unsigned char>(str[21])];
       /*FALLTHROUGH*/
       case 21:
-        hval += asso_values[(unsigned char)str[20]];
+        hval += asso_values[static_cast<unsigned char>(str[20])];
       /*FALLTHROUGH*/
       case 20:
-        hval += asso_values[(unsigned char)str[19]];
+        hval += asso_values[static_cast<unsigned char>(str[19])];
       /*FALLTHROUGH*/
       case 19:
-        hval += asso_values[(unsigned char)str[18]];
+        hval += asso_values[static_cast<unsigned char>(str[18])];
       /*FALLTHROUGH*/
       case 18:
-        hval += asso_values[(unsigned char)str[17]];
+        hval += asso_values[static_cast<unsigned char>(str[17])];
       /*FALLTHROUGH*/
       case 17:
-        hval += asso_values[(unsigned char)str[16]];
+        hval += asso_values[static_cast<unsigned char>(str[16])];
       /*FALLTHROUGH*/
       case 16:
-        hval += asso_values[(unsigned char)str[15]];
+        hval += asso_values[static_cast<unsigned char>(str[15])];
       /*FALLTHROUGH*/
       case 15:
-        hval += asso_values[(unsigned char)str[14]];
+        hval += asso_values[static_cast<unsigned char>(str[14])];
       /*FALLTHROUGH*/
       case 14:
-        hval += asso_values[(unsigned char)str[13]];
+        hval += asso_values[static_cast<unsigned char>(str[13])];
       /*FALLTHROUGH*/
       case 13:
-        hval += asso_values[(unsigned char)str[12]];
+        hval += asso_values[static_cast<unsigned char>(str[12])];
       /*FALLTHROUGH*/
       case 12:
-        hval += asso_values[(unsigned char)str[11]];
+        hval += asso_values[static_cast<unsigned char>(str[11])];
       /*FALLTHROUGH*/
       case 11:
-        hval += asso_values[(unsigned char)str[10]];
+        hval += asso_values[static_cast<unsigned char>(str[10])];
       /*FALLTHROUGH*/
       case 10:
-        hval += asso_values[(unsigned char)str[9]];
+        hval += asso_values[static_cast<unsigned char>(str[9])];
       /*FALLTHROUGH*/
       case 9:
-        hval += asso_values[(unsigned char)str[8]];
+        hval += asso_values[static_cast<unsigned char>(str[8])];
       /*FALLTHROUGH*/
       case 8:
-        hval += asso_values[(unsigned char)str[7]];
+        hval += asso_values[static_cast<unsigned char>(str[7])];
       /*FALLTHROUGH*/
       case 7:
-        hval += asso_values[(unsigned char)str[6]];
+        hval += asso_values[static_cast<unsigned char>(str[6])];
       /*FALLTHROUGH*/
       case 6:
-        hval += asso_values[(unsigned char)str[5]];
+        hval += asso_values[static_cast<unsigned char>(str[5])];
       /*FALLTHROUGH*/
       case 5:
-        hval += asso_values[(unsigned char)str[4]];
+        hval += asso_values[static_cast<unsigned char>(str[4])];
       /*FALLTHROUGH*/
       case 4:
-        hval += asso_values[(unsigned char)str[3]];
+        hval += asso_values[static_cast<unsigned char>(str[3])];
       /*FALLTHROUGH*/
       case 3:
-        hval += asso_values[(unsigned char)str[2]];
+        hval += asso_values[static_cast<unsigned char>(str[2])];
       /*FALLTHROUGH*/
       case 2:
-        hval += asso_values[(unsigned char)str[1]];
+        hval += asso_values[static_cast<unsigned char>(str[1])];
       /*FALLTHROUGH*/
       case 1:
-        hval += asso_values[(unsigned char)str[0]];
+        hval += asso_values[static_cast<unsigned char>(str[0])];
         break;
     }
   return hval;
@@ -399,257 +400,251 @@ HTTPHeaderNamesHash::header_name_hash_function (register const char *str, regist
 
 static const struct HeaderNameHashEntry header_name_wordlist[] =
   {
-#line 236 "HTTPHeaderNames.gperf"
-    {"TE", HTTPHeaderName::TE},
-#line 185 "HTTPHeaderNames.gperf"
-    {"Cookie", HTTPHeaderName::Cookie},
-#line 172 "HTTPHeaderNames.gperf"
-    {"Age", HTTPHeaderName::Age},
-#line 186 "HTTPHeaderNames.gperf"
-    {"Cookie2", HTTPHeaderName::Cookie2},
-#line 195 "HTTPHeaderNames.gperf"
-    {"ETag", HTTPHeaderName::ETag},
-#line 217 "HTTPHeaderNames.gperf"
-    {"Range", HTTPHeaderName::Range},
-#line 175 "HTTPHeaderNames.gperf"
-    {"Connection", HTTPHeaderName::Connection},
-#line 211 "HTTPHeaderNames.gperf"
-    {"Origin", HTTPHeaderName::Origin},
-#line 159 "HTTPHeaderNames.gperf"
-    {"Accept", HTTPHeaderName::Accept},
-#line 181 "HTTPHeaderNames.gperf"
-    {"Content-Range", HTTPHeaderName::ContentRange},
-#line 221 "HTTPHeaderNames.gperf"
-    {"Report-To", HTTPHeaderName::ReportTo},
-#line 213 "HTTPHeaderNames.gperf"
-    {"Ping-To", HTTPHeaderName::PingTo},
-#line 209 "HTTPHeaderNames.gperf"
-    {"Link", HTTPHeaderName::Link},
-#line 210 "HTTPHeaderNames.gperf"
-    {"Location", HTTPHeaderName::Location},
 #line 238 "HTTPHeaderNames.gperf"
-    {"Trailer", HTTPHeaderName::Trailer},
-#line 184 "HTTPHeaderNames.gperf"
-    {"Content-Type", HTTPHeaderName::ContentType},
-#line 233 "HTTPHeaderNames.gperf"
-    {"Set-Cookie", HTTPHeaderName::SetCookie},
-#line 234 "HTTPHeaderNames.gperf"
-    {"Set-Cookie2", HTTPHeaderName::SetCookie2},
-#line 180 "HTTPHeaderNames.gperf"
-    {"Content-Location", HTTPHeaderName::ContentLocation},
+    {"TE", HTTPHeaderName::TE},
+#line 186 "HTTPHeaderNames.gperf"
+    {"Cookie", HTTPHeaderName::Cookie},
+#line 173 "HTTPHeaderNames.gperf"
+    {"Age", HTTPHeaderName::Age},
+#line 187 "HTTPHeaderNames.gperf"
+    {"Cookie2", HTTPHeaderName::Cookie2},
 #line 196 "HTTPHeaderNames.gperf"
-    {"Expect", HTTPHeaderName::Expect},
-#line 242 "HTTPHeaderNames.gperf"
-    {"User-Agent", HTTPHeaderName::UserAgent},
-#line 178 "HTTPHeaderNames.gperf"
-    {"Content-Language", HTTPHeaderName::ContentLanguage},
-#line 162 "HTTPHeaderNames.gperf"
-    {"Accept-Language", HTTPHeaderName::AcceptLanguage},
-#line 163 "HTTPHeaderNames.gperf"
-    {"Accept-Ranges", HTTPHeaderName::AcceptRanges},
-#line 193 "HTTPHeaderNames.gperf"
-    {"Date", HTTPHeaderName::Date},
-#line 192 "HTTPHeaderNames.gperf"
-    {"DNT", HTTPHeaderName::DNT},
-#line 216 "HTTPHeaderNames.gperf"
-    {"Purpose", HTTPHeaderName::Purpose},
+    {"ETag", HTTPHeaderName::ETag},
 #line 218 "HTTPHeaderNames.gperf"
-    {"Referer", HTTPHeaderName::Referer},
+    {"Range", HTTPHeaderName::Range},
+#line 176 "HTTPHeaderNames.gperf"
+    {"Connection", HTTPHeaderName::Connection},
+#line 212 "HTTPHeaderNames.gperf"
+    {"Origin", HTTPHeaderName::Origin},
+#line 234 "HTTPHeaderNames.gperf"
+    {"Set-Cookie", HTTPHeaderName::SetCookie},
+#line 160 "HTTPHeaderNames.gperf"
+    {"Accept", HTTPHeaderName::Accept},
+#line 235 "HTTPHeaderNames.gperf"
+    {"Set-Cookie2", HTTPHeaderName::SetCookie2},
+#line 182 "HTTPHeaderNames.gperf"
+    {"Content-Range", HTTPHeaderName::ContentRange},
+#line 222 "HTTPHeaderNames.gperf"
+    {"Report-To", HTTPHeaderName::ReportTo},
+#line 214 "HTTPHeaderNames.gperf"
+    {"Ping-To", HTTPHeaderName::PingTo},
+#line 210 "HTTPHeaderNames.gperf"
+    {"Link", HTTPHeaderName::Link},
+#line 211 "HTTPHeaderNames.gperf"
+    {"Location", HTTPHeaderName::Location},
+#line 240 "HTTPHeaderNames.gperf"
+    {"Trailer", HTTPHeaderName::Trailer},
 #line 244 "HTTPHeaderNames.gperf"
-    {"Via", HTTPHeaderName::Via},
-#line 204 "HTTPHeaderNames.gperf"
+    {"User-Agent", HTTPHeaderName::UserAgent},
+#line 164 "HTTPHeaderNames.gperf"
+    {"Accept-Ranges", HTTPHeaderName::AcceptRanges},
+#line 181 "HTTPHeaderNames.gperf"
+    {"Content-Location", HTTPHeaderName::ContentLocation},
+#line 185 "HTTPHeaderNames.gperf"
+    {"Content-Type", HTTPHeaderName::ContentType},
+#line 194 "HTTPHeaderNames.gperf"
+    {"Date", HTTPHeaderName::Date},
+#line 193 "HTTPHeaderNames.gperf"
+    {"DNT", HTTPHeaderName::DNT},
+#line 217 "HTTPHeaderNames.gperf"
+    {"Purpose", HTTPHeaderName::Purpose},
+#line 179 "HTTPHeaderNames.gperf"
+    {"Content-Language", HTTPHeaderName::ContentLanguage},
+#line 163 "HTTPHeaderNames.gperf"
+    {"Accept-Language", HTTPHeaderName::AcceptLanguage},
+#line 219 "HTTPHeaderNames.gperf"
+    {"Referer", HTTPHeaderName::Referer},
+#line 178 "HTTPHeaderNames.gperf"
+    {"Content-Encoding", HTTPHeaderName::ContentEncoding},
+#line 205 "HTTPHeaderNames.gperf"
     {"If-Range", HTTPHeaderName::IfRange},
 #line 197 "HTTPHeaderNames.gperf"
-    {"Expires", HTTPHeaderName::Expires},
-#line 243 "HTTPHeaderNames.gperf"
-    {"Vary", HTTPHeaderName::Vary},
-#line 177 "HTTPHeaderNames.gperf"
-    {"Content-Encoding", HTTPHeaderName::ContentEncoding},
-#line 240 "HTTPHeaderNames.gperf"
-    {"Upgrade", HTTPHeaderName::Upgrade},
-#line 161 "HTTPHeaderNames.gperf"
+    {"Expect", HTTPHeaderName::Expect},
+#line 162 "HTTPHeaderNames.gperf"
     {"Accept-Encoding", HTTPHeaderName::AcceptEncoding},
-#line 199 "HTTPHeaderNames.gperf"
-    {"Icy-MetaInt", HTTPHeaderName::IcyMetaInt},
-#line 214 "HTTPHeaderNames.gperf"
+#line 215 "HTTPHeaderNames.gperf"
     {"Pragma", HTTPHeaderName::Pragma},
-#line 182 "HTTPHeaderNames.gperf"
-    {"Content-Security-Policy", HTTPHeaderName::ContentSecurityPolicy},
-#line 174 "HTTPHeaderNames.gperf"
-    {"Cache-Control", HTTPHeaderName::CacheControl},
-#line 206 "HTTPHeaderNames.gperf"
-    {"Keep-Alive", HTTPHeaderName::KeepAlive},
-#line 198 "HTTPHeaderNames.gperf"
-    {"Host", HTTPHeaderName::Host},
-#line 245 "HTTPHeaderNames.gperf"
-    {"X-Content-Type-Options", HTTPHeaderName::XContentTypeOptions},
-#line 219 "HTTPHeaderNames.gperf"
-    {"Referrer-Policy", HTTPHeaderName::ReferrerPolicy},
-#line 179 "HTTPHeaderNames.gperf"
-    {"Content-Length", HTTPHeaderName::ContentLength},
-#line 226 "HTTPHeaderNames.gperf"
-    {"Sec-WebSocket-Key", HTTPHeaderName::SecWebSocketKey},
-#line 173 "HTTPHeaderNames.gperf"
-    {"Authorization", HTTPHeaderName::Authorization},
-#line 235 "HTTPHeaderNames.gperf"
-    {"SourceMap", HTTPHeaderName::SourceMap},
-#line 224 "HTTPHeaderNames.gperf"
-    {"Sec-WebSocket-Accept", HTTPHeaderName::SecWebSocketAccept},
-#line 160 "HTTPHeaderNames.gperf"
-    {"Accept-Charset", HTTPHeaderName::AcceptCharset},
-#line 230 "HTTPHeaderNames.gperf"
-    {"Service-Worker", HTTPHeaderName::ServiceWorker},
-#line 250 "HTTPHeaderNames.gperf"
-    {"X-XSS-Protection", HTTPHeaderName::XXSSProtection},
-#line 189 "HTTPHeaderNames.gperf"
-    {"Cross-Origin-Opener-Policy", HTTPHeaderName::CrossOriginOpenerPolicy},
+#line 242 "HTTPHeaderNames.gperf"
+    {"Upgrade", HTTPHeaderName::Upgrade},
 #line 200 "HTTPHeaderNames.gperf"
-    {"Icy-Metadata", HTTPHeaderName::IcyMetadata},
-#line 248 "HTTPHeaderNames.gperf"
-    {"X-SourceMap", HTTPHeaderName::XSourceMap},
+    {"Icy-MetaInt", HTTPHeaderName::IcyMetaInt},
+#line 198 "HTTPHeaderNames.gperf"
+    {"Expires", HTTPHeaderName::Expires},
 #line 227 "HTTPHeaderNames.gperf"
-    {"Sec-WebSocket-Protocol", HTTPHeaderName::SecWebSocketProtocol},
-#line 176 "HTTPHeaderNames.gperf"
+    {"Sec-WebSocket-Key", HTTPHeaderName::SecWebSocketKey},
+#line 225 "HTTPHeaderNames.gperf"
+    {"Sec-WebSocket-Accept", HTTPHeaderName::SecWebSocketAccept},
+#line 236 "HTTPHeaderNames.gperf"
+    {"SourceMap", HTTPHeaderName::SourceMap},
+#line 246 "HTTPHeaderNames.gperf"
+    {"Via", HTTPHeaderName::Via},
+#line 237 "HTTPHeaderNames.gperf"
+    {"Strict-Transport-Security", HTTPHeaderName::StrictTransportSecurity},
+#line 177 "HTTPHeaderNames.gperf"
     {"Content-Disposition", HTTPHeaderName::ContentDisposition},
 #line 183 "HTTPHeaderNames.gperf"
+    {"Content-Security-Policy", HTTPHeaderName::ContentSecurityPolicy},
+#line 190 "HTTPHeaderNames.gperf"
+    {"Cross-Origin-Opener-Policy", HTTPHeaderName::CrossOriginOpenerPolicy},
+#line 245 "HTTPHeaderNames.gperf"
+    {"Vary", HTTPHeaderName::Vary},
+#line 228 "HTTPHeaderNames.gperf"
+    {"Sec-WebSocket-Protocol", HTTPHeaderName::SecWebSocketProtocol},
+#line 199 "HTTPHeaderNames.gperf"
+    {"Host", HTTPHeaderName::Host},
+#line 192 "HTTPHeaderNames.gperf"
+    {"Cross-Origin-Resource-Policy", HTTPHeaderName::CrossOriginResourcePolicy},
+#line 220 "HTTPHeaderNames.gperf"
+    {"Referrer-Policy", HTTPHeaderName::ReferrerPolicy},
+#line 201 "HTTPHeaderNames.gperf"
+    {"Icy-Metadata", HTTPHeaderName::IcyMetadata},
+#line 247 "HTTPHeaderNames.gperf"
+    {"X-Content-Type-Options", HTTPHeaderName::XContentTypeOptions},
+#line 175 "HTTPHeaderNames.gperf"
+    {"Cache-Control", HTTPHeaderName::CacheControl},
+#line 161 "HTTPHeaderNames.gperf"
+    {"Accept-Charset", HTTPHeaderName::AcceptCharset},
+#line 207 "HTTPHeaderNames.gperf"
+    {"Keep-Alive", HTTPHeaderName::KeepAlive},
+#line 241 "HTTPHeaderNames.gperf"
+    {"Transfer-Encoding", HTTPHeaderName::TransferEncoding},
+#line 168 "HTTPHeaderNames.gperf"
+    {"Access-Control-Allow-Origin", HTTPHeaderName::AccessControlAllowOrigin},
+#line 213 "HTTPHeaderNames.gperf"
+    {"Ping-From", HTTPHeaderName::PingFrom},
+#line 180 "HTTPHeaderNames.gperf"
+    {"Content-Length", HTTPHeaderName::ContentLength},
+#line 243 "HTTPHeaderNames.gperf"
+    {"Upgrade-Insecure-Requests", HTTPHeaderName::UpgradeInsecureRequests},
+#line 231 "HTTPHeaderNames.gperf"
+    {"Service-Worker", HTTPHeaderName::ServiceWorker},
+#line 250 "HTTPHeaderNames.gperf"
+    {"X-SourceMap", HTTPHeaderName::XSourceMap},
+#line 174 "HTTPHeaderNames.gperf"
+    {"Authorization", HTTPHeaderName::Authorization},
+#line 226 "HTTPHeaderNames.gperf"
+    {"Sec-WebSocket-Extensions", HTTPHeaderName::SecWebSocketExtensions},
+#line 252 "HTTPHeaderNames.gperf"
+    {"X-XSS-Protection", HTTPHeaderName::XXSSProtection},
+#line 239 "HTTPHeaderNames.gperf"
+    {"Timing-Allow-Origin", HTTPHeaderName::TimingAllowOrigin},
+#line 170 "HTTPHeaderNames.gperf"
+    {"Access-Control-Max-Age", HTTPHeaderName::AccessControlMaxAge},
+#line 184 "HTTPHeaderNames.gperf"
     {"Content-Security-Policy-Report-Only", HTTPHeaderName::ContentSecurityPolicyReportOnly},
 #line 191 "HTTPHeaderNames.gperf"
-    {"Cross-Origin-Resource-Policy", HTTPHeaderName::CrossOriginResourcePolicy},
-#line 212 "HTTPHeaderNames.gperf"
-    {"Ping-From", HTTPHeaderName::PingFrom},
-#line 249 "HTTPHeaderNames.gperf"
-    {"X-Temp-Tablet", HTTPHeaderName::XTempTablet},
-#line 239 "HTTPHeaderNames.gperf"
-    {"Transfer-Encoding", HTTPHeaderName::TransferEncoding},
-#line 220 "HTTPHeaderNames.gperf"
-    {"Refresh", HTTPHeaderName::Refresh},
-#line 215 "HTTPHeaderNames.gperf"
-    {"Proxy-Authorization", HTTPHeaderName::ProxyAuthorization},
-#line 167 "HTTPHeaderNames.gperf"
-    {"Access-Control-Allow-Origin", HTTPHeaderName::AccessControlAllowOrigin},
-#line 237 "HTTPHeaderNames.gperf"
-    {"Timing-Allow-Origin", HTTPHeaderName::TimingAllowOrigin},
-#line 207 "HTTPHeaderNames.gperf"
-    {"Last-Event-ID", HTTPHeaderName::LastEventID},
-#line 241 "HTTPHeaderNames.gperf"
-    {"Upgrade-Insecure-Requests", HTTPHeaderName::UpgradeInsecureRequests},
-#line 229 "HTTPHeaderNames.gperf"
-    {"Server-Timing", HTTPHeaderName::ServerTiming},
-#line 169 "HTTPHeaderNames.gperf"
-    {"Access-Control-Max-Age", HTTPHeaderName::AccessControlMaxAge},
-#line 190 "HTTPHeaderNames.gperf"
     {"Cross-Origin-Opener-Policy-Report-Only", HTTPHeaderName::CrossOriginOpenerPolicyReportOnly},
-#line 225 "HTTPHeaderNames.gperf"
-    {"Sec-WebSocket-Extensions", HTTPHeaderName::SecWebSocketExtensions},
-#line 194 "HTTPHeaderNames.gperf"
-    {"Default-Style", HTTPHeaderName::DefaultStyle},
-#line 228 "HTTPHeaderNames.gperf"
-    {"Sec-WebSocket-Version", HTTPHeaderName::SecWebSocketVersion},
-#line 247 "HTTPHeaderNames.gperf"
-    {"X-Frame-Options", HTTPHeaderName::XFrameOptions},
-#line 201 "HTTPHeaderNames.gperf"
-    {"If-Match", HTTPHeaderName::IfMatch},
-#line 203 "HTTPHeaderNames.gperf"
-    {"If-None-Match", HTTPHeaderName::IfNoneMatch},
-#line 222 "HTTPHeaderNames.gperf"
-    {"Sec-Fetch-Dest", HTTPHeaderName::SecFetchDest},
-#line 231 "HTTPHeaderNames.gperf"
-    {"Service-Worker-Allowed", HTTPHeaderName::ServiceWorkerAllowed},
-#line 164 "HTTPHeaderNames.gperf"
-    {"Access-Control-Allow-Credentials", HTTPHeaderName::AccessControlAllowCredentials},
-#line 170 "HTTPHeaderNames.gperf"
-    {"Access-Control-Request-Headers", HTTPHeaderName::AccessControlRequestHeaders},
-#line 246 "HTTPHeaderNames.gperf"
-    {"X-DNS-Prefetch-Control", HTTPHeaderName::XDNSPrefetchControl},
-#line 223 "HTTPHeaderNames.gperf"
-    {"Sec-Fetch-Mode", HTTPHeaderName::SecFetchMode},
+#line 251 "HTTPHeaderNames.gperf"
+    {"X-Temp-Tablet", HTTPHeaderName::XTempTablet},
+#line 221 "HTTPHeaderNames.gperf"
+    {"Refresh", HTTPHeaderName::Refresh},
+#line 230 "HTTPHeaderNames.gperf"
+    {"Server-Timing", HTTPHeaderName::ServerTiming},
 #line 208 "HTTPHeaderNames.gperf"
-    {"Last-Modified", HTTPHeaderName::LastModified},
-#line 232 "HTTPHeaderNames.gperf"
-    {"Service-Worker-Navigation-Preload", HTTPHeaderName::ServiceWorkerNavigationPreload},
-#line 168 "HTTPHeaderNames.gperf"
-    {"Access-Control-Expose-Headers", HTTPHeaderName::AccessControlExposeHeaders},
+    {"Last-Event-ID", HTTPHeaderName::LastEventID},
+#line 229 "HTTPHeaderNames.gperf"
+    {"Sec-WebSocket-Version", HTTPHeaderName::SecWebSocketVersion},
+#line 195 "HTTPHeaderNames.gperf"
+    {"Default-Style", HTTPHeaderName::DefaultStyle},
+#line 249 "HTTPHeaderNames.gperf"
+    {"X-Frame-Options", HTTPHeaderName::XFrameOptions},
 #line 165 "HTTPHeaderNames.gperf"
-    {"Access-Control-Allow-Headers", HTTPHeaderName::AccessControlAllowHeaders},
-#line 187 "HTTPHeaderNames.gperf"
-    {"Cross-Origin-Embedder-Policy", HTTPHeaderName::CrossOriginEmbedderPolicy},
-#line 171 "HTTPHeaderNames.gperf"
-    {"Access-Control-Request-Method", HTTPHeaderName::AccessControlRequestMethod},
+    {"Access-Control-Allow-Credentials", HTTPHeaderName::AccessControlAllowCredentials},
 #line 202 "HTTPHeaderNames.gperf"
-    {"If-Modified-Since", HTTPHeaderName::IfModifiedSince},
-#line 205 "HTTPHeaderNames.gperf"
-    {"If-Unmodified-Since", HTTPHeaderName::IfUnmodifiedSince},
+    {"If-Match", HTTPHeaderName::IfMatch},
+#line 204 "HTTPHeaderNames.gperf"
+    {"If-None-Match", HTTPHeaderName::IfNoneMatch},
+#line 223 "HTTPHeaderNames.gperf"
+    {"Sec-Fetch-Dest", HTTPHeaderName::SecFetchDest},
+#line 171 "HTTPHeaderNames.gperf"
+    {"Access-Control-Request-Headers", HTTPHeaderName::AccessControlRequestHeaders},
+#line 216 "HTTPHeaderNames.gperf"
+    {"Proxy-Authorization", HTTPHeaderName::ProxyAuthorization},
+#line 209 "HTTPHeaderNames.gperf"
+    {"Last-Modified", HTTPHeaderName::LastModified},
 #line 188 "HTTPHeaderNames.gperf"
-    {"Cross-Origin-Embedder-Policy-Report-Only", HTTPHeaderName::CrossOriginEmbedderPolicyReportOnly},
+    {"Cross-Origin-Embedder-Policy", HTTPHeaderName::CrossOriginEmbedderPolicy},
+#line 232 "HTTPHeaderNames.gperf"
+    {"Service-Worker-Allowed", HTTPHeaderName::ServiceWorkerAllowed},
+#line 224 "HTTPHeaderNames.gperf"
+    {"Sec-Fetch-Mode", HTTPHeaderName::SecFetchMode},
+#line 172 "HTTPHeaderNames.gperf"
+    {"Access-Control-Request-Method", HTTPHeaderName::AccessControlRequestMethod},
 #line 166 "HTTPHeaderNames.gperf"
-    {"Access-Control-Allow-Methods", HTTPHeaderName::AccessControlAllowMethods}
+    {"Access-Control-Allow-Headers", HTTPHeaderName::AccessControlAllowHeaders},
+#line 203 "HTTPHeaderNames.gperf"
+    {"If-Modified-Since", HTTPHeaderName::IfModifiedSince},
+#line 169 "HTTPHeaderNames.gperf"
+    {"Access-Control-Expose-Headers", HTTPHeaderName::AccessControlExposeHeaders},
+#line 206 "HTTPHeaderNames.gperf"
+    {"If-Unmodified-Since", HTTPHeaderName::IfUnmodifiedSince},
+#line 189 "HTTPHeaderNames.gperf"
+    {"Cross-Origin-Embedder-Policy-Report-Only", HTTPHeaderName::CrossOriginEmbedderPolicyReportOnly},
+#line 248 "HTTPHeaderNames.gperf"
+    {"X-DNS-Prefetch-Control", HTTPHeaderName::XDNSPrefetchControl},
+#line 167 "HTTPHeaderNames.gperf"
+    {"Access-Control-Allow-Methods", HTTPHeaderName::AccessControlAllowMethods},
+#line 233 "HTTPHeaderNames.gperf"
+    {"Service-Worker-Navigation-Preload", HTTPHeaderName::ServiceWorkerNavigationPreload}
   };
 
 static const signed char lookup[] =
   {
     -1, -1, -1, -1, -1,  0, -1, -1, -1,  1,  2, -1, -1, -1,
      3,  4, -1, -1, -1, -1,  5, -1, -1, -1, -1,  6, -1, -1,
-    -1, -1,  7, -1, -1, -1, -1,  8, -1, -1, -1, -1,  9, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, 10, -1, -1, -1, -1, 11,
-    -1, -1, -1, 12, 13, -1, -1, -1, -1, 14, -1, -1, -1, -1,
-    15, -1, -1, -1, 16, -1, -1, -1, -1, 17, 18, -1, -1, -1,
-    -1, 19, -1, -1, -1, -1, 20, -1, -1, -1, -1, 21, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 22, -1,
-    -1, -1, -1, 23, -1, -1, -1, -1, 24, -1, -1, -1, -1, 25,
-    -1, -1, -1, -1, 26, -1, -1, -1, -1, 27, -1, -1, -1, -1,
-    28, -1, -1, -1, -1, 29, -1, -1, -1, -1, 30, -1, -1, -1,
-    -1, 31, -1, -1, -1, -1, 32, -1, -1, -1, -1, 33, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, 34, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 35,
-    -1, -1, -1, -1, 36, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    37, -1, -1, -1, -1, 38, -1, -1, -1, 39, 40, -1, -1, -1,
-    -1, 41, -1, -1, -1, -1, -1, -1, -1, -1, -1, 42, -1, -1,
-    -1, -1, 43, -1, -1, 44, -1, -1, -1, -1, -1, -1, 45, -1,
-    -1, -1, -1, 46, -1, -1, -1, 47, 48, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, 49, 50, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 51, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, 52, -1, -1, -1, -1, 53, -1, -1,
-    -1, 54, 55, -1, -1, -1, -1, -1, -1, -1, -1, -1, 56, -1,
-    -1, -1, -1, 57, -1, -1, -1, -1, 58, -1, -1, -1, -1, 59,
-    -1, -1, -1, -1, 60, -1, -1, -1, -1, 61, -1, -1, -1, -1,
-    62, -1, -1, -1, -1, 63, -1, -1, -1, -1, 64, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 65, -1, -1,
-    -1, -1, 66, -1, -1, -1, -1, -1, -1, -1, -1, -1, 67, -1,
-    -1, -1, -1, 68, -1, -1, -1, -1, 69, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, 70, 71, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    72, 73, -1, -1, -1, -1, 74, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, 75, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1,  7, -1, -1, -1,  8,  9, -1, -1, -1, 10, 11, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, 12, -1, -1, -1, -1, 13,
+    -1, -1, -1, 14, 15, -1, -1, -1, -1, 16, -1, -1, -1, -1,
+    17, -1, -1, -1, -1, 18, -1, -1, -1, -1, 19, -1, -1, -1,
+    -1, 20, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, 21, -1, -1, -1, -1, 22, -1, -1, -1, -1, 23, -1,
+    -1, -1, -1, 24, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, 25, -1, -1, -1, -1, 26, -1, -1, -1, -1,
+    27, -1, -1, -1, -1, 28, -1, -1, -1, -1, 29, -1, -1, -1,
+    -1, 30, -1, -1, -1, -1, 31, -1, -1, -1, -1, 32, -1, -1,
+    -1, -1, 33, -1, -1, -1, -1, 34, -1, -1, -1, -1, -1, -1,
+    -1, 35, 36, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 37,
+    -1, -1, -1, -1, 38, -1, -1, -1, -1, 39, -1, -1, -1, -1,
+    40, -1, -1, -1, -1, -1, -1, -1, -1, -1, 41, -1, -1, -1,
+    -1, 42, -1, -1, -1, -1, 43, -1, -1, -1, 44, 45, -1, -1,
+    -1, -1, 46, -1, -1, -1, -1, -1, -1, -1, -1, -1, 47, -1,
+    -1, -1, -1, 48, -1, -1, -1, -1, -1, -1, -1, -1, -1, 49,
+    -1, -1, -1, -1, 50, -1, -1, -1, -1, 51, -1, -1, -1, 52,
+    53, -1, -1, -1, -1, 54, -1, -1, -1, -1, 55, -1, -1, -1,
+    -1, 56, -1, -1, -1, -1, 57, -1, -1, -1, 58, -1, -1, -1,
+    -1, -1, 59, -1, -1, -1, -1, 60, -1, -1, -1, -1, -1, -1,
+    -1, -1, 61, 62, -1, -1, -1, -1, 63, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, 64, -1, -1, -1, -1, 65, -1, -1, -1, -1,
+    66, -1, -1, -1, -1, 67, -1, -1, -1, -1, 68, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, 69, -1, -1, -1, -1, 70, -1, -1,
+    -1, 71, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 72, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    73, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, 74, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, 75, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, 76, -1, -1, -1, -1, -1, -1, -1, -1, -1, 77,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, 78, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, 79, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, 80, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 81, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, 82, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, 83, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, 84, -1, -1, -1, -1, 85, -1, -1,
+    -1, -1, 86, -1, -1, -1, -1, 87, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, 88, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 89, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, 90, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, 76, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, 77, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, 78, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, 79, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, 80, -1, -1, -1, -1, 81, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, 82, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, 83, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 84, -1, -1,
-    -1, -1, 85, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, 86, -1, -1, -1, -1, 87,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 88, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, 89, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, 90, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-    -1, -1, -1, 91
+    91, -1, -1, -1, -1, -1, -1, -1, -1, 92
   };
 
 const struct HeaderNameHashEntry *
-HTTPHeaderNamesHash::findHeaderNameImpl (register const char *str, register unsigned int len)
+HTTPHeaderNamesHash::findHeaderNameImpl (const char *str, size_t len)
 {
   if (len <= MAX_WORD_LENGTH && len >= MIN_WORD_LENGTH)
     {
@@ -657,11 +652,11 @@ HTTPHeaderNamesHash::findHeaderNameImpl (register const char *str, register unsi
 
       if (key <= MAX_HASH_VALUE)
         {
-          register int index = lookup[key];
+          int index = lookup[key];
 
           if (index >= 0)
             {
-              register const char *s = header_name_wordlist[index].name;
+              const char *s = header_name_wordlist[index].name;
 
               if ((((unsigned char)*str ^ (unsigned char)*s) & ~32) == 0 && !gperf_case_strncmp (str, s, len) && s[len] == '\0')
                 return &header_name_wordlist[index];
@@ -670,7 +665,7 @@ HTTPHeaderNamesHash::findHeaderNameImpl (register const char *str, register unsi
     }
   return 0;
 }
-#line 251 "HTTPHeaderNames.gperf"
+#line 253 "HTTPHeaderNames.gperf"
 
 bool findHTTPHeaderName(StringView stringView, HTTPHeaderName& headerName)
 {

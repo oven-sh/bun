@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "wtf/Deque.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -42,58 +43,36 @@ public:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-    static void destroy(JSCell*);
+    static void destroy(JSCell*) {}
 
-    int32_t length() { return m_length; }
+    size_t length() { return m_deque.size(); }
     void push(JSC::VM& vm, JSC::JSValue v)
     {
-        Entry* entry = new Entry(vm, v, nullptr);
-        if (m_length == 0) {
-            m_head = entry;
-        } else {
-            m_tail->m_next = entry;
-        }
-        m_tail = entry;
-        m_length++;
+        m_deque.append(WriteBarrier<Unknown>());
+        m_deque.last().set(vm, this, v);
     }
     void unshift(JSC::VM& vm, JSC::JSValue v)
     {
-        Entry* entry = new Entry(vm, v, m_head);
-        if (m_length == 0) {
-            m_tail = entry;
-        }
-        m_head = entry;
-        m_length++;
+        m_deque.prepend(WriteBarrier<Unknown>());
+        m_deque.first().set(vm, this, v);
     }
     JSC::JSValue shift()
     {
-        if (m_length == 0) return JSC::jsUndefined();
-        Entry* entry = m_head;
-        if (m_length == 0) {
-            m_head = nullptr;
-            m_tail = nullptr;
-        } else {
-            m_head = m_head->m_next;
-        }
-        entry->m_next = nullptr;
-        JSC::JSValue ret(entry->m_data.get());
-        delete entry;
-        m_length--;
-        return ret;
+        if (UNLIKELY(length() == 0))
+            return JSC::jsUndefined();
+        auto v = m_deque.first().get();
+        m_deque.removeFirst();
+        return v;
     }
     void clear()
     {
-        delete m_head;
-        m_head = nullptr;
-        m_tail = nullptr;
-        m_length = 0;
+        m_deque.clear();
     }
     JSC::JSValue first()
     {
-        // should raise error?
-        if (UNLIKELY(m_length == 0))
+        if (UNLIKELY(length() == 0))
             return JSC::jsUndefined();
-        return JSC::JSValue(m_head->m_data.get());
+        return JSC::JSValue(m_deque.first().get());
     }
 
     JSC::JSValue concat(JSC::VM&, JSC::JSGlobalObject*, int32_t);
@@ -103,20 +82,7 @@ public:
     JSC::JSValue _getString(JSC::VM&, JSC::JSGlobalObject*, int32_t);
 
 private:
-    struct Entry {
-        Entry(JSC::VM& vm, JSValue v, Entry* next) : m_data(vm, v.asCell()), m_next(next) {}
-        ~Entry()
-        {
-            if (m_next != nullptr)
-                delete m_next;
-        }
-        JSC::Strong<JSC::JSCell> m_data;
-        Entry* m_next;
-    };
-
-    int32_t m_length = 0;
-    Entry* m_head = nullptr;
-    Entry* m_tail = nullptr;
+    Deque<WriteBarrier<Unknown>> m_deque;
 };
 
 EncodedJSValue constructJSBufferList(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame);

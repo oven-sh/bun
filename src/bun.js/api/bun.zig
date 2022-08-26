@@ -486,6 +486,17 @@ pub fn getImportedStyles(
     return JSValue.createStringArray(ctx.ptr(), styles.ptr, styles.len, true).asRef();
 }
 
+pub fn newOs(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    _: []const js.JSValueRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    return Node.Os.create(ctx.ptr()).asObjectRef();
+}
+
 pub fn newPath(
     _: void,
     ctx: js.JSContextRef,
@@ -1031,6 +1042,10 @@ pub const Class = NewClass(
                 .name = "getRouteFiles",
                 .@"return" = "string[]",
             },
+        },
+        ._Os = .{
+            .rfn = Bun.newOs,
+            .ts = d.ts{},
         },
         ._Path = .{
             .rfn = Bun.newPath,

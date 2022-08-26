@@ -305,3 +305,94 @@ pub fn getSelfExeSharedLibPaths(allocator: std.mem.Allocator) error{OutOfMemory}
 ///     The posix_madvise() behaves same as madvise() except that it uses values
 ///     with POSIX_ prefix for the advice system call argument.
 pub extern "c" fn posix_madvise(ptr: *anyopaque, len: usize, advice: i32) c_int;
+
+// System related
+pub fn getFreeMemory() u64 {
+    if (comptime Environment.isLinux) {
+        return linux.get_free_memory();
+    } else if (comptime Environment.isMac) {
+        return darwin.get_free_memory();
+    } else {
+        return -1;
+    }
+}
+
+pub fn getTotalMemory() u64 {
+    if (comptime Environment.isLinux) {
+        return linux.get_total_memory();
+    } else if (comptime Environment.isMac) {
+        return darwin.get_total_memory();
+    } else {
+        return -1;
+    }
+}
+
+pub fn getSystemUptime() u64 {
+    if (comptime Environment.isLinux) {
+        return linux.get_system_uptime();
+    } else {
+        return darwin.get_system_uptime();
+    }
+}
+
+pub fn getSystemLoadavg() [3]f64 {
+    if (comptime Environment.isLinux) {
+        return linux.get_system_loadavg();
+    } else {
+        return darwin.get_system_loadavg();
+    }
+}
+
+pub fn getProcessPriority(pid_: i32) i32 {
+    const pid = @intCast(c_uint, pid_);
+
+    if (comptime Environment.isLinux) {
+        return linux.get_process_priority(pid);
+    } else if (comptime Environment.isMac) {
+        return darwin.get_process_priority(pid);
+    } else {
+        return -1;
+    }
+}
+
+pub fn setProcessPriority(pid_: i32, priority_: i32) std.c.E {
+    if (pid_ < 0) return .SRCH;
+
+    const pid = @intCast(c_uint, pid_);
+    const priority = @intCast(c_int, priority_);
+
+    var code: i32 = 0;
+    if (comptime Environment.isLinux) {
+        code = linux.set_process_priority(pid, priority);
+    } else if (comptime Environment.isMac) {
+        code = darwin.set_process_priority(pid, priority);
+    } else {
+        code = -2;
+    }
+
+    if (code == -2) return .SRCH;
+    if (code == 0) return .SUCCESS;
+
+    const errcode = std.c.getErrno(code);
+    return errcode;
+}
+
+pub fn getVersion() []u8 {
+    if (comptime Environment.isLinux) {
+        return linux.get_version();
+    } else if (comptime Environment.isMac) {
+        return darwin.get_version();
+    } else {
+        return "unknown";
+    }
+}
+
+pub fn getRelease() []u8 {
+    if (comptime Environment.isLinux) {
+        return linux.get_release();
+    } else if (comptime Environment.isMac) {
+        return darwin.get_release();
+    } else {
+        return "unknown";
+    }
+}

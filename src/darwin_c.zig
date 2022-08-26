@@ -1,5 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const unistd = @cImport(@cInclude("unistd.h"));
+const sysResource = @cImport(@cInclude("sys/resource.h"));
 const os = std.os;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
@@ -465,3 +467,123 @@ pub const kFSEventStreamEventFlagMount: c_int = 64;
 pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
+
+// System related
+extern fn getFreeMemoryDarwin_B() u64;
+pub fn get_free_memory() u64 {
+    return getFreeMemoryDarwin_B();
+}
+
+pub fn get_total_memory() u64 {
+    var memory_: [32]c_ulonglong = undefined;
+    var size: usize = memory_.len;
+
+    std.os.sysctlbynameZ(
+        "hw.memsize",
+        &memory_,
+        &size,
+        null,
+        0,
+    ) catch |err| switch (err) {
+        else => return 0,
+    };
+
+    return memory_[0];
+}
+
+pub const struct_BootTime = struct {
+    sec: u32,
+};
+pub fn get_system_uptime() u64 {
+    var uptime_: [16]struct_BootTime = undefined;
+    var size: usize = uptime_.len;
+
+    std.os.sysctlbynameZ(
+        "kern.boottime",
+        &uptime_,
+        &size,
+        null,
+        0,
+    ) catch |err| switch (err) {
+        else => return 0,
+    };
+
+    return @bitCast(u64, std.time.timestamp() - uptime_[0].sec);
+}
+
+pub const struct_LoadAvg = struct {
+    ldavg: [3]u32,
+    fscale: c_long,
+};
+pub fn get_system_loadavg() [3]f64 {
+    var loadavg_: [24]struct_LoadAvg = undefined;
+    var size: usize = loadavg_.len;
+
+    std.os.sysctlbynameZ(
+        "vm.loadavg",
+        &loadavg_,
+        &size,
+        null,
+        0,
+    ) catch |err| switch (err) {
+        else => return [3]f64{ 0, 0, 0 },
+    };
+
+    const loadavg = loadavg_[0];
+    const scale = @intToFloat(f64, loadavg.scale);
+    return [3]f64{
+        @intToFloat(f64, loadavg.ldavg[0]) / scale,
+        @intToFloat(f64, loadavg.ldavg[1]) / scale,
+        @intToFloat(f64, loadavg.ldavg[2]) / scale,
+    };
+}
+
+pub fn getuid() u32 {
+    return unistd.getuid();
+}
+
+pub fn getgid() u32 {
+    return unistd.getuid();
+}
+
+pub fn get_process_priority(pid: c_uint) i32 {
+    return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);
+}
+
+pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
+    return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
+}
+
+pub fn get_version() []const u8 {
+    var version: [100]u8 = undefined;
+    std.mem.set(u8, std.mem.span(&version), 0);
+
+    var size: usize = version.len;
+
+    if (std.c.sysctlbyname(
+        "kern.version",
+        &version,
+        &size,
+        null,
+        0,
+    ) == -1) return "unknown";
+
+    return std.mem.span(std.mem.sliceTo(std.mem.span(&version), @as(u8, 0)));
+}
+
+pub fn get_release() []const u8 {
+    var release: [16]u8 = undefined;
+    std.mem.set(u8, std.mem.span(&release), 0);
+
+    var size: usize = release.len;
+
+    if (std.c.sysctlbyname(
+        "kern.osrelease",
+        &release,
+        &size,
+        null,
+        0,
+    ) == -1) return "unknown";
+
+    return std.mem.span(std.mem.sliceTo(std.mem.span(&release), @as(u8, 0)));
+}

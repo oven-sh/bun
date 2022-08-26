@@ -3017,7 +3017,7 @@ pub const NodeFS = struct {
         if (len > 0) {
             @memcpy(prefix_buf, args.prefix.ptr, len);
         }
-        prefix_buf[len..][0..6] = "XXXXXX".*;
+        prefix_buf[len..][0..6].* = "XXXXXX".*;
         prefix_buf[len..][6] = 0;
 
         const rc = C.mkdtemp(prefix_buf);

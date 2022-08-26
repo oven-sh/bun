@@ -3013,12 +3013,12 @@ pub const NodeFS = struct {
 
     pub fn mkdtemp(this: *NodeFS, args: Arguments.MkdirTemp, comptime flavor: Flavor) Maybe(Return.Mkdtemp) {
         var prefix_buf = &this.sync_error_buf;
-        prefix_buf[0] = 0;
         const len = args.prefix.len;
         if (len > 0) {
             @memcpy(prefix_buf, args.prefix.ptr, len);
-            prefix_buf[len] = 0;
         }
+        prefix_buf[len..][0..6] = "XXXXXX";
+        prefix_buf[len..][6] = 0;
 
         const rc = C.mkdtemp(prefix_buf);
         switch (std.c.getErrno(@ptrToInt(rc))) {

@@ -92,6 +92,7 @@
 
 #include "WebCoreJSBuiltinInternals.h"
 #include "JSBuffer.h"
+#include "JSBufferList.h"
 #include "JSFFIFunction.h"
 #include "JavaScriptCore/InternalFunction.h"
 #include "JavaScriptCore/LazyClassStructure.h"
@@ -1014,6 +1015,7 @@ JSC:
     default: {
         static NeverDestroyed<const String> sqliteString(MAKE_STATIC_STRING_IMPL("sqlite"));
         static NeverDestroyed<const String> bunJSCString(MAKE_STATIC_STRING_IMPL("bun:jsc"));
+        static NeverDestroyed<const String> bunStreamString(MAKE_STATIC_STRING_IMPL("bun:stream"));
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
 
         JSC::JSValue moduleName = callFrame->argument(0);
@@ -1064,6 +1066,14 @@ JSC:
         if (string == fileURLToPathString) {
             return JSValue::encode(
                 JSFunction::create(vm, globalObject, 1, fileURLToPathString, functionFileURLToPath, ImplementationVisibility::Public, NoIntrinsic));
+        }
+
+        if (string == bunStreamString) {
+            auto* obj = constructEmptyObject(globalObject);
+            auto* bufferList = JSC::JSFunction::create(
+                vm, globalObject, 0, "BufferList"_s, WebCore::constructJSBufferList, ImplementationVisibility::Public, NoIntrinsic, WebCore::constructJSBufferList);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), bufferList, 0);
+            return JSValue::encode(obj);
         }
 
         if (UNLIKELY(string == noopString)) {

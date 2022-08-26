@@ -67,8 +67,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
 
-static void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* uint8Array);
-
 bool JSBuffer__isBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
@@ -1774,7 +1772,7 @@ Buffer* JSBuffer::toWrapped(JSC::VM& vm, JSC::JSValue value)
 
 } // namespace WebCore
 
-static void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* uint8Array)
+void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* uint8Array)
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     auto clientData = WebCore::clientData(vm);

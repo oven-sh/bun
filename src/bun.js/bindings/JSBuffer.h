@@ -29,6 +29,7 @@
 #include "Buffer.h"
 
 extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* uint8Array);
 
 namespace WebCore {
 

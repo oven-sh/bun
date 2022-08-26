@@ -64,11 +64,14 @@ pub const Response = struct {
     }
 
     pub fn redirectLocation(this: *const Response) ?[]const u8 {
-        return this.header("location");
+        return this.header(.Location);
     }
 
-    pub fn header(this: *const Response, comptime name: []const u8) ?[]const u8 {
-        return (this.body.init.headers orelse return null).get(name);
+    pub fn header(this: *const Response, name: JSC.FetchHeaders.HTTPHeaderName) ?[]const u8 {
+        return if ((this.body.init.headers orelse return null).fastGet(name)) |str|
+            str.slice()
+        else
+            null;
     }
 
     pub const Props = struct {};
@@ -244,7 +247,7 @@ pub const Response = struct {
     }
 
     pub fn mimeTypeWithDefault(response: *const Response, default: MimeType, request_ctx_: ?*const RequestContext) string {
-        if (response.header("content-type")) |content_type| {
+        if (response.header(.ContentType)) |content_type| {
             // Remember, we always lowercase it
             // hopefully doesn't matter here tho
             return content_type;
@@ -4118,10 +4121,8 @@ pub const Request = struct {
 
     pub fn mimeType(this: *const Request) string {
         if (this.headers) |headers| {
-            // Remember, we always lowercase it
-            // hopefully doesn't matter here tho
             if (headers.fastGet(.ContentType)) |content_type| {
-                return content_type;
+                return content_type.slice();
             }
         }
 

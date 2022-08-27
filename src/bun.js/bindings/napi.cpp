@@ -727,6 +727,19 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     void* finalize_hint,
     napi_ref* result)
 {
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSValue objectValue = toJS(js_object);
+    JSC::JSObject* object = objectValue.getObject();
+    if (!object) {
+        return napi_object_expected;
+    }
+
+    vm.heap.addFinalizer(object, [&](JSCell* cell) -> void {
+        finalize_cb(env, native_object, finalize_hint);
+    });
+
     return napi_ok;
 }
 

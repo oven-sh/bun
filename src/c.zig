@@ -389,7 +389,7 @@ pub fn getVersion(buf: []u8) []const u8 {
 
 pub fn getRelease(buf: []u8) []const u8 {
     if (comptime Environment.isLinux) {
-        return linux.get_release(buf);
+        return linux.get_release(buf.ptr[0..std.os.HOST_NAME_MAX]);
     } else if (comptime Environment.isMac) {
         return darwin.get_release(buf);
     } else {

@@ -267,7 +267,8 @@ pub const Os = struct {
     pub fn release(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        return JSC.ZigString.init(C.getRelease()).withEncoding().toValueGC(globalThis);
+        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+        return JSC.ZigString.init(C.getRelease(&name_buffer)).withEncoding().toValueGC(globalThis);
     }
 
     pub fn setPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -410,7 +411,8 @@ pub const Os = struct {
     pub fn version(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        return JSC.ZigString.init(C.getVersion()).withEncoding().toValueGC(globalThis);
+        var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+        return JSC.ZigString.init(C.getVersion(&name_buffer)).withEncoding().toValueGC(globalThis);
     }
 };
 

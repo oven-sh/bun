@@ -120,6 +120,17 @@ pub const FileSystem = struct {
         return try std.fmt.bufPrintZ(buf, ".{x}{s}", .{ @truncate(u64, @intCast(u128, hash) * @intCast(u128, std.time.nanoTimestamp())), extname });
     }
 
+    pub fn checkIfFileExists(_: *const FileSystem, dir: std.fs.Dir, fpath: []const u8) bool {
+        const file = dir.openFile(fpath, .{}) catch |e| switch (e) {
+            error.FileNotFound => return false,
+            error.IsDir => return true,
+            else => return false,
+        };
+
+        defer file.close();
+        return true;
+    }
+
     pub var max_fd: FileDescriptorType = 0;
 
     pub inline fn setMaxFd(fd: anytype) void {

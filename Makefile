@@ -227,7 +227,7 @@ STRIP=/usr/bin/strip
 endif
 
 ifeq ($(OS_NAME),linux)
-STRIP=$(which llvm-strip || which llvm-strip-13 || which strip || echo "Missing strip")
+STRIP=$(shell which llvm-strip || which llvm-strip-13 || which strip || echo "Missing strip")
 endif
 
 

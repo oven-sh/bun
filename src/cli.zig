@@ -211,7 +211,7 @@ pub const Arguments = struct {
 
     fn printVersionAndExit() noreturn {
         @setCold(true);
-        Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
+        Output.writer().writeAll(Global.Global.package_json_version_with_sha ++ "\n") catch {};
         Global.exit(0);
     }
 

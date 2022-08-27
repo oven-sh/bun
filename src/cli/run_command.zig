@@ -708,7 +708,7 @@ pub const RunCommand = struct {
         }
 
         var script_name_to_search: string = "";
-
+        // Support bun . - remove this comment
         if (positionals.len > 0) {
             script_name_to_search = positionals[0];
         }

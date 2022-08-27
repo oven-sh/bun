@@ -530,7 +530,7 @@ pub fn get_system_loadavg() [3]f64 {
     };
 
     const loadavg = loadavg_[0];
-    const scale = @intToFloat(f64, loadavg.scale);
+    const scale = @intToFloat(f64, loadavg.fscale);
     return [3]f64{
         @intToFloat(f64, loadavg.ldavg[0]) / scale,
         @intToFloat(f64, loadavg.ldavg[1]) / scale,
@@ -554,36 +554,34 @@ pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
     return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
 }
 
-pub fn get_version() []const u8 {
-    var version: [100]u8 = undefined;
-    std.mem.set(u8, std.mem.span(&version), 0);
+pub fn get_version(buf: []u8) []const u8 {
+    @memset(buf.ptr, 0, buf.len);
 
-    var size: usize = version.len;
+    var size: usize = buf.len;
 
     if (std.c.sysctlbyname(
         "kern.version",
-        &version,
+        buf.ptr,
         &size,
         null,
         0,
     ) == -1) return "unknown";
 
-    return std.mem.span(std.mem.sliceTo(std.mem.span(&version), @as(u8, 0)));
+    return std.mem.span(std.meta.assumeSentinel(buf.ptr, 0));
 }
 
-pub fn get_release() []const u8 {
-    var release: [16]u8 = undefined;
-    std.mem.set(u8, std.mem.span(&release), 0);
+pub fn get_release(buf: []u8) []const u8 {
+    @memset(buf.ptr, 0, buf.len);
 
-    var size: usize = release.len;
+    var size: usize = buf.len;
 
     if (std.c.sysctlbyname(
         "kern.osrelease",
-        &release,
+        buf.ptr,
         &size,
         null,
         0,
     ) == -1) return "unknown";
 
-    return std.mem.span(std.mem.sliceTo(std.mem.span(&release), @as(u8, 0)));
+    return std.mem.span(std.meta.assumeSentinel(buf.ptr, 0));
 }

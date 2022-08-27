@@ -361,8 +361,7 @@ pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
     return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
 }
 
-pub fn get_version() []u8 {
-    var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.version, 0), 0);
     std.mem.copy(u8, &name_buffer, result);
@@ -370,8 +369,7 @@ pub fn get_version() []u8 {
     return name_buffer[0..result.len];
 }
 
-pub fn get_release() []u8 {
-    var name_buffer: [std.os.HOST_NAME_MAX]u8 = undefined;
+pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
     const uts = std.os.uname();
     const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.release, 0), 0);
     std.mem.copy(u8, &name_buffer, result);

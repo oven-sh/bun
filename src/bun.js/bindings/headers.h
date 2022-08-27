@@ -546,7 +546,7 @@ CPP_DECL JSC__JSValue JSC__JSValue__toPropertyKeyValue(JSC__JSValue JSValue0, JS
 CPP_DECL JSC__JSString* JSC__JSValue__toString(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSString* JSC__JSValue__toString(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
-CPP_DECL uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue JSValue0);
+CPP_DECL uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue0);
 CPP_DECL bWTF__String JSC__JSValue__toWTFString(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, ZigException* arg2);
 CPP_DECL void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGlobalObject* arg2);

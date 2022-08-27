@@ -2023,7 +2023,7 @@ JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObjec
     return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
 }
 
-uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue val)
+uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSGlobalObject* arg0, JSC__JSValue val)
 {
     JSC::JSValue _val = JSC::JSValue::decode(val);
 

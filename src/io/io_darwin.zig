@@ -508,6 +508,20 @@ pub const Waker = struct {
         }
     }
 
+    pub fn wait(this: Waker) void {
+        var events = std.mem.zeroes([2]Kevent64);
+
+        _ = std.os.system.kevent64(
+            this.kq,
+            &events,
+            0,
+            &events,
+            @intCast(c_int, events.len),
+            0,
+            null,
+        );
+    }
+
     extern fn io_darwin_create_machport(
         *anyopaque,
         os.fd_t,

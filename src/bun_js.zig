@@ -135,17 +135,25 @@ pub const Run = struct {
         this.vm.tick();
 
         {
-            var i: usize = 0;
+            var any = false;
             while (this.vm.*.event_loop.pending_tasks_count.loadUnchecked() > 0 or this.vm.active_tasks > 0) {
                 this.vm.tick();
-                i +%= 1;
+                any = true;
+                if (this.vm.active_tasks > 0) {
+                    if (this.vm.event_loop.ready_tasks_count.load(.Monotonic) == 0) {
+                        _ = this.vm.global.vm().runGC(false);
 
-                if (i > 0 and i % 100 == 0) {
-                    std.time.sleep(std.time.ns_per_ms);
+                        if (this.vm.event_loop.ready_tasks_count.load(.Monotonic) == 0 and
+                            this.vm.active_tasks > 0)
+                        {
+                            this.vm.event_loop.ensureWaker();
+                            this.vm.event_loop.waker.?.wait();
+                        }
+                    }
                 }
             }
 
-            if (i > 0) {
+            if (any) {
                 if (this.vm.log.msgs.items.len > 0) {
                     if (Output.enable_ansi_colors) {
                         this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};

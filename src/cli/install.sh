@@ -231,6 +231,7 @@ bash)
     )
 
     bash_config=$HOME/.bashrc
+    tilde_bash_config=$(tildify "$bash_config")
 
     if [[ -w $bash_config ]]; then
         {
@@ -241,11 +242,11 @@ bash)
             done
         } >>"$bash_config"
 
-        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_zsh_config\""
+        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_bash_config\""
 
         refresh_command="source $bash_config"
     else
-        echo 'Manually add the directory to ~/.bashrc (or similar):'
+        echo "Manually add the directory to $tilde_bash_config (or similar):"
 
         for command in "${commands[@]}"; do
             info_bold "  $command"

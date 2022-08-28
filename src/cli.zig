@@ -43,6 +43,7 @@ const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
 const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
 const DevCommand = @import("./cli/dev_command.zig").DevCommand;
 const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+const DotCommand = @import("./cli/dot_command.zig").DotCommand;
 const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
 const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
 const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
@@ -855,6 +856,7 @@ pub const Command = struct {
             RootCommandMatcher.case("init") => .InitCommand,
             RootCommandMatcher.case("bun") => .BunCommand,
             RootCommandMatcher.case("discord") => .DiscordCommand,
+            RootCommandMatcher.case(".") => .DotCommand,
             RootCommandMatcher.case("upgrade") => .UpgradeCommand,
             RootCommandMatcher.case("completions") => .InstallCompletionsCommand,
             RootCommandMatcher.case("getcompletes") => .GetCompletionsCommand,
@@ -1101,6 +1103,16 @@ pub const Command = struct {
                     Global.exit(1);
                 }
             },
+            .DotCommand => {
+                var ctx = try Command.Context.create(allocator, log, .DotCommand);
+                if (ctx.positionals.len > 0) {
+                    if (try DotCommand.exec(&ctx)) {
+                        return;
+                    }
+
+                    Global.exit(1);
+                }
+            },
             .UpgradeCommand => {
                 const ctx = try Command.Context.create(allocator, log, .UpgradeCommand);
                 try UpgradeCommand.exec(ctx);
@@ -1202,7 +1214,7 @@ pub const Command = struct {
         }
     }
 
-    fn maybeOpenWithBunJS(ctx: *const Command.Context) bool {
+    pub fn maybeOpenWithBunJS(ctx: *const Command.Context) bool {
         const script_name_to_search = ctx.args.entry_points[0];
 
         var file_path = script_name_to_search;
@@ -1283,6 +1295,7 @@ pub const Command = struct {
         RemoveCommand,
         InstallCompletionsCommand,
         RunCommand,
+        DotCommand,
         UpgradeCommand,
         PackageManagerCommand,
         TestCommand,
@@ -1316,6 +1329,7 @@ pub const Command = struct {
             .BunCommand = true,
             .DevCommand = true,
             .RunCommand = true,
+            .DotCommand = true,
             .TestCommand = true,
         });
 

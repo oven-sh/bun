@@ -49,6 +49,30 @@ describe("TextDecoder", () => {
     gcTrace(true);
   });
 
+  describe("typedArrays", () => {
+    var text = `ABC DEF GHI JKL MNO PQR STU VWX YZ ABC DEF GHI JKL MNO PQR STU V`;
+    var bytes = new TextEncoder().encode(text);
+    var decoder = new TextDecoder();
+    for (let TypedArray of [
+      Uint8Array,
+      Uint16Array,
+      Uint32Array,
+      Int8Array,
+      Int16Array,
+      Int32Array,
+      Float32Array,
+      Float64Array,
+      DataView,
+      BigInt64Array,
+      BigUint64Array,
+    ]) {
+      it(`should decode ${TypedArray.name}`, () => {
+        const decoded = decoder.decode(new TypedArray(bytes.buffer));
+        expect(decoded).toBe(text);
+      });
+    }
+  });
+
   it("should decode unicode text with multiple consecutive emoji", () => {
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();

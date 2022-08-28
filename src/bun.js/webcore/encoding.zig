@@ -588,10 +588,10 @@ pub const TextDecoder = struct {
 
         switch (this.encoding) {
             EncodingLabel.@"latin1" => {
-                return ZigString.init(array_buffer.slice()).toValueGC(globalThis);
+                return ZigString.init(array_buffer.byteSlice()).toValueGC(globalThis);
             },
             EncodingLabel.@"UTF-8" => {
-                const buffer_slice = array_buffer.slice();
+                const buffer_slice = array_buffer.byteSlice();
 
                 if (this.fatal) {
                     if (strings.toUTF16Alloc(default_allocator, buffer_slice, true)) |result_| {

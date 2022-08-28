@@ -1056,7 +1056,17 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         arg2->ptr = (char*)typedArray->vector();
         return true;
     }
-
+    case JSC::JSType::DataViewType: {
+        JSC::JSDataView* typedArray = JSC::jsCast<JSC::JSDataView*>(value);
+        arg2->len = typedArray->length();
+        arg2->byte_len = typedArray->byteLength();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
+        arg2->cell_type = JSC::JSType::DataViewType;
+        arg2->ptr = (char*)typedArray->vector();
+        return true;
+    }
     case JSC::JSType::Uint8ClampedArrayType: {
         JSC::JSUint8ClampedArray* typedArray = JSC::jsCast<JSC::JSUint8ClampedArray*>(value);
         arg2->len = typedArray->length();

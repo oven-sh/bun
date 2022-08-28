@@ -206,6 +206,11 @@ function getTypes(fast) {
       args: ["uint32_t", "uint32_t"],
     },
 
+    is_null: {
+      returns: "bool",
+      args: ["ptr"],
+    },
+
     does_pointer_equal_42_as_int32_t: {
       returns: "bool",
       args: ["ptr"],
@@ -338,6 +343,7 @@ function ffiRunner(types) {
       identity_ptr,
       add_uint32_t,
       add_uint64_t,
+      is_null,
       does_pointer_equal_42_as_int32_t,
       ptr_should_point_to_42_as_int32_t,
       cb_identity_true,
@@ -434,6 +440,7 @@ function ffiRunner(types) {
   expect(add_uint16_t(1, 1)).toBe(2);
   expect(add_uint32_t(1, 1)).toBe(2);
   Bun.gc(true);
+  expect(is_null(null)).toBe(true);
   const cptr = ptr_should_point_to_42_as_int32_t();
   expect(cptr != 0).toBe(true);
   expect(typeof cptr === "number").toBe(true);

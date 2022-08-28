@@ -39,12 +39,10 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 // Functions
-
 
 // Attributes
 
@@ -108,10 +106,9 @@ template<> FunctionExecutable* JSWritableStreamDefaultControllerDOMConstructor::
 
 /* Hash table for prototype */
 
-static const HashTableValue JSWritableStreamDefaultControllerPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsWritableStreamDefaultControllerConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(writableStreamDefaultControllerErrorCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSWritableStreamDefaultControllerPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWritableStreamDefaultControllerConstructor, 0 } },
+    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, writableStreamDefaultControllerErrorCodeGenerator, 0 } },
 };
 
 const ClassInfo JSWritableStreamDefaultControllerPrototype::s_info = { "WritableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultControllerPrototype) };
@@ -126,13 +123,14 @@ void JSWritableStreamDefaultControllerPrototype::finishCreation(VM& vm)
 const ClassInfo JSWritableStreamDefaultController::s_info = { "WritableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultController) };
 
 JSWritableStreamDefaultController::JSWritableStreamDefaultController(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSWritableStreamDefaultController::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSWritableStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -156,7 +154,7 @@ void JSWritableStreamDefaultController::destroy(JSC::JSCell* cell)
     thisObject->JSWritableStreamDefaultController::~JSWritableStreamDefaultController();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -168,13 +166,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerConstructor, (JSGlobal
 
 JSC::GCClient::IsoSubspace* JSWritableStreamDefaultController::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWritableStreamDefaultController, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultController.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultController = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultController.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultController = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSWritableStreamDefaultController, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultController = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultController = WTFMove(space); });
 }
-
 
 }

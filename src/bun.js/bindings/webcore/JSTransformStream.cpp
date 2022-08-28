@@ -39,7 +39,6 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -105,11 +104,10 @@ template<> FunctionExecutable* JSTransformStreamDOMConstructor::initializeExecut
 
 /* Hash table for prototype */
 
-static const HashTableValue JSTransformStreamPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsTransformStreamConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "readable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(transformStreamReadableCodeGenerator), (intptr_t) (0) } },
-    { "writable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(transformStreamWritableCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSTransformStreamPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTransformStreamConstructor, 0 } },
+    { "readable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, transformStreamReadableCodeGenerator, 0 } },
+    { "writable"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, transformStreamWritableCodeGenerator, 0 } },
 };
 
 const ClassInfo JSTransformStreamPrototype::s_info = { "TransformStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamPrototype) };
@@ -124,13 +122,14 @@ void JSTransformStreamPrototype::finishCreation(VM& vm)
 const ClassInfo JSTransformStream::s_info = { "TransformStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStream) };
 
 JSTransformStream::JSTransformStream(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSTransformStream::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSTransformStream::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -154,7 +153,7 @@ void JSTransformStream::destroy(JSC::JSCell* cell)
     thisObject->JSTransformStream::~JSTransformStream();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -166,13 +165,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamConstructor, (JSGlobalObject* lexicalG
 
 JSC::GCClient::IsoSubspace* JSTransformStream::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTransformStream, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForTransformStream.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStream = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForTransformStream.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTransformStream = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSTransformStream, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStream = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForTransformStream.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStream = WTFMove(space); });
 }
-
 
 }

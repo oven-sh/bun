@@ -40,12 +40,10 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 // Functions
-
 
 // Attributes
 
@@ -109,12 +107,11 @@ template<> FunctionExecutable* JSReadableStreamBYOBRequestDOMConstructor::initia
 
 /* Hash table for prototype */
 
-static const HashTableValue JSReadableStreamBYOBRequestPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsReadableStreamBYOBRequestConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "view"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamBYOBRequestViewCodeGenerator), (intptr_t) (0) } },
-    { "respond"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamBYOBRequestRespondCodeGenerator), (intptr_t) (0) } },
-    { "respondWithNewView"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableStreamBYOBRequestRespondWithNewViewCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSReadableStreamBYOBRequestPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamBYOBRequestConstructor, 0 } },
+    { "view"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, readableStreamBYOBRequestViewCodeGenerator, 0 } },
+    { "respond"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamBYOBRequestRespondCodeGenerator, 0 } },
+    { "respondWithNewView"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamBYOBRequestRespondWithNewViewCodeGenerator, 0 } },
 };
 
 const ClassInfo JSReadableStreamBYOBRequestPrototype::s_info = { "ReadableStreamBYOBRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBRequestPrototype) };
@@ -129,13 +126,14 @@ void JSReadableStreamBYOBRequestPrototype::finishCreation(VM& vm)
 const ClassInfo JSReadableStreamBYOBRequest::s_info = { "ReadableStreamBYOBRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamBYOBRequest) };
 
 JSReadableStreamBYOBRequest::JSReadableStreamBYOBRequest(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSReadableStreamBYOBRequest::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSReadableStreamBYOBRequest::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -159,7 +157,7 @@ void JSReadableStreamBYOBRequest::destroy(JSC::JSCell* cell)
     thisObject->JSReadableStreamBYOBRequest::~JSReadableStreamBYOBRequest();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -171,13 +169,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject
 
 JSC::GCClient::IsoSubspace* JSReadableStreamBYOBRequest::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableStreamBYOBRequest, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForReadableStreamBYOBRequest.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBRequest = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForReadableStreamBYOBRequest.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBRequest = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSReadableStreamBYOBRequest, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForReadableStreamBYOBRequest.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableStreamBYOBRequest = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForReadableStreamBYOBRequest.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableStreamBYOBRequest = WTFMove(space); });
 }
-
-
 }

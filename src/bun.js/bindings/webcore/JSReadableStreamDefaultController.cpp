@@ -108,11 +108,11 @@ template<> FunctionExecutable* JSReadableStreamDefaultControllerDOMConstructor::
 /* Hash table for prototype */
 
 static const HashTableValue JSReadableStreamDefaultControllerPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsReadableStreamDefaultControllerConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultControllerDesiredSizeCodeGenerator), (intptr_t)(0) } },
-    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultControllerEnqueueCodeGenerator), (intptr_t)(0) } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultControllerCloseCodeGenerator), (intptr_t)(0) } },
-    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamDefaultControllerErrorCodeGenerator), (intptr_t)(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamDefaultControllerConstructor, 0 } },
+    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamDefaultControllerDesiredSizeCodeGenerator, 0 } },
+    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamDefaultControllerEnqueueCodeGenerator, 0 } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamDefaultControllerCloseCodeGenerator, 0 } },
+    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamDefaultControllerErrorCodeGenerator, 0 } },
 };
 
 const ClassInfo JSReadableStreamDefaultControllerPrototype::s_info = { "ReadableStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultControllerPrototype) };

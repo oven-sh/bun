@@ -99,7 +99,7 @@ const char* const s_importMetaObjectRequireCode =
 const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectLoadModuleCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectLoadModuleCodeLength = 2932;
+const int s_importMetaObjectLoadModuleCodeLength = 2925;
 static const JSC::Intrinsic s_importMetaObjectLoadModuleCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectLoadModuleCode =
     "(function (meta, resolvedSpecifier) {\n" \
@@ -127,7 +127,6 @@ const char* const s_importMetaObjectLoadModuleCode =
     "      entry.fetch,\n" \
     "      @promiseFieldReactionsOrResult\n" \
     "    );\n" \
-    "\n" \
     "    //\n" \
     "    //\n" \
     "    //\n" \
@@ -143,7 +142,6 @@ const char* const s_importMetaObjectLoadModuleCode =
     "        @promiseFieldFlags\n" \
     "      );\n" \
     "      var state = flags & @promiseStateMask;\n" \
-    "\n" \
     "      //\n" \
     "      if (\n" \
     "        state === @promiseStatePending ||\n" \
@@ -169,18 +167,15 @@ const char* const s_importMetaObjectLoadModuleCode =
     "    var dependenciesMap = module.dependenciesMap;\n" \
     "    var requestedModules = Loader.requestedModules(module);\n" \
     "    var dependencies = @newArrayWithSize(requestedModules.length);\n" \
-    "\n" \
     "    for (var i = 0, length = requestedModules.length; i < length; ++i) {\n" \
     "      var depName = requestedModules[i];\n" \
-    "\n" \
     "      //\n" \
     "      //\n" \
     "      var depKey =\n" \
     "        depName[0] === \"/\"\n" \
     "          ? depName\n" \
-    "          : Loader.resolveSync(depName, key, @undefined);\n" \
+    "          : Loader.resolve(depName, key, @undefined);\n" \
     "      var depEntry = Loader.ensureRegistered(depKey);\n" \
-    "\n" \
     "      if (depEntry.state < @ModuleLink) {\n" \
     "        queue.push(depKey);\n" \
     "      }\n" \
@@ -191,8 +186,8 @@ const char* const s_importMetaObjectLoadModuleCode =
     "\n" \
     "    entry.dependencies = dependencies;\n" \
     "    //\n" \
-    "    entry.instantiate = Promise.resolve(entry)\n" \
-    "    entry.satisfy = Promise.resolve(entry);\n" \
+    "    entry.instantiate = @Promise.resolve(entry)\n" \
+    "    entry.satisfy = @Promise.resolve(entry);\n" \
     "    key = queue.shift();\n" \
     "    while (key && (Loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {\n" \
     "      key = queue.shift();\n" \

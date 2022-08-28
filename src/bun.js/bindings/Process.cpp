@@ -60,8 +60,8 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
 
     case 1: {
         // This is a JSC builtin function
-        globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job, JSC::JSValue {}, JSC::JSValue {},
-            JSC::JSValue {}, JSC::JSValue {}));
+        globalObject->queueMicrotask(job, JSC::JSValue {}, JSC::JSValue {},
+            JSC::JSValue {}, JSC::JSValue {});
         break;
     }
 
@@ -74,7 +74,7 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
         JSC::JSValue argument2 = argCount > 3 ? callFrame->uncheckedArgument(3) : JSC::JSValue {};
         JSC::JSValue argument3 = argCount > 4 ? callFrame->uncheckedArgument(4) : JSC::JSValue {};
         globalObject->queueMicrotask(
-            JSC::createJSMicrotask(vm, job, argument0, argument1, argument2, argument3));
+            job, argument0, argument1, argument2, argument3);
         break;
     }
 

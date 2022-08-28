@@ -263,13 +263,13 @@ template<> void JSMessageEventDOMConstructor::initializeProperties(VM& vm, JSDOM
 /* Hash table for prototype */
 
 static const HashTableValue JSMessageEventPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsMessageEventConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "origin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsMessageEvent_origin), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "lastEventId"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsMessageEvent_lastEventId), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "source"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsMessageEvent_source), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsMessageEvent_data), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "ports"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsMessageEvent_ports), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "initMessageEvent"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsMessageEventPrototypeFunction_initMessageEvent), (intptr_t)(1) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessageEventConstructor, 0 } },
+    { "origin"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessageEvent_origin, 0 } },
+    { "lastEventId"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessageEvent_lastEventId, 0 } },
+    { "source"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessageEvent_source, 0 } },
+    { "data"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessageEvent_data, 0 } },
+    { "ports"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsMessageEvent_ports, 0 } },
+    { "initMessageEvent"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessageEventPrototypeFunction_initMessageEvent, 1 } },
 };
 
 const ClassInfo JSMessageEventPrototype::s_info = { "MessageEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessageEventPrototype) };

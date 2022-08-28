@@ -356,7 +356,8 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &supportsRichSourceInfo,
     &shouldInterruptScript,
     &javaScriptRuntimeFlags,
-    &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+    // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+    nullptr,
     nullptr, // &shouldInterruptScriptBeforeTimeout,
     &moduleLoaderImportModule, // moduleLoaderImportModule
     &moduleLoaderResolve, // moduleLoaderResolve
@@ -698,8 +699,8 @@ static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     }
 
     // This is a JSC builtin function
-    globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job, JSC::JSValue {}, JSC::JSValue {},
-        JSC::JSValue {}, JSC::JSValue {}));
+    globalObject->queueMicrotask(job, JSC::JSValue {}, JSC::JSValue {},
+        JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -726,8 +727,8 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 
     if (callFrame->argumentCount() == 1) {
-        globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job, JSC::JSValue {}, JSC::JSValue {},
-            JSC::JSValue {}, JSC::JSValue {}));
+        globalObject->queueMicrotask(job, JSC::JSValue {}, JSC::JSValue {},
+            JSC::JSValue {}, JSC::JSValue {});
         return JSC::JSValue::encode(JSC::jsNumber(Bun__Timer__getNextID()));
     }
 
@@ -2474,6 +2475,10 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_processEnvObject.visit(visitor);
     thisObject->m_processObject.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
+
+    for (auto& barrier : thisObject->m_thenables) {
+        visitor.append(barrier);
+    }
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
 

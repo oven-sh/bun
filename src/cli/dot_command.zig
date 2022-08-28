@@ -23,7 +23,7 @@ pub const DotCommand = struct {
         } else if (system.access(heap_allocator.dupeZ(u8, "index.cjs") catch unreachable, std.os.F_OK) == 0) {
             return "index.cjs";
         } else {
-            return "index.js";
+            return "-";
         }
     }
 
@@ -38,12 +38,22 @@ pub const DotCommand = struct {
         if (strings.eqlComptime(script_to_run, "")) {
             script_to_run = findFile();
         } else if (system.access(heap_allocator.dupeZ(u8, script_to_run) catch unreachable, std.os.F_OK) != 0) {
-            script_to_run = findFile();
+            var new_script_to_run = findFile();
 
             const package_json_path: string = if (root_dir_info.enclosing_package_json) |package_json|
                 std.fmt.allocPrint(heap_allocator, "{s}/package.json", .{package_json.source.path.name.dir}) catch "package.json"
             else
                 "package.json";
+
+            if (strings.eqlComptime(new_script_to_run, "-")) {
+                Output.prettyErrorln("<r><red>error<r>: Module not found \"<b>{s}<r>\". Invalid \"<b>main</b>\" field in \"{s}\"", .{
+                    script_to_run,
+                    package_json_path,
+                });
+                Global.exit(1);
+
+                return false;
+            } else script_to_run = new_script_to_run;
 
             Output.prettyWarnln("<r><yellow>Warn<r>: Invalid \"<b>main</b>\" field in \"{s}\"", .{
                 package_json_path,

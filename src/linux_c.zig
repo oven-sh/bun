@@ -1,4 +1,6 @@
 const std = @import("std");
+const unistd = @cImport(@cInclude("unistd.h"));
+const sysResource = @cImport(@cInclude("sys/resource.h"));
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -296,4 +298,81 @@ pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?
         len,
         flags,
     );
+}
+
+// System related
+pub const struct_sysinfo = extern struct {
+    uptime: c_long align(8),
+    loads: [3]c_ulong,
+    totalram: c_ulong,
+    freeram: c_ulong,
+    sharedram: c_ulong,
+    bufferram: c_ulong,
+    totalswap: c_ulong,
+    freeswap: c_ulong,
+    procs: u16,
+    pad: u16,
+    totalhigh: c_ulong,
+    freehigh: c_ulong,
+    mem_unit: u32,
+    pub fn _f(self: anytype) @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8) {
+        const Intermediate = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
+        const ReturnType = @import("std").zig.c_translation.FlexibleArrayType(@TypeOf(self), u8);
+        return @ptrCast(ReturnType, @alignCast(@alignOf(u8), @ptrCast(Intermediate, self) + 108));
+    }
+};
+pub extern fn sysinfo(__info: [*c]struct_sysinfo) c_int;
+
+pub fn get_free_memory() u64 {
+    var info: struct_sysinfo = undefined;
+    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.freeram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
+    return 0;
+}
+
+pub fn get_total_memory() u64 {
+    var info: struct_sysinfo = undefined;
+    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.totalram) *% @bitCast(c_ulong, @as(c_ulong, info.mem_unit));
+    return 0;
+}
+
+pub fn get_system_uptime() u64 {
+    var info: struct_sysinfo = undefined;
+    if (sysinfo(&info) == @as(c_int, 0)) return @bitCast(u64, info.uptime);
+    return 0;
+}
+
+pub fn get_system_loadavg() [3]f64 {
+    var info: struct_sysinfo = undefined;
+    if (sysinfo(&info) == @as(c_int, 0)) {
+        return [3]f64{
+            std.math.ceil((@intToFloat(f64, info.loads[0]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@intToFloat(f64, info.loads[1]) / 65536.0) * 100.0) / 100.0,
+            std.math.ceil((@intToFloat(f64, info.loads[2]) / 65536.0) * 100.0) / 100.0,
+        };
+    }
+    return [3]f64{ 0, 0, 0 };
+}
+
+pub fn get_process_priority(pid: c_uint) i32 {
+    return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);
+}
+
+pub fn set_process_priority(pid: c_uint, priority: c_int) i32 {
+    return sysResource.setpriority(sysResource.PRIO_PROCESS, pid, priority);
+}
+
+pub fn get_version(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+    const uts = std.os.uname();
+    const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.version, 0), 0);
+    std.mem.copy(u8, name_buffer, result);
+
+    return name_buffer[0..result.len];
+}
+
+pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
+    const uts = std.os.uname();
+    const result = std.mem.sliceTo(std.meta.assumeSentinel(&uts.release, 0), 0);
+    std.mem.copy(u8, name_buffer, result);
+
+    return name_buffer[0..result.len];
 }

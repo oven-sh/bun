@@ -1,4 +1,5 @@
 import Head from "next/head";
+import { dataURI } from "macro:./dataURI";
 
 export default function Layout({ children }) {
   return (
@@ -52,13 +53,18 @@ export default function Layout({ children }) {
         <div id="header-wrap">
           <header>
             <a href="/" id="logo-link" aria-label="home">
-              <img height="61px" src="/logo.svg" alt="Bun logo" id="logo" />
               <img
-                height="31.65px"
-                src="/Bun.png"
-                srcSet="/Bun.png 1x, /Bun@2x.png 2x"
+                height="61px"
+                src={dataURI("../public/logo.svg", "components/Layout.tsx")}
+                alt="Bun logo"
+                id="logo"
+              />
+
+              <img
                 alt="Bun"
                 id="logo-text"
+                height="31.65px"
+                src={dataURI("../public/Bun@2x.png", "components/Layout.tsx")}
               />
             </a>
 

@@ -486,6 +486,17 @@ pub fn getImportedStyles(
     return JSValue.createStringArray(ctx.ptr(), styles.ptr, styles.len, true).asRef();
 }
 
+pub fn newOs(
+    _: void,
+    ctx: js.JSContextRef,
+    _: js.JSObjectRef,
+    _: js.JSObjectRef,
+    _: []const js.JSValueRef,
+    _: js.ExceptionRef,
+) js.JSValueRef {
+    return Node.Os.create(ctx.ptr()).asObjectRef();
+}
+
 pub fn newPath(
     _: void,
     ctx: js.JSContextRef,
@@ -1032,6 +1043,10 @@ pub const Class = NewClass(
                 .@"return" = "string[]",
             },
         },
+        ._Os = .{
+            .rfn = Bun.newOs,
+            .ts = d.ts{},
+        },
         ._Path = .{
             .rfn = Bun.newPath,
             .ts = d.ts{},
@@ -1542,95 +1557,95 @@ pub fn serve(
     unreachable;
 }
 
-pub export fn Bun__escapeHTML(
-    globalObject: *JSGlobalObject,
-    callframe: *JSC.CallFrame,
-) JSC.JSValue {
-    const arguments = callframe.arguments(2);
-    if (arguments.len < 1) {
-        return ZigString.Empty.toValue(globalObject);
+pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u16, len: usize) JSValue {
+    std.debug.assert(len > 0);
+    const input_slice = ptr[0..len];
+    const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
+        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
+        return JSC.JSValue.jsUndefined();
+    };
+
+    switch (escaped) {
+        .static => |val| {
+            return ZigString.init(val).toValue(globalObject);
+        },
+        .original => return input_value,
+        .allocated => |escaped_html| {
+            if (comptime Environment.allow_assert) {
+                // assert that re-encoding the string produces the same result
+                std.debug.assert(
+                    std.mem.eql(
+                        u16,
+                        (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false) catch unreachable).?,
+                        escaped_html,
+                    ),
+                );
+
+                // assert we do not allocate a new string unnecessarily
+                std.debug.assert(
+                    !std.mem.eql(
+                        u16,
+                        input_slice,
+                        escaped_html,
+                    ),
+                );
+
+                // the output should always be longer than the input
+                std.debug.assert(escaped_html.len > input_slice.len);
+            }
+
+            return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
+        },
     }
+}
 
-    const input_value = arguments.ptr[0];
-    const zig_str = input_value.getZigString(globalObject);
-    if (zig_str.len == 0)
-        return ZigString.Empty.toValue(globalObject);
+pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u8, len: usize) JSValue {
+    std.debug.assert(len > 0);
 
-    if (zig_str.is16Bit()) {
-        const input_slice = zig_str.utf16SliceAligned();
-        const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
-            globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
-            return JSC.JSValue.jsUndefined();
-        };
+    const input_slice = ptr[0..len];
+    var stack_allocator = std.heap.stackFallback(256, globalObject.bunVM().allocator);
+    const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
 
-        switch (escaped) {
-            .static => |val| {
-                return ZigString.init(val).toValue(globalObject);
-            },
-            .original => return input_value,
-            .allocated => |escaped_html| {
-                if (comptime Environment.allow_assert) {
-                    // assert that re-encoding the string produces the same result
-                    std.debug.assert(
-                        std.mem.eql(
-                            u16,
-                            (strings.toUTF16Alloc(bun.default_allocator, strings.toUTF8Alloc(bun.default_allocator, escaped_html) catch unreachable, false) catch unreachable).?,
-                            escaped_html,
-                        ),
-                    );
+    const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
+        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
+        return JSC.JSValue.jsUndefined();
+    };
 
-                    // assert we do not allocate a new string unnecessarily
-                    std.debug.assert(
-                        !std.mem.eql(
-                            u16,
-                            input_slice,
-                            escaped_html,
-                        ),
-                    );
+    switch (escaped) {
+        .static => |val| {
+            return ZigString.init(val).toValue(globalObject);
+        },
+        .original => return input_value,
+        .allocated => |escaped_html| {
+            if (comptime Environment.allow_assert) {
+                // the output should always be longer than the input
+                std.debug.assert(escaped_html.len > input_slice.len);
 
-                    // the output should always be longer than the input
-                    std.debug.assert(escaped_html.len > input_slice.len);
-                }
+                // assert we do not allocate a new string unnecessarily
+                std.debug.assert(
+                    !std.mem.eql(
+                        u8,
+                        input_slice,
+                        escaped_html,
+                    ),
+                );
+            }
 
-                return ZigString.from16(escaped_html.ptr, escaped_html.len).toExternalValue(globalObject);
-            },
-        }
-    } else {
-        const input_slice = zig_str.slice();
-        const escaped = strings.escapeHTMLForLatin1Input(globalObject.bunVM().allocator, input_slice) catch {
-            globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
-            return JSC.JSValue.jsUndefined();
-        };
+            if (input_slice.len <= 32) {
+                const zig_str = ZigString.init(escaped_html);
+                const out = zig_str.toAtomicValue(globalObject);
+                return out;
+            }
 
-        switch (escaped) {
-            .static => |val| {
-                return ZigString.init(val).toValue(globalObject);
-            },
-            .original => return input_value,
-            .allocated => |escaped_html| {
-                if (comptime Environment.allow_assert) {
-                    // the output should always be longer than the input
-                    std.debug.assert(escaped_html.len > input_slice.len);
-
-                    // assert we do not allocate a new string unnecessarily
-                    std.debug.assert(
-                        !std.mem.eql(
-                            u8,
-                            input_slice,
-                            escaped_html,
-                        ),
-                    );
-                }
-
-                return ZigString.init(escaped_html).toExternalValue(globalObject);
-            },
-        }
+            return ZigString.init(escaped_html).toExternalValue(globalObject);
+        },
     }
 }
 
 comptime {
     if (!JSC.is_bindgen) {
-        _ = Bun__escapeHTML;
+        _ = Bun__escapeHTML8;
+        _ = Bun__escapeHTML16;
     }
 }
 
@@ -2188,8 +2203,6 @@ pub const Timer = struct {
                     this.io_task.?.deinit();
                     var task = Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, global, this) catch unreachable;
                     VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, this.id, this) catch unreachable;
-                    VirtualMachine.vm.timer.active +|= 1;
-                    VirtualMachine.vm.active_tasks +|= 1;
                     this.io_task = task;
                     task.schedule();
                 }
@@ -2198,6 +2211,13 @@ pub const Timer = struct {
 
                 if (this.repeat)
                     return;
+
+                VirtualMachine.vm.timer.active -|= 1;
+                VirtualMachine.vm.active_tasks -|= 1;
+            } else {
+                // the active tasks count is already cleared for canceled timeout,
+                // add one here to neutralize the `-|= 1` in event loop.
+                VirtualMachine.vm.active_tasks +|= 1;
             }
 
             this.clear(global);
@@ -2214,8 +2234,6 @@ pub const Timer = struct {
                 task.deinit();
             }
             VirtualMachine.vm.allocator.destroy(this);
-            VirtualMachine.vm.timer.active -|= 1;
-            VirtualMachine.vm.active_tasks -|= 1;
         }
     };
 
@@ -2270,6 +2288,9 @@ pub const Timer = struct {
         if (comptime is_bindgen) unreachable;
         var timer: *Timeout = VirtualMachine.vm.timer.timeouts.get(id.toInt32()) orelse return;
         timer.cancelled = true;
+        VirtualMachine.vm.timer.active -|= 1;
+        // here we also remove the active task count added in event_loop.
+        VirtualMachine.vm.active_tasks -|= 2;
     }
 
     pub fn clearTimeout(

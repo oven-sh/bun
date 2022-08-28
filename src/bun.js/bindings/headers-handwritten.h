@@ -180,6 +180,7 @@ typedef struct {
 enum SyntheticModuleType : uint64_t {
     Buffer = 1024,
     Process = 1025,
+    Events = 1026,
 };
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;

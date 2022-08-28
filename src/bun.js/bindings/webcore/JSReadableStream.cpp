@@ -108,13 +108,13 @@ template<> FunctionExecutable* JSReadableStreamDOMConstructor::initializeExecuta
 /* Hash table for prototype */
 
 static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsReadableStreamConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "locked"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamLockedCodeGenerator), (intptr_t)(0) } },
-    { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamCancelCodeGenerator), (intptr_t)(0) } },
-    { "getReader"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamGetReaderCodeGenerator), (intptr_t)(0) } },
-    { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamPipeToCodeGenerator), (intptr_t)(1) } },
-    { "pipeThrough"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamPipeThroughCodeGenerator), (intptr_t)(2) } },
-    { "tee"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t) static_cast<BuiltinGenerator>(readableStreamTeeCodeGenerator), (intptr_t)(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamConstructor, 0 } },
+    { "locked"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamLockedCodeGenerator, 0 } },
+    { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamCancelCodeGenerator, 0 } },
+    { "getReader"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamGetReaderCodeGenerator, 0 } },
+    { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeToCodeGenerator, 1 } },
+    { "pipeThrough"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeThroughCodeGenerator, 2 } },
+    { "tee"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamTeeCodeGenerator, 0 } },
 };
 
 const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };

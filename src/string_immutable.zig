@@ -2829,7 +2829,7 @@ pub fn indexOfNotChar(slice: []const u8, char: u8) ?u32 {
         while (remaining.len >= ascii_vector_size) {
             const vec: AsciiVector = remaining[0..ascii_vector_size].*;
             const cmp = @splat(ascii_vector_size, char) != vec;
-            if (@reduce(.Min, @bitCast(AsciiVectorU1, cmp)) > 0) {
+            if (@reduce(.Max, @bitCast(AsciiVectorU1, cmp)) > 0) {
                 const bitmask = @ptrCast(*const AsciiVectorInt, &cmp).*;
                 const first = @ctz(AsciiVectorInt, bitmask);
                 return @as(u32, first) + @intCast(u32, slice.len - remaining.len);
@@ -3117,12 +3117,14 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
 
 test "indexOfNotChar" {
     {
-        const yes = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        try std.testing.expectEqual(indexOfNotChar(yes, 'a').?, 36);
-    }
-    {
-        const yes = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        try std.testing.expectEqual(indexOfNotChar(yes, 'a').?, 108);
+        var yes: [312]u8 = undefined;
+        var i: usize = 0;
+        while (i < yes.len) {
+            @memset(&yes, 'a', yes.len);
+            yes[i] = 'b';
+            assert(indexOfNotChar(&yes, 'a').? == i);
+            i += 1;
+        }
     }
 }
 

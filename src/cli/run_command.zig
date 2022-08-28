@@ -796,7 +796,12 @@ pub const RunCommand = struct {
                             if (shebang.len == 0) break :possibly_open_with_bun_js;
 
                             if (shebang.len > 2 and strings.eqlComptimeIgnoreLen(shebang[0..2], "#!")) {
-                                break :possibly_open_with_bun_js;
+                                const first_arg: string = if (std.os.argv.len > 0) bun.span(std.os.argv[0]) else "";
+                                const filename = std.fs.path.basename(first_arg);
+                                // are we attempting to run the script with bun?
+                                if (!strings.contains(shebang, filename)) {
+                                    break :possibly_open_with_bun_js;
+                                }
                             }
                             Global.configureAllocator(.{ .long_running = true });
 

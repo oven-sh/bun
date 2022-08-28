@@ -62,10 +62,10 @@ ffiWrappers[FFIType.uint8_t] = function uint8(val) {
   return val < 0 ? 0 : val >= 255 ? 255 : val | 0;
 };
 ffiWrappers[FFIType.int16_t] = function int16(val) {
-  return val <= -8192 ? -8192 : val >= 8192 ? 8192 : val | 0;
+  return val <= -32768 ? -32768 : val >= 32768 ? 32768 : val | 0;
 };
 ffiWrappers[FFIType.uint16_t] = function uint16(val) {
-  return val <= 0 ? 0 : val >= 16384 ? 16384 : val | 0;
+  return val <= 0 ? 0 : val >= 65536 ? 65536 : val | 0;
 };
 ffiWrappers[FFIType.int32_t] = function int32(val) {
   return val | 0;
@@ -76,7 +76,10 @@ ffiWrappers[FFIType.uint32_t] = function uint32(val) {
 };
 ffiWrappers[FFIType.i64_fast] = function int64(val) {
   if (typeof val === "bigint") {
-    if (val < BigInt(Number.MAX_VALUE)) {
+    if (
+      val <= BigInt(Number.MAX_SAFE_INTEGER) &&
+      val >= BigInt(-Number.MAX_SAFE_INTEGER)
+    ) {
       return Number(val).valueOf() || 0;
     }
 
@@ -88,7 +91,7 @@ ffiWrappers[FFIType.i64_fast] = function int64(val) {
 
 ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
   if (typeof val === "bigint") {
-    if (val < BigInt(Number.MAX_VALUE) && val > 0) {
+    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= 0) {
       return Number(val).valueOf() || 0;
     }
 
@@ -124,11 +127,9 @@ ffiWrappers[FFIType.uint64_t] = function uint64(val) {
 
 ffiWrappers[FFIType.u64_fast] = function u64_fast(val) {
   if (typeof val === "bigint") {
-    return val < BigInt(Number.MAX_VALUE)
-      ? val <= BigInt(0)
-        ? 0
-        : Number(val)
-      : val;
+    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0))
+      return Number(val);
+    return val;
   }
 
   return typeof val === "number" ? (val <= 0 ? 0 : +val || 0) : +val || 0;

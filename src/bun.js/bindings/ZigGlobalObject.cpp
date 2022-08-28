@@ -78,6 +78,7 @@
 #include "JSURLSearchParams.h"
 #include "JSDOMException.h"
 #include "JSEventTarget.h"
+#include "JSEventEmitter.h"
 #include "EventTargetConcrete.h"
 #include "JSAbortSignal.h"
 #include "JSCustomEvent.h"
@@ -91,6 +92,7 @@
 
 #include "WebCoreJSBuiltinInternals.h"
 #include "JSBuffer.h"
+#include "JSBufferList.h"
 #include "JSFFIFunction.h"
 #include "JavaScriptCore/InternalFunction.h"
 #include "JavaScriptCore/LazyClassStructure.h"
@@ -156,6 +158,7 @@ using JSBuffer = WebCore::JSBuffer;
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 #include "../modules/BufferModule.h"
+#include "../modules/EventsModule.h"
 #include "../modules/ProcessModule.h"
 
 // #include <iostream>
@@ -346,11 +349,15 @@ extern "C" JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObje
     return JSC::JSValue::encode(JSC::JSValue(object));
 }
 
+extern "C" EncodedJSValue Bun__escapeHTML8(JSGlobalObject* globalObject, EncodedJSValue input, const LChar* ptr, size_t length);
+extern "C" EncodedJSValue Bun__escapeHTML16(JSGlobalObject* globalObject, EncodedJSValue input, const UChar* ptr, size_t length);
+
 const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &supportsRichSourceInfo,
     &shouldInterruptScript,
     &javaScriptRuntimeFlags,
-    &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+    // &queueMicrotaskToEventLoop, // queueTaskToEventLoop
+    nullptr,
     nullptr, // &shouldInterruptScriptBeforeTimeout,
     &moduleLoaderImportModule, // moduleLoaderImportModule
     &moduleLoaderResolve, // moduleLoaderResolve
@@ -692,8 +699,8 @@ static JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     }
 
     // This is a JSC builtin function
-    globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job, JSC::JSValue {}, JSC::JSValue {},
-        JSC::JSValue {}, JSC::JSValue {}));
+    globalObject->queueMicrotask(job, JSC::JSValue {}, JSC::JSValue {},
+        JSC::JSValue {}, JSC::JSValue {});
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -720,8 +727,8 @@ static JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 
     if (callFrame->argumentCount() == 1) {
-        globalObject->queueMicrotask(JSC::createJSMicrotask(vm, job, JSC::JSValue {}, JSC::JSValue {},
-            JSC::JSValue {}, JSC::JSValue {}));
+        globalObject->queueMicrotask(job, JSC::JSValue {}, JSC::JSValue {},
+            JSC::JSValue {}, JSC::JSValue {});
         return JSC::JSValue::encode(JSC::jsNumber(Bun__Timer__getNextID()));
     }
 
@@ -1009,6 +1016,7 @@ JSC:
     default: {
         static NeverDestroyed<const String> sqliteString(MAKE_STATIC_STRING_IMPL("sqlite"));
         static NeverDestroyed<const String> bunJSCString(MAKE_STATIC_STRING_IMPL("bun:jsc"));
+        static NeverDestroyed<const String> bunStreamString(MAKE_STATIC_STRING_IMPL("bun:stream"));
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
 
         JSC::JSValue moduleName = callFrame->argument(0);
@@ -1059,6 +1067,14 @@ JSC:
         if (string == fileURLToPathString) {
             return JSValue::encode(
                 JSFunction::create(vm, globalObject, 1, fileURLToPathString, functionFileURLToPath, ImplementationVisibility::Public, NoIntrinsic));
+        }
+
+        if (string == bunStreamString) {
+            auto* obj = constructEmptyObject(globalObject);
+            auto* bufferList = JSC::JSFunction::create(
+                vm, globalObject, 0, "BufferList"_s, WebCore::constructJSBufferList, ImplementationVisibility::Public, NoIntrinsic, WebCore::constructJSBufferList);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), bufferList, 0);
+            return JSValue::encode(obj);
         }
 
         if (UNLIKELY(string == noopString)) {
@@ -1572,6 +1588,7 @@ class JSPerformanceObject;
 static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformanceObject*));
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunNanosecondsWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSObject*));
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSObject*, JSString*));
 }
 
 class JSPerformanceObject final : public JSC::JSNonFinalObject {
@@ -1636,6 +1653,51 @@ JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSV
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     return functionPerformanceNowBody(lexicalGlobalObject);
+}
+
+JSC_DEFINE_JIT_OPERATION(functionBunEscapeHTMLWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSObject* castedThis, JSString* string))
+{
+    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    IGNORE_WARNINGS_BEGIN("frame-address")
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    IGNORE_WARNINGS_END
+    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    size_t length = string->length();
+    if (!length)
+        return JSValue::encode(string);
+
+    auto resolvedString = string->value(lexicalGlobalObject);
+    if (!resolvedString.is8Bit()) {
+        return Bun__escapeHTML16(lexicalGlobalObject, JSValue::encode(string), resolvedString.characters16(), length);
+    } else {
+        return Bun__escapeHTML8(lexicalGlobalObject, JSValue::encode(string), resolvedString.characters8(), length);
+    }
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionBunEscapeHTML);
+JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = JSC::getVM(lexicalGlobalObject);
+    JSC::JSValue argument = callFrame->argument(0);
+    if (argument.isEmpty())
+        return JSValue::encode(jsEmptyString(vm));
+    if (argument.isNumber() || argument.isBoolean())
+        return JSValue::encode(argument.toString(lexicalGlobalObject));
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto string = argument.toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    size_t length = string->length();
+    if (!length)
+        RELEASE_AND_RETURN(scope, JSValue::encode(string));
+
+    auto resolvedString = string->value(lexicalGlobalObject);
+    EncodedJSValue encodedInput = JSValue::encode(string);
+    if (!resolvedString.is8Bit()) {
+        RELEASE_AND_RETURN(scope, Bun__escapeHTML16(lexicalGlobalObject, encodedInput, resolvedString.characters16(), length));
+    } else {
+        RELEASE_AND_RETURN(scope, Bun__escapeHTML8(lexicalGlobalObject, encodedInput, resolvedString.characters8(), length));
+    }
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionBunNanoseconds);
@@ -1937,8 +1999,6 @@ void GlobalObject::finishCreation(VM& vm)
 
     RELEASE_ASSERT(classInfo());
 }
-
-extern "C" EncodedJSValue Bun__escapeHTML(JSGlobalObject* globalObject, CallFrame* callFrame);
 
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
@@ -2248,7 +2308,14 @@ void GlobalObject::installAPIGlobals(JSClassRef* globals, int count, JSC::VM& vm
 
         {
             JSC::Identifier identifier = JSC::Identifier::fromString(vm, "escapeHTML"_s);
-            object->putDirectNativeFunction(vm, this, identifier, 1, Bun__escapeHTML, ImplementationVisibility::Public, NoIntrinsic,
+            static ClassInfo escapeHTMLClassInfo = *object->classInfo();
+            static const JSC::DOMJIT::Signature DOMJITSignatureForEscapeHTML(
+                functionBunEscapeHTMLWithoutTypeCheck,
+                object->classInfo(),
+                JSC::DOMJIT::Effect::forPure(),
+                SpecString,
+                SpecString);
+            object->putDirectNativeFunction(vm, this, identifier, 1, functionBunEscapeHTML, ImplementationVisibility::Public, NoIntrinsic, &DOMJITSignatureForEscapeHTML,
                 JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontDelete | 0);
         }
 
@@ -2408,6 +2475,10 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_processEnvObject.visit(visitor);
     thisObject->m_processObject.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
+
+    for (auto& barrier : thisObject->m_thenables) {
+        visitor.append(barrier);
+    }
 
     thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
 
@@ -2580,6 +2651,16 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
     }
+    case SyntheticModuleType::Events: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                generateEventsSourceCode,
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:events"_s)), WTFMove(moduleKey)));
+
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
     default: {
         auto provider = Zig::SourceProvider::create(res.result.value);
         globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
@@ -2656,6 +2737,18 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     case SyntheticModuleType::Process: {
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(generateProcessSourceCode,
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
+        return promise;
+    }
+    case SyntheticModuleType::Events: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(generateEventsSourceCode,
                 JSC::SourceOrigin(), WTFMove(moduleKey)));
 
         auto sourceCode = JSSourceCode::create(vm, WTFMove(source));

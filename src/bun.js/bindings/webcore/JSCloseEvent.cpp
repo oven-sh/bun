@@ -221,10 +221,10 @@ template<> void JSCloseEventDOMConstructor::initializeProperties(VM& vm, JSDOMGl
 /* Hash table for prototype */
 
 static const HashTableValue JSCloseEventPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsCloseEventConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "wasClean"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsCloseEvent_wasClean), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "code"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsCloseEvent_code), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "reason"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsCloseEvent_reason), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsCloseEventConstructor, 0 } },
+    { "wasClean"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCloseEvent_wasClean, 0 } },
+    { "code"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCloseEvent_code, 0 } },
+    { "reason"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsCloseEvent_reason, 0 } },
 };
 
 const ClassInfo JSCloseEventPrototype::s_info = { "CloseEvent"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCloseEventPrototype) };

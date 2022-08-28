@@ -769,7 +769,7 @@ pub const Completion = struct {
             },
             .timeout => {
                 var op = &completion.operation.timeout;
-                linux.io_uring_prep_timeout(sqe, &op.timespec, 1, 0);
+                linux.io_uring_prep_timeout(sqe, &op.timespec, 0, 0);
             },
             .write => |op| {
                 linux.io_uring_prep_write(

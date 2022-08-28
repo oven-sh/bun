@@ -40,12 +40,10 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 // Functions
-
 
 // Attributes
 
@@ -109,16 +107,15 @@ template<> FunctionExecutable* JSWritableStreamDefaultWriterDOMConstructor::init
 
 /* Hash table for prototype */
 
-static const HashTableValue JSWritableStreamDefaultWriterPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsWritableStreamDefaultWriterConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(writableStreamDefaultWriterClosedCodeGenerator), (intptr_t) (0) } },
-    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(writableStreamDefaultWriterDesiredSizeCodeGenerator), (intptr_t) (0) } },
-    { "ready"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(writableStreamDefaultWriterReadyCodeGenerator), (intptr_t) (0) } },
-    { "abort"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(writableStreamDefaultWriterAbortCodeGenerator), (intptr_t) (0) } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(writableStreamDefaultWriterCloseCodeGenerator), (intptr_t) (0) } },
-    { "releaseLock"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(writableStreamDefaultWriterReleaseLockCodeGenerator), (intptr_t) (0) } },
-    { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(writableStreamDefaultWriterWriteCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSWritableStreamDefaultWriterPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsWritableStreamDefaultWriterConstructor, 0 } },
+    { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, writableStreamDefaultWriterClosedCodeGenerator, 0 } },
+    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, writableStreamDefaultWriterDesiredSizeCodeGenerator, 0 } },
+    { "ready"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, writableStreamDefaultWriterReadyCodeGenerator, 0 } },
+    { "abort"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, writableStreamDefaultWriterAbortCodeGenerator, 0 } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, writableStreamDefaultWriterCloseCodeGenerator, 0 } },
+    { "releaseLock"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, writableStreamDefaultWriterReleaseLockCodeGenerator, 0 } },
+    { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, writableStreamDefaultWriterWriteCodeGenerator, 0 } },
 };
 
 const ClassInfo JSWritableStreamDefaultWriterPrototype::s_info = { "WritableStreamDefaultWriter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultWriterPrototype) };
@@ -133,13 +130,14 @@ void JSWritableStreamDefaultWriterPrototype::finishCreation(VM& vm)
 const ClassInfo JSWritableStreamDefaultWriter::s_info = { "WritableStreamDefaultWriter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamDefaultWriter) };
 
 JSWritableStreamDefaultWriter::JSWritableStreamDefaultWriter(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSWritableStreamDefaultWriter::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSWritableStreamDefaultWriter::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -163,7 +161,7 @@ void JSWritableStreamDefaultWriter::destroy(JSC::JSCell* cell)
     thisObject->JSWritableStreamDefaultWriter::~JSWritableStreamDefaultWriter();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -175,13 +173,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultWriterConstructor, (JSGlobalObje
 
 JSC::GCClient::IsoSubspace* JSWritableStreamDefaultWriter::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWritableStreamDefaultWriter, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultWriter.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultWriter = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultWriter.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultWriter = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSWritableStreamDefaultWriter, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultWriter.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultWriter = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultWriter.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultWriter = WTFMove(space); });
 }
-
-
 }

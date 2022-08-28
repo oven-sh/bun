@@ -264,6 +264,10 @@ pub const ZigString = extern struct {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
+    pub fn toAtomicValue(this: *const ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
+        return shim.cppFn("toAtomicValue", .{ this, globalThis });
+    }
+
     pub fn init16(slice_: []const u16) ZigString {
         var out = ZigString{ .ptr = std.mem.sliceAsBytes(slice_).ptr, .len = slice_.len };
         out.markUTF16();
@@ -503,7 +507,7 @@ pub const ZigString = extern struct {
         return shim.cppFn("toErrorInstance", .{ this, global });
     }
 
-    pub const Extern = [_][]const u8{ "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
+    pub const Extern = [_][]const u8{ "toAtomicValue", "toValue", "toExternalValue", "to16BitValue", "toValueGC", "toErrorInstance", "toExternalU16", "toExternalValueWithCallback", "external" };
 };
 
 pub const DOMURL = opaque {
@@ -1769,6 +1773,24 @@ pub const JSGlobalObject = extern struct {
         this.vm().throwError(this, err);
     }
 
+    pub fn createSyntheticModule_(this: *JSGlobalObject, export_names: [*]const ZigString, export_len: usize, value_ptrs: [*]const JSValue, values_len: usize) void {
+        shim.cppFn("createSyntheticModule_", .{ this, export_names, export_len, value_ptrs, values_len });
+    }
+
+    pub fn createSyntheticModule(this: *JSGlobalObject, comptime module: anytype) void {
+        const names = comptime std.meta.fieldNames(@TypeOf(module));
+        var export_names: [names.len]ZigString = undefined;
+        var export_values: [names.len]JSValue = undefined;
+        inline for (comptime names) |export_name, i| {
+            export_names[i] = ZigString.init(export_name);
+            const function = @field(module, export_name).@"0";
+            const len = @field(module, export_name).@"1";
+            export_values[i] = JSC.NewFunction(this, &export_names[i], len, function);
+        }
+
+        createSyntheticModule_(this, &export_names, names.len, &export_values, names.len);
+    }
+
     pub fn throw(
         this: *JSGlobalObject,
         comptime fmt: string,
@@ -1991,6 +2013,7 @@ pub const JSGlobalObject = extern struct {
         "generateHeapSnapshot",
         "startRemoteInspector",
         "handleRejectedPromises",
+        "createSyntheticModule_",
         // "createError",
         // "throwError",
     };
@@ -2025,8 +2048,7 @@ fn _WTF(comptime str: []const u8) type {
         return opaque {};
     }
 }
-pub const JSNativeFn = fn (*JSGlobalObject, *JSC.CallFrame) callconv(.C) JSValue;
-pub const JSNativeFnWithCtx = fn (?*anyopaque, [*c]JSGlobalObject, ?*JSC.CallFrame) callconv(.C) void;
+pub const JSNativeFn = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 
 pub const URL = extern struct {
     pub const shim = Shimmer("WTF", "URL", @This());
@@ -2476,7 +2498,7 @@ pub const JSValue = enum(JSValueReprInt) {
     };
 
     pub inline fn cast(ptr: anytype) JSValue {
-        return @intToEnum(JSValue, @intCast(i64, @ptrToInt(ptr)));
+        return @intToEnum(JSValue, @bitCast(i64, @ptrToInt(ptr)));
     }
 
     pub const Formatter = struct {
@@ -2615,6 +2637,10 @@ pub const JSValue = enum(JSValueReprInt) {
     /// Create an object with exactly two properties
     pub fn createObject2(global: *JSGlobalObject, key1: *const ZigString, key2: *const ZigString, value1: JSValue, value2: JSValue) JSValue {
         return cppFn("createObject2", .{ global, key1, key2, value1, value2 });
+    }
+
+    pub fn asPromisePtr(this: JSValue, comptime T: type) *T {
+        return asPtr(this, T);
     }
 
     pub fn getErrorsProperty(this: JSValue, globalObject: *JSGlobalObject) JSValue {
@@ -3032,12 +3058,14 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("symbolKeyFor", .{ this, global, str });
     }
 
-    pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSNativeFnWithCtx, reject: JSNativeFnWithCtx) void {
+    pub fn _then(this: JSValue, global: *JSGlobalObject, ctx: JSValue, resolve: JSNativeFn, reject: JSNativeFn) void {
         return cppFn("_then", .{ this, global, ctx, resolve, reject });
     }
 
-    pub fn then(this: JSValue, global: *JSGlobalObject, comptime Then: type, ctx: *Then, comptime onResolve: fn (*Then, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void, comptime onReject: fn (*Then, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void) void {
-        Thenable(Then, onResolve, onReject).then(ctx, this, global);
+    pub fn then(this: JSValue, global: *JSGlobalObject, ctx: ?*anyopaque, resolve: JSNativeFn, reject: JSNativeFn) void {
+        if (comptime bun.Environment.allow_assert)
+            std.debug.assert(JSValue.fromPtr(ctx).asPtr(anyopaque) == ctx.?);
+        return this._then(global, JSValue.fromPtr(ctx), resolve, reject);
     }
 
     pub fn getDescription(this: JSValue, global: *JSGlobalObject) ZigString {
@@ -3999,30 +4027,35 @@ pub const Callback = struct {
     // zig: Value,
 };
 
-pub fn Thenable(comptime Then: type, comptime onResolve: fn (*Then, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void, comptime onReject: fn (*Then, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void) type {
+pub fn Thenable(comptime name: []const u8, comptime Then: type, comptime onResolve: fn (*Then, globalThis: *JSGlobalObject, result: JSValue) void, comptime onReject: fn (*Then, globalThis: *JSGlobalObject, result: JSValue) void) type {
     return struct {
         pub fn resolve(
-            ctx: ?*anyopaque,
             globalThis: [*c]JSGlobalObject,
             callframe: ?*JSC.CallFrame,
         ) callconv(.C) void {
             @setRuntimeSafety(false);
             const args_list = callframe.?.arguments(8);
-            onResolve(@ptrCast(*Then, @alignCast(std.meta.alignment(Then), ctx.?)), globalThis, args_list.ptr[0..args_list.len]);
+            onResolve(@ptrCast(*Then, @alignCast(std.meta.alignment(Then), args_list.ptr[args_list.len - 1].asEncoded().asPtr)), globalThis, args_list.ptr[0]);
         }
 
         pub fn reject(
-            ctx: ?*anyopaque,
             globalThis: [*c]JSGlobalObject,
             callframe: ?*JSC.CallFrame,
         ) callconv(.C) void {
             @setRuntimeSafety(false);
             const args_list = callframe.?.arguments(8);
-            onReject(@ptrCast(*Then, @alignCast(std.meta.alignment(Then), ctx.?)), globalThis, args_list.ptr[0..args_list.len]);
+            onReject(@ptrCast(*Then, @alignCast(std.meta.alignment(Then), args_list.ptr[args_list.len - 1].asEncoded().asPtr)), globalThis, args_list.ptr[0]);
         }
 
         pub fn then(ctx: *Then, this: JSValue, globalThis: *JSGlobalObject) void {
             this._then(globalThis, ctx, resolve, reject);
+        }
+
+        comptime {
+            if (!JSC.is_bindgen) {
+                @export(resolve, name ++ "__resolve");
+                @export(reject, name ++ "__reject");
+            }
         }
     };
 }

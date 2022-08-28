@@ -17,6 +17,7 @@ public:
     DOMIsoSubspaces() = default;
     /*-- BUN --*/
     std::unique_ptr<IsoSubspace> m_subspaceForBuffer;
+    std::unique_ptr<IsoSubspace> m_subspaceForBufferList;
     std::unique_ptr<IsoSubspace> m_subspaceForFFIFunction;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiClass;
     std::unique_ptr<IsoSubspace> m_subspaceForNapiPrototype;
@@ -874,6 +875,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForEvent;
     std::unique_ptr<IsoSubspace> m_subspaceForEventListener;
     std::unique_ptr<IsoSubspace> m_subspaceForEventTarget;
+    std::unique_ptr<IsoSubspace> m_subspaceForEventEmitter;
 
     std::unique_ptr<IsoSubspace> m_subspaceForZigGlobalObject;
 

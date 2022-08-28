@@ -527,6 +527,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         has_marked_complete: bool = false,
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
+        response_protected: bool = false,
         response_ptr: ?*JSC.WebCore.Response = null,
         blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
         promise: ?*JSC.JSValue = null,
@@ -548,38 +549,29 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled;
 
-        pub const thenables = shim.thenables(.{
-            PromiseHandler,
-        });
-
-        pub const lazy_static_functions = thenables;
-        pub const Export = lazy_static_functions;
-
-        const PromiseHandler = JSC.Thenable(RequestContext, onResolve, onReject);
-
         pub fn setAbortHandler(this: *RequestContext) void {
             if (this.has_abort_handler) return;
             this.has_abort_handler = true;
             this.resp.onAborted(*RequestContext, RequestContext.onAbort, this);
         }
 
-        pub fn onResolve(
-            ctx: *RequestContext,
-            _: *JSC.JSGlobalObject,
-            arguments: []const JSC.JSValue,
-        ) void {
+        pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const arguments = callframe.arguments(2);
+            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const result = arguments.ptr[0];
             ctx.pending_promises_for_abort -|= 1;
             if (ctx.aborted) {
                 ctx.finalizeForAbort();
-                return;
+                return JSValue.jsUndefined();
             }
 
-            if (arguments.len == 0) {
+            if (result.isEmptyOrUndefinedOrNull()) {
                 ctx.renderMissing();
-                return;
+                return JSValue.jsUndefined();
             }
 
-            handleResolve(ctx, arguments[0]);
+            handleResolve(ctx, result);
+            return JSValue.jsUndefined();
         }
 
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
@@ -605,18 +597,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.pending_promises_for_abort == 0) this.finalize();
         }
 
-        pub fn onReject(
-            ctx: *RequestContext,
-            _: *JSC.JSGlobalObject,
-            arguments: []const JSC.JSValue,
-        ) void {
+        pub fn onReject(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const arguments = callframe.arguments(2);
+            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const err = arguments.ptr[0];
+
             ctx.pending_promises_for_abort -|= 1;
 
             if (ctx.aborted) {
                 ctx.finalizeForAbort();
-                return;
+                return JSValue.jsUndefined();
             }
-            handleReject(ctx, if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined());
+            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else JSC.JSValue.jsUndefined());
+            return JSValue.jsUndefined();
         }
 
         fn handleReject(ctx: *RequestContext, value: JSC.JSValue) void {
@@ -813,7 +806,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (!this.response_jsvalue.isEmpty()) {
-                this.server.response_objects_pool.push(this.server.globalThis, this.response_jsvalue);
+                if (this.response_protected) {
+                    this.response_jsvalue.unprotect();
+                    this.response_protected = false;
+                }
                 this.response_jsvalue = JSC.JSValue.zero;
             }
 
@@ -1243,101 +1239,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 assignment_result.ensureStillAlive();
                 // it returns a Promise when it goes through ReadableStreamDefaultReader
                 if (assignment_result.asPromise()) |promise| {
-                    const AwaitPromise = struct {
-                        pub fn onResolve(req: *RequestContext, _: *JSGlobalObject, _: []const JSC.JSValue) void {
-                            streamLog("onResolve", .{});
-                            var wrote_anything = false;
-
-                            if (req.sink) |wrapper| {
-                                wrapper.sink.pending_flush = null;
-                                wrapper.sink.done = true;
-                                req.aborted = req.aborted or wrapper.sink.aborted;
-                                wrote_anything = wrapper.sink.wrote > 0;
-                                wrapper.sink.finalize();
-                                wrapper.detach();
-                                req.sink = null;
-                                wrapper.sink.destroy();
-                            }
-
-                            if (req.response_ptr) |resp| {
-                                if (resp.body.value == .Locked) {
-                                    resp.body.value.Locked.readable.?.done();
-                                    resp.body.value = .{ .Used = {} };
-                                }
-                            }
-
-                            if (req.aborted) {
-                                req.finalizeForAbort();
-                                return;
-                            }
-
-                            const responded = req.resp.hasResponded();
-
-                            if (!responded and !wrote_anything) {
-                                req.resp.clearAborted();
-                                req.renderMissing();
-                                return;
-                            } else if (!responded and wrote_anything and !req.aborted) {
-                                req.resp.clearAborted();
-                                req.resp.endStream(false);
-                            }
-
-                            req.finalize();
-                        }
-                        pub fn onReject(req: *RequestContext, globalThis: *JSGlobalObject, args: []const JSC.JSValue) void {
-                            var wrote_anything = req.has_written_status;
-
-                            if (req.sink) |wrapper| {
-                                wrapper.sink.pending_flush = null;
-                                wrapper.sink.done = true;
-                                wrote_anything = wrote_anything or wrapper.sink.wrote > 0;
-                                req.aborted = req.aborted or wrapper.sink.aborted;
-                                wrapper.sink.finalize();
-                                wrapper.detach();
-                                req.sink = null;
-                                wrapper.sink.destroy();
-                            }
-
-                            if (req.response_ptr) |resp| {
-                                if (resp.body.value == .Locked) {
-                                    resp.body.value.Locked.readable.?.done();
-                                    resp.body.value = .{ .Used = {} };
-                                }
-                            }
-
-                            streamLog("onReject({s})", .{wrote_anything});
-
-                            if (req.aborted) {
-                                req.finalizeForAbort();
-                                return;
-                            }
-
-                            if (args.len > 0 and !wrote_anything) {
-                                req.response_jsvalue.unprotect();
-                                req.response_jsvalue = JSValue.zero;
-                                req.handleReject(args[0]);
-                                return;
-                            } else if (wrote_anything) {
-                                req.resp.endStream(true);
-                                if (comptime debug_mode) {
-                                    if (args.len > 0) {
-                                        var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
-                                        defer exception_list.deinit();
-                                        req.server.vm.runErrorHandler(args[0], &exception_list);
-                                    }
-                                }
-                                req.finalize();
-                                return;
-                            }
-
-                            const fallback = JSC.SystemError{
-                                .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_UNHANDLED_ERROR))),
-                                .message = ZigString.init("Unhandled error in ReadableStream"),
-                            };
-                            req.handleReject(fallback.toErrorInstance(globalThis));
-                        }
-                    };
-
                     streamLog("returned a promise", .{});
                     switch (promise.status(this.server.globalThis.vm())) {
                         .Pending => {
@@ -1351,19 +1252,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             };
                             assignment_result.then(
                                 this.server.globalThis,
-                                RequestContext,
                                 this,
-                                AwaitPromise.onResolve,
-                                AwaitPromise.onReject,
+                                onResolveStream,
+                                onRejectStream,
                             );
                             // the response_stream should be GC'd
 
                         },
                         .Fulfilled => {
-                            AwaitPromise.onResolve(this, this.server.globalThis, &.{promise.result(this.server.globalThis.vm())});
+                            this.handleResolveStream();
                         },
                         .Rejected => {
-                            AwaitPromise.onReject(this, this.server.globalThis, &.{promise.result(this.server.globalThis.vm())});
+                            this.handleRejectStream(this.server.globalThis, promise.result(this.server.globalThis.vm()));
                         },
                     }
                     return;
@@ -1396,6 +1296,113 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         const streamLog = Output.scoped(.ReadableStream, false);
+
+        pub fn handleResolveStream(req: *RequestContext) void {
+            streamLog("onResolve", .{});
+            var wrote_anything = false;
+            if (req.sink) |wrapper| {
+                wrapper.sink.pending_flush = null;
+                wrapper.sink.done = true;
+                req.aborted = req.aborted or wrapper.sink.aborted;
+                wrote_anything = wrapper.sink.wrote > 0;
+                wrapper.sink.finalize();
+                wrapper.detach();
+                req.sink = null;
+                wrapper.sink.destroy();
+            }
+
+            if (req.response_ptr) |resp| {
+                if (resp.body.value == .Locked) {
+                    resp.body.value.Locked.readable.?.done();
+                    resp.body.value = .{ .Used = {} };
+                }
+            }
+
+            if (req.aborted) {
+                req.finalizeForAbort();
+                return;
+            }
+
+            const responded = req.resp.hasResponded();
+
+            if (!responded and !wrote_anything) {
+                req.resp.clearAborted();
+                req.renderMissing();
+                return;
+            } else if (!responded and wrote_anything and !req.aborted) {
+                req.resp.clearAborted();
+                req.resp.endStream(false);
+            }
+
+            req.finalize();
+        }
+
+        pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            var args = callframe.arguments(2);
+            var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            req.handleResolveStream();
+            return JSValue.jsUndefined();
+        }
+        pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+            const args = callframe.arguments(2);
+            var req = args.ptr[args.len - 1].asPromisePtr(@This());
+            var err = args.ptr[0];
+            req.handleRejectStream(globalThis, err);
+            return JSValue.jsUndefined();
+        }
+
+        pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
+            var wrote_anything = req.has_written_status;
+
+            if (req.sink) |wrapper| {
+                wrapper.sink.pending_flush = null;
+                wrapper.sink.done = true;
+                wrote_anything = wrote_anything or wrapper.sink.wrote > 0;
+                req.aborted = req.aborted or wrapper.sink.aborted;
+                wrapper.sink.finalize();
+                wrapper.detach();
+                req.sink = null;
+                wrapper.sink.destroy();
+            }
+
+            if (req.response_ptr) |resp| {
+                if (resp.body.value == .Locked) {
+                    resp.body.value.Locked.readable.?.done();
+                    resp.body.value = .{ .Used = {} };
+                }
+            }
+
+            streamLog("onReject({s})", .{wrote_anything});
+
+            if (req.aborted) {
+                req.finalizeForAbort();
+                return;
+            }
+
+            if (!err.isEmptyOrUndefinedOrNull() and !wrote_anything) {
+                req.response_jsvalue.unprotect();
+                req.response_jsvalue = JSValue.zero;
+                req.handleReject(err);
+                return;
+            } else if (wrote_anything) {
+                req.resp.endStream(true);
+                if (comptime debug_mode) {
+                    if (!err.isEmptyOrUndefinedOrNull()) {
+                        var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
+                        defer exception_list.deinit();
+                        req.server.vm.runErrorHandler(err, &exception_list);
+                    }
+                }
+                req.finalize();
+                return;
+            }
+
+            const fallback = JSC.SystemError{
+                .code = ZigString.init(@as(string, @tagName(JSC.Node.ErrorCode.ERR_UNHANDLED_ERROR))),
+                .message = ZigString.init("Unhandled error in ReadableStream"),
+            };
+            req.handleReject(fallback.toErrorInstance(globalThis));
+        }
 
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
             switch (value.*) {
@@ -1619,13 +1626,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var needs_content_type = true;
             const content_type: MimeType = brk: {
                 if (response.body.init.headers) |headers_| {
-                    if (headers_.get("content-type")) |content| {
+                    if (headers_.fastGet(.ContentType)) |content| {
                         needs_content_type = false;
-                        break :brk MimeType.init(content);
+                        break :brk MimeType.byName(content.slice());
                     }
                 }
                 break :brk if (this.blob.content_type.len > 0)
-                    MimeType.init(this.blob.content_type)
+                    MimeType.byName(this.blob.content_type)
                 else if (MimeType.sniff(this.blob.sharedView())) |content|
                     content
                 else if (this.blob.is_all_ascii orelse false)
@@ -1795,13 +1802,26 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             onPull(bun.cast(*RequestContext, this));
         }
 
+        pub const Export = shim.exportFunctions(.{
+            .onResolve = onResolve,
+            .onReject = onReject,
+            .onResolveStream = onResolveStream,
+            .onRejectStream = onRejectStream,
+        });
+
         comptime {
             if (!JSC.is_bindgen) {
-                @export(PromiseHandler.resolve, .{
+                @export(onResolve, .{
                     .name = Export[0].symbol_name,
                 });
-                @export(PromiseHandler.reject, .{
+                @export(onReject, .{
                     .name = Export[1].symbol_name,
+                });
+                @export(onResolveStream, .{
+                    .name = Export[2].symbol_name,
+                });
+                @export(onRejectStream, .{
+                    .name = Export[3].symbol_name,
                 });
             }
         }
@@ -1824,7 +1844,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         vm: *JSC.VirtualMachine = undefined,
         globalThis: *JSGlobalObject,
         base_url_string_for_joining: string = "",
-        response_objects_pool: JSC.WebCore.Response.Pool = JSC.WebCore.Response.Pool{},
         config: ServerConfig = ServerConfig{},
         pending_requests: usize = 0,
         request_pool_allocator: std.mem.Allocator = undefined,
@@ -1913,12 +1932,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn deinit(this: *ThisServer) void {
-            if (this.vm.response_objects_pool) |pool| {
-                if (pool == &this.response_objects_pool) {
-                    this.vm.response_objects_pool = null;
-                }
-            }
-
             this.app.destroy();
             const allocator = this.allocator;
             allocator.destroy(this);
@@ -1948,9 +1961,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         noinline fn onListenFailed(this: *ThisServer) void {
-            var zig_str: ZigString = ZigString.init("Failed to start server");
+            var zig_str: ZigString = ZigString.init("");
+            var output_buf: [4096]u8 = undefined;
+
             if (comptime ssl_enabled) {
-                var output_buf: [4096]u8 = undefined;
                 output_buf[0] = 0;
                 var written: usize = 0;
                 var ssl_error = BoringSSL.ERR_get_error();
@@ -2002,8 +2016,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     zig_str.withEncoding().mark();
                 }
             }
+
+            if (zig_str.len == 0) {
+                zig_str = ZigString.init(std.fmt.bufPrint(&output_buf, "Failed to start server. Is port {d} in use?", .{this.config.port}) catch "Failed to start server");
+            }
+
             // store the exception in here
+            // toErrorInstance clones the string
             this.thisObject = zig_str.toErrorInstance(this.globalThis);
+
+            // reference it in stack memory
+            this.thisObject.ensureStillAlive();
             return;
         }
 
@@ -2015,7 +2038,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.listener = socket;
             const needs_post_handler = this.vm.uws_event_loop == null;
             this.vm.uws_event_loop = uws.Loop.get();
-            this.vm.response_objects_pool = &this.response_objects_pool;
             this.listen_callback = JSC.AnyTask.New(ThisServer, run).init(this);
             this.vm.eventLoop().enqueueTask(JSC.Task.init(&this.listen_callback));
             if (needs_post_handler) {
@@ -2140,7 +2162,20 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (response_value.as(JSC.WebCore.Response)) |response| {
                 ctx.response_jsvalue = response_value;
                 ctx.response_jsvalue.ensureStillAlive();
-                response_value.protect();
+                ctx.response_protected = false;
+                switch (response.body.value) {
+                    .Blob => |*blob| {
+                        if (blob.needsToReadFile()) {
+                            response_value.protect();
+                            ctx.response_protected = true;
+                        }
+                    },
+                    .Locked => {
+                        response_value.protect();
+                        ctx.response_protected = true;
+                    },
+                    else => {},
+                }
                 ctx.render(response);
                 return;
             }
@@ -2216,7 +2251,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     request_object.headers = JSC.FetchHeaders.createFromUWS(this.globalThis, req);
                 }
 
-                RequestContext.PromiseHandler.then(ctx, response_value, this.globalThis);
+                response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject);
                 return;
             }
 

@@ -89,7 +89,6 @@ function loadModule(meta, resolvedSpecifier) {
       entry.fetch,
       @promiseFieldReactionsOrResult
     );
-
     // parseModule() returns a Promise, but the value is already fulfilled
     // so we just pull it out of the promise here once again
     // But, this time we do it a little more carefully because this is a JSC function call and not bun source code
@@ -105,7 +104,6 @@ function loadModule(meta, resolvedSpecifier) {
         @promiseFieldFlags
       );
       var state = flags & @promiseStateMask;
-
       // this branch should never happen, but just to be safe
       if (
         state === @promiseStatePending ||
@@ -131,18 +129,15 @@ function loadModule(meta, resolvedSpecifier) {
     var dependenciesMap = module.dependenciesMap;
     var requestedModules = Loader.requestedModules(module);
     var dependencies = @newArrayWithSize(requestedModules.length);
-
     for (var i = 0, length = requestedModules.length; i < length; ++i) {
       var depName = requestedModules[i];
-
       // optimization: if it starts with a slash then it's an absolute path
       // we don't need to run the resolver a 2nd time
       var depKey =
         depName[0] === "/"
           ? depName
-          : Loader.resolveSync(depName, key, @undefined);
+          : Loader.resolve(depName, key, @undefined);
       var depEntry = Loader.ensureRegistered(depKey);
-
       if (depEntry.state < @ModuleLink) {
         queue.push(depKey);
       }
@@ -153,8 +148,8 @@ function loadModule(meta, resolvedSpecifier) {
 
     entry.dependencies = dependencies;
     // All dependencies resolved, set instantiate and satisfy field directly.
-    entry.instantiate = Promise.resolve(entry)
-    entry.satisfy = Promise.resolve(entry);
+    entry.instantiate = @Promise.resolve(entry)
+    entry.satisfy = @Promise.resolve(entry);
     key = queue.shift();
     while (key && (Loader.registry.@get(key)?.state ?? @ModuleFetch) >= @ModuleLink) {
       key = queue.shift();

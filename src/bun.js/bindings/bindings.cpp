@@ -95,29 +95,29 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
     }
 }
 
+using namespace JSC;
+
 template<typename PromiseType, bool isInternal>
-static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), void (*ArgFn4)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
+static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, JSC__JSValue (*resolverFunction)(JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), JSC__JSValue (*rejecterFunction)(JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
 {
 
     auto globalThis = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), [ctx, promise, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
-            ArgFn3(ctx, globalObject, callFrame);
-
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        });
-    JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(),
-        [ctx, promise, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            ArgFn4(ctx, globalObject, callFrame);
-
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        });
 
     if constexpr (!isInternal) {
-        promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
+        JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
+        auto callData = JSC::getCallData(performPromiseThenFunction);
+        ASSERT(callData.type != CallData::Type::None);
+
+        MarkedArgumentBuffer arguments;
+        arguments.append(promise);
+        arguments.append(globalThis->thenable(resolverFunction));
+        arguments.append(globalThis->thenable(rejecterFunction));
+        arguments.append(jsUndefined());
+        arguments.append(JSValue::decode(ctx));
+        ASSERT(!arguments.hasOverflowed());
+        JSC::call(globalThis, performPromiseThenFunction, callData, jsUndefined(), arguments);
     } else {
-        promise->then(globalObject, resolverFunction, rejecterFunction);
+        promise->then(globalThis, resolverFunction, rejecterFunction);
     }
 }
 
@@ -587,15 +587,15 @@ JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 }
 
 // TODO: prevent this from allocating so much memory
-void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), void (*ArgFn4)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
+void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue arg2, JSC__JSValue (*ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), JSC__JSValue (*ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
 {
 
     auto* cell = JSC::JSValue::decode(JSValue0).asCell();
 
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
-        handlePromise<JSC::JSPromise, false>(promise, globalObject, ctx, ArgFn3, ArgFn4);
+        handlePromise<JSC::JSPromise, false>(promise, arg1, arg2, ArgFn3, ArgFn4);
     } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
-        handlePromise<JSC::JSInternalPromise, true>(promise, globalObject, ctx, ArgFn3, ArgFn4);
+        RELEASE_ASSERT(false);
     }
 }
 
@@ -1056,7 +1056,17 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
         arg2->ptr = (char*)typedArray->vector();
         return true;
     }
-
+    case JSC::JSType::DataViewType: {
+        JSC::JSDataView* typedArray = JSC::jsCast<JSC::JSDataView*>(value);
+        arg2->len = typedArray->length();
+        arg2->byte_len = typedArray->byteLength();
+        // the offset is already set by vector()
+        // https://github.com/oven-sh/bun/issues/561
+        arg2->offset = 0;
+        arg2->cell_type = JSC::JSType::DataViewType;
+        arg2->ptr = (char*)typedArray->vector();
+        return true;
+    }
     case JSC::JSType::Uint8ClampedArrayType: {
         JSC::JSUint8ClampedArray* typedArray = JSC::jsCast<JSC::JSUint8ClampedArray*>(value);
         arg2->len = typedArray->length();
@@ -1259,6 +1269,25 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* glob
 JSC__JSValue ZigString__toValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(*arg0))));
+}
+
+JSC__JSValue ZigString__toAtomicValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
+{
+    if (arg0->len == 0) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
+    }
+
+    if (isTaggedUTF16Ptr(arg0->ptr)) {
+        if (auto impl = WTF::AtomStringImpl::lookUp(reinterpret_cast<const UChar*>(untag(arg0->ptr)), arg0->len)) {
+            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTFMove(impl))));
+        }
+    } else {
+        if (auto impl = WTF::AtomStringImpl::lookUp(untag(arg0->ptr), arg0->len)) {
+            return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTFMove(impl))));
+        }
+    }
+
+    return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), makeAtomString(Zig::toStringCopy(*arg0)))));
 }
 
 JSC__JSValue ZigString__to16BitValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)

@@ -12338,7 +12338,7 @@ fn NewParser_(
 
                                 children.append(child) catch unreachable;
                             } else {
-                                children.append(p.parseJSXElement(less_than_loc) catch unreachable) catch unreachable;
+                                children.append(try p.parseJSXElement(less_than_loc)) catch unreachable;
                             }
 
                             // The call to parseJSXElement() above doesn't consume the last

@@ -818,7 +818,7 @@ pub export fn napi_get_date_value(env: napi_env, value: napi_value, result: *f64
     ).asNumber();
     return .ok;
 }
-pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: [*c]napi_ref) napi_status;
+pub extern fn napi_add_finalizer(env: napi_env, js_object: napi_value, native_object: ?*anyopaque, finalize_cb: napi_finalize, finalize_hint: ?*anyopaque, result: *napi_ref) napi_status;
 pub export fn napi_create_bigint_int64(env: napi_env, value: i64, result: *napi_value) napi_status {
     result.* = JSC.JSValue.fromInt64NoTruncate(env, value);
     return .ok;
@@ -1462,6 +1462,7 @@ pub fn fixDeadCodeElimination() void {
     std.mem.doNotOptimizeAway(&napi_ref_threadsafe_function);
     std.mem.doNotOptimizeAway(&napi_add_async_cleanup_hook);
     std.mem.doNotOptimizeAway(&napi_remove_async_cleanup_hook);
+    std.mem.doNotOptimizeAway(&napi_add_finalizer);
 
     std.mem.doNotOptimizeAway(&@import("../bun.js/node/buffer.zig").BufferVectorized.fill);
 }
@@ -1555,5 +1556,6 @@ comptime {
         _ = napi_add_async_cleanup_hook;
         _ = napi_remove_async_cleanup_hook;
         _ = @import("../bun.js/node/buffer.zig").BufferVectorized.fill;
+        _ = napi_add_finalizer;
     }
 }

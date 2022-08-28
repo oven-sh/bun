@@ -1,0 +1,121 @@
+#pragma once
+
+#include "IdentifierEventListenerMap.h"
+#include "ExceptionOr.h"
+#include "ContextDestructionObserver.h"
+#include "ScriptWrappable.h"
+#include <memory>
+#include <variant>
+#include <wtf/Forward.h>
+
+#include <wtf/WeakPtr.h>
+
+#include "root.h"
+
+namespace JSC {
+class JSValue;
+class JSObject;
+}
+
+namespace WebCore {
+
+class DOMWrapperWorld;
+class JSEventListener;
+
+struct EventEmitterData {
+    WTF_MAKE_NONCOPYABLE(EventEmitterData);
+    WTF_MAKE_FAST_ALLOCATED;
+
+public:
+    EventEmitterData() = default;
+    IdentifierEventListenerMap eventListenerMap;
+    bool isFiringEventListeners { false };
+};
+
+class EventEmitter final : public ScriptWrappable, public CanMakeWeakPtr<EventEmitter>, public RefCounted<EventEmitter>, public ContextDestructionObserver {
+    WTF_MAKE_ISO_ALLOCATED(EventEmitter);
+
+public:
+    static Ref<EventEmitter> create(ScriptExecutionContext&);
+    WEBCORE_EXPORT ~EventEmitter() = default;
+
+    using RefCounted::deref;
+    using RefCounted::ref;
+
+    ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); };
+
+    WEBCORE_EXPORT bool isNode() const { return false; };
+
+    WEBCORE_EXPORT void addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT void removeListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&&);
+    WEBCORE_EXPORT void removeAllListenersForBindings(const Identifier& eventType);
+    WEBCORE_EXPORT bool emitForBindings(const Identifier&, const MarkedArgumentBuffer&);
+
+    WEBCORE_EXPORT bool addListener(const Identifier& eventType, Ref<EventListener>&&, bool, bool);
+    WEBCORE_EXPORT bool removeListener(const Identifier& eventType, EventListener&);
+    WEBCORE_EXPORT bool removeAllListeners(const Identifier& eventType);
+
+    WEBCORE_EXPORT void emit(const Identifier&, const MarkedArgumentBuffer&);
+    WEBCORE_EXPORT void uncaughtExceptionInEventHandler();
+
+    WEBCORE_EXPORT Vector<Identifier> getEventNames();
+    WEBCORE_EXPORT Vector<JSObject*> getListeners(const Identifier& eventType);
+    WEBCORE_EXPORT int listenerCount(const Identifier& eventType);
+
+    bool hasEventListeners() const;
+    bool hasEventListeners(const Identifier& eventType) const;
+    bool hasActiveEventListeners(const Identifier& eventType) const;
+
+    Vector<Identifier> eventTypes();
+    const SimpleEventListenerVector& eventListeners(const Identifier& eventType);
+
+    void fireEventListeners(const Identifier& eventName, const MarkedArgumentBuffer& arguments);
+    bool isFiringEventListeners() const;
+
+    void invalidateJSEventListeners(JSC::JSObject*);
+
+    const EventEmitterData* eventTargetData() const;
+
+    IdentifierEventListenerMap& eventListenerMap() { return ensureEventEmitterData().eventListenerMap; }
+
+private:
+    EventEmitter(ScriptExecutionContext& context)
+        : ContextDestructionObserver(&context)
+    {
+    }
+
+    EventEmitterData* eventTargetData() { return &m_eventTargetData; }
+    EventEmitterData* eventTargetDataConcurrently() { return &m_eventTargetData; }
+    EventEmitterData& ensureEventEmitterData() { return m_eventTargetData; }
+    void eventListenersDidChange() {}
+
+    void innerInvokeEventListeners(const Identifier&, SimpleEventListenerVector, const MarkedArgumentBuffer& arguments);
+    void invalidateEventListenerRegions();
+
+    EventEmitterData m_eventTargetData;
+};
+
+inline const EventEmitterData* EventEmitter::eventTargetData() const
+{
+    return const_cast<EventEmitter*>(this)->eventTargetData();
+}
+
+inline bool EventEmitter::isFiringEventListeners() const
+{
+    auto* data = eventTargetData();
+    return data && data->isFiringEventListeners;
+}
+
+inline bool EventEmitter::hasEventListeners() const
+{
+    auto* data = eventTargetData();
+    return data && !data->eventListenerMap.isEmpty();
+}
+
+inline bool EventEmitter::hasEventListeners(const Identifier& eventType) const
+{
+    auto* data = eventTargetData();
+    return data && data->eventListenerMap.contains(eventType);
+}
+
+} // namespace WebCore

@@ -1,3 +1,4 @@
+#include "mimalloc.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,6 +6,11 @@
 #include <sys/socket.h>
 #include <ifaddrs.h>
 #include <arpa/inet.h>
+
+#define free mi_free
+#define malloc mi_malloc
+#define realloc mi_realloc
+#define strdup mi_strdup
 
 #ifdef __linux__
     #include <netpacket/packet.h>
@@ -22,8 +28,9 @@ extern "C" uint32_t getBitCountFromIPv4Mask(uint32_t mask) {
 extern "C" uint32_t getBitCountFromIPv6Mask(const in6_addr &mask) {
     uint32_t bitCount = 0;
 
-    for (uint32_t ii = 0; ii < 4; ii++) {
-        bitCount += __builtin_popcount(mask.s6_addr32[ii]);
+    // uint32 version is unsupported on some platforms
+    for (size_t ii = 0; ii < 16; ii++) {
+        bitCount += __builtin_popcount(mask.s6_addr[ii]);
     }
 
     return bitCount;
@@ -37,7 +44,7 @@ extern "C" NetworkInterface *getNetworkInterfaces() {
     struct ifaddrs *ifap, *ifa;
     unsigned char *ptr;
 
-    getifaddrs (&ifap);
+    getifaddrs(&ifap);
     for (ifa = ifap; ifa; ifa = ifa->ifa_next) {
         if (ifa->ifa_addr && ifa->ifa_addr->sa_family==AF_INET) {
             struct sockaddr_in *sa = (struct sockaddr_in *) ifa->ifa_addr;

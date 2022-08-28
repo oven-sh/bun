@@ -95,29 +95,29 @@ static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
     }
 }
 
+using namespace JSC;
+
 template<typename PromiseType, bool isInternal>
-static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), void (*ArgFn4)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
+static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, JSC__JSValue (*resolverFunction)(JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), JSC__JSValue (*rejecterFunction)(JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
 {
 
     auto globalThis = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    JSC::JSNativeStdFunction* resolverFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(), [ctx, promise, ArgFn3](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> const JSC::EncodedJSValue {
-            ArgFn3(ctx, globalObject, callFrame);
-
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        });
-    JSC::JSNativeStdFunction* rejecterFunction = JSC::JSNativeStdFunction::create(
-        globalObject->vm(), globalObject, 1, String(),
-        [ctx, promise, ArgFn4](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-            ArgFn4(ctx, globalObject, callFrame);
-
-            return JSC::JSValue::encode(JSC::jsUndefined());
-        });
 
     if constexpr (!isInternal) {
-        promise->performPromiseThen(globalObject, resolverFunction, rejecterFunction, JSC::jsUndefined());
+        JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
+        auto callData = JSC::getCallData(performPromiseThenFunction);
+        ASSERT(callData.type != CallData::Type::None);
+
+        MarkedArgumentBuffer arguments;
+        arguments.append(promise);
+        arguments.append(globalThis->thenable(resolverFunction));
+        arguments.append(globalThis->thenable(rejecterFunction));
+        arguments.append(jsUndefined());
+        arguments.append(JSValue::decode(ctx));
+        ASSERT(!arguments.hasOverflowed());
+        JSC::call(globalThis, performPromiseThenFunction, callData, jsUndefined(), arguments);
     } else {
-        promise->then(globalObject, resolverFunction, rejecterFunction);
+        promise->then(globalThis, resolverFunction, rejecterFunction);
     }
 }
 
@@ -587,15 +587,15 @@ JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 }
 
 // TODO: prevent this from allocating so much memory
-void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* ctx, void (*ArgFn3)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), void (*ArgFn4)(void*, JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
+void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue arg2, JSC__JSValue (*ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), JSC__JSValue (*ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
 {
 
     auto* cell = JSC::JSValue::decode(JSValue0).asCell();
 
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(cell)) {
-        handlePromise<JSC::JSPromise, false>(promise, globalObject, ctx, ArgFn3, ArgFn4);
+        handlePromise<JSC::JSPromise, false>(promise, arg1, arg2, ArgFn3, ArgFn4);
     } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
-        handlePromise<JSC::JSInternalPromise, true>(promise, globalObject, ctx, ArgFn3, ArgFn4);
+        RELEASE_ASSERT(false);
     }
 }
 
@@ -2023,7 +2023,7 @@ JSC__JSValue JSC__JSValue__fromUInt64NoTruncate(JSC__JSGlobalObject* globalObjec
     return JSC::JSValue::encode(JSC::JSValue(JSC::JSBigInt::createFrom(globalObject, val)));
 }
 
-uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSGlobalObject* arg0, JSC__JSValue val)
+uint64_t JSC__JSValue__toUInt64NoTruncate(JSC__JSValue val)
 {
     JSC::JSValue _val = JSC::JSValue::decode(val);
 

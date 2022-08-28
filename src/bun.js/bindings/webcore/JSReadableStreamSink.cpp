@@ -89,9 +89,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamSinkPrototype, JSReadableStr
 /* Hash table for prototype */
 
 static const HashTableValue JSReadableStreamSinkPrototypeTableValues[] = {
-    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsReadableStreamSinkPrototypeFunction_enqueue), (intptr_t)(1) } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsReadableStreamSinkPrototypeFunction_close), (intptr_t)(0) } },
-    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsReadableStreamSinkPrototypeFunction_error), (intptr_t)(1) } },
+    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamSinkPrototypeFunction_enqueue, 1 } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamSinkPrototypeFunction_close, 0 } },
+    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamSinkPrototypeFunction_error, 1 } },
 };
 
 const ClassInfo JSReadableStreamSinkPrototype::s_info = { "ReadableStreamSink"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamSinkPrototype) };

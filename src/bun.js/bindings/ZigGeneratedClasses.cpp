@@ -43,9 +43,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA1Prototype, JSSHA1Prototype::Base);
 
 
   static const HashTableValue JSSHA1PrototypeTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA1Prototype__byteLengthGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA1Prototype__digestCallback), (intptr_t)(0) } }  ,
-{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA1Prototype__updateCallback), (intptr_t)(0) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA1Prototype__byteLengthGetterWrap, 0 } }  ,
+{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA1Prototype__digestCallback, 0 } }  ,
+{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA1Prototype__updateCallback, 0 } }
   };
 
 
@@ -125,8 +125,8 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA1Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA1Class__hash);
 
   static const HashTableValue JSSHA1ConstructorTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA1Class__getByteLengthStatic), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA1Class__hash), (intptr_t)(2) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA1Class__getByteLengthStatic, 0 } }  ,
+{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA1Class__hash, 2 } }
   };
 
 
@@ -275,9 +275,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMD5Prototype, JSMD5Prototype::Base);
 
 
   static const HashTableValue JSMD5PrototypeTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(MD5Prototype__byteLengthGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(MD5Prototype__digestCallback), (intptr_t)(0) } }  ,
-{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(MD5Prototype__updateCallback), (intptr_t)(0) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MD5Prototype__byteLengthGetterWrap, 0 } }  ,
+{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, MD5Prototype__digestCallback, 0 } }  ,
+{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, MD5Prototype__updateCallback, 0 } }
   };
 
 
@@ -357,8 +357,8 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(MD5Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(MD5Class__hash);
 
   static const HashTableValue JSMD5ConstructorTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(MD5Class__getByteLengthStatic), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(MD5Class__hash), (intptr_t)(2) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MD5Class__getByteLengthStatic, 0 } }  ,
+{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, MD5Class__hash, 2 } }
   };
 
 
@@ -507,9 +507,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMD4Prototype, JSMD4Prototype::Base);
 
 
   static const HashTableValue JSMD4PrototypeTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(MD4Prototype__byteLengthGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(MD4Prototype__digestCallback), (intptr_t)(0) } }  ,
-{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(MD4Prototype__updateCallback), (intptr_t)(0) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MD4Prototype__byteLengthGetterWrap, 0 } }  ,
+{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, MD4Prototype__digestCallback, 0 } }  ,
+{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, MD4Prototype__updateCallback, 0 } }
   };
 
 
@@ -589,8 +589,8 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(MD4Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(MD4Class__hash);
 
   static const HashTableValue JSMD4ConstructorTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(MD4Class__getByteLengthStatic), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(MD4Class__hash), (intptr_t)(2) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, MD4Class__getByteLengthStatic, 0 } }  ,
+{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, MD4Class__hash, 2 } }
   };
 
 
@@ -739,9 +739,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA224Prototype, JSSHA224Prototype::Base);
 
 
   static const HashTableValue JSSHA224PrototypeTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA224Prototype__byteLengthGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA224Prototype__digestCallback), (intptr_t)(0) } }  ,
-{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA224Prototype__updateCallback), (intptr_t)(0) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA224Prototype__byteLengthGetterWrap, 0 } }  ,
+{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA224Prototype__digestCallback, 0 } }  ,
+{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA224Prototype__updateCallback, 0 } }
   };
 
 
@@ -821,8 +821,8 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA224Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA224Class__hash);
 
   static const HashTableValue JSSHA224ConstructorTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA224Class__getByteLengthStatic), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA224Class__hash), (intptr_t)(2) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA224Class__getByteLengthStatic, 0 } }  ,
+{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA224Class__hash, 2 } }
   };
 
 
@@ -971,9 +971,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA512Prototype, JSSHA512Prototype::Base);
 
 
   static const HashTableValue JSSHA512PrototypeTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA512Prototype__byteLengthGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA512Prototype__digestCallback), (intptr_t)(0) } }  ,
-{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA512Prototype__updateCallback), (intptr_t)(0) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA512Prototype__byteLengthGetterWrap, 0 } }  ,
+{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512Prototype__digestCallback, 0 } }  ,
+{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512Prototype__updateCallback, 0 } }
   };
 
 
@@ -1053,8 +1053,8 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA512Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA512Class__hash);
 
   static const HashTableValue JSSHA512ConstructorTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA512Class__getByteLengthStatic), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA512Class__hash), (intptr_t)(2) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA512Class__getByteLengthStatic, 0 } }  ,
+{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512Class__hash, 2 } }
   };
 
 
@@ -1203,9 +1203,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA384Prototype, JSSHA384Prototype::Base);
 
 
   static const HashTableValue JSSHA384PrototypeTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA384Prototype__byteLengthGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA384Prototype__digestCallback), (intptr_t)(0) } }  ,
-{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA384Prototype__updateCallback), (intptr_t)(0) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA384Prototype__byteLengthGetterWrap, 0 } }  ,
+{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA384Prototype__digestCallback, 0 } }  ,
+{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA384Prototype__updateCallback, 0 } }
   };
 
 
@@ -1285,8 +1285,8 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA384Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA384Class__hash);
 
   static const HashTableValue JSSHA384ConstructorTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA384Class__getByteLengthStatic), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA384Class__hash), (intptr_t)(2) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA384Class__getByteLengthStatic, 0 } }  ,
+{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA384Class__hash, 2 } }
   };
 
 
@@ -1435,9 +1435,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA256Prototype, JSSHA256Prototype::Base);
 
 
   static const HashTableValue JSSHA256PrototypeTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA256Prototype__byteLengthGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA256Prototype__digestCallback), (intptr_t)(0) } }  ,
-{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA256Prototype__updateCallback), (intptr_t)(0) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA256Prototype__byteLengthGetterWrap, 0 } }  ,
+{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA256Prototype__digestCallback, 0 } }  ,
+{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA256Prototype__updateCallback, 0 } }
   };
 
 
@@ -1517,8 +1517,8 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA256Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA256Class__hash);
 
   static const HashTableValue JSSHA256ConstructorTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA256Class__getByteLengthStatic), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA256Class__hash), (intptr_t)(2) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA256Class__getByteLengthStatic, 0 } }  ,
+{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA256Class__hash, 2 } }
   };
 
 
@@ -1667,9 +1667,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSHA512_256Prototype, JSSHA512_256Prototype
 
 
   static const HashTableValue JSSHA512_256PrototypeTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA512_256Prototype__byteLengthGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA512_256Prototype__digestCallback), (intptr_t)(0) } }  ,
-{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA512_256Prototype__updateCallback), (intptr_t)(0) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA512_256Prototype__byteLengthGetterWrap, 0 } }  ,
+{ "digest"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512_256Prototype__digestCallback, 0 } }  ,
+{ "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512_256Prototype__updateCallback, 0 } }
   };
 
 
@@ -1749,8 +1749,8 @@ extern "C" JSC_DECLARE_CUSTOM_GETTER(SHA512_256Class__getByteLengthStatic);
 extern "C" JSC_DECLARE_HOST_FUNCTION(SHA512_256Class__hash);
 
   static const HashTableValue JSSHA512_256ConstructorTableValues[] = {
-{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(SHA512_256Class__getByteLengthStatic), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(SHA512_256Class__hash), (intptr_t)(2) } }
+{ "byteLength"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SHA512_256Class__getByteLengthStatic, 0 } }  ,
+{ "hash"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SHA512_256Class__hash, 2 } }
   };
 
 
@@ -1899,9 +1899,9 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSTextDecoderPrototype, JSTextDecoderPrototy
 
 
   static const HashTableValue JSTextDecoderPrototypeTableValues[] = {
-{ "decode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(TextDecoderPrototype__decodeCallback), (intptr_t)(1) } }  ,
-{ "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(TextDecoderPrototype__encodingGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "fatal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(TextDecoderPrototype__fatalGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }
+{ "decode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, TextDecoderPrototype__decodeCallback, 1 } }  ,
+{ "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__encodingGetterWrap, 0 } }  ,
+{ "fatal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, TextDecoderPrototype__fatalGetterWrap, 0 } }
   };
 
 
@@ -2192,23 +2192,23 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSRequestPrototype, JSRequestPrototype::Base
 
 
   static const HashTableValue JSRequestPrototypeTableValues[] = {
-{ "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(RequestPrototype__arrayBufferCallback), (intptr_t)(0) } }  ,
-{ "blob"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(RequestPrototype__blobCallback), (intptr_t)(0) } }  ,
-{ "bodyUsed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__bodyUsedGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__cacheGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "clone"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(RequestPrototype__cloneCallback), (intptr_t)(1) } }  ,
-{ "credentials"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__credentialsGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "destination"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__destinationGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "headers"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__headersGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "integrity"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__integrityGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(RequestPrototype__jsonCallback), (intptr_t)(0) } }  ,
-{ "method"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__methodGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "mode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__modeGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__redirectGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "referrer"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__referrerGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "referrerPolicy"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__referrerPolicyGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(RequestPrototype__textCallback), (intptr_t)(0) } }  ,
-{ "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(RequestPrototype__urlGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }
+{ "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__arrayBufferCallback, 0 } }  ,
+{ "blob"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__blobCallback, 0 } }  ,
+{ "bodyUsed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__bodyUsedGetterWrap, 0 } }  ,
+{ "cache"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__cacheGetterWrap, 0 } }  ,
+{ "clone"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__cloneCallback, 1 } }  ,
+{ "credentials"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__credentialsGetterWrap, 0 } }  ,
+{ "destination"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__destinationGetterWrap, 0 } }  ,
+{ "headers"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__headersGetterWrap, 0 } }  ,
+{ "integrity"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__integrityGetterWrap, 0 } }  ,
+{ "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__jsonCallback, 0 } }  ,
+{ "method"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__methodGetterWrap, 0 } }  ,
+{ "mode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__modeGetterWrap, 0 } }  ,
+{ "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__redirectGetterWrap, 0 } }  ,
+{ "referrer"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__referrerGetterWrap, 0 } }  ,
+{ "referrerPolicy"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__referrerPolicyGetterWrap, 0 } }  ,
+{ "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, RequestPrototype__textCallback, 0 } }  ,
+{ "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, RequestPrototype__urlGetterWrap, 0 } }
   };
 
 
@@ -2685,18 +2685,18 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSResponsePrototype, JSResponsePrototype::Ba
 
 
   static const HashTableValue JSResponsePrototypeTableValues[] = {
-{ "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(ResponsePrototype__arrayBufferCallback), (intptr_t)(0) } }  ,
-{ "blob"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(ResponsePrototype__blobCallback), (intptr_t)(0) } }  ,
-{ "bodyUsed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(ResponsePrototype__bodyUsedGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "clone"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(ResponsePrototype__cloneCallback), (intptr_t)(1) } }  ,
-{ "headers"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(ResponsePrototype__headersGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(ResponsePrototype__jsonCallback), (intptr_t)(0) } }  ,
-{ "ok"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(ResponsePrototype__okGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "status"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(ResponsePrototype__statusGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "statusText"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(ResponsePrototype__statusTextGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(ResponsePrototype__textCallback), (intptr_t)(0) } }  ,
-{ "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(ResponsePrototype__typeGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }  ,
-{ "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(ResponsePrototype__urlGetterWrap), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } }
+{ "arrayBuffer"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__arrayBufferCallback, 0 } }  ,
+{ "blob"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__blobCallback, 0 } }  ,
+{ "bodyUsed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__bodyUsedGetterWrap, 0 } }  ,
+{ "clone"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__cloneCallback, 1 } }  ,
+{ "headers"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__headersGetterWrap, 0 } }  ,
+{ "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__jsonCallback, 0 } }  ,
+{ "ok"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__okGetterWrap, 0 } }  ,
+{ "status"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__statusGetterWrap, 0 } }  ,
+{ "statusText"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__statusTextGetterWrap, 0 } }  ,
+{ "text"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponsePrototype__textCallback, 0 } }  ,
+{ "type"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__typeGetterWrap, 0 } }  ,
+{ "url"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, ResponsePrototype__urlGetterWrap, 0 } }
   };
 
 
@@ -2927,9 +2927,9 @@ extern "C" JSC_DECLARE_HOST_FUNCTION(ResponseClass__constructJSON);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ResponseClass__constructRedirect);
 
   static const HashTableValue JSResponseConstructorTableValues[] = {
-{ "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(ResponseClass__constructError), (intptr_t)(0) } }  ,
-{ "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(ResponseClass__constructJSON), (intptr_t)(0) } }  ,
-{ "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(ResponseClass__constructRedirect), (intptr_t)(0) } }
+{ "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructError, 0 } }  ,
+{ "json"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructJSON, 0 } }  ,
+{ "redirect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, ResponseClass__constructRedirect, 0 } }
   };
 
 

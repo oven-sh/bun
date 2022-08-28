@@ -40,12 +40,10 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 // Functions
-
 
 // Attributes
 
@@ -109,13 +107,12 @@ template<> FunctionExecutable* JSTransformStreamDefaultControllerDOMConstructor:
 
 /* Hash table for prototype */
 
-static const HashTableValue JSTransformStreamDefaultControllerPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsTransformStreamDefaultControllerConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(transformStreamDefaultControllerDesiredSizeCodeGenerator), (intptr_t) (0) } },
-    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(transformStreamDefaultControllerEnqueueCodeGenerator), (intptr_t) (0) } },
-    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(transformStreamDefaultControllerErrorCodeGenerator), (intptr_t) (0) } },
-    { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(transformStreamDefaultControllerTerminateCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSTransformStreamDefaultControllerPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTransformStreamDefaultControllerConstructor, 0 } },
+    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, transformStreamDefaultControllerDesiredSizeCodeGenerator, 0 } },
+    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, transformStreamDefaultControllerEnqueueCodeGenerator, 0 } },
+    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, transformStreamDefaultControllerErrorCodeGenerator, 0 } },
+    { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, transformStreamDefaultControllerTerminateCodeGenerator, 0 } },
 };
 
 const ClassInfo JSTransformStreamDefaultControllerPrototype::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultControllerPrototype) };
@@ -130,13 +127,14 @@ void JSTransformStreamDefaultControllerPrototype::finishCreation(VM& vm)
 const ClassInfo JSTransformStreamDefaultController::s_info = { "TransformStreamDefaultController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTransformStreamDefaultController) };
 
 JSTransformStreamDefaultController::JSTransformStreamDefaultController(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSTransformStreamDefaultController::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSTransformStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -160,7 +158,7 @@ void JSTransformStreamDefaultController::destroy(JSC::JSCell* cell)
     thisObject->JSTransformStreamDefaultController::~JSTransformStreamDefaultController();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -172,13 +170,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsTransformStreamDefaultControllerConstructor, (JSGloba
 
 JSC::GCClient::IsoSubspace* JSTransformStreamDefaultController::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSTransformStreamDefaultController, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForTransformStreamDefaultController.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamDefaultController = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForTransformStreamDefaultController.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamDefaultController = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSTransformStreamDefaultController, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamDefaultController = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForTransformStreamDefaultController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamDefaultController = WTFMove(space); });
 }
-
-
 }

@@ -240,10 +240,10 @@ static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeIntoWit
 /* Hash table for prototype */
 
 static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsTextEncoderConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsTextEncoder_encoding), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsTextEncoderPrototypeFunction_encode), (intptr_t) static_cast<const JSC::DOMJIT::Signature*>(&DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck) } },
-    { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsTextEncoderPrototypeFunction_encodeInto), (intptr_t) static_cast<const JSC::DOMJIT::Signature*>(&DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck) } },
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoderConstructor, 0 } },
+    { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoder_encoding, 0 } },
+    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encode, &DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck } },
+    { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encodeInto, &DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck } },
 };
 
 JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> input))

@@ -92,10 +92,10 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStreamSourcePrototype, JSReadableS
 /* Hash table for prototype */
 
 static const HashTableValue JSReadableStreamSourcePrototypeTableValues[] = {
-    { "controller"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { (intptr_t) static_cast<PropertySlot::GetValueFunc>(jsReadableStreamSource_controller), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "start"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsReadableStreamSourcePrototypeFunction_start), (intptr_t)(1) } },
-    { "pull"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsReadableStreamSourcePrototypeFunction_pull), (intptr_t)(1) } },
-    { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsReadableStreamSourcePrototypeFunction_cancel), (intptr_t)(1) } },
+    { "controller"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamSource_controller, 0 } },
+    { "start"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamSourcePrototypeFunction_start, 1 } },
+    { "pull"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamSourcePrototypeFunction_pull, 1 } },
+    { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsReadableStreamSourcePrototypeFunction_cancel, 1 } },
 };
 
 const ClassInfo JSReadableStreamSourcePrototype::s_info = { "ReadableStreamSource"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamSourcePrototype) };

@@ -154,11 +154,11 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
                 return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
             }
             JSC::JSUint8Array* newArray = JSC::JSUint8Array::create(
-                  lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(arrayBuffer), 0, length - n);
+                lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8), WTFMove(arrayBuffer), 0, length - n);
             toBuffer(lexicalGlobalObject, newArray);
 
             memcpy(newArray->typedVector(), array->typedVector() + n, length - n);
-            iter->set(vm ,this, newArray);
+            iter->set(vm, this, newArray);
         } else {
             uint8Array->set(lexicalGlobalObject, offset, array, 0, length);
             m_deque.removeFirst();
@@ -239,7 +239,7 @@ static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_unshiftBody(JSC:
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
 }
 static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_shiftBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBufferList>::ClassParameter castedThis)
-{   
+{
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->shift()));
@@ -356,15 +356,15 @@ static JSC_DEFINE_HOST_FUNCTION(jsBufferListPrototypeFunction_consume,
 /* Hash table for prototype */
 static const HashTableValue JSBufferListPrototypeTableValues[]
     = {
-        { "push"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferListPrototypeFunction_push), (intptr_t)(1) } },
-        { "unshift"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferListPrototypeFunction_unshift), (intptr_t)(1) } },
-        { "shift"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferListPrototypeFunction_shift), (intptr_t)(0) } },
-        { "clear"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferListPrototypeFunction_clear), (intptr_t)(0) } },
-        { "first"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferListPrototypeFunction_first), (intptr_t)(0) } },
-        { "concat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferListPrototypeFunction_concat), (intptr_t)(1) } },
-        { "join"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferListPrototypeFunction_join), (intptr_t)(1) } },
-        { "consume"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { (intptr_t) static_cast<RawNativeFunction>(jsBufferListPrototypeFunction_consume), (intptr_t)(2) } },
-    };
+          { "push"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_push, 1 } },
+          { "unshift"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_unshift, 1 } },
+          { "shift"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_shift, 0 } },
+          { "clear"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_clear, 0 } },
+          { "first"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_first, 0 } },
+          { "concat"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_concat, 1 } },
+          { "join"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_join, 1 } },
+          { "consume"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferListPrototypeFunction_consume, 2 } },
+      };
 
 void JSBufferListPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {

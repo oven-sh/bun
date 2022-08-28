@@ -213,12 +213,86 @@ public:
 
     EncodedJSValue assignToStream(JSValue stream, JSValue controller);
 
+    enum class PromiseFunctions : uint8_t {
+        Bun__HTTPRequestContext__onReject,
+        Bun__HTTPRequestContext__onRejectStream,
+        Bun__HTTPRequestContext__onResolve,
+        Bun__HTTPRequestContext__onResolveStream,
+        Bun__HTTPRequestContextTLS__onReject,
+        Bun__HTTPRequestContextTLS__onRejectStream,
+        Bun__HTTPRequestContextTLS__onResolve,
+        Bun__HTTPRequestContextTLS__onResolveStream,
+        Bun__HTTPRequestContextDebug__onReject,
+        Bun__HTTPRequestContextDebug__onRejectStream,
+        Bun__HTTPRequestContextDebug__onResolve,
+        Bun__HTTPRequestContextDebug__onResolveStream,
+        Bun__HTTPRequestContextDebugTLS__onReject,
+        Bun__HTTPRequestContextDebugTLS__onRejectStream,
+        Bun__HTTPRequestContextDebugTLS__onResolve,
+        Bun__HTTPRequestContextDebugTLS__onResolveStream,
+
+    };
+
+    static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
+    {
+        if (handler == Bun__HTTPRequestContext__onReject) {
+            return PromiseFunctions::Bun__HTTPRequestContext__onReject;
+        } else if (handler == Bun__HTTPRequestContext__onRejectStream) {
+            return PromiseFunctions::Bun__HTTPRequestContext__onRejectStream;
+        } else if (handler == Bun__HTTPRequestContext__onResolve) {
+            return PromiseFunctions::Bun__HTTPRequestContext__onResolve;
+        } else if (handler == Bun__HTTPRequestContext__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContext__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextTLS__onReject) {
+            return PromiseFunctions::Bun__HTTPRequestContextTLS__onReject;
+        } else if (handler == Bun__HTTPRequestContextTLS__onRejectStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextTLS__onRejectStream;
+        } else if (handler == Bun__HTTPRequestContextTLS__onResolve) {
+            return PromiseFunctions::Bun__HTTPRequestContextTLS__onResolve;
+        } else if (handler == Bun__HTTPRequestContextTLS__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextTLS__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextDebug__onReject) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebug__onReject;
+        } else if (handler == Bun__HTTPRequestContextDebug__onRejectStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebug__onRejectStream;
+        } else if (handler == Bun__HTTPRequestContextDebug__onResolve) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebug__onResolve;
+        } else if (handler == Bun__HTTPRequestContextDebug__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebug__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onReject) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onReject;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onRejectStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onRejectStream;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolve) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolve;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+        } else {
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    JSFunction* thenable(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
+    {
+        auto& barrier = this->m_thenables[static_cast<size_t>(GlobalObject::promiseHandlerID(handler))];
+        if (JSFunction* func = barrier.get()) {
+            return func;
+        }
+
+        JSFunction* func = JSC::JSFunction::create(vm(), this, 2,
+            String(), handler, ImplementationVisibility::Public);
+
+        barrier.set(vm(), this, func);
+        return func;
+    }
+
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBufferResolve;
     mutable WriteBarrier<JSFunction> m_readableStreamToText;
     mutable WriteBarrier<JSFunction> m_readableStreamToBlob;
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
     mutable WriteBarrier<JSFunction> m_assignToStream;
+    mutable WriteBarrier<JSFunction> m_thenables[16];
 
     void trackFFIFunction(JSC::JSFunction* function)
     {

@@ -305,6 +305,7 @@ pub const EventLoop = struct {
     pub fn tickWithCount(this: *EventLoop) u32 {
         var finished: u32 = 0;
         var global = this.global;
+        var global_vm = global.vm();
         var vm_ = this.virtual_machine;
         while (this.tasks.readItem()) |task| {
             switch (task.tag()) {
@@ -380,6 +381,9 @@ pub const EventLoop = struct {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});
                 } else unreachable,
             }
+
+            global_vm.releaseWeakRefs();
+            global_vm.drainMicrotasks();
         }
 
         if (finished > 0) {
@@ -412,26 +416,21 @@ pub const EventLoop = struct {
     pub fn tick(this: *EventLoop) void {
         var poller = &this.virtual_machine.poller;
         var ctx = this.virtual_machine;
+        this.tickConcurrent();
+        var global_vm = ctx.global.vm();
         while (true) {
-            this.tickConcurrent();
+            while (this.tickWithCount() > 0) {} else {
+                global_vm.releaseWeakRefs();
+                global_vm.drainMicrotasks();
+                this.tickConcurrent();
+                if (this.tasks.count > 0) continue;
+            }
 
-            // this.global.vm().doWork();
-
-            while (this.tickWithCount() > 0) {}
+            this.global.vm().doWork();
             poller.tick();
 
-            this.tickConcurrent();
-
-            if (this.tickWithCount() == 0) break;
+            break;
         }
-
-        // This is JSC's event loop
-        // We don't actually use this.
-        // However, there are three uses of it in JavaScriptCore outside our control:
-        // 1. FinalizationRegistry callbacks
-        // 2. WebAssembly.instantiate
-        // 3. WebAssembly.instantiateStreaming
-        this.global.vm().doWork();
 
         if (!ctx.disable_run_us_loop and ctx.us_loop_reference_count > 0 and !ctx.is_us_loop_entered) {
             ctx.is_us_loop_entered = true;

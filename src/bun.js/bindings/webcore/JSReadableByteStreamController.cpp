@@ -40,12 +40,10 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
 // Functions
-
 
 // Attributes
 
@@ -109,14 +107,13 @@ template<> FunctionExecutable* JSReadableByteStreamControllerDOMConstructor::ini
 
 /* Hash table for prototype */
 
-static const HashTableValue JSReadableByteStreamControllerPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsReadableByteStreamControllerConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "byobRequest"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableByteStreamControllerByobRequestCodeGenerator), (intptr_t) (0) } },
-    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableByteStreamControllerDesiredSizeCodeGenerator), (intptr_t) (0) } },
-    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableByteStreamControllerEnqueueCodeGenerator), (intptr_t) (0) } },
-    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableByteStreamControllerCloseCodeGenerator), (intptr_t) (0) } },
-    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { (intptr_t)static_cast<BuiltinGenerator>(readableByteStreamControllerErrorCodeGenerator), (intptr_t) (0) } },
+static const HashTableValue JSReadableByteStreamControllerPrototypeTableValues[] = {
+    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableByteStreamControllerConstructor, 0 } },
+    { "byobRequest"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, readableByteStreamControllerByobRequestCodeGenerator, 0 } },
+    { "desiredSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, readableByteStreamControllerDesiredSizeCodeGenerator, 0 } },
+    { "enqueue"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableByteStreamControllerEnqueueCodeGenerator, 0 } },
+    { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableByteStreamControllerCloseCodeGenerator, 0 } },
+    { "error"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableByteStreamControllerErrorCodeGenerator, 0 } },
 };
 
 const ClassInfo JSReadableByteStreamControllerPrototype::s_info = { "ReadableByteStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableByteStreamControllerPrototype) };
@@ -131,13 +128,14 @@ void JSReadableByteStreamControllerPrototype::finishCreation(VM& vm)
 const ClassInfo JSReadableByteStreamController::s_info = { "ReadableByteStreamController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableByteStreamController) };
 
 JSReadableByteStreamController::JSReadableByteStreamController(Structure* structure, JSDOMGlobalObject& globalObject)
-    : JSDOMObject(structure, globalObject) { }
+    : JSDOMObject(structure, globalObject)
+{
+}
 
 void JSReadableByteStreamController::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
 }
 
 JSObject* JSReadableByteStreamController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -161,7 +159,7 @@ void JSReadableByteStreamController::destroy(JSC::JSCell* cell)
     thisObject->JSReadableByteStreamController::~JSReadableByteStreamController();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableByteStreamControllerConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableByteStreamControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -173,13 +171,11 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableByteStreamControllerConstructor, (JSGlobalObj
 
 JSC::GCClient::IsoSubspace* JSReadableByteStreamController::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSReadableByteStreamController, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForReadableByteStreamController.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableByteStreamController = WTFMove(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForReadableByteStreamController.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForReadableByteStreamController = WTFMove(space); }
-    );
+    return WebCore::subspaceForImpl<JSReadableByteStreamController, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForReadableByteStreamController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableByteStreamController = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForReadableByteStreamController.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableByteStreamController = WTFMove(space); });
 }
-
-
 }

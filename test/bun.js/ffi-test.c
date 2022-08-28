@@ -118,6 +118,7 @@ void *getDeallocatorBuffer() {
 }
 int getDeallocatorCalledCount() { return deallocatorCalled; }
 
+bool is_null(int32_t *ptr) { return ptr == NULL; }
 bool does_pointer_equal_42_as_int32_t(int32_t *ptr);
 bool does_pointer_equal_42_as_int32_t(int32_t *ptr) { return *ptr == 42; }
 

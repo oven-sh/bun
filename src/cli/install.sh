@@ -224,6 +224,34 @@ zsh)
         done
     fi
     ;;
+bash)
+    commands=(
+        "export $install_env=$quoted_install_dir"
+        "export PATH=\"$bin_env:\$PATH\""
+    )
+
+    bash_config=$HOME/.bashrc
+
+    if [[ -w $bash_config ]]; then
+        {
+            echo -e '\n# bun'
+
+            for command in "${commands[@]}"; do
+                echo "$command"
+            done
+        } >>"$bash_config"
+
+        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_zsh_config\""
+
+        refresh_command="source $bash_config"
+    else
+        echo 'Manually add the directory to ~/.bashrc (or similar):'
+
+        for command in "${commands[@]}"; do
+            info_bold "  $command"
+        done
+    fi
+    ;;
 *)
     echo 'Manually add the directory to ~/.bashrc (or similar):'
     info_bold "  export $install_env=$quoted_install_dir"

@@ -233,11 +233,16 @@ bash)
     bash_configs=(
         "$HOME/.bashrc"
         "$HOME/.bash_profile"
-        "$XDG_CONFIG_HOME/.bash_profile"
-        "$XDG_CONFIG_HOME/.bashrc"
-        "$XDG_CONFIG_HOME/bash_profile"
-        "$XDG_CONFIG_HOME/bashrc"
     )
+
+    if [[ ${XDG_CONFIG_HOME:-} ]]; then
+        bash_configs+=(
+            "$XDG_CONFIG_HOME/.bash_profile"
+            "$XDG_CONFIG_HOME/.bashrc"
+            "$XDG_CONFIG_HOME/bash_profile"
+            "$XDG_CONFIG_HOME/bashrc"
+        )
+    fi
 
     set_manually=true
     for bash_config in "${bash_configs[@]}"; do

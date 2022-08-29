@@ -2698,7 +2698,7 @@ pub const Resolver = struct {
                     break :brk null;
                 };
                 if (info.tsconfig_json) |tsconfig_json| {
-                    var parentConfigs = std.ArrayList(*TSConfigJSON).init(r.allocator);
+var parent_configs = std.BoundedArray(*TSConfigJSON, 64);
                     defer parentConfigs.deinit();
                     try parentConfigs.append(tsconfig_json);
                     var current = tsconfig_json;

@@ -8,6 +8,10 @@ export default [
     klass: {},
     JSType: "0b11101110",
     proto: {
+      body: {
+        getter: "getBody",
+        cache: true,
+      },
       text: { fn: "getText" },
       json: { fn: "getJSON" },
       arrayBuffer: { fn: "getArrayBuffer" },

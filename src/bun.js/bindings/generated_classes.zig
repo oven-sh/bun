@@ -752,6 +752,9 @@ pub const JSRequest = struct {
             @compileLog("Expected Request.getArrayBuffer to be a callback");
         if (@TypeOf(Request.getBlob) != CallbackType)
             @compileLog("Expected Request.getBlob to be a callback");
+        if (@TypeOf(Request.getBody) != GetterType)
+            @compileLog("Expected Request.getBody to be a getter");
+
         if (@TypeOf(Request.getBodyUsed) != GetterType)
             @compileLog("Expected Request.getBodyUsed to be a getter");
 
@@ -800,6 +803,7 @@ pub const JSRequest = struct {
             @export(Request.finalize, .{ .name = "RequestClass__finalize" });
             @export(Request.getArrayBuffer, .{ .name = "RequestPrototype__getArrayBuffer" });
             @export(Request.getBlob, .{ .name = "RequestPrototype__getBlob" });
+            @export(Request.getBody, .{ .name = "RequestPrototype__getBody" });
             @export(Request.getBodyUsed, .{ .name = "RequestPrototype__getBodyUsed" });
             @export(Request.getCache, .{ .name = "RequestPrototype__getCache" });
             @export(Request.getCredentials, .{ .name = "RequestPrototype__getCredentials" });

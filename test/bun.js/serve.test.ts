@@ -1,4 +1,4 @@
-import { file, serve } from "bun";
+import { file, readableStreamToText, serve } from "bun";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { resolve } from "path";
@@ -11,6 +11,26 @@ class TestPass extends Error {
     this.name = "TestPass";
   }
 }
+
+describe("request body streaming", () => {
+  it("works", async () => {
+    var server = serve({
+      port: port++,
+      development: false,
+
+      async fetch(req: Request) {
+        const text = await readableStreamToText(req.body);
+        return new Response(text);
+      },
+    });
+
+    var res = await fetch(`http://localhost:${server.port}`, {
+      body: "hello",
+      method: "POST",
+    });
+    expect(await res.text()).toBe("hello");
+  });
+});
 
 describe("streaming", () => {
   describe("error handler", () => {

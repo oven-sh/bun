@@ -3318,7 +3318,12 @@ For compatibility reasons, these NPM packages are embedded into bun’s binary a
 
 ## Developing bun
 
-Estimated: 30-90 minutes :(
+Some links you should read about JavaScriptCore, the JavaScript engine Bun uses:
+
+- https://webkit.org/blog/12967/understanding-gc-in-jsc-from-scratch/
+- https://webkit.org/blog/7122/introducing-riptide-webkits-retreating-wavefront-concurrent-garbage-collector/
+
+To get your development environment configured, expect it to take 30-90 minutes :(
 
 ### VSCode Dev Container (Linux)
 

@@ -985,11 +985,26 @@ pub const Completion = struct {
 };
 
 pub const Waker = struct {
-    fd: std.os.fd_t,
+    fd: os.fd_t,
 
-    pub fn waitSync(this: Waker) void {
-        var bytes: [8]u8 = undefined;
-        _ = std.os.read(this.fd, &bytes) catch 0;
+    pub fn init(_: std.mem.Allocator) !Waker {
+        return Waker{
+            .fd = try os.eventfd(0, 0),
+        };
+    }
+
+    pub fn wait(this: Waker) !u64 {
+        var bytes: usize = 0;
+        _ = std.os.read(this.fd, @ptrCast(*[8]u8, &bytes)) catch 0;
+        return @intCast(u64, bytes);
+    }
+
+    pub fn wake(this: Waker) !void {
+        var bytes: usize = 1;
+        _ = std.os.write(
+            this.fd,
+            @ptrCast(*[8]u8, &bytes),
+        ) catch 0;
     }
 };
 

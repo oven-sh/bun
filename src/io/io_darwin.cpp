@@ -2,22 +2,8 @@
 #ifdef __APPLE__
 
 #include <sys/event.h>
-#include <sys/select.h>
-#include <unistd.h>
 
-#include <mach/boolean.h>
-#include <mach/bootstrap.h>
-#include <mach/exception.h>
-#include <mach/host_info.h>
 #include <mach/mach.h>
-#include <mach/mach_error.h>
-#include <mach/mach_host.h>
-#include <mach/mach_interface.h>
-#include <mach/mach_traps.h>
-#include <mach/message.h>
-#include <mach/mig_errors.h>
-#include <mach/notify.h>
-
 // errno
 #include <errno.h>
 
@@ -38,7 +24,7 @@ extern "C" mach_port_t io_darwin_create_machport(uint64_t wakeup, int32_t fd,
   kevent64_s event{};
   event.ident = port;
   event.filter = EVFILT_MACHPORT;
-  event.flags = EV_ADD;
+  event.flags = EV_ADD | EV_ENABLE;
   event.fflags = MACH_RCV_MSG | MACH_RCV_OVERWRITE;
   event.ext[0] = reinterpret_cast<uint64_t>(wakeup_buffer_);
   event.ext[1] = nbytes;

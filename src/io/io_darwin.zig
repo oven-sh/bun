@@ -502,24 +502,32 @@ pub const Waker = struct {
     machport: *anyopaque = undefined,
     machport_buf: []u8 = &.{},
 
+    const zeroed = std.mem.zeroes([16]Kevent64);
+
     pub fn wake(this: Waker) !void {
         if (!io_darwin_schedule_wakeup(this.machport)) {
             return error.WakeUpFailed;
         }
     }
 
-    pub fn wait(this: Waker) void {
-        var events = std.mem.zeroes([2]Kevent64);
+    pub fn wait(this: Waker) !usize {
+        var events = zeroed;
 
-        _ = std.os.system.kevent64(
+        const count = std.os.system.kevent64(
             this.kq,
             &events,
             0,
             &events,
-            @intCast(c_int, events.len),
+            events.len,
             0,
             null,
         );
+
+        if (count < 0) {
+            return asError(std.c.getErrno(count));
+        }
+
+        return @intCast(usize, count);
     }
 
     extern fn io_darwin_create_machport(
@@ -548,6 +556,88 @@ pub const Waker = struct {
             .kq = kq,
             .machport = machport,
             .machport_buf = machport_buf,
+        };
+    }
+};
+
+pub const UserFilterWaker = struct {
+    kq: os.fd_t,
+    ident: u64 = undefined,
+
+    pub fn wake(this: UserFilterWaker) !void {
+        var events = zeroed;
+        events[0].ident = this.ident;
+        events[0].filter = c.EVFILT_USER;
+        events[0].data = 0;
+        events[0].fflags = c.NOTE_TRIGGER;
+        events[0].udata = 0;
+        const errno = std.os.system.kevent64(
+            this.kq,
+            &events,
+            1,
+            &events,
+            events.len,
+            0,
+            null,
+        );
+
+        if (errno < 0) {
+            return asError(std.c.getErrno(errno));
+        }
+    }
+
+    const zeroed = std.mem.zeroes([16]Kevent64);
+
+    pub fn wait(this: UserFilterWaker) !u64 {
+        var events = zeroed;
+        events[0].ident = 123;
+        events[0].filter = c.EVFILT_USER;
+        events[0].flags = c.EV_ADD | c.EV_ENABLE;
+        events[0].data = 0;
+        events[0].udata = 0;
+
+        const errno = std.os.system.kevent64(
+            this.kq,
+            &events,
+            1,
+            &events,
+            events.len,
+            0,
+            null,
+        );
+        if (errno < 0) {
+            return asError(std.c.getErrno(errno));
+        }
+
+        return @intCast(u64, errno);
+    }
+
+    pub fn init(_: std.mem.Allocator) !UserFilterWaker {
+        const kq = try os.kqueue();
+        assert(kq > -1);
+
+        var events = [1]Kevent64{std.mem.zeroes(Kevent64)};
+        events[0].ident = 123;
+        events[0].filter = c.EVFILT_USER;
+        events[0].flags = c.EV_ADD | c.EV_ENABLE;
+        events[0].data = 0;
+        events[0].udata = 0;
+        var timespec = default_timespec;
+        const errno = std.os.system.kevent64(
+            kq,
+            &events,
+            1,
+            &events,
+            @intCast(c_int, events.len),
+            0,
+            &timespec,
+        );
+
+        std.debug.assert(errno == 0);
+
+        return UserFilterWaker{
+            .kq = kq,
+            .ident = 123,
         };
     }
 };

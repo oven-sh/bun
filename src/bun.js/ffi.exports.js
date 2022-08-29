@@ -175,7 +175,7 @@ ffiWrappers[FFIType.cstring] = ffiWrappers[FFIType.pointer] = function pointer(
 ) {
   if (typeof val === "number") return val;
   if (!val) {
-    return 0;
+    return null;
   }
 
   if (ArrayBuffer.isView(val) || val instanceof ArrayBuffer) {

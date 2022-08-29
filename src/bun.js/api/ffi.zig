@@ -1353,7 +1353,7 @@ pub const FFI = struct {
                         try writer.print("JSVALUE_TO_INT64({s})", .{self.symbol});
                     },
                     .u64_fast, .uint64_t => {
-                        try writer.print("JSVALUE_TO_UINT64(globalObject, {s})", .{self.symbol});
+                        try writer.print("JSVALUE_TO_UINT64({s})", .{self.symbol});
                     },
                     .cstring, .ptr => {
                         try writer.print("JSVALUE_TO_PTR({s})", .{self.symbol});

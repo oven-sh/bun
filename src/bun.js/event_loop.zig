@@ -291,6 +291,8 @@ pub const Task = TaggedPointerUnion(.{
     // TimeoutTasklet,
 });
 
+const AsyncIO = @import("io");
+
 pub const EventLoop = struct {
     ready_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
     pending_tasks_count: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
@@ -300,6 +302,8 @@ pub const EventLoop = struct {
     concurrent_lock: Lock = Lock.init(),
     global: *JSGlobalObject = undefined,
     virtual_machine: *VirtualMachine = undefined,
+    waker: ?AsyncIO.Waker = null,
+
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 
     pub fn tickWithCount(this: *EventLoop) u32 {
@@ -465,6 +469,12 @@ pub const EventLoop = struct {
         this.tasks.writeItem(task) catch unreachable;
     }
 
+    pub fn ensureWaker(this: *EventLoop) void {
+        if (this.waker == null) {
+            this.waker = AsyncIO.Waker.init(this.virtual_machine.allocator) catch unreachable;
+        }
+    }
+
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: Task) void {
         this.concurrent_lock.lock();
         defer this.concurrent_lock.unlock();
@@ -472,7 +482,12 @@ pub const EventLoop = struct {
         if (this.virtual_machine.uws_event_loop) |loop| {
             loop.nextTick(*EventLoop, this, EventLoop.tick);
         }
-        _ = this.ready_tasks_count.fetchAdd(1, .Monotonic);
+
+        if (this.ready_tasks_count.fetchAdd(1, .Monotonic) == 0) {
+            if (this.waker) |waker| {
+                waker.wake() catch unreachable;
+            }
+        }
     }
 };
 

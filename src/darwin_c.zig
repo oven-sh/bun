@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const unistd = @cImport(@cInclude("unistd.h"));
 const sysResource = @cImport(@cInclude("sys/resource.h"));
 const os = std.os;
 const mem = std.mem;
@@ -468,10 +467,9 @@ pub const kFSEventStreamEventFlagRootChanged: c_int = 32;
 pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
-// System related
-extern fn getFreeMemoryDarwin_B() u64;
 pub fn get_free_memory() u64 {
-    return getFreeMemoryDarwin_B();
+    // NOT IMPLEMENTED YET
+    return 1024 * 1024;
 }
 
 pub fn get_total_memory() u64 {
@@ -538,13 +536,8 @@ pub fn get_system_loadavg() [3]f64 {
     };
 }
 
-pub fn getuid() u32 {
-    return unistd.getuid();
-}
-
-pub fn getgid() u32 {
-    return unistd.getuid();
-}
+pub extern fn getuid(...) std.os.uid_t;
+pub extern fn getgid(...) std.os.gid_t;
 
 pub fn get_process_priority(pid: c_uint) i32 {
     return sysResource.getpriority(sysResource.PRIO_PROCESS, pid);

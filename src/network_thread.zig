@@ -14,10 +14,9 @@ const Lock = @import("./lock.zig").Lock;
 const FIFO = @import("./io/fifo.zig").FIFO;
 
 /// Single-thread in this pool
-pool: ThreadPool,
 io: *AsyncIO = undefined,
 thread: std.Thread = undefined,
-event_fd: std.os.fd_t = 0,
+waker: AsyncIO.Waker = undefined,
 queued_tasks_mutex: Lock = Lock.init(),
 queued_tasks: Batch = .{},
 processing_tasks: Batch = .{},
@@ -44,11 +43,6 @@ pub fn processEvents(this: *@This()) void {
 }
 /// Should only be called on the HTTP thread!
 fn processEvents_(this: *@This()) !void {
-    {
-        var bytes: [8]u8 = undefined;
-        _ = std.os.read(this.event_fd, &bytes) catch 0;
-    }
-
     while (true) {
         this.queueEvents();
 
@@ -82,20 +76,20 @@ fn processEvents_(this: *@This()) !void {
 }
 
 pub fn schedule(this: *@This(), batch: Batch) void {
+    if (batch.len == 0)
+        return;
+
+    {
+        this.queued_tasks_mutex.lock();
+        defer this.queued_tasks_mutex.unlock();
+        this.queued_tasks.push(batch);
+    }
+
     if (comptime Environment.isLinux) {
-        if (batch.len == 0)
-            return;
-
-        {
-            this.queued_tasks_mutex.lock();
-            defer this.queued_tasks_mutex.unlock();
-            this.queued_tasks.push(batch);
-        }
-
         const one = @bitCast([8]u8, @as(usize, batch.len));
-        _ = std.os.write(this.event_fd, &one) catch @panic("Failed to write to eventfd");
+        _ = std.os.write(this.waker.fd, &one) catch @panic("Failed to write to eventfd");
     } else {
-        this.pool.schedule(batch);
+        this.waker.wake() catch @panic("Failed to wake");
     }
 }
 
@@ -151,8 +145,6 @@ pub fn warmup() !void {
     if (has_warmed or global_loaded.load(.Monotonic) > 0) return;
     has_warmed = true;
     try init();
-    if (comptime !Environment.isLinux)
-        global.pool.forceSpawn();
 }
 
 pub fn init() !void {
@@ -160,16 +152,20 @@ pub fn init() !void {
     AsyncIO.global_loaded = true;
 
     global = NetworkThread{
-        .pool = ThreadPool.init(.{ .max_threads = 1, .stack_size = 64 * 1024 * 1024 }),
         .timer = try std.time.Timer.start(),
     };
-    global.pool.on_thread_spawn = HTTP.onThreadStart;
+
     if (comptime Environment.isLinux) {
-        const event_fd = try std.os.eventfd(0, std.os.linux.EFD.CLOEXEC | 0);
-        global.event_fd = event_fd;
-        global.thread = try std.Thread.spawn(.{ .stack_size = 64 * 1024 * 1024 }, HTTP.onThreadStartNew, .{
-            @intCast(std.os.fd_t, event_fd),
-        });
-        global.thread.detach();
+        const fd = try std.os.eventfd(0, std.os.linux.EFD.CLOEXEC | 0);
+        global.waker = .{ .fd = fd };
+    } else if (comptime Environment.isMac) {
+        global.waker = try AsyncIO.Waker.init(@import("./global.zig").default_allocator);
+    } else {
+        @compileLog("TODO: Waker");
     }
+
+    global.thread = try std.Thread.spawn(.{ .stack_size = 64 * 1024 * 1024 }, HTTP.onThreadStartNew, .{
+        global.waker,
+    });
+    global.thread.detach();
 }

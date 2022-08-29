@@ -498,7 +498,7 @@ pub fn wait(this: *@This(), ptr: anytype, comptime onReady: anytype) void {
     _ = this.ring.enter(submitted, 1, linux.IORING_ENTER_GETEVENTS) catch 0;
 }
 
-pub fn init(entries_: u12, flags: u32, event_fd: os.fd_t) !IO {
+pub fn init(entries_: u12, flags: u32, waker: Waker) !IO {
     var ring: IO_Uring = undefined;
     var entries = entries_;
 
@@ -541,7 +541,7 @@ pub fn init(entries_: u12, flags: u32, event_fd: os.fd_t) !IO {
         break;
     }
 
-    return IO{ .ring = ring, .event_fd = event_fd };
+    return IO{ .ring = ring, .event_fd = waker.fd };
 }
 
 pub fn deinit(self: *IO) void {
@@ -981,6 +981,30 @@ pub const Completion = struct {
                 completion.callback(completion.context, completion, &result);
             },
         }
+    }
+};
+
+pub const Waker = struct {
+    fd: os.fd_t,
+
+    pub fn init(_: std.mem.Allocator) !Waker {
+        return Waker{
+            .fd = try os.eventfd(0, 0),
+        };
+    }
+
+    pub fn wait(this: Waker) !u64 {
+        var bytes: usize = 0;
+        _ = std.os.read(this.fd, @ptrCast(*[8]u8, &bytes)) catch 0;
+        return @intCast(u64, bytes);
+    }
+
+    pub fn wake(this: Waker) !void {
+        var bytes: usize = 1;
+        _ = std.os.write(
+            this.fd,
+            @ptrCast(*[8]u8, &bytes),
+        ) catch 0;
     }
 };
 

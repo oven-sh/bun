@@ -544,7 +544,6 @@ You can see [Bun's Roadmap](https://github.com/oven-sh/bun/issues/159), but here
 | CSS Parser (it only bundles)                                                          | CSS            |
 | Tree-shaking                                                                          | JavaScript     |
 | Tree-shaking                                                                          | CSS            |
-| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json         | TS Transpiler  |
 | [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html) | TS Transpiler  |
 | `@jsxPragma` comments                                                                 | JS Transpiler  |
 | Sharing `.bun` files                                                                  | bun            |
@@ -3318,7 +3317,12 @@ For compatibility reasons, these NPM packages are embedded into bun’s binary a
 
 ## Developing bun
 
-Estimated: 30-90 minutes :(
+Some links you should read about JavaScriptCore, the JavaScript engine Bun uses:
+
+- https://webkit.org/blog/12967/understanding-gc-in-jsc-from-scratch/
+- https://webkit.org/blog/7122/introducing-riptide-webkits-retreating-wavefront-concurrent-garbage-collector/
+
+To get your development environment configured, expect it to take 30-90 minutes :(
 
 ### VSCode Dev Container (Linux)
 

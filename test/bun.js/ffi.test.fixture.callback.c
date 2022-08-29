@@ -111,9 +111,9 @@ static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
 static bool JSVALUE_IS_NUMBER(EncodedJSValue val) __attribute__((__always_inline__));
 
-static uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value) __attribute__((__always_inline__));
+static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) __attribute__((__always_inline__));
 static int64_t  JSVALUE_TO_INT64(EncodedJSValue value) __attribute__((__always_inline__));
-uint64_t JSVALUE_TO_UINT64_SLOW(void* globalObject, EncodedJSValue value);
+uint64_t JSVALUE_TO_UINT64_SLOW(EncodedJSValue value);
 int64_t  JSVALUE_TO_INT64_SLOW(EncodedJSValue value);
 
 EncodedJSValue UINT64_TO_JSVALUE_SLOW(void* globalObject, uint64_t val);
@@ -149,11 +149,17 @@ static bool JSVALUE_IS_NUMBER(EncodedJSValue val) {
 
 static void* JSVALUE_TO_PTR(EncodedJSValue val) {
   // must be a double
+  if (val.asInt64 == TagValueNull)
+    return 0;
   return (void*)(val.asInt64 - DoubleEncodeOffset);
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   EncodedJSValue val;
+  if (ptr == 0) {
+    val.asInt64 = TagValueNull;
+    return val;
+  }
   val.asInt64 = (int64_t)ptr + DoubleEncodeOffset;
   return val;
 }
@@ -201,7 +207,7 @@ static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
 }
 
 
-static uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value) {
+static uint64_t JSVALUE_TO_UINT64(EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
     return (uint64_t)JSVALUE_TO_INT32(value);
   }
@@ -210,7 +216,7 @@ static uint64_t JSVALUE_TO_UINT64(void* globalObject, EncodedJSValue value) {
     return (uint64_t)JSVALUE_TO_DOUBLE(value);
   }
 
-  return JSVALUE_TO_UINT64_SLOW(globalObject, value);
+  return JSVALUE_TO_UINT64_SLOW(value);
 }
 static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
@@ -262,6 +268,9 @@ ZIG_REPR_TYPE JSFunctionCall(void* globalObject, void* callFrame);
 bool my_callback_function(void* arg0);
 
 bool my_callback_function(void* arg0) {
+#ifdef INJECT_BEFORE
+INJECT_BEFORE;
+#endif
   EncodedJSValue arguments[1] = {
     PTR_TO_JSVALUE(arg0)
   };

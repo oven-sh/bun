@@ -33,6 +33,7 @@ pub const TSConfigJSON = struct {
     // More info: https://github.com/microsoft/TypeScript/issues/31869
     base_url_for_paths: string = "",
 
+    extends: string = "",
     // The verbatim values of "compilerOptions.paths". The keys are patterns to
     // match and the values are arrays of fallback paths to search. Each key and
     // each fallback path can optionally have a single "*" wildcard character.
@@ -49,7 +50,7 @@ pub const TSConfigJSON = struct {
 
     use_define_for_class_fields: ?bool = null,
 
-    preserve_imports_not_used_as_values: bool = false,
+    preserve_imports_not_used_as_values: ?bool = false,
 
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
@@ -108,18 +109,10 @@ pub const TSConfigJSON = struct {
         errdefer allocator.free(result.paths);
         if (json.asProperty("extends")) |extends_value| {
             if (!source.path.isNodeModule()) {
-                log.addWarning(&source, extends_value.loc, "\"extends\" is not implemented yet") catch unreachable;
+                if (extends_value.expr.asString(allocator) orelse null) |str| {
+                    result.extends = str;
+                }
             }
-            // if ((extends_value.expr.asString(allocator) catch null)) |str| {
-            //     if (extends(str, source.rangeOfString(extends_value.loc))) |base| {
-            //         result.jsx = base.jsx;
-            //         result.base_url_for_paths = base.base_url_for_paths;
-            //         result.use_define_for_class_fields = base.use_define_for_class_fields;
-            //         result.preserve_imports_not_used_as_values = base.preserve_imports_not_used_as_values;
-            //         //  https://github.com/microsoft/TypeScript/issues/14527#issuecomment-284948808
-            //         result.paths = base.paths;
-            //     }
-            // }
         }
         var has_base_url = false;
 

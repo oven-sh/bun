@@ -1,5 +1,4 @@
 const std = @import("std");
-const unistd = @cImport(@cInclude("unistd.h"));
 const sysResource = @cImport(@cInclude("sys/resource.h"));
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,

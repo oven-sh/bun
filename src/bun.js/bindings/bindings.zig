@@ -3879,7 +3879,7 @@ pub const ExternalStringImpl = extern struct {
 
 pub const JSArray = struct {
     pub fn from(globalThis: *JSGlobalObject, arguments: []const JSC.JSValue) JSValue {
-        return JSC.JSValue.c(JSC.C.JSObjectMakeArray(globalThis.ref(), arguments.len, @ptrCast([*]const JSC.C.JSObjectRef, arguments.ptr), null));
+        return JSC.JSValue.c(JSC.C.JSObjectMakeArray(globalThis.ref(), arguments.len, @ptrCast(?[*]const JSC.C.JSObjectRef, arguments.ptr), null));
     }
 };
 

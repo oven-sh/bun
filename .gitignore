@@ -103,3 +103,4 @@ src/runtime.version
 *.sqlite
 *.database
 *.db
+misctools/machbench

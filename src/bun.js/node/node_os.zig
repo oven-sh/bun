@@ -11,37 +11,6 @@ const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
 const heap_allocator = bun.default_allocator;
 const constants = @import("./os/constants.zig");
 
-// From C ; bindings/node_os/
-pub const struct_InterfaceAddresses = extern struct {
-    interface: [*c]u8,
-    address: [*c]u8,
-    netmask: [*c]u8,
-    family: [*c]u8,
-    mac: [*c]u8,
-    cidr: c_int,
-    scopeid: u32,
-    internal: c_int,
-};
-pub extern fn getNetworkInterfaces() [*c]struct_InterfaceAddresses;
-pub extern fn getNetworkInterfaceArrayLen(arr: [*c]struct_InterfaceAddresses) usize;
-extern fn freeNetworkInterfaceArray(arr: [*c]struct_InterfaceAddresses, len: c_int) void;
-
-pub const struct_CpuInfo = extern struct {
-    manufacturer: [*c]u8,
-    clockSpeed: f32,
-    userTime: c_int,
-    niceTime: c_int,
-    systemTime: c_int,
-    idleTime: c_int,
-    iowaitTime: c_int,
-    irqTime: c_int,
-};
-extern fn getCpuInfo() [*c]struct_CpuInfo;
-extern fn getCpuTime() [*c]struct_CpuInfo;
-extern fn getCpuInfoAndTime() [*c]struct_CpuInfo;
-extern fn getCpuArrayLen(arr: [*c]struct_CpuInfo) usize;
-extern fn freeCpuInfoArray(arr: [*c]struct_CpuInfo, len: c_int) void;
-
 pub const Os = struct {
     pub const name = "Bun__Os";
     pub const code = @embedFile("../os.exports.js");
@@ -88,36 +57,8 @@ pub const Os = struct {
     pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        const cpus_ = getCpuInfoAndTime();
-        if (cpus_ == null) return JSC.JSArray.from(globalThis, &.{});
-
-        const len = getCpuArrayLen(cpus_);
-        const arr = cpus_[0..len];
-
-        var buf: [256]JSC.JSValue = undefined;
-        var result = std.ArrayListUnmanaged(JSC.JSValue){ .capacity = buf.len, .items = buf[0..1] };
-        result.items.len = 0;
-
-        for (arr) |cpu| {
-            var object = JSC.JSValue.createEmptyObject(globalThis, 3);
-            var timesObject = JSC.JSValue.createEmptyObject(globalThis, 5);
-
-            timesObject.put(globalThis, &JSC.ZigString.init("user"), JSC.JSValue.jsNumber(cpu.userTime));
-            timesObject.put(globalThis, &JSC.ZigString.init("nice"), JSC.JSValue.jsNumber(cpu.niceTime));
-            timesObject.put(globalThis, &JSC.ZigString.init("sys"), JSC.JSValue.jsNumber(cpu.systemTime));
-            timesObject.put(globalThis, &JSC.ZigString.init("idle"), JSC.JSValue.jsNumber(cpu.idleTime));
-            timesObject.put(globalThis, &JSC.ZigString.init("irq"), JSC.JSValue.jsNumber(cpu.irqTime));
-
-            object.put(globalThis, &JSC.ZigString.init("model"), JSC.ZigString.init(std.mem.span(cpu.manufacturer)).withEncoding().toValueGC(globalThis));
-            object.put(globalThis, &JSC.ZigString.init("speed"), JSC.JSValue.jsNumber(@floatToInt(i32, cpu.clockSpeed)));
-            object.put(globalThis, &JSC.ZigString.init("times"), timesObject);
-
-            _ = result.appendAssumeCapacity(object);
-        }
-
-        freeCpuInfoArray(cpus_, @intCast(c_int, len));
-        heap_allocator.free(arr);
-        return JSC.JSArray.from(globalThis, result.toOwnedSlice(heap_allocator));
+        // TODO:
+        return JSC.JSArray.from(globalThis, &.{});
     }
 
     pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -143,7 +84,7 @@ pub const Os = struct {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
         var args_ = callframe.arguments(1);
-        var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
+        const arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         if (arguments.len > 0 and !arguments[0].isNumber()) {
             const err = JSC.toTypeError(
@@ -156,7 +97,7 @@ pub const Os = struct {
             return JSC.JSValue.jsUndefined();
         }
 
-        var pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
+        const pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
 
         const priority = C.getProcessPriority(pid);
         if (priority == -1) {
@@ -215,47 +156,8 @@ pub const Os = struct {
     pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
 
-        const networkInterfaces_ = getNetworkInterfaces();
-        if (networkInterfaces_ == null) return JSC.JSValue.createEmptyObject(globalThis, 0);
-
-        const len = getNetworkInterfaceArrayLen(networkInterfaces_);
-        const arr = networkInterfaces_[0..len];
-
-        const object = JSC.JSValue.createEmptyObject(globalThis, 0);
-        var map = std.StringArrayHashMap(std.ArrayList(JSC.JSValue)).init(heap_allocator);
-        _ = map.ensureUnusedCapacity(len) catch unreachable;
-
-        defer map.deinit();
-
-        for (arr) |part| {
-            const interface = std.mem.span(part.interface);
-            const family = std.mem.span(part.family);
-            const netmask = std.mem.span(part.netmask);
-            const cidr = std.fmt.allocPrint(heap_allocator, "{s}/{}", .{ netmask, part.cidr }) catch unreachable;
-
-            var list = map.get(interface) orelse std.ArrayList(JSC.JSValue).init(heap_allocator);
-            var obj = JSC.JSValue.createEmptyObject(globalThis, if (strings.eqlComptime(family, "IPv6")) 7 else 6);
-            obj.put(globalThis, &JSC.ZigString.init("address"), JSC.ZigString.init(std.mem.span(part.address)).withEncoding().toValueGC(globalThis));
-            obj.put(globalThis, &JSC.ZigString.init("netmask"), JSC.ZigString.init(netmask).withEncoding().toValueGC(globalThis));
-            obj.put(globalThis, &JSC.ZigString.init("family"), JSC.ZigString.init(family).withEncoding().toValueGC(globalThis));
-            obj.put(globalThis, &JSC.ZigString.init("mac"), JSC.ZigString.init(std.mem.span(part.mac)).withEncoding().toValueGC(globalThis));
-            obj.put(globalThis, &JSC.ZigString.init("cidr"), JSC.ZigString.init(cidr).withEncoding().toValueGC(globalThis));
-            if (strings.eqlComptime(family, "IPv6")) obj.put(globalThis, &JSC.ZigString.init("scopeid"), JSC.JSValue.jsNumber(part.scopeid));
-            obj.put(globalThis, &JSC.ZigString.init("internal"), JSC.JSValue.jsBoolean(if (part.internal == 0) true else false));
-
-            _ = list.append(obj) catch unreachable;
-            _ = map.put(interface, list) catch unreachable;
-        }
-
-        for (map.keys()) |key| {
-            var value = map.get(key);
-
-            object.put(globalThis, &JSC.ZigString.init(key), JSC.JSArray.from(globalThis, value.?.toOwnedSlice()));
-        }
-
-        freeNetworkInterfaceArray(networkInterfaces_, @intCast(c_int, len));
-        heap_allocator.free(arr);
-        return object;
+        // TODO:
+        return JSC.JSValue.createEmptyObject(globalThis, 0);
     }
 
     pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
@@ -413,7 +315,3 @@ pub const Os = struct {
         return JSC.ZigString.init(C.getVersion(&name_buffer)).withEncoding().toValueGC(globalThis);
     }
 };
-
-comptime {
-    std.testing.refAllDecls(Os);
-}

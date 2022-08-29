@@ -464,6 +464,28 @@ pub fn build(b: *std.build.Builder) !void {
     }
 
     {
+        const headers_step = b.step("machbench-obj", "Build Machbench tool (object files)");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("machbench", "misctools/machbench.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            false,
+        );
+
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
+        headers_obj.addOptions("build_options", opts);
+    }
+
+    {
         const headers_step = b.step("fetch-obj", "Build fetch (object files)");
         var headers_obj: *std.build.LibExeObjStep = b.addObject("fetch", "misctools/fetch.zig");
         defer headers_step.dependOn(&headers_obj.step);

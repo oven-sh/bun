@@ -234,6 +234,7 @@ threadlocal var check_browser_map_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var remap_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var load_as_file_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 threadlocal var remap_path_trailing_slash: [bun.MAX_PATH_BYTES]u8 = undefined;
+threadlocal var tsconfig_paths_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
 pub const DebugLogs = struct {
     what: string = "",
@@ -2698,14 +2699,13 @@ pub const Resolver = struct {
                     break :brk null;
                 };
                 if (info.tsconfig_json) |tsconfig_json| {
-var parent_configs = std.BoundedArray(*TSConfigJSON, 64);
-                    defer parentConfigs.deinit();
-                    try parentConfigs.append(tsconfig_json);
+                    var parent_configs = try std.BoundedArray(*TSConfigJSON, 64).init(0);
+                    try parent_configs.append(tsconfig_json);
                     var current = tsconfig_json;
-                    while (current.extends) |extends| {
+                    while (current.extends.len > 0) {
                         var tsDirName = Dirname.dirname(current.abs_path);
                         // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
-                        var absPath = ResolvePath.joinAbsString(tsDirName, &[_]string{ tsDirName, extends }, ResolvePath.Platform.auto);
+                        var absPath = ResolvePath.joinAbsStringBuf(tsDirName, &tsconfig_path_abs_buf, &[_]string{ tsDirName, current.extends }, .auto);
                         var parentConfigMaybe = try r.parseTSConfig(absPath, 0);
                         if (parentConfigMaybe) |parentConfig| {
                             try parentConfigs.append(parentConfig);

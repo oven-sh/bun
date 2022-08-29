@@ -33,7 +33,7 @@ pub const TSConfigJSON = struct {
     // More info: https://github.com/microsoft/TypeScript/issues/31869
     base_url_for_paths: string = "",
 
-    extends: ?string = null,
+    extends: string = "",
     // The verbatim values of "compilerOptions.paths". The keys are patterns to
     // match and the values are arrays of fallback paths to search. Each key and
     // each fallback path can optionally have a single "*" wildcard character.

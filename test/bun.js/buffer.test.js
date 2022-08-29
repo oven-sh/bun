@@ -387,6 +387,37 @@ it("read", () => {
   reset();
 });
 
+it("write", () => {
+  let buf = Buffer.alloc(16);
+  function reset() {
+    new Uint8Array(buf.buffer).fill(0);
+  }
+
+  expect(buf.write("hello", 8, 8)).toBe(5);
+  reset();
+
+  expect(buf.write("hello!", 3, 8)).toBe(6);
+  reset();
+
+  expect(buf.write("Foo Bar!", 4, 4)).toBe(4);
+  reset();
+
+  expect(buf.write("foo", 0, 1)).toBe(1);
+  reset();
+
+  expect(buf.write("foo", 0, 2)).toBe(2);
+  reset();
+
+  expect(buf.write("foo", 0)).toBe(3);
+  reset();
+
+  expect(buf.write("Foo Bar!", 4, 6)).toBe(6);
+  reset();
+
+  expect(buf.write("Foo Bar!", 4, 7)).toBe(7);
+  reset();
+});
+
 it("includes", () => {
   const buf = Buffer.from('this is a buffer');
 

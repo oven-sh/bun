@@ -260,7 +260,7 @@ bash)
         fi
     done
 
-    if [[ $set_manually ]]; then
+    if [[ $set_manually = true ]]; then
         echo "Manually add the directory to $tilde_bash_config (or similar):"
 
         for command in "${commands[@]}"; do

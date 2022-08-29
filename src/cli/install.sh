@@ -227,25 +227,40 @@ zsh)
 bash)
     commands=(
         "export $install_env=$quoted_install_dir"
-        "export PATH=\"$bin_env:\$PATH\""
+        "export PATH=$bin_env:\$PATH"
     )
 
-    bash_config=$HOME/.bashrc
-    tilde_bash_config=$(tildify "$bash_config")
+    bash_configs=(
+        "$HOME/.bashrc"
+        "$HOME/.bash_profile"
+        "$XDG_CONFIG_HOME/.bash_profile"
+        "$XDG_CONFIG_HOME/.bashrc"
+        "$XDG_CONFIG_HOME/bash_profile"
+        "$XDG_CONFIG_HOME/bashrc"
+    )
 
-    if [[ -w $bash_config ]]; then
-        {
-            echo -e '\n# bun'
+    set_manually=true
+    for bash_config in "${bash_configs[@]}"; do
+        tilde_bash_config=$(tildify "$bash_config")
 
-            for command in "${commands[@]}"; do
-                echo "$command"
-            done
-        } >>"$bash_config"
+        if [[ -w $bash_config ]]; then
+            {
+                echo -e '\n# bun'
 
-        info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_bash_config\""
+                for command in "${commands[@]}"; do
+                    echo "$command"
+                done
+            } >>"$bash_config"
 
-        refresh_command="source $bash_config"
-    else
+            info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_bash_config\""
+
+            refresh_command="source $bash_config"
+            set_manually=false
+            break
+        fi
+    done
+
+    if [[ $set_manually ]]; then
         echo "Manually add the directory to $tilde_bash_config (or similar):"
 
         for command in "${commands[@]}"; do

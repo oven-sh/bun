@@ -3437,6 +3437,9 @@ source ~/.bash_profile
 
 The version of Zig used by Bun is not a fork, just a slightly older version. Zig is a new programming language and moves quickly.
 
+#### Download precompiled WebKit
+Download the latest Webkit release from https://github.com/oven-sh/WebKit/releases. The tarball contains a `bun-webkit` folder. Move the contents of that folder into `~/webkit-build`. You can customize the directory; see `JSC_BASE_DIR` var in the [Makefile](https://github.com/oven-sh/bun/blob/ce90e0c372f3e92b2a163d24018132aa2ce2ee6b/Makefile#L155).
+
 #### Build bun (macOS)
 
 If you're building on a macOS device, you'll need to have a valid Developer Certificate, or else the code signing step will fail. To check if you have one, open the `Keychain Access` app, go to the `login` profile and search for `Apple Development`. You should have at least one certificate with a name like `Apple Development: user@example.com (WDYABC123)`. If you don't have one, follow [this guide](https://ioscodesigning.com/generating-code-signing-files/#generate-a-code-signing-certificate-using-xcode) to get one.
@@ -3448,7 +3451,7 @@ In `bun`:
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
 git submodule update --init --recursive --progress --depth=1
-make vendor identifier-cache jsc dev
+make vendor identifier-cache jsc bindings dev
 ```
 
 #### Verify it worked (macOS)

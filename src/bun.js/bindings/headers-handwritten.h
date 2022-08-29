@@ -205,43 +205,13 @@ extern "C" const char* Bun__versions_zig;
 
 extern "C" void ZigString__free_global(const unsigned char* ptr, size_t len);
 
-extern "C" int64_t Bun__encoding__writeLatin1AsHex(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeUTF16AsHex(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeLatin1AsURLSafeBase64(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeUTF16AsURLSafeBase64(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeLatin1AsBase64(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeUTF16AsBase64(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeLatin1AsUTF16(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeUTF16AsUTF16(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeLatin1AsUTF8(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeUTF16AsUTF8(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeLatin1AsASCII(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len);
-extern "C" int64_t Bun__encoding__writeUTF16AsASCII(const UChar* ptr, size_t len, unsigned char* to, size_t other_len);
+extern "C" int64_t Bun__encoding__writeLatin1(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
+extern "C" int64_t Bun__encoding__writeUTF16(const UChar* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 
-extern "C" size_t Bun__encoding__byteLengthLatin1AsHex(const unsigned char* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthUTF16AsHex(const UChar* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthLatin1AsURLSafeBase64(const unsigned char* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthUTF16AsURLSafeBase64(const UChar* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthLatin1AsBase64(const unsigned char* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthUTF16AsBase64(const UChar* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthLatin1AsUTF16(const unsigned char* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF16(const UChar* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthLatin1AsUTF8(const unsigned char* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF8(const UChar* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthLatin1AsASCII(const unsigned char* ptr, size_t len);
-extern "C" size_t Bun__encoding__byteLengthUTF16AsASCII(const UChar* ptr, size_t len);
+extern "C" size_t Bun__encoding__byteLengthLatin1(const unsigned char* ptr, size_t len, Encoding encoding);
+extern "C" size_t Bun__encoding__byteLengthUTF16(const UChar* ptr, size_t len, Encoding encoding);
 
-extern "C" int64_t Bun__encoding__constructFromLatin1AsHex(void*, const unsigned char* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromUTF16AsHex(void*, const UChar* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromLatin1AsURLSafeBase64(void*, const unsigned char* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromUTF16AsURLSafeBase64(void*, const UChar* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromLatin1AsBase64(void*, const unsigned char* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromUTF16AsBase64(void*, const UChar* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromLatin1AsUTF16(void*, const unsigned char* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromUTF16AsUTF16(void*, const UChar* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromLatin1AsUTF8(void*, const unsigned char* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromUTF16AsUTF8(void*, const UChar* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromLatin1AsASCII(void*, const unsigned char* ptr, size_t len);
-extern "C" int64_t Bun__encoding__constructFromUTF16AsASCII(void*, const UChar* ptr, size_t len);
+extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
+extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);
 
 #endif

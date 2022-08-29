@@ -1192,12 +1192,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
 
     if (callFrame->argumentCount() > 1) {
         if (arg1.value().isAnyInt()) {
-            int32_t ioffset = arg1.value().toInt32(lexicalGlobalObject);
+            int32_t ioffset = arg1.value().toUInt32(lexicalGlobalObject);
             if (ioffset < 0) {
                 throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
                 return JSC::JSValue::encode(jsUndefined());
             }
-            offset = static_cast<uint32_t>(ioffset);
+            offset = ioffset;
         } else if (arg1.value().isString()) {
             std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
             if (!encoded) {
@@ -1209,24 +1209,21 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
         }
     }
 
-    if (callFrame->argumentCount() > 2) {
-        length = static_cast<uint32_t>(callFrame->argument(2).toInt32(lexicalGlobalObject));
-    }
-
-    length -= std::min(offset, length);
-
     if (UNLIKELY(length < offset)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
     }
 
     if (callFrame->argumentCount() > 2) {
-        std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(3));
-        if (!encoded) {
-            throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-            return JSC::JSValue::encode(jsUndefined());
-        }
+        uint32_t arg_len = 0;
+        arg_len = callFrame->argument(2).toUInt32(lexicalGlobalObject);
+        length = std::min(arg_len, length-offset);
+    }
 
-        encoding = encoded.value();
+    if (callFrame->argumentCount() > 2) {
+        std::optional<BufferEncodingType> parsedEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(3));
+        if (parsedEncoding.has_value()) {
+            encoding = parsedEncoding.value();
+        }
     }
 
     auto view = str->tryGetValue(lexicalGlobalObject);

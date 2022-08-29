@@ -3644,6 +3644,7 @@ pub const Server = struct {
         var req = picohttp.Request.parse(req_buf_node.data[0..read_size], &req_headers_buf) catch |err| {
             _ = conn.client.write(RequestContext.printStatusLine(400) ++ "\r\n\r\n", SOCKET_FLAGS) catch {};
             _ = Syscall.close(conn.client.socket.fd);
+
             Output.printErrorln("ERR: {s}", .{@errorName(err)});
             return;
         };

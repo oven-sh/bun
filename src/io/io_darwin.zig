@@ -1092,7 +1092,7 @@ pub fn accept(
 
                 // darwin doesn't support os.MSG.NOSIGNAL,
                 // but instead a socket option to avoid SIGPIPE.
-                Syscall.setsockopt(fd, os.SOL_SOCKET, os.SO_NOSIGPIPE, &mem.toBytes(@as(c_int, 1))) catch |err| return switch (err) {
+                Syscall.setsockopt(fd, os.SOL.SOCKET, os.SO.NOSIGPIPE, &mem.toBytes(@as(c_int, 1))) catch |err| return switch (err) {
                     error.TimeoutTooBig => unreachable,
                     error.PermissionDenied => error.NetworkSubsystemFailed,
                     error.AlreadyConnected => error.NetworkSubsystemFailed,

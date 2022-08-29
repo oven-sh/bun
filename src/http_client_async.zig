@@ -43,6 +43,8 @@ pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
 }
 
 pub fn onThreadStartNew(waker: AsyncIO.Waker) void {
+    Output.Source.configureNamedThread("HTTP");
+
     default_arena = Arena.init() catch unreachable;
     default_allocator = default_arena.allocator();
     NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(default_allocator);
@@ -115,7 +117,7 @@ pub fn onThreadStartNew(waker: AsyncIO.Waker) void {
 
     AsyncIO.global_loaded = true;
     NetworkThread.global.io = &AsyncIO.global;
-    Output.Source.configureNamedThread("HTTP");
+
     AsyncBIO.initBoringSSL();
 
     NetworkThread.global.processEvents();

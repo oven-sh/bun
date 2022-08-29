@@ -544,7 +544,6 @@ You can see [Bun's Roadmap](https://github.com/oven-sh/bun/issues/159), but here
 | CSS Parser (it only bundles)                                                          | CSS            |
 | Tree-shaking                                                                          | JavaScript     |
 | Tree-shaking                                                                          | CSS            |
-| [`extends`](https://www.typescriptlang.org/tsconfig#extends) in tsconfig.json         | TS Transpiler  |
 | [TypeScript Decorators](https://www.typescriptlang.org/docs/handbook/decorators.html) | TS Transpiler  |
 | `@jsxPragma` comments                                                                 | JS Transpiler  |
 | Sharing `.bun` files                                                                  | bun            |

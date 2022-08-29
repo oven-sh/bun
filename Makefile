@@ -771,6 +771,18 @@ fetch-debug: $(IO_FILES)
 	$(ZIG) build fetch-obj
 	$(CXX) $(DEBUG_PACKAGE_DIR)/fetch.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/fetch $(DEBUG_IO_FILES) $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
 
+.PHONY: machbench-debug
+machbench-debug: $(IO_FILES)
+	$(ZIG) build machbench-obj
+	$(CXX) $(DEBUG_PACKAGE_DIR)/machbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/machbench $(DEBUG_IO_FILES) $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+
+.PHONY: machbench
+machbench: $(IO_FILES)
+	$(ZIG) build -Drelease-fast machbench-obj
+	$(CXX) $(PACKAGE_DIR)/machbench.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/machbench $(IO_FILES)  $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	rm -rf $(PACKAGE_DIR)/machbench.o
+
+
 .PHONY: httpbench-debug
 httpbench-debug: $(IO_FILES)
 	$(ZIG) build httpbench-obj

@@ -2703,39 +2703,39 @@ pub const Resolver = struct {
                     try parent_configs.append(tsconfig_json);
                     var current = tsconfig_json;
                     while (current.extends.len > 0) {
-                        var tsDirName = Dirname.dirname(current.abs_path);
+                        var ts_dir_name = Dirname.dirname(current.abs_path);
                         // not sure why this needs cwd but we'll just pass in the dir of the tsconfig...
-                        var absPath = ResolvePath.joinAbsStringBuf(tsDirName, &tsconfig_path_abs_buf, &[_]string{ tsDirName, current.extends }, .auto);
-                        var parentConfigMaybe = try r.parseTSConfig(absPath, 0);
-                        if (parentConfigMaybe) |parentConfig| {
-                            try parentConfigs.append(parentConfig);
-                            current = parentConfig;
+                        var abs_path = ResolvePath.joinAbsStringBuf(ts_dir_name, &tsconfig_path_abs_buf, &[_]string{ ts_dir_name, current.extends }, .auto);
+                        var parent_config_maybe = try r.parseTSConfig(abs_path, 0);
+                        if (parent_config_maybe) |parent_config| {
+                            try parent_configs.append(parent_config);
+                            current = parent_config;
                         } else {
                             break;
                         }
                     }
 
-                    var mergedConfig = parentConfigs.pop();
+                    var merged_config = parent_configs.pop();
                     // starting from the base config (end of the list)
                     // successively apply the inheritable attributes to the next config
-                    while (parentConfigs.popOrNull()) |parentConfig| {
-                        if (parentConfig.base_url.len > 0) {
-                            mergedConfig.base_url = parentConfig.base_url;
-                            mergedConfig.base_url_for_paths = parentConfig.base_url_for_paths;
+                    while (parent_configs.popOrNull()) |parent_config| {
+                        if (parent_config.base_url.len > 0) {
+                            merged_config.base_url = parent_config.base_url;
+                            merged_config.base_url_for_paths = parent_config.base_url_for_paths;
                         }
-                        mergedConfig.jsx = parentConfig.mergeJSX(mergedConfig.jsx);
+                        merged_config.jsx = parent_config.mergeJSX(merged_config.jsx);
 
-                        if (parentConfig.preserve_imports_not_used_as_values) |value| {
-                            mergedConfig.preserve_imports_not_used_as_values = value;
+                        if (parent_config.preserve_imports_not_used_as_values) |value| {
+                            merged_config.preserve_imports_not_used_as_values = value;
                         }
 
-                        var iter = parentConfig.paths.iterator();
+                        var iter = parent_config.paths.iterator();
                         while (iter.next()) |c| {
-                            mergedConfig.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
+                            merged_config.paths.put(c.key_ptr.*, c.value_ptr.*) catch unreachable;
                         }
                         // todo deinit these parent configs somehow?
                     }
-                    info.tsconfig_json = mergedConfig;
+                    info.tsconfig_json = merged_config;
                 }
                 info.enclosing_tsconfig_json = info.tsconfig_json;
             }

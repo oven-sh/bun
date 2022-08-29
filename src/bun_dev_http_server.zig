@@ -1,4 +1,7 @@
-// const c = @import("./c.zig");
+// This is the HTTP server used by "bun dev"
+// It is not suitable for benchmarking.
+// It is not designed to be fast.
+
 const std = @import("std");
 const bun = @import("global.zig");
 const string = bun.string;

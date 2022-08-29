@@ -1,4 +1,4 @@
-const Server = @import("../http.zig").Server;
+const Server = @import("../bun_dev_http_server.zig").Server;
 const Command = @import("../cli.zig").Command;
 const Global = @import("../global.zig").Global;
 pub const DevCommand = struct {

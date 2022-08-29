@@ -42,11 +42,11 @@ pub fn onThreadStart(_: ?*anyopaque) ?*anyopaque {
     return null;
 }
 
-pub fn onThreadStartNew(event_fd: os.fd_t) void {
+pub fn onThreadStartNew(waker: AsyncIO.Waker) void {
     default_arena = Arena.init() catch unreachable;
     default_allocator = default_arena.allocator();
     NetworkThread.address_list_cached = NetworkThread.AddressListCache.init(default_allocator);
-    AsyncIO.global = AsyncIO.init(1024, 0, event_fd) catch |err| {
+    AsyncIO.global = AsyncIO.init(1024, 0, waker) catch |err| {
         log: {
             if (comptime Environment.isLinux) {
                 if (err == error.SystemOutdated) {
@@ -115,16 +115,10 @@ pub fn onThreadStartNew(event_fd: os.fd_t) void {
 
     AsyncIO.global_loaded = true;
     NetworkThread.global.io = &AsyncIO.global;
-    if (comptime !Environment.isLinux) {
-        NetworkThread.global.pool.io = &AsyncIO.global;
-    }
-
     Output.Source.configureNamedThread("HTTP");
     AsyncBIO.initBoringSSL();
 
-    if (comptime Environment.isLinux) {
-        NetworkThread.global.processEvents();
-    }
+    NetworkThread.global.processEvents();
 }
 
 pub inline fn getAllocator() std.mem.Allocator {

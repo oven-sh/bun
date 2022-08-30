@@ -538,6 +538,50 @@ pub fn build(b: *std.build.Builder) !void {
         opts.addOption(
             bool,
             "bindgen",
+            true,
+        );
+
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
+        headers_obj.addOptions("build_options", opts);
+    }
+
+    {
+        const headers_step = b.step("toyhttpserver-obj", "Build ToyHTTP bench");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("toyhttpserver", "src/http_server.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
+            true,
+        );
+
+        opts.addOption(
+            bool,
+            "baseline",
+            is_baseline,
+        );
+        opts.addOption([:0]const u8, "sha", git_sha);
+        opts.addOption(bool, "is_canary", is_canary);
+        headers_obj.addOptions("build_options", opts);
+    }
+
+    {
+        const headers_step = b.step("toyhttpserver-lite-obj", "Build ToyHTTP Server Single-Threaded");
+        var headers_obj: *std.build.LibExeObjStep = b.addObject("toyhttpserver-lite", "src/http_server.zig");
+        defer headers_step.dependOn(&headers_obj.step);
+        try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
+        var opts = b.addOptions();
+        opts.addOption(
+            bool,
+            "bindgen",
             false,
         );
 
@@ -546,6 +590,7 @@ pub fn build(b: *std.build.Builder) !void {
             "baseline",
             is_baseline,
         );
+        opts.addOption(bool, "toy_single_threaded_http_server", true);
         opts.addOption([:0]const u8, "sha", git_sha);
         opts.addOption(bool, "is_canary", is_canary);
         headers_obj.addOptions("build_options", opts);

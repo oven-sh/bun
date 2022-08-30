@@ -75,7 +75,7 @@ const URL = @import("../../url.zig").URL;
 const Transpiler = @import("./transpiler.zig");
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
-const is_bindgen = JSC.is_bindgen;
+const is_bindgen = @import("std").meta.globalOption("bindgen", bool) orelse false;
 const uws = @import("uws");
 const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
@@ -106,8 +106,8 @@ pub const ServerConfig = struct {
     max_request_body_size: usize = 1024 * 1024 * 128,
     development: bool = false,
 
-    onError: JSC.JSValue = JSC.JSValue.zero,
-    onRequest: JSC.JSValue = JSC.JSValue.zero,
+    onError: if (is_bindgen) void else JSC.JSValue = if (is_bindgen) void{} else JSC.JSValue.zero,
+    onRequest: if (is_bindgen) void else JSC.JSValue = if (is_bindgen) void{} else JSC.JSValue.zero,
 
     pub const SSLConfig = struct {
         server_name: [*c]const u8 = null,

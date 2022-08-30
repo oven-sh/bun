@@ -272,7 +272,30 @@ pub const darwin = struct {
     pub extern "c" fn @"open$NOCANCEL"(path: [*:0]const u8, oflag: c_uint, ...) c_int;
     pub extern "c" fn @"read$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize) isize;
     pub extern "c" fn @"pread$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize, offset: c.off_t) isize;
+    pub fn @"kevent64$NOCANCEL"(
+        kq: c_int,
+        changelist: [*]const Kevent64,
+        nchanges: c_int,
+        eventlist: [*]Kevent64,
+        nevents: c_int,
+        flags: c_uint,
+        timeout_: ?*const os.timespec,
+    ) c_int {
+        while (true) {
+            const ret = os.system.kevent64(kq, changelist, nchanges, eventlist, nevents, flags, timeout_);
+            if (ret == -1) {
+                const err = std.c.getErrno(ret);
+                if (err == .INTR) {
+                    continue;
+                }
+                return -1;
+            }
+            return ret;
+        }
+        unreachable;
+    }
 };
+const kevent64 = darwin.@"kevent64$NOCANCEL";
 pub const OpenError = error{
     /// In WASI, this error may occur when the file descriptor does
     /// not hold the required rights to open a new resource relative to it.
@@ -513,7 +536,7 @@ pub const Waker = struct {
     pub fn wait(this: Waker) !usize {
         var events = zeroed;
 
-        const count = std.os.system.kevent64(
+        const count = kevent64(
             this.kq,
             &events,
             0,
@@ -571,7 +594,7 @@ pub const UserFilterWaker = struct {
         events[0].data = 0;
         events[0].fflags = c.NOTE_TRIGGER;
         events[0].udata = 0;
-        const errno = std.os.system.kevent64(
+        const errno = kevent64(
             this.kq,
             &events,
             1,
@@ -596,7 +619,7 @@ pub const UserFilterWaker = struct {
         events[0].data = 0;
         events[0].udata = 0;
 
-        const errno = std.os.system.kevent64(
+        const errno = kevent64(
             this.kq,
             &events,
             1,
@@ -623,7 +646,7 @@ pub const UserFilterWaker = struct {
         events[0].data = 0;
         events[0].udata = 0;
         var timespec = default_timespec;
-        const errno = std.os.system.kevent64(
+        const errno = kevent64(
             kq,
             &events,
             1,
@@ -653,7 +676,7 @@ pub fn tick(self: *IO) !void {
     return self.flush(.no_wait);
 }
 
-const Kevent64 = std.os.system.kevent64_s;
+const Kevent64 = std.os.darwin.kevent64_s;
 
 /// Pass all queued submissions to the kernel and run for `nanoseconds`.
 /// The `nanoseconds` argument is a u63 to allow coercion to the i64 used
@@ -728,7 +751,7 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
         ts.tv_sec = @intCast(@TypeOf(ts.tv_sec), timeout_ns / std.time.ns_per_s);
     }
 
-    const new_events_ = std.os.system.kevent64(
+    const new_events_ = kevent64(
         self.waker.kq,
         &events,
         @intCast(c_int, change_events),
@@ -1001,7 +1024,7 @@ fn submitWithIncrementPending(
     }
 }
 
-pub const AcceptError = os.AcceptError || os.SetSockOptError;
+pub const AcceptError = os.AcceptError;
 
 // -- NOT DONE YET
 pub fn eventfd(self: *IO) os.fd_t {
@@ -1092,13 +1115,7 @@ pub fn accept(
 
                 // darwin doesn't support os.MSG.NOSIGNAL,
                 // but instead a socket option to avoid SIGPIPE.
-                Syscall.setsockopt(fd, os.SOL.SOCKET, os.SO.NOSIGPIPE, &mem.toBytes(@as(c_int, 1))) catch |err| return switch (err) {
-                    error.TimeoutTooBig => unreachable,
-                    error.PermissionDenied => error.NetworkSubsystemFailed,
-                    error.AlreadyConnected => error.NetworkSubsystemFailed,
-                    error.InvalidProtocolOption => error.ProtocolFailure,
-                    else => |e| e,
-                };
+                Syscall.setsockopt(fd, os.SOL.SOCKET, os.SO.NOSIGPIPE, &mem.toBytes(@as(c_int, 1))) catch {};
 
                 return fd;
             }

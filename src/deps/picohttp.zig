@@ -13,6 +13,18 @@ pub const Header = struct {
     name: []const u8,
     value: []const u8,
 
+    pub fn count(this: *const Header, builder: *StringBuilder) void {
+        builder.count(this.name);
+        builder.count(this.value);
+    }
+
+    pub fn clone(this: *const Header, builder: *StringBuilder) Header {
+        return .{
+            .name = builder.append(this.name),
+            .value = builder.append(this.value),
+        };
+    }
+
     pub fn isMultiline(self: Header) bool {
         return @ptrToInt(self.name.ptr) == 0;
     }
@@ -39,11 +51,37 @@ pub const Header = struct {
     }
 };
 
+const StringBuilder = @import("../string_builder.zig");
+
 pub const Request = struct {
     method: []const u8,
     path: []const u8,
     minor_version: usize,
     headers: []const Header,
+    bytes_read: u32 = 0,
+
+    pub fn count(this: Request, builder: *StringBuilder) void {
+        builder.count(this.method);
+        builder.count(this.path);
+
+        for (this.headers) |header| {
+            header.count(builder);
+        }
+    }
+
+    pub fn clone(this: *const Request, headers: []Header, builder: *StringBuilder) Request {
+        for (this.headers) |header, i| {
+            headers[i] = header.clone(builder);
+        }
+
+        return .{
+            .method = builder.append(this.method),
+            .path = builder.append(this.path),
+            .minor_version = this.minor_version,
+            .headers = headers,
+            .bytes_read = this.bytes_read,
+        };
+    }
 
     pub fn format(self: Request, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         try fmt.format(writer, "{s} {s}\n", .{ self.method, self.path });
@@ -83,6 +121,7 @@ pub const Request = struct {
                 .path = path,
                 .minor_version = @intCast(usize, minor_version),
                 .headers = src[0..num_headers],
+                .bytes_read = @intCast(u32, @maximum(rc, 0)),
             },
         };
     }

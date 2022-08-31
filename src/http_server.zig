@@ -17,19 +17,21 @@ const HiveArray = @import("./hive_array.zig").HiveArray;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const StringPointer = @import("./api/schema.zig").Api.StringPointer;
 const StringBuilder = @import("./string_builder.zig");
-
+const Lock = @import("./lock.zig").Lock;
 const log = Output.scoped(.HTTPServer, false);
 
 const ServerConfig = struct {
-    port: u16,
+    port: u16 = 3001,
+    host: []const u8 = "0.0.0.0",
+    reuse_port: bool = true,
 };
 const AsyncIO = @import("io");
 pub const constants = struct {
-    pub const OPEN_SOCKET_FLAGS = std.os.SOCK.CLOEXEC;
+    pub const OPEN_SOCKET_FLAGS = std.os.SOCK.CLOEXEC | std.os.SO.REUSEADDR | std.os.SO.REUSEPORT;
     pub const SOCKET_BACKLOG = 1024;
 };
 
-const FallbackBufferPool = ObjectPool([16384]u8, null, false, 256);
+const FallbackBufferPool = ObjectPool([16384]u8, null, false, 1024);
 
 const SocketList = HiveArray(Socket, constants.SOCKET_BACKLOG);
 const IncomingRequest = struct {
@@ -127,60 +129,98 @@ pub const RequestHandler = struct {
 const recv_buffer_len = 4096;
 const RecvBuffer = [recv_buffer_len]u8;
 const RecvHiveArray = HiveArray(RecvBuffer, 128);
-const CompletionPool = ObjectPool(AsyncIO.Completion, null, false, 256);
 
-pub fn sendStaticMessageConcurrent(io: *AsyncIO, fd: fd_t, message: []const u8) void {
-    const CompletionPoolBackup = ObjectPool(AsyncIO.Completion, null, false, 512);
+pub fn sendStaticMessageConcurrent(toy: *ToyHTTPServer, fd: fd_t, message: []const u8) void {
+    // const CompletionPoolBackup = ObjectPool(AsyncIO.Completion, null, false, 512);
 
     const doSendError = struct {
         pub fn send(
-            this: *AsyncIO,
+            this: *ToyHTTPServer,
             completion: *AsyncIO.Completion,
             result: AsyncIO.SendError!usize,
         ) void {
-            defer @fieldParentPtr(CompletionPoolBackup.Node, "data", completion).release();
+            // defer @fieldParentPtr(CompletionPoolBackup.Node, "data", completion).release();
 
             const amt = result catch |err| {
                 if (err != error.EBADF)
                     sendClose(completion.operation.send.socket);
                 return;
             };
-            const remain = completion.operation.send.buf[0..completion.operation.send.len][amt..];
-            if (amt == 0 or remain.len == 0) {
+            if (amt == 0 or completion.operation.send.disconnected) {
                 sendClose(completion.operation.send.socket);
                 return;
             }
-            this.send(*AsyncIO, this, send, &CompletionPoolBackup.get(bun.default_allocator).data, completion.operation.send.socket, remain, 0);
+            const remain = completion.operation.send.buf[0..completion.operation.send.len][amt..];
+            if (remain.len == 0) {
+                this.server.takeAsync(completion.operation.send.socket);
+                return;
+            }
+
+            this.io.sendNow(*ToyHTTPServer, this, send, CompletionPool.get(), completion.operation.send.socket, remain, 0);
         }
     }.send;
-    io.send(*AsyncIO, io, doSendError, &CompletionPoolBackup.get(bun.default_allocator).data, fd, message, 0);
+    toy.io.sendNow(*ToyHTTPServer, toy, doSendError, CompletionPool.get(), fd, message, 0);
 }
 
-pub fn sendStaticMessage(fd: fd_t, message: []const u8) void {
+const CompletionPool = struct {
+    pub fn get() *AsyncIO.Completion {
+        return bun.default_allocator.create(AsyncIO.Completion) catch unreachable;
+    }
+};
+
+pub fn sendStaticMessage(server: *Server, fd: fd_t, message: []const u8) void {
     const doSendError = struct {
         pub fn send(
-            _: *usize,
+            this: *Server,
             completion: *AsyncIO.Completion,
             result: AsyncIO.SendError!usize,
         ) void {
-            defer @fieldParentPtr(CompletionPool.Node, "data", completion).release();
-
             var amt = result catch {
                 sendClose(completion.operation.send.socket);
                 return;
             };
             const remain = completion.operation.send.buf[0..completion.operation.send.len][amt..];
-            if (amt == 0 or remain.len == 0) {
+            if (amt == 0 or completion.operation.send.disconnected) {
                 sendClose(completion.operation.send.socket);
                 return;
             }
-            AsyncIO.global.send(*usize, &amt, send, &CompletionPool.get(bun.default_allocator).data, completion.operation.send.socket, remain, 0);
+            if (remain.len == 0) {
+                this.take(completion.operation.send.socket);
+                return;
+            }
+
+            AsyncIO.global.send(*Server, this, send, CompletionPool.get(), completion.operation.send.socket, remain, 0);
         }
     }.send;
-    const foo = struct {
-        pub var garbage: usize = 1;
-    };
-    AsyncIO.global.send(*usize, &foo.garbage, doSendError, &CompletionPool.get(bun.default_allocator).data, fd, message, 0);
+    AsyncIO.global.send(*Server, server, doSendError, CompletionPool.get(), fd, message, 0);
+}
+
+pub fn sendStaticMessageWithoutClosing(server: *Server, fd: fd_t, message: []const u8) void {
+    const doSendError = struct {
+        pub fn send(
+            this: *Server,
+            completion: *AsyncIO.Completion,
+            result: AsyncIO.SendError!usize,
+        ) void {
+            var amt = result catch {
+                sendClose(completion.operation.send.socket);
+                return;
+            };
+            if (amt == 0 or completion.operation.send.disconnected) {
+                sendClose(completion.operation.send.socket);
+                return;
+            }
+
+            const remain = completion.operation.send.buf[0..completion.operation.send.len][amt..];
+            if (remain.len == 0) {
+                this.take(completion.operation.send.socket);
+                return;
+            }
+
+            AsyncIO.global.send(*Server, this, send, CompletionPool.get(), completion.operation.send.socket, remain, 0);
+        }
+    }.send;
+    AsyncIO.global.send(*Server, server, doSendError, CompletionPool.get(), fd, message, 0);
 }
 
 pub const Server = struct {
@@ -192,6 +232,97 @@ pub const Server = struct {
     handler: RequestHandler,
     shutdown_completion: AsyncIO.Completion = undefined,
     shutdown_requested: bool = false,
+
+    pending_sockets_to_return: PendingSocketsList = PendingSocketsList.init(),
+    pending_sockets_to_return_lock: Lock = Lock.init(),
+    pending_socket_return_task: NetworkThread.Task = .{ .callback = flushPendingSocketsToReturn },
+    pending_sockets_to_return_scheduled: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
+
+    after_callback: AsyncIO.Callback = .{
+        .callback = enqueueAcceptOpaque,
+        .ctx = undefined,
+    },
+
+    has_pending_accept: bool = false,
+
+    pub fn flushPendingSocketsToReturn(task: *NetworkThread.Task) void {
+        var server: *Server = @fieldParentPtr(Server, "pending_socket_return_task", task);
+        server.pending_sockets_to_return_scheduled.store(0, .Monotonic);
+        server.pending_sockets_to_return_lock.lock();
+        var sockets_slice = server.pending_sockets_to_return.readableSlice(0);
+        var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
+        var allocator = stack_fallback.get();
+        var list = allocator.dupe(u32, sockets_slice) catch unreachable;
+        server.pending_sockets_to_return.head = 0;
+        server.pending_sockets_to_return.count = 0;
+        server.pending_sockets_to_return_lock.unlock();
+
+        defer {
+            if (!stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(list))) {
+                allocator.free(list);
+            }
+        }
+
+        for (list) |fd| {
+            if (comptime Environment.isMac) {
+                std.os.getsockoptError(@intCast(c_int, fd)) catch {
+                    sendClose(@intCast(c_int, fd));
+                    continue;
+                };
+            }
+
+            if (server.sockets.get()) |socket| {
+                socket.* = .{
+                    .fd = @intCast(fd_t, fd),
+                    .server_ = server,
+                };
+
+                socket.enqueueRecv() catch unreachable;
+            } else {
+                sendClose(@intCast(fd_t, fd));
+            }
+        }
+    }
+
+    const PendingSocketsList = std.fifo.LinearFifo(u32, .{ .Static = constants.SOCKET_BACKLOG });
+
+    pub fn takeAsync(this: *Server, socket: fd_t) void {
+        if (comptime Environment.isMac) {
+            sendClose(socket);
+            return;
+        }
+        //     var err_code: i32 = undefined;
+        //     var size: u32 = @sizeOf(u32);
+        //     _ = std.c.getsockopt(@intCast(fd_t, socket), std.os.SOL.SOCKET, AsyncIO.darwin.SO_NREAD, @ptrCast([*]u8, &err_code), &size);
+        //     if (err_code == 0) {
+        //         std.os.shutdown(socket, .both) catch {};
+        //         std.os.close(socket);
+        //     }
+        //     return;
+        // }
+
+        this.pending_sockets_to_return_lock.lock();
+        {
+            this.pending_sockets_to_return.writeItemAssumeCapacity(@intCast(u32, socket));
+        }
+        if (this.pending_sockets_to_return_scheduled.fetchAdd(1, .Monotonic) == 0)
+            NetworkThread.global.schedule(NetworkThread.Batch.from(&this.pending_socket_return_task));
+        this.pending_sockets_to_return_lock.unlock();
+    }
+
+    pub fn take(server: *Server, fd: fd_t) void {
+        if (server.sockets.get()) |socket| {
+            socket.* = .{
+                .fd = @intCast(fd_t, fd),
+                .server_ = server,
+            };
+
+            socket.enqueueRecv() catch unreachable;
+        } else {
+            sendClose(@intCast(fd_t, fd));
+        }
+    }
+
     pub fn quiet(this: *Server) void {
         this.status = .closing;
     }
@@ -231,56 +362,90 @@ pub const Server = struct {
 
     pub fn start(config: ServerConfig, handler: RequestHandler) !*Server {
         log("start port: {d}", .{config.port});
-        const socket = try AsyncIO.openSocket(std.os.AF.INET, constants.OPEN_SOCKET_FLAGS | std.os.SOCK.STREAM, std.os.IPPROTO.TCP);
-        errdefer std.os.close(socket);
-        var listener: std.x.net.tcp.Listener = .{
-            .socket = .{
-                .fd = socket,
-            },
-        };
-        // listener.setFastOpen(true) catch {};
-        listener.setReuseAddress(true) catch {};
-        listener.setReusePort(true) catch {};
 
-        // listener.setKeepAlive(false) catch {};
-        try listener.bind(std.x.net.ip.Address.initIPv4(std.x.os.IPv4.unspecified, config.port));
-        _ = try AsyncIO.Syscall.fcntl(socket, std.os.F.SETFL, (try AsyncIO.Syscall.fcntl(socket, std.os.F.GETFL, 0)) | std.os.O.NONBLOCK);
         var server = try bun.default_allocator.create(Server);
         server.* = .{
-            .listener = socket,
+            .listener = brk: {
+                if (comptime Environment.isMac) {
+                    break :brk AsyncIO.createListenSocket(config.host, config.port, config.reuse_port);
+                } else {
+                    break :brk try AsyncIO.openSocket(std.os.AF.INET, constants.OPEN_SOCKET_FLAGS | std.os.SOCK.STREAM, std.os.IPPROTO.TCP);
+                }
+            },
             .handler = handler,
         };
-        try listener.listen(constants.SOCKET_BACKLOG);
-        server.enqueueAccept();
+        server.after_callback.ctx = server;
+
+        {
+            // var listener: std.x.net.tcp.Listener = .{
+            //     .socket = .{
+            //         .fd = server.listener,
+            //     },
+            // };
+            server.enqueueAccept();
+            // listener.setKeepAlive(false) catch {};
+            // try listener.bind(std.x.net.ip.Address.initIPv4(std.x.os.IPv4.unspecified, config.port));
+            // try listener.listen(constants.SOCKET_BACKLOG);
+        }
+
+        // try AsyncIO.global.on_after.append(bun.default_allocator, server.after_callback);
         return server;
     }
 
+    pub fn enqueueAcceptOpaque(server: *anyopaque) void {
+        enqueueAccept(@ptrCast(*Server, @alignCast(@alignOf(Server), server)));
+    }
+
     pub fn enqueueAccept(server: *Server) void {
-        AsyncIO.global.accept(*Server, server, onAccept, &server.accept_completion, server.listener);
+        AsyncIO.global.acceptNow(*Server, server, onAccept, &server.accept_completion, server.listener);
     }
 
     pub fn onAccept(
         this: *Server,
-        _: *AsyncIO.Completion,
+        complete: *AsyncIO.Completion,
         result_: AsyncIO.AcceptError!std.os.socket_t,
     ) void {
-        const fd = result_ catch |err| {
+        var remain: usize = @as(usize, complete.operation.accept.backlog);
+
+        var fd = result_ catch |err| {
             log("onAccept error: {s}", .{@errorName(err)});
             return;
         };
 
+        _ = AsyncIO.Syscall.fcntl(fd, std.os.F.SETFL, (AsyncIO.Syscall.fcntl(fd, std.os.F.GETFL, 0) catch 0) | std.os.O.NONBLOCK | std.os.O.CLOEXEC) catch 0;
+
+        if (this.handleAccept(fd)) {
+            if (comptime Environment.isMac) {
+                while (remain > 0) : (remain -= 1) {
+                    const sockfd = AsyncIO.darwin.@"accept$NOCANCEL"(this.listener, null, null);
+                    if (sockfd < 0) {
+                        break;
+                    }
+                    fd = sockfd;
+
+                    AsyncIO.Syscall.setsockopt(fd, std.os.SOL.SOCKET, std.os.SO.NOSIGPIPE, &std.mem.toBytes(@as(c_int, 1))) catch {};
+                    _ = AsyncIO.Syscall.fcntl(fd, std.os.F.SETFL, (AsyncIO.Syscall.fcntl(fd, std.os.F.GETFL, 0) catch 0) | std.os.O.NONBLOCK | std.os.O.CLOEXEC) catch 0;
+                    // _ = AsyncIO.Syscall.fcntl(fd, std.os.FD_CLOEXEC, 1) catch 0;
+
+                    if (!this.handleAccept(fd))
+                        break;
+                }
+            }
+        }
+    }
+
+    fn handleAccept(this: *Server, fd: std.os.socket_t) bool {
         if (this.status == .closing or this.status == .closed) {
             log("onAccept closing fd: {d} because not accepting connections", .{fd});
             std.os.close(fd);
-            return;
+            return false;
         }
 
         var socket = this.sockets.get() orelse {
             log("onAccept closing fd: {d} because no sockets available", .{fd});
             std.os.close(fd);
-            return;
+            return false;
         };
-        socket.server_ = this;
 
         socket.* = .{
             .fd = fd,
@@ -292,8 +457,7 @@ pub const Server = struct {
             std.os.close(fd);
             std.debug.assert(this.sockets.put(socket));
         };
-
-        this.enqueueAccept();
+        return true;
     }
 
     pub fn dispatch(this: *Server, socket: *Socket, request: HTTPRequest) void {
@@ -315,6 +479,9 @@ pub const Server = struct {
 };
 
 fn sendClose(fd: fd_t) void {
+    std.os.getsockoptError(fd) catch {};
+    std.os.shutdown(fd, std.os.ShutdownHow.both) catch {};
+
     if (comptime Environment.isLinux) {
         const Closer = struct {
             pub fn onClose(_: void, completion: *AsyncIO.Completion, _: AsyncIO.CloseError!void) void {
@@ -323,7 +490,7 @@ fn sendClose(fd: fd_t) void {
             }
         };
 
-        AsyncIO.global.close(void, void{}, Closer.onClose, CompletionPool.get(bun.default_allocator), fd);
+        AsyncIO.global.close(void, void{}, Closer.onClose, CompletionPool.get(), fd);
     } else {
         std.os.close(fd);
     }
@@ -337,50 +504,52 @@ const CompletionSwapper = struct {
     pub fn get(this: *CompletionSwapper) *AsyncIO.Completion {
         if (this.which == 0) {
             this.which = 1;
+            this.first = undefined;
             return &this.first;
         } else {
             this.which = 0;
+            this.second = undefined;
             return &this.second;
         }
     }
 };
 
+const CRLF = [2]u8{ '\r', '\n' };
+
 const request_header_fields_too_large = "431 Request Header Fields Too Large" ++
-    "\r\n" ++
+    CRLF ++
     "Connection: close" ++
-    "\r\n" ++
+    CRLF ++
     "Server: bun" ++
-    "\r\n" ++
+    CRLF ++
     "Content-Type: text/plain" ++
-    "\r\n" ++
+    CRLF ++
     "Content-Length: 0" ++
-    "\r\n" ++
-    "\r\n";
+    CRLF ++
+    CRLF;
 
 const bad_request = "400 Bad Request" ++
-    "\r\n" ++
+    CRLF ++
     "Connection: close" ++
-    "\r\n" ++
+    CRLF ++
     "Server: bun" ++
-    "\r\n" ++
+    CRLF ++
     "Content-Type: text/plain" ++
-    "\r\n" ++
+    CRLF ++
     "Content-Length: 0" ++
-    "\r\n" ++
-    "\r\n";
+    CRLF ++
+    CRLF;
 
-const hello_world = "HTTP/1.1 " ++
-    "200 OK" ++
-    "\r\n" ++
+const hello_world = "HTTP/1.1 200 OK" ++
+    CRLF ++
     "Connection: close" ++
-    "\r\n" ++
+    CRLF ++
     "Server: bun" ++
-    "\r\n" ++
+    CRLF ++
     "Content-Type: text/plain" ++
-    "\r\n" ++
+    CRLF ++
     "Content-Length: 13" ++
-    "\r\n" ++
-    "\r\n" ++
+    CRLF ++ CRLF ++
     "Hello, world!";
 
 pub const Socket = struct {
@@ -401,8 +570,7 @@ pub const Socket = struct {
             },
             .empty => {},
         }
-
-        this.* = .{ .fd = 0, .server_ = undefined };
+        this.recv_completion = CompletionSwapper{};
     }
 
     pub fn consume(this: *Socket, buf: []u8) !void {
@@ -470,6 +638,12 @@ pub const Socket = struct {
                 this.data = .{ .value = .{ .fallback_buffer = fallback }, .len = @truncate(u16, buf.len) };
                 return this.data.writable();
             }
+
+            if (this.data.value == .empty) {
+                var fallback = FallbackBufferPool.get(bun.default_allocator);
+                this.data = .{ .value = .{ .fallback_buffer = fallback }, .len = 0 };
+                return this.data.writable();
+            }
         }
 
         return next_buffer;
@@ -487,7 +661,7 @@ pub const Socket = struct {
             *Socket,
             this,
             Socket.onRecv,
-            this.recv_completion.get(),
+            CompletionPool.get(),
             this.fd,
             next_buffer,
         );
@@ -501,10 +675,11 @@ pub const Socket = struct {
     }
 
     pub fn closeWithoutReset(this: *Socket) void {
-        std.debug.assert(this.fd > 0);
-        sendClose(this.fd);
-
+        const fd = this.fd;
+        std.debug.assert(fd > 0);
         this.fd = 0;
+
+        sendClose(fd);
     }
 
     pub fn onRecv(
@@ -529,7 +704,7 @@ pub const Socket = struct {
                 error.TooBig => {
                     log("onRecv TooBig", .{});
                     this.reset();
-                    sendStaticMessage(this.fd, request_header_fields_too_large);
+                    sendStaticMessage(this.server(), this.fd, request_header_fields_too_large);
 
                     return;
                 },
@@ -542,7 +717,7 @@ pub const Socket = struct {
                 error.BadRequest => {
                     log("onRecv bad request", .{});
                     this.reset();
-                    sendStaticMessage(this.fd, bad_request);
+                    sendStaticMessage(this.server(), this.fd, bad_request);
 
                     return;
                 },
@@ -550,7 +725,7 @@ pub const Socket = struct {
                     this.enqueueRecv() catch {
                         log("onRecv TooBig (on enqueue)", .{});
                         this.reset();
-                        sendStaticMessage(this.fd, request_header_fields_too_large);
+                        sendStaticMessage(this.server(), this.fd, request_header_fields_too_large);
                     };
                     return;
                 },
@@ -576,11 +751,11 @@ pub const ToySingleThreadedHTTPServer = struct {
     task: NetworkThread.Task = .{ .callback = startServer },
 
     pub fn onRequest(
-        _: *ToySingleThreadedHTTPServer,
+        this: *ToySingleThreadedHTTPServer,
         incoming: IncomingRequest,
     ) void {
         log("onRequest: {any}", .{incoming});
-        sendStaticMessage(incoming.fd, hello_world);
+        sendStaticMessageWithoutClosing(this.server, incoming.fd, hello_world);
         var inc = incoming;
         inc.freeData(bun.default_allocator);
     }
@@ -626,8 +801,6 @@ pub const ToySingleThreadedHTTPServer = struct {
 };
 
 pub const ToyHTTPServer = struct {
-    const Lock = @import("./lock.zig").Lock;
-
     pub const Handler = RequestHandler.New(*ToyHTTPServer, onRequest);
     const Fifo = std.fifo.LinearFifo(IncomingRequest, .Dynamic);
     server: *Server,
@@ -660,9 +833,9 @@ pub const ToyHTTPServer = struct {
         this.drain();
 
         while (true) {
-            while (this.active.readItem()) |*incoming| {
-                defer incoming.freeData(bun.default_allocator);
-                sendStaticMessageConcurrent(&this.io, incoming.fd, hello_world);
+            while (this.active.readItem()) |incoming| {
+                // defer incoming.freeData(bun.default_allocator);
+                sendStaticMessageConcurrent(this, incoming.fd, hello_world);
             }
 
             this.io.wait(this, drain);

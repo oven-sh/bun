@@ -260,6 +260,53 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const c = std.c;
 pub const darwin = struct {
+    pub const SO_DEBUG = @as(c_int, 0x0001);
+    pub const SO_ACCEPTCONN = @as(c_int, 0x0002);
+    pub const SO_REUSEADDR = @as(c_int, 0x0004);
+    pub const SO_KEEPALIVE = @as(c_int, 0x0008);
+    pub const SO_DONTROUTE = @as(c_int, 0x0010);
+    pub const SO_BROADCAST = @as(c_int, 0x0020);
+    pub const SO_USELOOPBACK = @as(c_int, 0x0040);
+    pub const SO_LINGER = @as(c_int, 0x0080);
+    pub const SO_OOBINLINE = @as(c_int, 0x0100);
+    pub const SO_REUSEPORT = @as(c_int, 0x0200);
+    pub const SO_TIMESTAMP = @as(c_int, 0x0400);
+    pub const SO_TIMESTAMP_MONOTONIC = @as(c_int, 0x0800);
+    pub const SO_DONTTRUNC = @as(c_int, 0x2000);
+    pub const SO_WANTMORE = @as(c_int, 0x4000);
+    pub const SO_WANTOOBFLAG = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x8000, .hexadecimal);
+    pub const SO_SNDBUF = @as(c_int, 0x1001);
+    pub const SO_RCVBUF = @as(c_int, 0x1002);
+    pub const SO_SNDLOWAT = @as(c_int, 0x1003);
+    pub const SO_RCVLOWAT = @as(c_int, 0x1004);
+    pub const SO_SNDTIMEO = @as(c_int, 0x1005);
+    pub const SO_RCVTIMEO = @as(c_int, 0x1006);
+    pub const SO_ERROR = @as(c_int, 0x1007);
+    pub const SO_TYPE = @as(c_int, 0x1008);
+    pub const SO_LABEL = @as(c_int, 0x1010);
+    pub const SO_PEERLABEL = @as(c_int, 0x1011);
+    pub const SO_NREAD = @as(c_int, 0x1020);
+    pub const SO_NKE = @as(c_int, 0x1021);
+    pub const SO_NOSIGPIPE = @as(c_int, 0x1022);
+    pub const SO_NOADDRERR = @as(c_int, 0x1023);
+    pub const SO_NWRITE = @as(c_int, 0x1024);
+    pub const SO_REUSESHAREUID = @as(c_int, 0x1025);
+    pub const SO_NOTIFYCONFLICT = @as(c_int, 0x1026);
+    pub const SO_UPCALLCLOSEWAIT = @as(c_int, 0x1027);
+    pub const SO_LINGER_SEC = @as(c_int, 0x1080);
+    pub const SO_RANDOMPORT = @as(c_int, 0x1082);
+    pub const SO_NP_EXTENSIONS = @as(c_int, 0x1083);
+    pub const SO_NUMRCVPKT = @as(c_int, 0x1112);
+    pub const SO_NET_SERVICE_TYPE = @as(c_int, 0x1116);
+    pub const SO_NETSVC_MARKING_LEVEL = @as(c_int, 0x1119);
+
+    pub const TCP_NODELAY = 0x01;
+    pub const TCP_MAXSEG = 0x02;
+    pub const TCP_NOPUSH = 0x04;
+    pub const TCP_NOOPT = 0x08;
+    pub const TCP_KEEPALIVE = 0x10;
+    pub const TCP_CONNECTIONTIMEOUT = 0x20;
+
     pub usingnamespace os.darwin;
     pub extern "c" fn @"recvfrom$NOCANCEL"(sockfd: c.fd_t, noalias buf: *anyopaque, len: usize, flags: u32, noalias src_addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) isize;
     pub extern "c" fn @"sendto$NOCANCEL"(sockfd: c.fd_t, buf: *const anyopaque, len: usize, flags: u32, dest_addr: ?*const c.sockaddr, addrlen: c.socklen_t) isize;
@@ -267,11 +314,13 @@ pub const darwin = struct {
     pub extern "c" fn @"sendmsg$NOCANCEL"(sockfd: c.fd_t, msg: *const std.x.os.Socket.Message, flags: c_int) isize;
     pub extern "c" fn @"recvmsg$NOCANCEL"(sockfd: c.fd_t, msg: *std.x.os.Socket.Message, flags: c_int) isize;
     pub extern "c" fn @"connect$NOCANCEL"(sockfd: c.fd_t, sock_addr: *const c.sockaddr, addrlen: c.socklen_t) c_int;
-    pub extern "c" fn @"accept$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) c_int;
     pub extern "c" fn @"accept4$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t, flags: c_uint) c_int;
     pub extern "c" fn @"open$NOCANCEL"(path: [*:0]const u8, oflag: c_uint, ...) c_int;
     pub extern "c" fn @"read$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize) isize;
     pub extern "c" fn @"pread$NOCANCEL"(fd: c.fd_t, buf: [*]u8, nbyte: usize, offset: c.off_t) isize;
+    pub extern "c" fn @"recv$NOCANCEL"(sockfd: c.fd_t, arg1: ?*anyopaque, arg2: usize, arg3: c_int) isize;
+    pub extern "c" fn @"accept$NOCANCEL"(sockfd: c.fd_t, noalias addr: ?*c.sockaddr, noalias addrlen: ?*c.socklen_t) c_int;
+
     pub fn @"kevent64$NOCANCEL"(
         kq: c_int,
         changelist: [*]const Kevent64,
@@ -474,7 +523,7 @@ pub const Syscall = struct {
     }
 
     pub fn socket(domain: u32, socket_type: u32, protocol: u32) SocketError!socket_t {
-        const filtered_sock_type = socket_type & ~@as(u32, os.SOCK.NONBLOCK | os.SOCK.CLOEXEC);
+        const filtered_sock_type = socket_type & ~@as(u32, os.SOCK.NONBLOCK | os.SOCK.CLOEXEC | std.os.SO.REUSEADDR | std.os.SO.REUSEPORT);
         const rc = darwin.socket(domain, filtered_sock_type, protocol);
         switch (darwin.getErrno(rc)) {
             .SUCCESS => {
@@ -501,18 +550,18 @@ const Time = @import("./time.zig").Time;
 
 const IO = @This();
 
+pub const Callback = struct {
+    ctx: *anyopaque,
+    callback: fn (*anyopaque) void,
+};
+
 time: Time = .{},
 io_inflight: usize = 0,
 timeouts: FIFO(Completion) = .{},
 completed: FIFO(Completion) = .{},
 io_pending: FIFO(Completion) = .{},
 last_event_fd: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(32),
-pending_count: usize = 0,
 waker: Waker = undefined,
-
-pub fn hasNoWork(this: *IO) bool {
-    return this.pending_count == 0 and this.io_inflight == 0 and this.io_pending.peek() == null and this.completed.peek() == null and this.timeouts.peek() == null;
-}
 
 pub fn init(_: u12, _: u32, waker: Waker) !IO {
     return IO{
@@ -520,7 +569,7 @@ pub fn init(_: u12, _: u32, waker: Waker) !IO {
     };
 }
 
-pub const Waker = struct {
+pub const MachPortWaker = struct {
     kq: os.fd_t,
     machport: *anyopaque = undefined,
     machport_buf: []u8 = &.{},
@@ -665,6 +714,8 @@ pub const UserFilterWaker = struct {
     }
 };
 
+pub const Waker = MachPortWaker;
+
 pub fn deinit(self: *IO) void {
     assert(self.waker.kq > -1);
     os.close(self.waker.kq);
@@ -718,8 +769,12 @@ pub fn wait(self: *IO, context: anytype, comptime function: anytype) void {
 }
 
 fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
+    return flush_(self);
+}
+
+fn flush_(self: *IO) !void {
     var io_pending = self.io_pending.peek();
-    var events: [2048]Kevent64 = undefined;
+    var events: [4096]Kevent64 = undefined;
 
     // Check timeouts and fill events with completions in io_pending
     // (they will be submitted through kevent).
@@ -727,20 +782,8 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
     const next_timeout = self.flush_timeouts();
 
     // Flush any timeouts
-    {
-        var completed = self.completed;
-        self.completed = .{};
-        if (completed.pop()) |first| {
-            (first.callback)(self, first);
 
-            while (completed.pop()) |completion|
-                (completion.callback)(self, completion);
-
-            return;
-        }
-    }
-
-    const change_events = self.flush_io(&events, &io_pending);
+    var change_events = self.flush_io(&events, &io_pending);
 
     // Zero timeouts for kevent() implies a non-blocking poll
     var ts = default_timespec;
@@ -750,49 +793,76 @@ fn flush(self: *IO, comptime _: @Type(.EnumLiteral)) !void {
         ts.tv_nsec = @intCast(@TypeOf(ts.tv_nsec), timeout_ns % std.time.ns_per_s);
         ts.tv_sec = @intCast(@TypeOf(ts.tv_sec), timeout_ns / std.time.ns_per_s);
     }
+    while (true) {
+        const new_events_ = kevent64(
+            self.waker.kq,
+            &events,
+            @intCast(c_int, change_events),
+            &events,
+            @intCast(c_int, events.len),
+            0,
+            if (next_timeout != null) &ts else null,
+        );
 
-    const new_events_ = kevent64(
-        self.waker.kq,
-        &events,
-        @intCast(c_int, change_events),
-        &events,
-        @intCast(c_int, events.len),
-        0,
-        if (next_timeout != null) &ts else null,
-    );
+        if (new_events_ < 0) {
+            return std.debug.panic("kevent() failed {s}", .{@tagName(std.c.getErrno(new_events_))});
+        }
+        const new_events = @intCast(usize, new_events_);
 
-    if (new_events_ < 0) {
-        return std.debug.panic("kevent() failed {s}", .{@tagName(std.c.getErrno(new_events_))});
-    }
-    const new_events = @intCast(usize, new_events_);
-
-    // Mark the io events submitted only after kevent() successfully processed them
-    self.io_pending.out = io_pending;
-    if (io_pending == null) {
-        self.io_pending.in = null;
-    }
-
-    var new_io_inflight_events = new_events;
-    self.io_inflight += change_events;
-
-    for (events[0..new_events]) |kevent| {
-        if (kevent.filter == c.EVFILT_MACHPORT) {
-            new_io_inflight_events -= 1;
-            continue;
+        // Mark the io events submitted only after kevent() successfully processed them
+        self.io_pending.out = io_pending;
+        if (io_pending == null) {
+            self.io_pending.in = null;
         }
 
-        const completion = @intToPtr(*Completion, kevent.udata);
-        completion.next = null;
-        self.completed.push(completion);
+        var new_io_inflight_events = new_events;
+        self.io_inflight += change_events;
+
+        for (events[0..new_events]) |kevent| {
+            if (kevent.filter == c.EVFILT_MACHPORT or kevent.filter == c.EVFILT_USER) {
+                new_io_inflight_events -= 1;
+                continue;
+            }
+
+            const completion = @intToPtr(*Completion, kevent.udata);
+            switch (completion.operation) {
+                .accept => |*accept| {
+                    accept.backlog = @intCast(@TypeOf(accept.backlog), kevent.data);
+                },
+                .send => |*send| {
+                    send.disconnected = kevent.fflags & c.EV_EOF != 0;
+                },
+                .recv => |*recv| {
+                    recv.available = @intCast(u32, @truncate(i33, kevent.data));
+                },
+                else => {},
+            }
+            completion.next = null;
+            self.completed.push(completion);
+        }
+
+        // subtract machport events from io_inflight
+        self.io_inflight -= @minimum(change_events, new_io_inflight_events);
+
+        change_events = self.flush_io(&events, &io_pending);
+        if (change_events == 0 and new_events < events.len) {
+            break;
+        }
     }
 
-    // subtract machport events from io_inflight
-    self.io_inflight -= new_io_inflight_events;
+    {
+        var completed = self.completed;
+        self.completed = .{};
+        if (completed.pop()) |first| {
+            var current = first.next;
+            (first.callback)(self, first);
 
-    var completed = self.completed;
-    self.completed = .{};
-    while (completed.pop()) |completion| {
-        (completion.callback)(self, completion);
+            while (current) |completion| {
+                var prev_next = completion.next;
+                (completion.callback)(self, completion);
+                current = prev_next;
+            }
+        }
     }
 }
 
@@ -803,8 +873,8 @@ fn flush_io(_: *IO, events: []Kevent64, io_pending_top: *?*Completion) usize {
         const event_info = switch (completion.operation) {
             .accept => |op| [3]c_int{
                 op.socket,
-                c.EVFILT_READ,
-                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
+                c.EVFILT_READ | c.EV_CLEAR,
+                c.EV_ADD | c.EV_ENABLE,
             },
             .connect => |op| [3]c_int{
                 op.socket,
@@ -829,7 +899,7 @@ fn flush_io(_: *IO, events: []Kevent64, io_pending_top: *?*Completion) usize {
             .send => |op| [3]c_int{
                 op.socket,
                 c.EVFILT_WRITE,
-                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT,
+                c.EV_ADD | c.EV_ENABLE | c.EV_ONESHOT | c.EV_EOF,
             },
             .event => |op| [3]c_int{
                 op.fd,
@@ -894,6 +964,7 @@ pub const Completion = struct {
 const Operation = union(enum) {
     accept: struct {
         socket: os.socket_t,
+        backlog: u32 = 0,
     },
     close: struct {
         fd: os.fd_t,
@@ -917,12 +988,14 @@ const Operation = union(enum) {
         socket: os.socket_t,
         buf: [*]u8,
         len: u32,
+        available: u32 = 0,
     },
     send: struct {
         socket: os.socket_t,
         buf: [*]const u8,
         len: u32,
         flags: u32 = 0,
+        disconnected: bool = false,
     },
     timeout: struct {
         expires: u64,
@@ -958,7 +1031,7 @@ fn submit(
     operation_data: anytype,
     comptime OperationImpl: type,
 ) void {
-    submitWithIncrementPending(self, context, callback, completion, operation_tag, operation_data, OperationImpl, true);
+    submitWithIncrementPending(self, context, callback, completion, operation_tag, operation_data, OperationImpl);
 }
 
 fn submitWithIncrementPending(
@@ -969,10 +1042,7 @@ fn submitWithIncrementPending(
     comptime operation_tag: std.meta.Tag(Operation),
     operation_data: anytype,
     comptime OperationImpl: type,
-    comptime increment_pending: bool,
 ) void {
-    if (comptime increment_pending)
-        self.pending_count += 1;
     const Context = @TypeOf(context);
     const onCompleteFn = struct {
         fn onComplete(
@@ -999,9 +1069,6 @@ fn submitWithIncrementPending(
                 else => {},
             }
 
-            if (comptime increment_pending)
-                io.pending_count -= 1;
-
             // Complete the Completion
             return callback(
                 @intToPtr(Context, @ptrToInt(_completion.context)),
@@ -1020,11 +1087,11 @@ fn submitWithIncrementPending(
 
     switch (operation_tag) {
         .timeout => self.timeouts.push(completion),
-        else => self.completed.push(completion),
+        else => self.io_pending.push(completion),
     }
 }
 
-pub const AcceptError = os.AcceptError;
+pub const AcceptError = os.AcceptError || Errno;
 
 // -- NOT DONE YET
 pub fn eventfd(self: *IO) os.fd_t {
@@ -1120,6 +1187,67 @@ pub fn accept(
                 return fd;
             }
         },
+    );
+}
+
+pub fn acceptNow(
+    self: *IO,
+    comptime Context: type,
+    context: Context,
+    comptime callback: fn (
+        context: Context,
+        completion: *Completion,
+        result: AcceptError!os.socket_t,
+    ) void,
+    completion: *Completion,
+    socket: os.socket_t,
+) void {
+    const accepter = struct {
+        fn doOperation(op: anytype) AcceptError!os.socket_t {
+            const fd = darwin.@"accept$NOCANCEL"(
+                op.socket,
+                null,
+                null,
+            );
+            if (fd < 0) {
+                switch (std.c.getErrno(fd)) {
+                    .SUCCESS => unreachable,
+                    .INTR => unreachable,
+                    .AGAIN => return error.WouldBlock,
+                    .CONNABORTED => return error.ConnectionAborted,
+                    .INVAL => return error.SocketNotListening,
+                    .MFILE => return error.ProcessFdQuotaExceeded,
+                    .NFILE => return error.SystemFdQuotaExceeded,
+                    .NOBUFS => return error.SystemResources,
+                    .NOMEM => return error.SystemResources,
+                    .PROTO => return error.ProtocolFailure,
+                    .PERM => return error.BlockedByFirewall,
+                    else => |err| return asError(err),
+                }
+            }
+            errdefer {
+                Syscall.close(fd) catch {};
+            }
+
+            const foo = Syscall.fcntl(fd, std.os.F.SETFL, (Syscall.fcntl(fd, std.os.F.GETFL, 0) catch 0) | std.os.O.NONBLOCK) catch 0;
+            _ = foo;
+            // darwin doesn't support os.MSG.NOSIGNAL,
+            // but instead a socket option to avoid SIGPIPE.
+            Syscall.setsockopt(fd, os.SOL.SOCKET, os.SO.NOSIGPIPE, &mem.toBytes(@as(c_int, 1))) catch {};
+
+            return fd;
+        }
+    };
+
+    self.submit(
+        context,
+        callback,
+        completion,
+        .accept,
+        .{
+            .socket = socket,
+        },
+        accepter,
     );
 }
 
@@ -1413,7 +1541,7 @@ pub fn recv(
         },
         struct {
             fn doOperation(op: anytype) RecvError!usize {
-                const rc = system.@"recvfrom$NOCANCEL"(op.socket, op.buf, op.len, 0, null, null);
+                const rc = system.@"recv$NOCANCEL"(op.socket, op.buf, @minimum(op.len, op.available), 0);
                 return switch (system.getErrno(rc)) {
                     .SUCCESS => @intCast(usize, rc),
                     .AGAIN => error.WouldBlock,
@@ -1425,6 +1553,64 @@ pub fn recv(
             }
         },
     );
+}
+
+pub fn recvNow(
+    self: *IO,
+    comptime Context: type,
+    context: Context,
+    comptime callback: fn (
+        context: Context,
+        completion: *Completion,
+        result: RecvError!usize,
+    ) void,
+    completion: *Completion,
+    socket: os.socket_t,
+    buffer: []u8,
+) void {
+    assert(socket > 0);
+    const receiver = struct {
+        fn doOperation(op: anytype) RecvError!usize {
+            const rc = system.@"recvfrom$NOCANCEL"(op.socket, op.buf, op.len, 0, null, null);
+            return switch (system.getErrno(rc)) {
+                .SUCCESS => @intCast(usize, rc),
+                .AGAIN => error.WouldBlock,
+                .NOMEM => error.SystemResources,
+                .CONNREFUSED => error.ConnectionRefused,
+                .CONNRESET => error.ConnectionResetByPeer,
+                else => |err| asError(err),
+            };
+        }
+    };
+
+    const op: Operation = .{ .recv = .{
+        .socket = socket,
+        .buf = buffer.ptr,
+        .len = @intCast(u32, buffer_limit(buffer.len)),
+    } };
+    const result = receiver.doOperation(op.recv) catch {
+        self.submit(
+            context,
+            callback,
+            completion,
+            .recv,
+            .{
+                .socket = socket,
+                .buf = buffer.ptr,
+                .len = @intCast(u32, buffer_limit(buffer.len)),
+            },
+            receiver,
+        );
+        return;
+    };
+
+    completion.* = .{
+        .next = null,
+        .context = context,
+        .callback = undefined,
+        .operation = op,
+    };
+    callback(context, completion, result);
 }
 
 pub const SendError = error{
@@ -1459,6 +1645,34 @@ pub fn send(
     buffer: []const u8,
     _: u32,
 ) void {
+    assert(socket > 0);
+    const sender = struct {
+        fn doOperation(op: anytype) SendError!usize {
+            const rc = system.@"sendto$NOCANCEL"(op.socket, op.buf, op.len, op.flags, null, 0);
+            return switch (system.getErrno(rc)) {
+                .SUCCESS => @intCast(usize, rc),
+                .ACCES => error.AccessDenied,
+                .AGAIN => error.WouldBlock,
+                .ALREADY => error.FastOpenAlreadyInProgress,
+                .CONNRESET => error.ConnectionResetByPeer,
+                .MSGSIZE => error.MessageTooBig,
+                .NOBUFS => error.SystemResources,
+                .NOMEM => error.SystemResources,
+                .PIPE => error.BrokenPipe,
+                .AFNOSUPPORT => error.AddressFamilyNotSupported,
+                .LOOP => error.SymLinkLoop,
+                .NAMETOOLONG => error.NameTooLong,
+                .NOENT => error.FileNotFound,
+                .NOTDIR => error.NotDir,
+                .HOSTUNREACH => error.NetworkUnreachable,
+                .NETUNREACH => error.NetworkUnreachable,
+                .NOTCONN => error.SocketNotConnected,
+                .NETDOWN => error.NetworkSubsystemFailed,
+                else => |err| asError(err),
+            };
+        }
+    };
+
     self.submit(
         context,
         callback,
@@ -1470,33 +1684,82 @@ pub fn send(
             .len = @intCast(u32, buffer_limit(buffer.len)),
             .flags = 0,
         },
-        struct {
-            fn doOperation(op: anytype) SendError!usize {
-                const rc = system.@"sendto$NOCANCEL"(op.socket, op.buf, op.len, op.flags, null, 0);
-                return switch (system.getErrno(rc)) {
-                    .SUCCESS => @intCast(usize, rc),
-                    .ACCES => error.AccessDenied,
-                    .AGAIN => error.WouldBlock,
-                    .ALREADY => error.FastOpenAlreadyInProgress,
-                    .CONNRESET => error.ConnectionResetByPeer,
-                    .MSGSIZE => error.MessageTooBig,
-                    .NOBUFS => error.SystemResources,
-                    .NOMEM => error.SystemResources,
-                    .PIPE => error.BrokenPipe,
-                    .AFNOSUPPORT => error.AddressFamilyNotSupported,
-                    .LOOP => error.SymLinkLoop,
-                    .NAMETOOLONG => error.NameTooLong,
-                    .NOENT => error.FileNotFound,
-                    .NOTDIR => error.NotDir,
-                    .HOSTUNREACH => error.NetworkUnreachable,
-                    .NETUNREACH => error.NetworkUnreachable,
-                    .NOTCONN => error.SocketNotConnected,
-                    .NETDOWN => error.NetworkSubsystemFailed,
-                    else => |err| asError(err),
-                };
-            }
-        },
+        sender,
     );
+}
+
+pub fn sendNow(
+    self: *IO,
+    comptime Context: type,
+    context: Context,
+    comptime callback: fn (
+        context: Context,
+        completion: *Completion,
+        result: SendError!usize,
+    ) void,
+    completion: *Completion,
+    socket: os.socket_t,
+    buffer: []const u8,
+    _: u32,
+) void {
+    return send(self, Context, context, callback, completion, socket, buffer, 0);
+    // assert(socket > 0);
+    // const sender = struct {
+    //     fn doOperation(op: anytype) SendError!usize {
+    //         const rc = system.@"sendto$NOCANCEL"(op.socket, op.buf, op.len, op.flags, null, 0);
+    //         return switch (system.getErrno(rc)) {
+    //             .SUCCESS => @intCast(usize, rc),
+    //             .ACCES => error.AccessDenied,
+    //             .AGAIN => error.WouldBlock,
+    //             .ALREADY => error.FastOpenAlreadyInProgress,
+    //             .CONNRESET => error.ConnectionResetByPeer,
+    //             .MSGSIZE => error.MessageTooBig,
+    //             .NOBUFS => error.SystemResources,
+    //             .NOMEM => error.SystemResources,
+    //             .PIPE => error.BrokenPipe,
+    //             .AFNOSUPPORT => error.AddressFamilyNotSupported,
+    //             .LOOP => error.SymLinkLoop,
+    //             .NAMETOOLONG => error.NameTooLong,
+    //             .NOENT => error.FileNotFound,
+    //             .NOTDIR => error.NotDir,
+    //             .HOSTUNREACH => error.NetworkUnreachable,
+    //             .NETUNREACH => error.NetworkUnreachable,
+    //             .NOTCONN => error.SocketNotConnected,
+    //             .NETDOWN => error.NetworkSubsystemFailed,
+    //             else => |err| asError(err),
+    //         };
+    //     }
+    // };
+
+    // const op: Operation = .{ .send = .{
+    //     .socket = socket,
+    //     .buf = buffer.ptr,
+    //     .len = @intCast(u32, buffer_limit(buffer.len)),
+    //     .flags = 0,
+    // } };
+    // const result = sender.doOperation(op.send) catch {
+    //     self.submit(
+    //         context,
+    //         callback,
+    //         completion,
+    //         .send,
+    //         .{
+    //             .socket = socket,
+    //             .buf = buffer.ptr,
+    //             .len = @intCast(u32, buffer_limit(buffer.len)),
+    //             .flags = 0,
+    //         },
+    //         sender,
+    //     );
+    //     return;
+    // };
+    // completion.* = .{
+    //     .operation = op,
+    //     .context = context,
+    //     .callback = undefined,
+    //     .next = null,
+    // };
+    // callback(context, completion, result);
 }
 
 pub const TimeoutError = error{Canceled} || Errno;
@@ -1594,13 +1857,14 @@ pub fn write(
 }
 
 pub fn openSocket(family: u32, sock_type: u32, protocol: u32) !os.socket_t {
-    const fd = try Syscall.socket(family, sock_type | os.SOCK.NONBLOCK, protocol);
+    const fd = try Syscall.socket(family, sock_type | os.SOCK.NONBLOCK | os.SOCK.CLOEXEC, protocol);
     errdefer {
         Syscall.close(fd) catch {};
     }
 
     // darwin doesn't support os.MSG.NOSIGNAL, but instead a socket option to avoid SIGPIPE.
-    try Syscall.setsockopt(fd, os.SOL.SOCKET, os.SO.NOSIGPIPE, &mem.toBytes(@as(c_int, 1)));
+    try Syscall.setsockopt(fd, os.SOL.SOCKET, os.SO.NOSIGPIPE | os.SO.NOSIGPIPE | darwin.TCP_NODELAY, &mem.toBytes(@as(c_int, 1)));
+
     return fd;
 }
 
@@ -1621,3 +1885,19 @@ fn buffer_limit(buffer_len: usize) usize {
 
 pub var global: IO = undefined;
 pub var global_loaded: bool = false;
+
+extern fn io_darwin_create_listen_socket(host: [*c]const u8, port: [*c]const u8, reuse: bool) c_int;
+
+pub fn createListenSocket(
+    host: []const u8,
+    port: u16,
+    reuse: bool,
+) c_int {
+    var host_: [1024]u8 = undefined;
+    @memcpy(&host_, host.ptr, host.len);
+    host_[host.len] = 0;
+    var port_: [16]u8 = undefined;
+    var port_string = std.fmt.bufPrintZ(&port_, "{d}", .{port}) catch return -1;
+    var sentinled = host_[0..host.len :0];
+    return io_darwin_create_listen_socket(sentinled, port_string, reuse);
+}

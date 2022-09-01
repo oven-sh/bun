@@ -835,7 +835,7 @@ clone-submodules:
 	git -c submodule."src/bun.js/WebKit".update=none submodule update --init --recursive --depth=1 --progress
 
 .PHONY: devcontainer
-devcontainer: clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets base64 tinycc runtime_js_dev sqlite dev
+devcontainer: $(OBJ_DIR) $(DEBUG_OBJ_DIR) clone-submodules libbacktrace mimalloc zlib libarchive boringssl picohttp identifier-cache node-fallbacks npm-install api analytics bun_error fallback_decoder bindings uws lolhtml usockets base64 tinycc runtime_js_dev sqlite dev
 
 .PHONY: devcontainer-build
 devcontainer-build:

@@ -349,9 +349,9 @@ pub const RunCommand = struct {
         args.node_modules_bundle_path = null;
         args.node_modules_bundle_path_server = null;
         args.generate_node_module_bundle = false;
-
         this_bundler.* = try bundler.Bundler.init(ctx.allocator, ctx.log, args, null, env);
         this_bundler.options.env.behavior = Api.DotEnvBehavior.load_all;
+        this_bundler.env.quiet = true;
         this_bundler.options.env.prefix = "";
 
         this_bundler.resolver.care_about_bin_folder = true;
@@ -390,7 +390,10 @@ pub const RunCommand = struct {
                 }
             }
 
-            // Run .env in the root dir
+            // TODO: evaluate if we can skip running this in nested calls to bun run
+            // The reason why it's unclear:
+            // - Some scripts may do NODE_ENV=production bun run foo
+            //   This would cause potentially a different .env file to be loaded
             this_bundler.runEnvLoader() catch {};
 
             if (root_dir_info.getEntries()) |dir| {

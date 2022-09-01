@@ -1365,6 +1365,7 @@ pub const Crypto = struct {
             }
 
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                const thisValue = callframe.this();
                 const input = callframe.argument(0);
                 const buffer = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), globalThis.bunVM().allocator, input) orelse {
                     globalThis.throwInvalidArguments("expected string or buffer", .{});
@@ -1372,7 +1373,7 @@ pub const Crypto = struct {
                 };
                 defer buffer.deinit();
                 this.hashing.update(buffer.slice());
-                return input;
+                return thisValue;
             }
 
             pub fn digest_(

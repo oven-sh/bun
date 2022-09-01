@@ -9,7 +9,7 @@ inline void generateStringDecoderSourceCode(JSC::JSGlobalObject* lexicalGlobalOb
     GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
 
     exportNames.append(JSC::Identifier::fromString(vm, "StringDecoder"_s));
-    exportValues.append(JSC::JSFunction::create(vm, globalObject, 0, "StringDecoder"_s, WebCore::constructJSStringDecoder, ImplementationVisibility::Public, NoIntrinsic, WebCore::constructJSStringDecoder));
+    exportValues.append(globalObject->JSStringDecoder());
 }
 
 }

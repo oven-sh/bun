@@ -87,6 +87,7 @@
 #include "JSErrorEvent.h"
 #include "JSCloseEvent.h"
 #include "JSFetchHeaders.h"
+#include "JSStringDecoder.h"
 
 #include "Process.h"
 
@@ -1982,6 +1983,18 @@ void GlobalObject::finishCreation(VM& vm)
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::HTTPSResponseSink);
             auto* structure = JSHTTPSResponseSink::createStructure(init.vm, init.global, prototype);
             auto* constructor = JSHTTPSResponseSinkConstructor::create(init.vm, init.global, JSHTTPSResponseSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSStringDecoderClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = JSStringDecoderPrototype::create(
+                init.vm, init.global, JSStringDecoderPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = JSStringDecoder::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSStringDecoderConstructor::create(
+                init.vm, init.global, JSStringDecoderConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);

@@ -49,6 +49,10 @@ it("StringDecoder-utf8-additional", () => {
   expect(decoder.write(Buffer.from('F1', 'hex'))).toBe('');
   expect(decoder.write(Buffer.from('41F2', 'hex'))).toBe('\ufffdA');
   expect(decoder.end()).toBe('\ufffd');
+
+  // Additional utf8Text test
+  decoder = new StringDecoder('utf8');
+  expect(decoder.text(Buffer.from([0x41]), 2)).toBe('');
 });
 
 it("StringDecoder-utf16le-additional", () => {

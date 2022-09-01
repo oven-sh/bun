@@ -6,8 +6,8 @@
 namespace WebCore {
 using namespace JSC;
 
-class JSStringDecoder : public JSC::JSNonFinalObject {
-    using Base = JSC::JSNonFinalObject;
+class JSStringDecoder : public JSC::JSDestructibleObject {
+    using Base = JSC::JSDestructibleObject;
 
 public:
     JSStringDecoder(JSC::VM& vm, JSC::Structure* structure, BufferEncodingType encoding)
@@ -45,17 +45,18 @@ public:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     static void destroy(JSCell*) {}
 
-    JSC::JSValue write(JSC::VM&, JSC::JSGlobalObject*, JSC::JSUint8Array*);
-    JSC::JSValue end(JSC::VM&, JSC::JSGlobalObject*, JSC::JSUint8Array*);
-
-private:
-    JSC::JSValue fillLast(JSC::VM&, JSC::JSGlobalObject*, JSC::JSUint8Array*);
-    JSC::JSValue text(JSC::VM&, JSC::JSGlobalObject*, JSC::JSUint8Array*, uint32_t);
-    uint8_t utf8CheckIncomplete(JSC::JSUint8Array*, uint32_t);
+    JSC::JSValue write(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
+    JSC::JSValue end(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
 
     uint8_t m_lastNeed;
     uint8_t m_lastTotal;
     uint8_t m_lastChar[4];
+
+private:
+    JSC::JSValue fillLast(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
+    JSC::JSValue text(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t, uint32_t);
+    uint8_t utf8CheckIncomplete(uint8_t*, uint32_t, uint32_t);
+
     BufferEncodingType m_encoding;
 };
 
@@ -89,6 +90,40 @@ private:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
 
-EncodedJSValue constructJSStringDecoder(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame);
+class JSStringDecoderConstructor final : public JSC::InternalFunction {
+public:
+    using Base = JSC::InternalFunction;
+    static JSStringDecoderConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSStringDecoderPrototype* prototype);
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr bool needsDestruction = false;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+    }
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
+    }
+
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype);
+
+    // Must be defined for each specialization class.
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+    DECLARE_EXPORT_INFO;
+private:
+    JSStringDecoderConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
+        : Base(vm, structure, nativeFunction, nativeFunction)
+    {
+    }
+
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype);
+};
 
 }

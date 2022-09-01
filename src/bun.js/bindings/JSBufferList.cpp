@@ -169,7 +169,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     RELEASE_AND_RETURN(throwScope, uint8Array);
 }
 
-const JSC::ClassInfo JSBufferList::s_info = { "JSBufferList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferList) };
+const JSC::ClassInfo JSBufferList::s_info = { "BufferList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferList) };
 
 JSC::GCClient::IsoSubspace* JSBufferList::subspaceForImpl(JSC::VM& vm)
 {

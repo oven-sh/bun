@@ -797,23 +797,23 @@ httpbench-release: $(IO_FILES)
 .PHONY: toyhttpserver-debug
 toyhttpserver-debug:
 	$(ZIG) build toyhttpserver-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/toyhttpserver.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/toyhttpserver $(DEBUG_IO_FILES) $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(DEBUG_PACKAGE_DIR)/toyhttpserver.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/toyhttpserver $(DEBUG_IO_FILES) $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 
 .PHONY: toyhttpserver
 toyhttpserver:
 	$(ZIG) build -Drelease-fast toyhttpserver-obj
-	$(CXX) $(PACKAGE_DIR)/toyhttpserver.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/toyhttpserver $(IO_FILES)  $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/toyhttpserver.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/toyhttpserver $(IO_FILES)   $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/toyhttpserver.o
 
 .PHONY: toyhttpserver-lite-debug
 toyhttpserver-lite-debug:
 	$(ZIG) build toyhttpserver-lite-obj
-	$(CXX) $(DEBUG_PACKAGE_DIR)/toyhttpserver-lite.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/toyhttpserver-lite $(DEBUG_IO_FILES) $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(DEBUG_PACKAGE_DIR)/toyhttpserver-lite.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/toyhttpserver-lite $(DEBUG_IO_FILES) $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 
 .PHONY: toyhttpserver-lite
 toyhttpserver-lite:
 	$(ZIG) build -Drelease-fast toyhttpserver-lite-obj
-	$(CXX) $(PACKAGE_DIR)/toyhttpserver-lite.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/toyhttpserver-lite $(IO_FILES)  $(DEFAULT_LINKER_FLAGS) -lc $(MINIMUM_ARCHIVE_FILES)
+	$(CXX) $(PACKAGE_DIR)/toyhttpserver-lite.o -g $(OPTIMIZATION_LEVEL) -o ./misctools/toyhttpserver-lite $(IO_FILES)  $(DEFAULT_LINKER_FLAGS) -lc $(ARCHIVE_FILES)
 	rm -rf $(PACKAGE_DIR)/toyhttpserver-lite.o
 
 .PHONY: check-glibc-version-dependency

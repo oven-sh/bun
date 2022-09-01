@@ -17,6 +17,10 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
         socket: *Socket,
         const ThisSocket = @This();
 
+        pub fn handle(this: ThisSocket) ?*anyopaque {
+            return us_socket_get_native_handle(comptime ssl_int, this.socket);
+        }
+
         pub fn isEstablished(this: ThisSocket) bool {
             return us_socket_is_established(comptime ssl_int, this.socket) > 0;
         }
@@ -36,7 +40,7 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
             return us_socket_context(
                 comptime ssl_int,
                 this.socket,
-            );
+            ).?;
         }
         pub fn flush(this: ThisSocket) void {
             return us_socket_flush(
@@ -99,6 +103,56 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
                 buf,
                 length,
             );
+        }
+
+        pub fn attach(fd: c_int, ctx: *us_socket_context_t) ?ThisSocket {
+            if (us_socket_attach(comptime ssl_int, fd, ctx)) |socket| {
+                return ThisSocket{ .socket = socket };
+            } else {
+                return null;
+            }
+        }
+
+        pub fn detach(this: ThisSocket) c_int {
+            const handle_ = this.handle().?;
+            var socket_ = this.socket;
+            if (us_socket_detach(comptime ssl_int, socket_) == null)
+                return -1;
+
+            return @intCast(c_int, @ptrToInt(handle_));
+        }
+
+        pub fn listen(
+            host: []const u8,
+            port: c_int,
+            socket_ctx: *us_socket_context_t,
+            comptime Context: type,
+            ctx: Context,
+            comptime socket_field_name: []const u8,
+        ) ?*Context {
+            // var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+            // var allocator = stack_fallback.get();
+            // var host_ = allocator.dupeZ(u8, host) catch return null;
+            // defer allocator.free(host_);
+            _ = host;
+
+            var socket = us_socket_context_listen(
+                comptime ssl_int,
+                socket_ctx,
+                null,
+                port,
+                0,
+                @sizeOf(Context),
+            ) orelse return null;
+            const socket_ = ThisSocket{ .socket = @ptrCast(*Socket, socket) };
+            var holder = socket_.ext(Context) orelse {
+                if (comptime bun.Environment.allow_assert) unreachable;
+                _ = us_socket_close_connecting(comptime ssl_int, socket_.socket);
+                return null;
+            };
+            holder.* = ctx;
+            @field(holder.*, socket_field_name) = socket;
+            return holder;
         }
 
         pub fn connect(
@@ -316,7 +370,7 @@ extern fn us_socket_context_add_server_name(ssl: c_int, context: ?*us_socket_con
 extern fn us_socket_context_remove_server_name(ssl: c_int, context: ?*us_socket_context_t, hostname_pattern: [*c]const u8) void;
 extern fn us_socket_context_on_server_name(ssl: c_int, context: ?*us_socket_context_t, cb: ?fn (?*us_socket_context_t, [*c]const u8) callconv(.C) void) void;
 extern fn us_socket_context_get_native_handle(ssl: c_int, context: ?*us_socket_context_t) ?*anyopaque;
-extern fn us_create_socket_context(ssl: c_int, loop: ?*Loop, ext_size: c_int, options: us_socket_context_options_t) ?*us_socket_context_t;
+pub extern fn us_create_socket_context(ssl: c_int, loop: ?*Loop, ext_size: c_int, options: us_socket_context_options_t) ?*us_socket_context_t;
 extern fn us_socket_context_free(ssl: c_int, context: ?*us_socket_context_t) void;
 extern fn us_socket_context_on_open(ssl: c_int, context: ?*us_socket_context_t, on_open: fn (*Socket, c_int, [*c]u8, c_int) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_close(ssl: c_int, context: ?*us_socket_context_t, on_close: fn (*Socket, c_int, ?*anyopaque) callconv(.C) ?*Socket) void;
@@ -325,7 +379,7 @@ extern fn us_socket_context_on_writable(ssl: c_int, context: ?*us_socket_context
 extern fn us_socket_context_on_timeout(ssl: c_int, context: ?*us_socket_context_t, on_timeout: fn (*Socket) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_connect_error(ssl: c_int, context: ?*us_socket_context_t, on_connect_error: fn (*Socket, c_int) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_end(ssl: c_int, context: ?*us_socket_context_t, on_end: fn (*Socket) callconv(.C) ?*Socket) void;
-extern fn us_socket_context_ext(ssl: c_int, context: ?*us_socket_context_t) ?*anyopaque;
+pub extern fn us_socket_context_ext(ssl: c_int, context: ?*us_socket_context_t) ?*anyopaque;
 
 extern fn us_socket_context_listen(ssl: c_int, context: ?*us_socket_context_t, host: [*c]const u8, port: c_int, options: c_int, socket_ext_size: c_int) ?*listen_socket_t;
 
@@ -391,8 +445,8 @@ pub const Poll = opaque {
         pub const write_flag = if (Environment.isLinux) std.os.linux.EPOLL.OUT else 2;
     };
 
-    pub fn deinit(self: *Poll) void {
-        us_poll_free(self);
+    pub fn deinit(self: *Poll, loop: *Loop) void {
+        us_poll_free(self, loop);
     }
 
     // (void* userData, int fd, int events, int error, struct us_poll_t *poll)
@@ -503,7 +557,11 @@ pub const Request = opaque {
     extern fn uws_req_get_parameter(res: *Request, index: c_ushort, dest: *[*]const u8) usize;
 };
 
-const listen_socket_t = opaque {};
+pub const listen_socket_t = opaque {
+    pub fn close(this: *listen_socket_t, comptime ssl: bool) void {
+        us_listen_socket_close(comptime @as(c_int, @boolToInt(ssl)), this);
+    }
+};
 extern fn us_listen_socket_close(ssl: c_int, ls: *listen_socket_t) void;
 
 pub fn NewApp(comptime ssl: bool) type {
@@ -1148,3 +1206,5 @@ pub const uws_app_listen_config_t = extern struct {
 };
 
 extern fn us_socket_mark_needs_more_not_ssl(socket: ?*uws_res) void;
+extern fn us_socket_detach(ssl: c_int, socket: *Socket) ?*Socket;
+extern fn us_socket_attach(ssl: c_int, client_fd: c_int, ctx: *us_socket_context_t) ?*Socket;

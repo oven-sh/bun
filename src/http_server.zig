@@ -146,7 +146,7 @@ pub fn sendStaticMessageConcurrent(toy: *ToyHTTPServer, fd: fd_t, message: []con
                     sendClose(completion.operation.send.socket);
                 return;
             };
-            if (amt == 0 or completion.operation.send.disconnected) {
+            if (completion.operation.send.disconnected) {
                 sendClose(completion.operation.send.socket);
                 return;
             }
@@ -180,7 +180,7 @@ pub fn sendStaticMessage(server: *Server, fd: fd_t, message: []const u8) void {
                 return;
             };
             const remain = completion.operation.send.buf[0..completion.operation.send.len][amt..];
-            if (amt == 0 or completion.operation.send.disconnected) {
+            if (completion.operation.send.disconnected) {
                 sendClose(completion.operation.send.socket);
                 return;
             }
@@ -206,7 +206,7 @@ pub fn sendStaticMessageWithoutClosing(server: *Server, fd: fd_t, message: []con
                 sendClose(completion.operation.send.socket);
                 return;
             };
-            if (amt == 0 or completion.operation.send.disconnected) {
+            if (completion.operation.send.disconnected) {
                 sendClose(completion.operation.send.socket);
                 return;
             }
@@ -287,10 +287,7 @@ pub const Server = struct {
     const PendingSocketsList = std.fifo.LinearFifo(u32, .{ .Static = constants.SOCKET_BACKLOG });
 
     pub fn takeAsync(this: *Server, socket: fd_t) void {
-        if (comptime Environment.isMac) {
-            sendClose(socket);
-            return;
-        }
+
         //     var err_code: i32 = undefined;
         //     var size: u32 = @sizeOf(u32);
         //     _ = std.c.getsockopt(@intCast(fd_t, socket), std.os.SOL.SOCKET, AsyncIO.darwin.SO_NREAD, @ptrCast([*]u8, &err_code), &size);
@@ -518,7 +515,7 @@ const CRLF = [2]u8{ '\r', '\n' };
 
 const request_header_fields_too_large = "431 Request Header Fields Too Large" ++
     CRLF ++
-    "Connection: close" ++
+    "Connection: keep-alive" ++
     CRLF ++
     "Server: bun" ++
     CRLF ++
@@ -530,7 +527,7 @@ const request_header_fields_too_large = "431 Request Header Fields Too Large" ++
 
 const bad_request = "400 Bad Request" ++
     CRLF ++
-    "Connection: close" ++
+    "Connection: keep-alive" ++
     CRLF ++
     "Server: bun" ++
     CRLF ++
@@ -542,7 +539,7 @@ const bad_request = "400 Bad Request" ++
 
 const hello_world = "HTTP/1.1 200 OK" ++
     CRLF ++
-    "Connection: close" ++
+    "Connection: keep-alive" ++
     CRLF ++
     "Server: bun" ++
     CRLF ++

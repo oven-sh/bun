@@ -104,3 +104,5 @@ src/runtime.version
 *.database
 *.db
 misctools/machbench
+misctools/toyhttpserver
+misctools/toyhttpserver-lite

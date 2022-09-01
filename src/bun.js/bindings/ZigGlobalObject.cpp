@@ -160,6 +160,7 @@ using JSBuffer = WebCore::JSBuffer;
 #include "../modules/BufferModule.h"
 #include "../modules/EventsModule.h"
 #include "../modules/ProcessModule.h"
+#include "../modules/StringDecoderModule.h"
 
 // #include <iostream>
 static bool has_loaded_jsc = false;
@@ -2661,6 +2662,16 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
     }
+    case SyntheticModuleType::StringDecoder: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                generateStringDecoderSourceCode,
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:string_decoder"_s)), WTFMove(moduleKey)));
+
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
     default: {
         auto provider = Zig::SourceProvider::create(res.result.value);
         globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
@@ -2749,6 +2760,18 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     case SyntheticModuleType::Events: {
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(generateEventsSourceCode,
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
+        return promise;
+    }
+    case SyntheticModuleType::StringDecoder: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(generateStringDecoderSourceCode,
                 JSC::SourceOrigin(), WTFMove(moduleKey)));
 
         auto sourceCode = JSSourceCode::create(vm, WTFMove(source));

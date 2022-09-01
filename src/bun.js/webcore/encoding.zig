@@ -819,16 +819,13 @@ pub const Encoder = struct {
                 // For this, we rely on the GC to manage the memory to minimize potential for memory leaks
                 return ZigString.init(input).toValueGC(global);
             },
-            // potentially convert UTF-16 to UTF-8
-            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
-                const converted = strings.toUTF16Alloc(allocator, input, false) catch return ZigString.init("Out of memory").toErrorInstance(global);
-                if (converted) |utf16| {
-                    return ZigString.toExternalU16(utf16.ptr, utf16.len, global);
+            .ucs2, .utf16le => {
+                var output = allocator.alloc(u16, len / 2) catch return ZigString.init("Out of memory").toErrorInstance(global);
+                var i : usize = 0;
+                while (i < len / 2) : (i += 1) {
+                    output[i] = (@intCast(u16, input[2 * i + 1]) << 8) + @intCast(u16, input[2 * i]);
                 }
-
-                var output = allocator.alloc(u8, input.len) catch return ZigString.init("Out of memory").toErrorInstance(global);
-                JSC.WTF.copyLCharsFromUCharSource(output.ptr, []align(1) const u16, @ptrCast([*]align(1) const u16, input.ptr)[0 .. input.len / 2]);
-                return ZigString.init(output).toExternalValue(global);
+                return ZigString.toExternalU16(output.ptr, output.len, global);
             },
 
             JSC.Node.Encoding.hex => {

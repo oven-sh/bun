@@ -26,17 +26,17 @@ JSC::JSValue JSStringDecoder::fillLast(JSC::VM& vm, JSC::JSGlobalObject* globalO
         // utf8CheckExtraBytes
         if ((bufPtr[0] & 0xC0) != 0x80) {
             m_lastNeed = 0;
-            return JSC::jsString(vm, WTF::String(u"\uFFFD", 1));
+            RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTF::String(u"\uFFFD", 1)));
         }
         if (m_lastNeed > 1 && length > 1) {
             if ((bufPtr[1] & 0xC0) != 0x80) {
                 m_lastNeed = 1;
-                return JSC::jsString(vm, WTF::String(u"\uFFFD", 1));
+                RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTF::String(u"\uFFFD", 1)));
             }
             if (m_lastNeed > 2 && length > 2) {
                  if ((bufPtr[2] & 0xC0) != 0x80) {
                     m_lastNeed = 2;
-                    return JSC::jsString(vm, WTF::String(u"\uFFFD", 1));
+                    RELEASE_AND_RETURN(throwScope, JSC::jsString(vm, WTF::String(u"\uFFFD", 1)));
                 }
             }
         }
@@ -44,11 +44,11 @@ JSC::JSValue JSStringDecoder::fillLast(JSC::VM& vm, JSC::JSGlobalObject* globalO
 
     if (m_lastNeed <= length) {
         memmove(m_lastChar + m_lastTotal - m_lastNeed, bufPtr, m_lastNeed);
-        return JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, m_lastTotal, globalObject, static_cast<uint8_t>(m_encoding)));
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, m_lastTotal, globalObject, static_cast<uint8_t>(m_encoding))));
     }
     memmove(m_lastChar + m_lastTotal - m_lastNeed, bufPtr, length);
     m_lastNeed -= length;
-    return JSC::jsEmptyString(vm);
+    RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
 }
 
 // Checks the type of a UTF-8 byte, whether it's ASCII, a leading byte, or a
@@ -100,40 +100,38 @@ JSC::JSValue JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
     switch (m_encoding) {
     case BufferEncodingType::ucs2:
     case BufferEncodingType::utf16le: {
+        if (length == offset)
+            RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
         if ((length - offset) % 2 == 0) {
-            JSString* r = JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset, globalObject, static_cast<uint8_t>(m_encoding))).toString(globalObject);
-            RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
-            if (r->length()) {
-                UChar c = r->value(globalObject).characterAt(r->length() - 1);
-                if (c >= 0xD800 && c <= 0xDBFF) {
-                    m_lastNeed = 2;
-                    m_lastTotal = 4;
-                    m_lastChar[0] = bufPtr[length - 2];
-                    m_lastChar[1] = bufPtr[length - 1];
-                    return JSC::jsSubstring(vm, globalObject, r, 0, r->length() - 1);
-                }
+            UChar c = (static_cast<uint16_t>(bufPtr[length - 1]) << 8) + static_cast<uint16_t>(bufPtr[length - 2]);
+            if (c >= 0xD800 && c <= 0xDBFF) {
+                m_lastNeed = 2;
+                m_lastTotal = 4;
+                m_lastChar[0] = bufPtr[length - 2];
+                m_lastChar[1] = bufPtr[length - 1];
+                RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset - 2, globalObject, static_cast<uint8_t>(m_encoding))));
             }
-            return r;
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset, globalObject, static_cast<uint8_t>(m_encoding))));
         }
         m_lastNeed = 1;
         m_lastTotal = 2;
         m_lastChar[0] = bufPtr[length - 1];
-        return JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset - 1, globalObject, static_cast<uint8_t>(m_encoding)));
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset - 1, globalObject, static_cast<uint8_t>(m_encoding))));
     }
     case BufferEncodingType::utf8: {
         uint32_t total = utf8CheckIncomplete(buf, offset);
         if (!m_lastNeed)
-            return JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset, globalObject, static_cast<uint8_t>(m_encoding)));
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset, globalObject, static_cast<uint8_t>(m_encoding))));
         m_lastTotal = total;
         uint32_t end = length - (total - m_lastNeed);
         if (end < length)
             memmove(m_lastChar, bufPtr + end, std::min(4U, length - end));
-        return JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, end - offset, globalObject, static_cast<uint8_t>(m_encoding)));
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, end - offset, globalObject, static_cast<uint8_t>(m_encoding))));
     }
     case BufferEncodingType::base64: {
         uint32_t n = (length - offset) % 3;
         if (n == 0)
-            return JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset, globalObject, static_cast<uint8_t>(m_encoding)));
+            RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset, globalObject, static_cast<uint8_t>(m_encoding))));
         m_lastNeed = 3 - n;
         m_lastTotal = 3;
         if (n == 1) {
@@ -142,7 +140,7 @@ JSC::JSValue JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
             m_lastChar[0] = bufPtr[length - 2];
             m_lastChar[1] = bufPtr[length - 1];
         }
-        return JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset - n, globalObject, static_cast<uint8_t>(m_encoding)));
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(bufPtr + offset, length - offset - n, globalObject, static_cast<uint8_t>(m_encoding))));
     }
     default: {
         // should never reach here.
@@ -154,10 +152,9 @@ JSC::JSValue JSStringDecoder::text(JSC::VM& vm, JSC::JSGlobalObject* globalObjec
 
 JSC::JSValue JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSUint8Array* buf)
 {
-    if (buf->length() == 0)
-        return JSC::jsEmptyString(vm);
-
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (buf->length() == 0)
+        RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
 
     switch (m_encoding) {
     case BufferEncodingType::ucs2:
@@ -169,23 +166,23 @@ JSC::JSValue JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalObje
             JSString* firstHalf = fillLast(vm, globalObject, buf).toString(globalObject);
             RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
             if (firstHalf->length() == 0)
-                return firstHalf;
+                RELEASE_AND_RETURN(throwScope, firstHalf);
             offset = m_lastNeed;
             m_lastNeed = 0;
 
             JSString* secondHalf = text(vm, globalObject, buf, offset).toString(globalObject);
             RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
             if (secondHalf->length() == 0)
-                return firstHalf;
-            return JSC::jsString(globalObject, firstHalf, secondHalf);
+                RELEASE_AND_RETURN(throwScope, firstHalf);
+            RELEASE_AND_RETURN(throwScope, JSC::jsString(globalObject, firstHalf, secondHalf));
         }
         JSString* str = text(vm, globalObject, buf, offset).toString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
-        return str;
+        RELEASE_AND_RETURN(throwScope, str);
     }
     default: {
         uint32_t length = buf->length();
-        return JSC::JSValue::decode(Bun__encoding__toString(buf->typedVector(), length, globalObject, static_cast<uint8_t>(m_encoding)));
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(buf->typedVector(), length, globalObject, static_cast<uint8_t>(m_encoding))));
     }
     }
 }
@@ -198,34 +195,34 @@ JSC::JSValue JSStringDecoder::end(JSC::VM& vm, JSC::JSGlobalObject* globalObject
     case BufferEncodingType::utf16le: {
         if (buf == nullptr || buf->length() == 0) {
             if (m_lastNeed) {
-                return JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, m_lastTotal - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding)));
+                RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, m_lastTotal - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding))));
             } else {
-                return JSC::jsEmptyString(vm);
+                RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
             }
         }
         JSString* firstHalf = write(vm, globalObject, buf).toString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
         if (m_lastNeed) {
             JSString* secondHalf = JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, m_lastTotal - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding))).toString(globalObject);
-            return JSC::jsString(globalObject, firstHalf, secondHalf);
+            RELEASE_AND_RETURN(throwScope, JSC::jsString(globalObject, firstHalf, secondHalf));
         } else {
-            return firstHalf;
+            RELEASE_AND_RETURN(throwScope, firstHalf);
         }
     }
     case BufferEncodingType::utf8: {
         if (buf == nullptr || buf->length() == 0) {
-            return m_lastNeed ? JSC::jsString(vm, WTF::String(u"\uFFFD", 1)) : JSC::jsEmptyString(vm);
+            RELEASE_AND_RETURN(throwScope, m_lastNeed ? JSC::jsString(vm, WTF::String(u"\uFFFD", 1)) : JSC::jsEmptyString(vm));
         }
         JSString* firstHalf = write(vm, globalObject, buf).toString(globalObject);
         RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
-        return m_lastNeed ? JSC::jsString(globalObject, firstHalf, WTF::String(u"\uFFFD", 1)) : firstHalf;
+        RELEASE_AND_RETURN(throwScope, m_lastNeed ? JSC::jsString(globalObject, firstHalf, WTF::String(u"\uFFFD", 1)) : firstHalf);
     }
     case BufferEncodingType::base64: {
         if (buf == nullptr || buf->length() == 0) {
             if (m_lastNeed) {
-                return JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, 3 - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding)));
+                RELEASE_AND_RETURN(throwScope, JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, 3 - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding))));
             } else {
-                return JSC::jsEmptyString(vm);
+                RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
             }
         }
         JSString* firstHalf = write(vm, globalObject, buf).toString(globalObject);
@@ -233,16 +230,16 @@ JSC::JSValue JSStringDecoder::end(JSC::VM& vm, JSC::JSGlobalObject* globalObject
         if (m_lastNeed) {
             JSString* secondHalf = JSC::JSValue::decode(Bun__encoding__toString(m_lastChar, 3 - m_lastNeed, globalObject, static_cast<uint8_t>(m_encoding))).toString(globalObject);
             RETURN_IF_EXCEPTION(throwScope, JSC::jsUndefined());
-            return JSC::jsString(globalObject, firstHalf, secondHalf);
+            RELEASE_AND_RETURN(throwScope, JSC::jsString(globalObject, firstHalf, secondHalf));
         } else {
-            return firstHalf;
+            RELEASE_AND_RETURN(throwScope, firstHalf);
         }
     }
     default: {
         if (buf == nullptr) {
-            return JSC::jsEmptyString(vm);
+            RELEASE_AND_RETURN(throwScope, JSC::jsEmptyString(vm));
         }
-        return write(vm, globalObject, buf);
+        RELEASE_AND_RETURN(throwScope, write(vm, globalObject, buf));
     }
     }
 }
@@ -259,35 +256,6 @@ JSC::GCClient::IsoSubspace* JSStringDecoder::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForStringDecoder = WTFMove(space); });
 }
 
-class JSStringDecoderPrototype : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSStringDecoderPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSStringDecoderPrototype* ptr = new (NotNull, JSC::allocateCell<JSStringDecoderPrototype>(vm)) JSStringDecoderPrototype(vm, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSStringDecoderPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, JSStringDecoderPrototype::Base);
 
 static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSStringDecoder>::ClassParameter castedThis)
@@ -300,10 +268,6 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_writeBody(JSC
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->type())) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return JSValue::encode(jsUndefined());
-    }
     JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(buffer);
     if (!view) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
@@ -321,10 +285,6 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_endBody(JSC::
     }
 
     auto buffer = callFrame->uncheckedArgument(0);
-    if (!buffer.isCell() || !JSC::isTypedView(buffer.asCell()->type())) {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
-        return JSValue::encode(jsUndefined());
-    }
     JSC::JSUint8Array* view = JSC::jsDynamicCast<JSC::JSUint8Array*>(buffer);
     if (!view) {
         throwVMTypeError(lexicalGlobalObject, throwScope, "Expected Uint8Array"_s);
@@ -337,13 +297,13 @@ static JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write);
 static JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return IDLOperation<JSStringDecoder>::call<jsStringDecoderPrototypeFunction_writeBody>(*globalObject, *callFrame, "push");
+    return IDLOperation<JSStringDecoder>::call<jsStringDecoderPrototypeFunction_writeBody>(*globalObject, *callFrame, "write");
 }
 static JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end);
 static JSC_DEFINE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return IDLOperation<JSStringDecoder>::call<jsStringDecoderPrototypeFunction_endBody>(*globalObject, *callFrame, "unshift");
+    return IDLOperation<JSStringDecoder>::call<jsStringDecoderPrototypeFunction_endBody>(*globalObject, *callFrame, "end");
 }
 
 /* Hash table for prototype */
@@ -356,7 +316,6 @@ static const HashTableValue JSStringDecoderPrototypeTableValues[]
 void JSStringDecoderPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 {
     Base::finishCreation(vm);
-    this->setPrototypeDirect(vm, globalThis->objectPrototype());
     reifyStaticProperties(vm, JSStringDecoder::info(), JSStringDecoderPrototypeTableValues, *this);
 }
 
@@ -375,9 +334,9 @@ EncodedJSValue constructJSStringDecoder(JSGlobalObject* globalObject, CallFrame*
     }
     JSStringDecoderPrototype* prototype = JSStringDecoderPrototype::create(
         vm, globalObject, JSStringDecoderPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-    JSStringDecoder* bufferList = JSStringDecoder::create(
+    JSStringDecoder* stringDecoder = JSStringDecoder::create(
         vm, globalObject, JSStringDecoder::createStructure(vm, globalObject, prototype), encoding);
-    return JSC::JSValue::encode(bufferList);
+    return JSC::JSValue::encode(stringDecoder);
 }
 
 } // namespace Zig

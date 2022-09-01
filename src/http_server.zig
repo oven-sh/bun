@@ -408,26 +408,44 @@ pub const ToyHTTPServer = struct {
         _: *Connection,
         incoming: IncomingRequest,
     ) bool {
-        this.outgoing_list.load(.Monotonic).appendAssumeCapacity(incoming);
-        this.has_scheduled.storeUnchecked(1);
+        {
+            this.lock.lock();
+            defer this.lock.unlock();
+            this.outgoing_list.loadUnchecked().appendAssumeCapacity(incoming);
+        }
+
+        if (this.outgoing_list.loadUnchecked().len > 20)
+            this.waker.wake() catch unreachable;
+
         return true;
     }
 
     pub fn drain(this: *ToyHTTPServer) void {
         var ctx = this.ctx;
+
         {
+            this.lock.lock();
+            defer {
+                this.lock.unlock();
+            }
+
             if (this.first_is_active) {
                 this.first_is_active = false;
                 this.second_list.len = 0;
-                this.incoming_list = this.outgoing_list.swap(&this.second_list, .SeqCst);
+
+                this.incoming_list = this.outgoing_list.value;
+                this.outgoing_list.value = &this.second_list;
             } else {
                 this.first_is_active = true;
                 this.first_list.len = 0;
-                this.incoming_list = this.outgoing_list.swap(&this.first_list, .SeqCst);
+
+                this.incoming_list = this.outgoing_list.value;
+                this.outgoing_list.value = &this.first_list;
             }
         }
 
-        for (this.outgoing_list.load(.Monotonic).slice()) |incoming| {
+        const slice = this.incoming_list.slice();
+        for (slice) |incoming| {
             const sent = AsyncIO.darwin.@"sendto"(incoming.fd, hello_world, hello_world.len, 0, null, 0);
             if (sent < hello_world.len) {
                 var socket = uWS.SocketTCP.attach(incoming.fd, ctx) orelse continue;
@@ -536,9 +554,8 @@ pub const ToyHTTPServer = struct {
     };
 
     fn scheduleWakeup(this: *ToyHTTPServer) void {
-        if (this.has_scheduled.value == 0) return;
+        if (this.has_scheduled.load(.Monotonic) == 0) return;
 
-        this.has_scheduled.value = 0;
         this.waker.wake() catch unreachable;
     }
     pub fn startServer(toy: *ToyHTTPServer) void {
@@ -588,13 +605,10 @@ pub const ToyHTTPServer = struct {
         _ = http.loop.addPostHandler(*ToyHTTPServer, http, drain);
         var thread = std.Thread.spawn(.{}, startServer, .{http}) catch unreachable;
         http.drain();
-
         thread.detach();
         while (true) {
-            http.loop.nextTick(*ToyHTTPServer, http, drain);
             _ = http.waker.wait() catch 0;
             http.drain();
-            http.loop.run();
         }
     }
 };

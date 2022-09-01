@@ -99,8 +99,17 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "fetch debug",
-      "program": "${workspaceFolder}/misctools/fetch",
+      "name": "toyhttpserver debug",
+      "program": "${workspaceFolder}/misctools/toyhttpserver",
+      "args": ["https://example.com", "--verbose", "3001"],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "toyhttpserver lite debug",
+      "program": "${workspaceFolder}/misctools/toyhttpserver-lite",
       "args": ["https://example.com", "--verbose"],
       "cwd": "${workspaceFolder}",
       "console": "internalConsole"

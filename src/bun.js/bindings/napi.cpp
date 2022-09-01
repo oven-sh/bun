@@ -736,7 +736,7 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
         return napi_object_expected;
     }
 
-    vm.heap.addFinalizer(object, [&](JSCell* cell) -> void {
+    vm.heap.addFinalizer(object, [=](JSCell* cell) -> void {
         finalize_cb(env, native_object, finalize_hint);
     });
 

@@ -106,47 +106,7 @@ pub const Server = struct {
     shutdown_requested: bool = false,
     loop: *uWS.Loop = undefined,
 
-    pending_sockets_to_return: PendingSocketsList = PendingSocketsList.init(),
-    pending_sockets_to_return_lock: Lock = Lock.init(),
-    pending_sockets_to_return_scheduled: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-
-    pub fn flushPendingSocketsToReturn(server: *Server) void {
-        server.pending_sockets_to_return_scheduled.store(0, .Monotonic);
-        server.pending_sockets_to_return_lock.lock();
-        var sockets_slice = server.pending_sockets_to_return.readableSlice(0);
-        var stack_fallback = std.heap.stackFallback(4096, bun.default_allocator);
-        var allocator = stack_fallback.get();
-        var list = allocator.dupe(u32, sockets_slice) catch unreachable;
-        server.pending_sockets_to_return.head = 0;
-        server.pending_sockets_to_return.count = 0;
-        server.pending_sockets_to_return_lock.unlock();
-
-        defer {
-            if (!stack_fallback.fixed_buffer_allocator.ownsSlice(std.mem.sliceAsBytes(list))) {
-                allocator.free(list);
-            }
-        }
-
-        for (list) |fd| {
-            _ = uWS.SocketTCP.attach(@intCast(c_int, fd), server.ctx);
-        }
-    }
-
     const PendingSocketsList = std.fifo.LinearFifo(u32, .{ .Static = constants.SOCKET_BACKLOG });
-
-    pub fn takeAsync(this: *Server, socket: fd_t) void {
-        this.pending_sockets_to_return_lock.lock();
-        {
-            this.pending_sockets_to_return.writeItemAssumeCapacity(@intCast(u32, socket));
-        }
-        if (this.pending_sockets_to_return_scheduled.fetchAdd(1, .Monotonic) == 0)
-            this.loop.wakeup();
-        this.pending_sockets_to_return_lock.unlock();
-    }
-
-    pub fn take(server: *Server, fd: fd_t) void {
-        _ = uWS.SocketTCP.attach(fd, server.ctx);
-    }
 
     pub fn quiet(this: *Server) void {
         if (this.status != .open)
@@ -209,7 +169,6 @@ pub const Server = struct {
             .status = .open,
             .loop = uWS.Loop.get().?,
         };
-        _ = server.loop.addPostHandler(*Server, server, flushPendingSocketsToReturn);
         return server;
     }
     pub fn createContext(server: *Server) ?*uWS.us_socket_context_t {
@@ -341,9 +300,9 @@ pub const Connection = struct {
         };
 
         const fd = @intCast(fd_t, @ptrToInt(socket.handle().?));
-        if (this.has_incoming_request) {
-            this.incoming_request.freeData(bun.default_allocator);
-        }
+        // if (this.has_incoming_request) {
+        //     this.incoming_request.freeData(bun.default_allocator);
+        // }
         this.has_received = true;
         this.has_incoming_request = true;
         this.dispatch(IncomingRequest.create(bun.default_allocator, data, fd, request) catch {
@@ -431,7 +390,11 @@ pub const ToyHTTPServer = struct {
     pub const Handler = RequestHandler.New(*ToyHTTPServer, onRequest);
     const Fifo = std.fifo.LinearFifo(IncomingRequest, .{ .Static = 4096 });
     server: *Server,
-    pending: std.BoundedArray(IncomingRequest, 2048) = std.BoundedArray(IncomingRequest, 2048).init(0) catch unreachable,
+    first_list: std.BoundedArray(IncomingRequest, 8096) = std.BoundedArray(IncomingRequest, 8096).init(0) catch unreachable,
+    second_list: std.BoundedArray(IncomingRequest, 8096) = std.BoundedArray(IncomingRequest, 8096).init(0) catch unreachable,
+    first_is_active: bool = true,
+    incoming_list: *std.BoundedArray(IncomingRequest, 8096) = undefined,
+    outgoing_list: std.atomic.Atomic(*std.BoundedArray(IncomingRequest, 8096)) = undefined,
     active: Fifo,
     lock: Lock = Lock.init(),
     loop: *uWS.Loop,
@@ -442,40 +405,36 @@ pub const ToyHTTPServer = struct {
 
     pub fn onRequest(
         this: *ToyHTTPServer,
-        connection: *Connection,
+        _: *Connection,
         incoming: IncomingRequest,
     ) bool {
-        _ = connection.socket.detach();
-
-        {
-            this.lock.lock();
-            this.pending.buffer[this.pending.len] = incoming;
-            this.pending.len += 1;
-            defer this.lock.unlock();
-        }
-
-        this.loop.wakeup();
-        this.waker.wake() catch unreachable;
+        this.outgoing_list.load(.Monotonic).appendAssumeCapacity(incoming);
+        this.has_scheduled.storeUnchecked(1);
         return true;
     }
 
     pub fn drain(this: *ToyHTTPServer) void {
-        {
-            this.has_scheduled.store(0, .Monotonic);
-            this.lock.lock();
-            defer this.lock.unlock();
-            const all = this.pending.slice();
-            this.active.write(all) catch unreachable;
-            this.pending.len = 0;
-        }
         var ctx = this.ctx;
-
-        while (this.active.readItem()) |incoming| {
-            var socket = uWS.SocketTCP.attach(incoming.fd, ctx) orelse continue;
-            _ = socket.write(hello_world, true);
-            _ = socket.detach();
-            this.server.takeAsync(incoming.fd);
+        {
+            if (this.first_is_active) {
+                this.first_is_active = false;
+                this.second_list.len = 0;
+                this.incoming_list = this.outgoing_list.swap(&this.second_list, .SeqCst);
+            } else {
+                this.first_is_active = true;
+                this.first_list.len = 0;
+                this.incoming_list = this.outgoing_list.swap(&this.first_list, .SeqCst);
+            }
         }
+
+        for (this.outgoing_list.load(.Monotonic).slice()) |incoming| {
+            const sent = AsyncIO.darwin.@"sendto"(incoming.fd, hello_world, hello_world.len, 0, null, 0);
+            if (sent < hello_world.len) {
+                var socket = uWS.SocketTCP.attach(incoming.fd, ctx) orelse continue;
+                _ = socket.write(hello_world, true);
+            }
+        }
+        this.incoming_list.len = 0;
     }
 
     // pub fn dispatch(this: *ToyHTTPServer, socket: *WritableSocket, _: IncomingRequest) void {
@@ -576,6 +535,12 @@ pub const ToyHTTPServer = struct {
         }
     };
 
+    fn scheduleWakeup(this: *ToyHTTPServer) void {
+        if (this.has_scheduled.value == 0) return;
+
+        this.has_scheduled.value = 0;
+        this.waker.wake() catch unreachable;
+    }
     pub fn startServer(toy: *ToyHTTPServer) void {
         Output.Source.configureNamedThread("ToyHTTPServer");
         var toy_config = ServerConfig{
@@ -585,6 +550,7 @@ pub const ToyHTTPServer = struct {
         defer Output.flush();
 
         toy.server = Server.start(toy_config, RequestHandler.New(ToyHTTPServer, onRequest).init(toy)) catch unreachable;
+        _ = toy.server.loop.addPostHandler(*ToyHTTPServer, toy, scheduleWakeup);
         toy.server.loop.run();
     }
 
@@ -602,6 +568,9 @@ pub const ToyHTTPServer = struct {
             .loop = uWS.Loop.get().?,
             .waker = AsyncIO.Waker.init(bun.default_allocator) catch unreachable,
         };
+        http.incoming_list = &http.first_list;
+        http.outgoing_list.value = &http.second_list;
+
         http.ctx = uWS.us_create_socket_context(0, http.loop, 8, .{}).?;
         uWS.SocketTCP.configure(
             http.ctx,

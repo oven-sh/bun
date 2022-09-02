@@ -84,7 +84,7 @@ pub const DotCommand = struct {
     }
 
     // From cli.zig - maybeOpenWithBunJS but modified to accept file & script_to_run
-    pub fn tryToRun(ctx: *Command.Context, file: std.fs.File, script_to_run: string) RunOutput {
+    fn tryToRun(ctx: *Command.Context, file: std.fs.File, script_to_run: string) RunOutput {
         ctx.args.entry_points = &[_]string{script_to_run};
 
         var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;

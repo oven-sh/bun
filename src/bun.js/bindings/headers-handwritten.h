@@ -46,6 +46,12 @@ typedef struct SystemError {
 
 typedef void* ArrayBufferSink;
 
+typedef uint8_t BunPluginTarget;
+const BunPluginTarget BunPluginTargetBun = 0;
+const BunPluginTarget BunPluginTargetBrowser = 1;
+const BunPluginTarget BunPluginTargetNode = 2;
+const BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
+
 typedef uint8_t ZigStackFrameCode;
 const ZigStackFrameCode ZigStackFrameCodeNone = 0;
 const ZigStackFrameCode ZigStackFrameCodeEval = 1;

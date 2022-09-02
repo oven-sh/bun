@@ -99,6 +99,7 @@ using namespace JSC;
     macro(file) \
     macro(filePath) \
     macro(fillFromJS) \
+    macro(filter) \
     macro(finishConsumingStream) \
     macro(flush) \
     macro(flushAlgorithm) \
@@ -115,6 +116,7 @@ using namespace JSC;
     macro(hostname) \
     macro(href) \
     macro(ignoreBOM) \
+    macro(importer) \
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
@@ -192,6 +194,7 @@ using namespace JSC;
     macro(sep) \
     macro(setBody) \
     macro(setStatus) \
+    macro(setup) \
     macro(sink) \
     macro(size) \
     macro(start) \

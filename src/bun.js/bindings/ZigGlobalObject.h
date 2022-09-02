@@ -32,6 +32,7 @@ class EventLoopTask;
 #include "DOMConstructors.h"
 #include "DOMWrapperWorld-class.h"
 #include "DOMIsoSubspaces.h"
+#include "BunPlugin.h"
 // #include "EventTarget.h"
 
 // namespace WebCore {
@@ -302,6 +303,10 @@ public:
     {
         this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
     }
+
+    BunPlugin::OnLoad onLoadPlugins[BunPluginTargetMax + 1] {};
+    BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
+    BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 

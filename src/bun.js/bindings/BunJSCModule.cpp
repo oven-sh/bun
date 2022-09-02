@@ -1,5 +1,4 @@
 #include "root.h"
-#include "JavaScriptCore/JSCInlines.h"
 
 #include "JavaScriptCore/JavaScript.h"
 #include "wtf/FileSystem.h"

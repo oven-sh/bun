@@ -1773,6 +1773,35 @@ pub const JSGlobalObject = extern struct {
         this.vm().throwError(this, err);
     }
 
+    pub const BunPluginTarget = enum(u8) {
+        bun = 0,
+        node = 1,
+        browser = 2,
+    };
+    extern fn Bun__runOnLoadPlugins(*JSC.JSGlobalObject, ?*const ZigString, *const ZigString, BunPluginTarget) JSValue;
+    extern fn Bun__runOnResolvePlugins(*JSC.JSGlobalObject, ?*const ZigString, *const ZigString, *const ZigString, BunPluginTarget) JSValue;
+
+    pub fn runOnLoadPlugins(this: *JSGlobalObject, namespace_: ZigString, path: ZigString, target: BunPluginTarget) ?JSValue {
+        JSC.markBinding();
+        const result = Bun__runOnLoadPlugins(this, if (namespace_.len > 0) &namespace_ else null, &path, target);
+        if (result.isEmptyOrUndefinedOrNull()) {
+            return null;
+        }
+
+        return result;
+    }
+
+    pub fn runOnResolvePlugins(this: *JSGlobalObject, namespace_: ZigString, path: ZigString, source: ZigString, target: BunPluginTarget) ?JSValue {
+        JSC.markBinding();
+
+        const result = Bun__runOnResolvePlugins(this, if (namespace_.len > 0) &namespace_ else null, &path, &source, target);
+        if (result.isEmptyOrUndefinedOrNull()) {
+            return null;
+        }
+
+        return result;
+    }
+
     pub fn createSyntheticModule_(this: *JSGlobalObject, export_names: [*]const ZigString, export_len: usize, value_ptrs: [*]const JSValue, values_len: usize) void {
         shim.cppFn("createSyntheticModule_", .{ this, export_names, export_len, value_ptrs, values_len });
     }

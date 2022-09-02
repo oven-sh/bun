@@ -14,14 +14,18 @@ const cli = @import("../cli.zig");
 
 pub const DotCommand = struct {
     fn findFile() ?string {
-        if (system.access(heap_allocator.dupeZ(u8, "index.js") catch unreachable, std.os.F_OK) == 0) {
+        if (system.access("index.js", std.os.F_OK) == 0) {
             return "index.js";
-        } else if (system.access(heap_allocator.dupeZ(u8, "index.ts") catch unreachable, std.os.F_OK) == 0) {
+        } else if (system.access("index.ts", std.os.F_OK) == 0) {
             return "index.ts";
-        } else if (system.access(heap_allocator.dupeZ(u8, "index.mjs") catch unreachable, std.os.F_OK) == 0) {
+        } else if (system.access("index.mjs", std.os.F_OK) == 0) {
             return "index.mjs";
-        } else if (system.access(heap_allocator.dupeZ(u8, "index.cjs") catch unreachable, std.os.F_OK) == 0) {
+        } else if (system.access("index.cjs", std.os.F_OK) == 0) {
             return "index.cjs";
+        } else if (system.access("index.mts", std.os.F_OK) == 0) {
+            return "index.mts";
+        } else if (system.access("index.cts", std.os.F_OK) == 0) {
+            return "index.cts";
         } else {
             return null;
         }
@@ -33,7 +37,7 @@ pub const DotCommand = struct {
         var root_dir_info = try RunCommand.configureEnvForRun(ctx.*, &this_bundler, null, &ORIGINAL_PATH, true);
 
         var script_to_run: ?string = "";
-        if (root_dir_info.enclosing_package_json) |package_json| script_to_run = package_json.main_fields.get("main") orelse null;
+        if (root_dir_info.enclosing_package_json) |package_json| script_to_run = package_json.main_fields.get("module") orelse package_json.main_fields.get("main") orelse null;
 
         if (script_to_run == null) {
             script_to_run = findFile();
@@ -60,8 +64,11 @@ pub const DotCommand = struct {
             });
         }
 
+        //std.debug.print("POSITIONALS {any}\nENTRY POINTS {any}\n\n", .{ ctx.positionals, ctx.args.entry_points });
         ctx.positionals = &[_]string{script_to_run.?};
         ctx.args.entry_points = &[_]string{script_to_run.?};
+        //ctx.positionals[0] = script_to_run.?;
+        //ctx.args.entry_points[0] = script_to_run.?;
 
         if (Command.maybeOpenWithBunJS(ctx)) {
             return true;

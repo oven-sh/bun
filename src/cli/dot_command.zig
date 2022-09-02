@@ -20,7 +20,7 @@ const RunOutput = struct {
 };
 
 pub const DotCommand = struct {
-    pub fn returnFileIfExist(name: string) ?std.fs.File {
+    fn returnFileIfExist(name: string) ?std.fs.File {
         var script_name_to_search = name;
         var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
@@ -64,24 +64,6 @@ pub const DotCommand = struct {
 
         return file;
     }
-
-    // fn findFile() ?string {
-    //     if (system.access("index.js", std.os.F_OK) == 0) {
-    //         return "index.js";
-    //     } else if (system.access("index.ts", std.os.F_OK) == 0) {
-    //         return "index.ts";
-    //     } else if (system.access("index.mjs", std.os.F_OK) == 0) {
-    //         return "index.mjs";
-    //     } else if (system.access("index.cjs", std.os.F_OK) == 0) {
-    //         return "index.cjs";
-    //     } else if (system.access("index.mts", std.os.F_OK) == 0) {
-    //         return "index.mts";
-    //     } else if (system.access("index.cts", std.os.F_OK) == 0) {
-    //         return "index.cts";
-    //     } else {
-    //         return null;
-    //     }
-    // }
 
     fn findFile(ctx: *Command.Context, run: bool) RunOutput {
         if (returnFileIfExist("index.js")) |file| {

@@ -178,39 +178,6 @@ fn createRouteObjectFromMatch(
     return Instance.make(ctx, router);
 }
 
-pub const match_type_definition = &[_]d.ts{
-    .{
-        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/FetchEvent FetchEvent} to a `Route` from the local filesystem. Returns `null` if there is no match.",
-        .args = &[_]d.ts.arg{
-            .{
-                .name = "event",
-                .@"return" = "FetchEvent",
-            },
-        },
-        .@"return" = "Route | null",
-    },
-    .{
-        .tsdoc = "Match a `pathname` to a `Route` from the local filesystem. Returns `null` if there is no match.",
-        .args = &[_]d.ts.arg{
-            .{
-                .name = "pathname",
-                .@"return" = "string",
-            },
-        },
-        .@"return" = "Route | null",
-    },
-    .{
-        .tsdoc = "Match a {@link https://developer.mozilla.org/en-US/docs/Web/API/Request Request} to a `Route` from the local filesystem. Returns `null` if there is no match.",
-        .args = &[_]d.ts.arg{
-            .{
-                .name = "request",
-                .@"return" = "Request",
-            },
-        },
-        .@"return" = "Route | null",
-    },
-};
-
 pub const Instance = NewClass(
     Router,
     .{

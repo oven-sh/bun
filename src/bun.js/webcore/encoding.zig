@@ -678,154 +678,103 @@ pub const TextDecoder = struct {
     }
 };
 
-/// This code is incredibly redundant
-/// We have different paths for creaitng a new buffer versus writing into an existing one
-/// That's mostly why all the duplication
-/// The majority of the business logic here is just shooting it off to the optimized functions
 pub const Encoder = struct {
-    export fn Bun__encoding__writeLatin1AsHex(input: [*]const u8, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU8(input, len, to, to_len, .hex);
+    export fn Bun__encoding__writeLatin1(input: [*]const u8, len: usize, to: [*]u8, to_len: usize, encoding: u8) i64 {
+        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+            .utf8 => writeU8(input, len, to, to_len, .utf8),
+            .latin1 => writeU8(input, len, to, to_len, .ascii),
+            .ascii => writeU8(input, len, to, to_len, .ascii),
+            .ucs2 => writeU8(input, len, to, to_len, .utf16le),
+            .utf16le => writeU8(input, len, to, to_len, .utf16le),
+            .base64 => writeU8(input, len, to, to_len, .base64),
+            .base64url => writeU8(input, len, to, to_len, .base64url),
+            .hex => writeU8(input, len, to, to_len, .hex),
+            else => unreachable,
+        };
     }
-    export fn Bun__encoding__writeLatin1AsASCII(input: [*]const u8, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU8(input, len, to, to_len, .ascii);
+    export fn Bun__encoding__writeUTF16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize, encoding: u8) i64 {
+        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+            .utf8 => writeU16(input, len, to, to_len, .utf8),
+            .latin1 => writeU16(input, len, to, to_len, .ascii),
+            .ascii => writeU16(input, len, to, to_len, .ascii),
+            .ucs2 => writeU16(input, len, to, to_len, .utf16le),
+            .utf16le => writeU16(input, len, to, to_len, .utf16le),
+            .base64 => writeU16(input, len, to, to_len, .base64),
+            .base64url => writeU16(input, len, to, to_len, .base64url),
+            .hex => writeU16(input, len, to, to_len, .hex),
+            else => unreachable,
+        };
     }
-    export fn Bun__encoding__writeLatin1AsURLSafeBase64(input: [*]const u8, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU8(input, len, to, to_len, .base64url);
+    export fn Bun__encoding__byteLengthLatin1(input: [*]const u8, len: usize, encoding: u8) usize {
+        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+            .utf8 => byteLengthU8(input, len, .utf8),
+            .latin1 => byteLengthU8(input, len, .ascii),
+            .ascii => byteLengthU8(input, len, .ascii),
+            .ucs2 => byteLengthU8(input, len, .utf16le),
+            .utf16le => byteLengthU8(input, len, .utf16le),
+            .base64 => byteLengthU8(input, len, .base64),
+            .base64url => byteLengthU8(input, len, .base64url),
+            .hex => byteLengthU8(input, len, .hex),
+            else => unreachable,
+        };
     }
-    export fn Bun__encoding__writeLatin1AsUTF16(input: [*]const u8, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU8(input, len, to, to_len, .utf16le);
+    export fn Bun__encoding__byteLengthUTF16(input: [*]const u16, len: usize, encoding: u8) usize {
+        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+            .utf8 => byteLengthU16(input, len, .utf8),
+            .latin1 => byteLengthU16(input, len, .ascii),
+            .ascii => byteLengthU16(input, len, .ascii),
+            .ucs2 => byteLengthU16(input, len, .utf16le),
+            .utf16le => byteLengthU16(input, len, .utf16le),
+            .base64 => byteLengthU16(input, len, .base64),
+            .base64url => byteLengthU16(input, len, .base64url),
+            .hex => byteLengthU16(input, len, .hex),
+            else => unreachable,
+        };
     }
-    export fn Bun__encoding__writeLatin1AsUTF8(input: [*]const u8, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU8(input, len, to, to_len, JSC.Node.Encoding.utf8);
-    }
-    export fn Bun__encoding__writeLatin1AsBase64(input: [*]const u8, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU8(input, len, to, to_len, .base64);
-    }
-    export fn Bun__encoding__writeUTF16AsBase64(input: [*]const u16, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU16(input, len, to, to_len, .base64);
-    }
-    export fn Bun__encoding__writeUTF16AsHex(input: [*]const u16, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU16(input, len, to, to_len, .hex);
-    }
-    export fn Bun__encoding__writeUTF16AsURLSafeBase64(input: [*]const u16, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU16(input, len, to, to_len, .base64url);
-    }
-    export fn Bun__encoding__writeUTF16AsUTF16(input: [*]const u16, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU16(input, len, to, to_len, JSC.Node.Encoding.utf16le);
-    }
-    export fn Bun__encoding__writeUTF16AsUTF8(input: [*]const u16, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU16(input, len, to, to_len, .utf8);
-    }
-    export fn Bun__encoding__writeUTF16AsASCII(input: [*]const u8, len: usize, to: [*]u8, to_len: usize) i64 {
-        return writeU8(input, len, to, to_len, .ascii);
-    }
-
-    export fn Bun__encoding__byteLengthLatin1AsHex(input: [*]const u8, len: usize) usize {
-        return byteLengthU8(input, len, .hex);
-    }
-    export fn Bun__encoding__byteLengthLatin1AsASCII(input: [*]const u8, len: usize) usize {
-        return byteLengthU8(input, len, .ascii);
-    }
-    export fn Bun__encoding__byteLengthLatin1AsURLSafeBase64(input: [*]const u8, len: usize) usize {
-        return byteLengthU8(input, len, .base64url);
-    }
-    export fn Bun__encoding__byteLengthLatin1AsUTF16(input: [*]const u8, len: usize) usize {
-        return byteLengthU8(input, len, .utf16le);
-    }
-    export fn Bun__encoding__byteLengthLatin1AsUTF8(input: [*]const u8, len: usize) usize {
-        return byteLengthU8(input, len, .utf8);
-    }
-    export fn Bun__encoding__byteLengthLatin1AsBase64(input: [*]const u8, len: usize) usize {
-        return byteLengthU8(input, len, .base64);
-    }
-    export fn Bun__encoding__byteLengthUTF16AsBase64(input: [*]const u16, len: usize) usize {
-        return byteLengthU16(input, len, .base64);
-    }
-    export fn Bun__encoding__byteLengthUTF16AsHex(input: [*]const u16, len: usize) usize {
-        return byteLengthU16(input, len, .hex);
-    }
-    export fn Bun__encoding__byteLengthUTF16AsURLSafeBase64(input: [*]const u16, len: usize) usize {
-        return byteLengthU16(input, len, .base64url);
-    }
-    export fn Bun__encoding__byteLengthUTF16AsUTF16(input: [*]const u16, len: usize) usize {
-        return byteLengthU16(input, len, .utf16le);
-    }
-    export fn Bun__encoding__byteLengthUTF16AsUTF8(input: [*]const u16, len: usize) usize {
-        return byteLengthU16(input, len, .utf8);
-    }
-    export fn Bun__encoding__byteLengthUTF16AsASCII(input: [*]const u8, len: usize) usize {
-        return byteLengthU8(input, len, .ascii);
-    }
-
-    export fn Bun__encoding__constructFromLatin1AsHex(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
-        var slice = constructFromU8(input, len, .hex);
+    export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
+        var slice = switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+            .hex => constructFromU8(input, len, .hex),
+            .ascii => constructFromU8(input, len, .ascii),
+            .base64url => constructFromU8(input, len, .base64url),
+            .utf16le => constructFromU8(input, len, .utf16le),
+            .ucs2 => constructFromU8(input, len, .utf16le),
+            .utf8 => constructFromU8(input, len, .utf8),
+            .base64 => constructFromU8(input, len, .base64),
+            else => unreachable,
+        };
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
-    export fn Bun__encoding__constructFromLatin1AsASCII(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
-        var slice = constructFromU8(input, len, .ascii);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromLatin1AsURLSafeBase64(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
-        var slice = constructFromU8(input, len, .base64url);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromLatin1AsUTF16(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
-        var slice = constructFromU8(input, len, .utf16le);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromLatin1AsUTF8(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
-        var slice = constructFromU8(input, len, JSC.Node.Encoding.utf8);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromLatin1AsBase64(globalObject: *JSGlobalObject, input: [*]const u8, len: usize) JSValue {
-        var slice = constructFromU8(input, len, .base64);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromUTF16AsBase64(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
-        var slice = constructFromU16(input, len, .base64);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromUTF16AsHex(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
-        var slice = constructFromU16(input, len, .hex);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromUTF16AsURLSafeBase64(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
-        var slice = constructFromU16(input, len, .base64url);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromUTF16AsUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
-        var slice = constructFromU16(input, len, JSC.Node.Encoding.utf16le);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromUTF16AsUTF8(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
-        var slice = constructFromU16(input, len, .utf8);
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
-    }
-    export fn Bun__encoding__constructFromUTF16AsASCII(globalObject: *JSGlobalObject, input: [*]const u16, len: usize) JSValue {
-        var slice = constructFromU16(input, len, .utf8);
+    export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
+        var slice = switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+            .base64 => constructFromU16(input, len, .base64),
+            .hex => constructFromU16(input, len, .hex),
+            .base64url => constructFromU16(input, len, .base64url),
+            .utf16le => constructFromU16(input, len, .utf16le),
+            .ucs2 => constructFromU16(input, len, .utf16le),
+            .utf8 => constructFromU16(input, len, .utf8),
+            .ascii => constructFromU16(input, len, .utf8),
+            else => unreachable,
+        };
         return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
     }
 
-    export fn Bun__encoding__toStringUTF16(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
-        return toString(input, len, globalObject, JSC.Node.Encoding.utf16le);
-    }
+    // for SQL statement
     export fn Bun__encoding__toStringUTF8(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
         return toString(input, len, globalObject, .utf8);
     }
-    export fn Bun__encoding__toStringASCII(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
-        return toString(input, len, globalObject, .ascii);
-    }
 
-    export fn Bun__encoding__toStringHex(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
-        return toString(input, len, globalObject, .hex);
-    }
-
-    export fn Bun__encoding__toStringBase64(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
-        return toString(input, len, globalObject, .base64);
-    }
-
-    export fn Bun__encoding__toStringURLSafeBase64(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject) JSValue {
-        return toString(input, len, globalObject, .base64url);
+    export fn Bun__encoding__toString(input: [*]const u8, len: usize, globalObject: *JSC.JSGlobalObject, encoding: u8) JSValue {
+        return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
+            .ucs2 => toString(input, len, globalObject, .utf16le),
+            .utf16le => toString(input, len, globalObject, .utf16le),
+            .buffer => toString(input, len, globalObject, .utf8),
+            .utf8 => toString(input, len, globalObject, .utf8),
+            .ascii => toString(input, len, globalObject, .ascii),
+            .hex => toString(input, len, globalObject, .hex),
+            .base64 => toString(input, len, globalObject, .base64),
+            .base64url => toString(input, len, globalObject, .base64url),
+            else => unreachable,
+        };
     }
 
     // pub fn writeUTF16AsUTF8(utf16: [*]const u16, len: usize, to: [*]u8, to_len: usize) callconv(.C) i32 {
@@ -870,16 +819,13 @@ pub const Encoder = struct {
                 // For this, we rely on the GC to manage the memory to minimize potential for memory leaks
                 return ZigString.init(input).toValueGC(global);
             },
-            // potentially convert UTF-16 to UTF-8
-            JSC.Node.Encoding.ucs2, JSC.Node.Encoding.utf16le => {
-                const converted = strings.toUTF16Alloc(allocator, input, false) catch return ZigString.init("Out of memory").toErrorInstance(global);
-                if (converted) |utf16| {
-                    return ZigString.toExternalU16(utf16.ptr, utf16.len, global);
+            .ucs2, .utf16le => {
+                var output = allocator.alloc(u16, len / 2) catch return ZigString.init("Out of memory").toErrorInstance(global);
+                var i : usize = 0;
+                while (i < len / 2) : (i += 1) {
+                    output[i] = (@intCast(u16, input[2 * i + 1]) << 8) + @intCast(u16, input[2 * i]);
                 }
-
-                var output = allocator.alloc(u8, input.len) catch return ZigString.init("Out of memory").toErrorInstance(global);
-                JSC.WTF.copyLCharsFromUCharSource(output.ptr, []align(1) const u16, @ptrCast([*]align(1) const u16, input.ptr)[0 .. input.len / 2]);
-                return ZigString.init(output).toExternalValue(global);
+                return ZigString.toExternalU16(output.ptr, output.len, global);
             },
 
             JSC.Node.Encoding.hex => {
@@ -1205,51 +1151,17 @@ pub const Encoder = struct {
 
     comptime {
         if (!JSC.is_bindgen) {
-            _ = Bun__encoding__writeLatin1AsHex;
-            _ = Bun__encoding__writeLatin1AsURLSafeBase64;
-            _ = Bun__encoding__writeLatin1AsUTF16;
-            _ = Bun__encoding__writeLatin1AsUTF8;
-            _ = Bun__encoding__writeLatin1AsBase64;
-            _ = Bun__encoding__writeUTF16AsBase64;
-            _ = Bun__encoding__writeUTF16AsHex;
-            _ = Bun__encoding__writeUTF16AsURLSafeBase64;
-            _ = Bun__encoding__writeUTF16AsUTF16;
-            _ = Bun__encoding__writeUTF16AsUTF8;
-            _ = Bun__encoding__writeLatin1AsASCII;
-            _ = Bun__encoding__writeUTF16AsASCII;
+            _ = Bun__encoding__writeLatin1;
+            _ = Bun__encoding__writeUTF16;
 
-            _ = Bun__encoding__byteLengthLatin1AsHex;
-            _ = Bun__encoding__byteLengthLatin1AsURLSafeBase64;
-            _ = Bun__encoding__byteLengthLatin1AsUTF16;
-            _ = Bun__encoding__byteLengthLatin1AsUTF8;
-            _ = Bun__encoding__byteLengthLatin1AsBase64;
-            _ = Bun__encoding__byteLengthUTF16AsBase64;
-            _ = Bun__encoding__byteLengthUTF16AsHex;
-            _ = Bun__encoding__byteLengthUTF16AsURLSafeBase64;
-            _ = Bun__encoding__byteLengthUTF16AsUTF16;
-            _ = Bun__encoding__byteLengthUTF16AsUTF8;
-            _ = Bun__encoding__byteLengthLatin1AsASCII;
-            _ = Bun__encoding__byteLengthUTF16AsASCII;
+            _ = Bun__encoding__byteLengthLatin1;
+            _ = Bun__encoding__byteLengthUTF16;
 
-            _ = Bun__encoding__toStringUTF16;
+            _ = Bun__encoding__toString;
             _ = Bun__encoding__toStringUTF8;
-            _ = Bun__encoding__toStringASCII;
-            _ = Bun__encoding__toStringHex;
-            _ = Bun__encoding__toStringBase64;
-            _ = Bun__encoding__toStringURLSafeBase64;
 
-            _ = Bun__encoding__constructFromLatin1AsHex;
-            _ = Bun__encoding__constructFromLatin1AsASCII;
-            _ = Bun__encoding__constructFromLatin1AsURLSafeBase64;
-            _ = Bun__encoding__constructFromLatin1AsUTF16;
-            _ = Bun__encoding__constructFromLatin1AsUTF8;
-            _ = Bun__encoding__constructFromLatin1AsBase64;
-            _ = Bun__encoding__constructFromUTF16AsBase64;
-            _ = Bun__encoding__constructFromUTF16AsHex;
-            _ = Bun__encoding__constructFromUTF16AsURLSafeBase64;
-            _ = Bun__encoding__constructFromUTF16AsUTF16;
-            _ = Bun__encoding__constructFromUTF16AsUTF8;
-            _ = Bun__encoding__constructFromUTF16AsASCII;
+            _ = Bun__encoding__constructFromLatin1;
+            _ = Bun__encoding__constructFromUTF16;
         }
     }
 };

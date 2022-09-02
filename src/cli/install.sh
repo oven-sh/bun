@@ -80,7 +80,9 @@ if [[ $target = darwin-x64 ]]; then
     fi
 fi
 
-github_repo="https://github.com/oven-sh/bun"
+GITHUB=${GITHUB-"https://github.com"}
+
+github_repo="$GITHUB/oven-sh/bun"
 
 if [[ $target = darwin-x64 ]]; then
     # If AVX2 isn't supported, use the -baseline build

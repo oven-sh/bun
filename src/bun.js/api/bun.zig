@@ -1013,143 +1013,87 @@ pub const Class = NewClass(
     .{
         .match = .{
             .rfn = Router.match,
-            .ts = Router.match_type_definition,
         },
         .sleepSync = .{
             .rfn = sleepSync,
         },
         .fetch = .{
             .rfn = Fetch.call,
-            .ts = d.ts{},
         },
         .getImportedStyles = .{
             .rfn = Bun.getImportedStyles,
-            .ts = d.ts{
-                .name = "getImportedStyles",
-                .@"return" = "string[]",
-            },
         },
         .inspect = .{
             .rfn = Bun.inspect,
-            .ts = d.ts{
-                .name = "inspect",
-                .@"return" = "string",
-            },
         },
         .getRouteFiles = .{
             .rfn = Bun.getRouteFiles,
-            .ts = d.ts{
-                .name = "getRouteFiles",
-                .@"return" = "string[]",
-            },
         },
         ._Os = .{
             .rfn = Bun.newOs,
-            .ts = d.ts{},
         },
         ._Path = .{
             .rfn = Bun.newPath,
-            .ts = d.ts{},
         },
         .getRouteNames = .{
             .rfn = Bun.getRouteNames,
-            .ts = d.ts{
-                .name = "getRouteNames",
-                .@"return" = "string[]",
-            },
         },
         .readFile = .{
             .rfn = Bun.readFileAsString,
-            .ts = d.ts{
-                .name = "readFile",
-                .@"return" = "string",
-            },
         },
         .resolveSync = .{
             .rfn = Bun.resolveSync,
-            .ts = d.ts{
-                .name = "resolveSync",
-                .@"return" = "string",
-            },
         },
         .resolve = .{
             .rfn = Bun.resolve,
-            .ts = d.ts{
-                .name = "resolve",
-                .@"return" = "string",
-            },
         },
         .readFileBytes = .{
             .rfn = Bun.readFileAsBytes,
-            .ts = d.ts{
-                .name = "readFile",
-                .@"return" = "Uint8Array",
-            },
         },
         .getPublicPath = .{
             .rfn = Bun.getPublicPathJS,
-            .ts = d.ts{
-                .name = "getPublicPath",
-                .@"return" = "string",
-            },
         },
         .registerMacro = .{
             .rfn = Bun.registerMacro,
-            .ts = d.ts{
-                .name = "registerMacro",
-                .@"return" = "undefined",
-            },
             .enumerable = false,
         },
         .fs = .{
             .rfn = Bun.createNodeFS,
-            .ts = d.ts{},
             .enumerable = false,
         },
         .jest = .{
             .rfn = @import("../test/jest.zig").Jest.call,
-            .ts = d.ts{},
             .enumerable = false,
         },
         .gc = .{
             .rfn = Bun.runGC,
-            .ts = d.ts{},
         },
         .allocUnsafe = .{
             .rfn = Bun.allocUnsafe,
-            .ts = .{},
         },
         .mmap = .{
             .rfn = Bun.mmapFile,
-            .ts = .{},
         },
         .generateHeapSnapshot = .{
             .rfn = Bun.generateHeapSnapshot,
-            .ts = d.ts{},
         },
         .shrink = .{
             .rfn = Bun.shrink,
-            .ts = d.ts{},
         },
         .openInEditor = .{
             .rfn = Bun.openInEditor,
-            .ts = d.ts{},
         },
         .readAllStdinSync = .{
             .rfn = Bun.readAllStdinSync,
-            .ts = d.ts{},
         },
         .serve = .{
             .rfn = Bun.serve,
-            .ts = d.ts{},
         },
         .file = .{
             .rfn = JSC.WebCore.Blob.constructFile,
-            .ts = d.ts{},
         },
         .write = .{
             .rfn = JSC.WebCore.Blob.writeFile,
-            .ts = d.ts{},
         },
         .sha = .{
             .rfn = JSC.wrapWithHasContainer(Crypto.SHA512_256, "hash_", false, false, true),
@@ -1173,15 +1117,12 @@ pub const Class = NewClass(
     .{
         .main = .{
             .get = getMain,
-            .ts = d.ts{ .name = "main", .@"return" = "string" },
         },
         .cwd = .{
             .get = getCWD,
-            .ts = d.ts{ .name = "cwd", .@"return" = "string" },
         },
         .origin = .{
             .get = getOrigin,
-            .ts = d.ts{ .name = "origin", .@"return" = "string" },
         },
         .stdin = .{
             .get = getStdin,
@@ -1194,15 +1135,12 @@ pub const Class = NewClass(
         },
         .routesDir = .{
             .get = getRoutesDir,
-            .ts = d.ts{ .name = "routesDir", .@"return" = "string" },
         },
         .assetPrefix = .{
             .get = getAssetPrefix,
-            .ts = d.ts{ .name = "assetPrefix", .@"return" = "string" },
         },
         .argv = .{
             .get = getArgv,
-            .ts = d.ts{ .name = "argv", .@"return" = "string[]" },
         },
         .env = .{
             .get = EnvironmentVariables.getter,
@@ -1213,19 +1151,16 @@ pub const Class = NewClass(
         },
         .Transpiler = .{
             .get = getTranspilerConstructor,
-            .ts = d.ts{ .name = "Transpiler", .@"return" = "Transpiler.prototype" },
         },
         .hash = .{
             .get = getHashObject,
         },
         .TOML = .{
             .get = getTOMLObject,
-            .ts = d.ts{ .name = "TOML", .@"return" = "TOML.prototype" },
         },
         .unsafe = .{
             .get = getUnsafe,
         },
-
         .SHA1 = .{
             .get = Crypto.SHA1.getter,
         },
@@ -1365,6 +1300,7 @@ pub const Crypto = struct {
             }
 
             pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                const thisValue = callframe.this();
                 const input = callframe.argument(0);
                 const buffer = JSC.Node.SliceOrBuffer.fromJS(globalThis.ptr(), globalThis.bunVM().allocator, input) orelse {
                     globalThis.throwInvalidArguments("expected string or buffer", .{});
@@ -1372,7 +1308,7 @@ pub const Crypto = struct {
                 };
                 defer buffer.deinit();
                 this.hashing.update(buffer.slice());
-                return input;
+                return thisValue;
             }
 
             pub fn digest_(

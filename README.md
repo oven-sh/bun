@@ -3413,7 +3413,7 @@ curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/jul1/zig
 tar -xvf zig.tar.gz -C $HOME/.bun-tools/
 
 # Make sure it gets trusted
-xattr -dr com.apple.quarantine $HOME/.bun-tools/zig/zig
+xattr -d com.apple.quarantine $HOME/.bun-tools/zig/zig
 ```
 
 Now you'll need to add Zig to your PATH.

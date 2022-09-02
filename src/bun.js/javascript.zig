@@ -868,6 +868,16 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:string_decoder" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(""),
+                        .specifier = ZigString.init("node:string_decoder"),
+                        .source_url = ZigString.init("node:string_decoder"),
+                        .hash = 0,
+                        .tag = ResolvedSource.Tag.@"node:string_decoder",
+                    };
+                },
                 .@"bun:ffi" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2313,7 +2323,6 @@ pub const EventListenerMixin = struct {
             .{
                 .@"callAsFunction" = .{
                     .rfn = Handler.addListener,
-                    .ts = d.ts{},
                 },
             },
             .{},
@@ -2403,7 +2412,6 @@ pub const ResolveError = struct {
             .@"referrer" = .{
                 .@"get" = getReferrer,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"code" = .{
                 .@"get" = getCode,
@@ -2412,27 +2420,22 @@ pub const ResolveError = struct {
             .@"message" = .{
                 .@"get" = getMessage,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"name" = .{
                 .@"get" = getName,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"specifier" = .{
                 .@"get" = getSpecifier,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"importKind" = .{
                 .@"get" = getImportKind,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"position" = .{
                 .@"get" = getPosition,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
         },
     );
@@ -2802,6 +2805,7 @@ pub const HardcodedModule = enum {
     @"node:module",
     @"node:os",
     @"node:stream",
+    @"node:string_decoder",
     @"node:path",
     @"node:perf_hooks",
     @"node:process",
@@ -2843,6 +2847,7 @@ pub const HardcodedModule = enum {
             .{ "node:stream", HardcodedModule.@"node:stream" },
             .{ "node:stream/consumer", HardcodedModule.@"node:stream/consumer" },
             .{ "node:stream/web", HardcodedModule.@"node:stream/web" },
+            .{ "node:string_decoder", HardcodedModule.@"node:string_decoder" },
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:url", HardcodedModule.@"node:url" },
@@ -2850,6 +2855,7 @@ pub const HardcodedModule = enum {
             .{ "path", HardcodedModule.@"node:path" },
             .{ "process", HardcodedModule.@"node:process" },
             .{ "streams", HardcodedModule.@"node:stream" },
+            .{ "string_decoder", HardcodedModule.@"node:string_decoder" },
             .{ "undici", HardcodedModule.@"undici" },
             .{ "ws", HardcodedModule.@"ws" },
         },
@@ -2884,9 +2890,10 @@ pub const HardcodedModule = enum {
             .{ "node:path/win32", "node:path" },
             .{ "node:perf_hooks", "node:perf_hooks" },
             .{ "node:process", "node:process" },
+            .{ "node:stream", "node:stream" },
             .{ "node:stream/consumer", "node:stream/consumer" },
             .{ "node:stream/web", "node:stream/web" },
-            .{ "node:stream", "node:stream" },
+            .{ "node:string_decoder", "node:string_decoder" },
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
             .{ "node:url", "node:url" },
@@ -2896,9 +2903,10 @@ pub const HardcodedModule = enum {
             .{ "path/win32", "node:path" },
             .{ "perf_hooks", "node:perf_hooks" },
             .{ "process", "node:process" },
+            .{ "stream", "node:stream" },
             .{ "stream/consumer", "node:stream/consumer" },
             .{ "stream/web", "node:stream/web" },
-            .{ "stream", "node:stream" },
+            .{ "string_decoder", "node:string_decoder" },
             .{ "timers", "node:timers" },
             .{ "timers/promises", "node:timers/promises" },
             .{ "undici", "undici" },

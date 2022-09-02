@@ -237,74 +237,43 @@ static EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject,
     auto view = str->tryGetValue(lexicalGlobalObject);
     JSC::EncodedJSValue result;
 
-    switch (encoding) {
-    case WebCore::BufferEncodingType::utf8: {
-        if (view.is8Bit()) {
-            result = Bun__encoding__constructFromLatin1AsUTF8(lexicalGlobalObject, view.characters8(), view.length());
-        } else {
-            result = Bun__encoding__constructFromUTF16AsUTF8(lexicalGlobalObject, view.characters16(), view.length());
+    if (view.is8Bit()) {
+        switch (encoding) {
+        case WebCore::BufferEncodingType::utf8:
+        case WebCore::BufferEncodingType::ucs2:
+        case WebCore::BufferEncodingType::utf16le:
+        case WebCore::BufferEncodingType::base64:
+        case WebCore::BufferEncodingType::base64url:
+        case WebCore::BufferEncodingType::hex: {
+            result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, view.characters8(), view.length(), static_cast<uint8_t>(encoding));
+            break;
         }
-        break;
-    }
-
-    case WebCore::BufferEncodingType::ascii: {
-        if (view.is8Bit()) {
-            // ascii is a noop for latin1
+        case WebCore::BufferEncodingType::ascii:     // ascii is a noop for latin1
+        case WebCore::BufferEncodingType::latin1: {  // The native encoding is latin1, so we don't need to do any conversion.
             result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, view.characters8(), view.length());
-        } else {
-            result = Bun__encoding__constructFromUTF16AsASCII(lexicalGlobalObject, view.characters16(), view.length());
+            break;
         }
-        break;
-    }
-    case WebCore::BufferEncodingType::latin1: {
-        if (view.is8Bit()) {
-            // The native encoding is latin1
-            // so we don't need to do any conversion.
-            result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, view.characters8(), view.length());
-        } else {
-            result = Bun__encoding__constructFromUTF16AsASCII(lexicalGlobalObject, view.characters16(), view.length());
         }
-        break;
-    }
-    case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le: {
-        if (view.is8Bit()) {
-            result = Bun__encoding__constructFromLatin1AsUTF16(lexicalGlobalObject, view.characters8(), view.length());
-        } else {
+    } else {
+        switch (encoding) {
+        case WebCore::BufferEncodingType::utf8:
+        case WebCore::BufferEncodingType::base64:
+        case WebCore::BufferEncodingType::base64url:
+        case WebCore::BufferEncodingType::ascii:
+        case WebCore::BufferEncodingType::latin1: {
+            result = Bun__encoding__constructFromUTF16(lexicalGlobalObject, view.characters16(), view.length(), static_cast<uint8_t>(encoding));
+            break;
+        }
+        case WebCore::BufferEncodingType::ucs2:
+        case WebCore::BufferEncodingType::utf16le: {
             // The native encoding is UTF-16
             // so we don't need to do any conversion.
             result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, reinterpret_cast<const unsigned char*>(view.characters16()), view.length() * 2);
+            break;
         }
-        break;
+        }
     }
 
-    case WebCore::BufferEncodingType::base64: {
-        if (view.is8Bit()) {
-            result = Bun__encoding__constructFromLatin1AsBase64(lexicalGlobalObject, view.characters8(), view.length());
-        } else {
-            result = Bun__encoding__constructFromUTF16AsBase64(lexicalGlobalObject, view.characters16(), view.length());
-        }
-        break;
-    }
-
-    case WebCore::BufferEncodingType::base64url: {
-        if (view.is8Bit()) {
-            result = Bun__encoding__constructFromLatin1AsURLSafeBase64(lexicalGlobalObject, view.characters8(), view.length());
-        } else {
-            result = Bun__encoding__constructFromUTF16AsURLSafeBase64(lexicalGlobalObject, view.characters16(), view.length());
-        }
-        break;
-    }
-
-    case WebCore::BufferEncodingType::hex: {
-        if (view.is8Bit()) {
-            result = Bun__encoding__constructFromLatin1AsHex(lexicalGlobalObject, view.characters8(), view.length());
-        } else {
-            result = Bun__encoding__constructFromUTF16AsHex(lexicalGlobalObject, view.characters16(), view.length());
-        }
-        break;
-    }
-    }
     JSC::JSValue decoded = JSC::JSValue::decode(result);
     if (UNLIKELY(!result)) {
         throwTypeError(lexicalGlobalObject, scope, "An error occurred while decoding the string"_s);
@@ -430,57 +399,18 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_byteLengthBody(JSC
     int64_t written = 0;
 
     switch (encoding) {
-    case WebCore::BufferEncodingType::utf8: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__byteLengthLatin1AsUTF8(view.characters8(), view.length());
-        } else {
-            written = Bun__encoding__byteLengthUTF16AsUTF8(view.characters16(), view.length());
-        }
-        break;
-    }
-
+    case WebCore::BufferEncodingType::utf8:
     case WebCore::BufferEncodingType::latin1:
-    case WebCore::BufferEncodingType::ascii: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__byteLengthLatin1AsASCII(view.characters8(), view.length());
-        } else {
-            written = Bun__encoding__byteLengthUTF16AsASCII(view.characters16(), view.length());
-        }
-        break;
-    }
+    case WebCore::BufferEncodingType::ascii:
     case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__byteLengthLatin1AsUTF16(view.characters8(), view.length());
-        } else {
-            written = Bun__encoding__byteLengthUTF16AsUTF16(view.characters16(), view.length());
-        }
-        break;
-    }
-
-    case WebCore::BufferEncodingType::base64: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__byteLengthLatin1AsBase64(view.characters8(), view.length());
-        } else {
-            written = Bun__encoding__byteLengthUTF16AsBase64(view.characters16(), view.length());
-        }
-        break;
-    }
-
-    case WebCore::BufferEncodingType::base64url: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__byteLengthLatin1AsURLSafeBase64(view.characters8(), view.length());
-        } else {
-            written = Bun__encoding__byteLengthUTF16AsURLSafeBase64(view.characters16(), view.length());
-        }
-        break;
-    }
-
+    case WebCore::BufferEncodingType::utf16le:
+    case WebCore::BufferEncodingType::base64:
+    case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
         if (view.is8Bit()) {
-            written = Bun__encoding__byteLengthLatin1AsHex(view.characters8(), view.length());
+            written = Bun__encoding__byteLengthLatin1(view.characters8(), view.length(), static_cast<uint8_t>(encoding));
         } else {
-            written = Bun__encoding__byteLengthUTF16AsHex(view.characters16(), view.length());
+            written = Bun__encoding__byteLengthUTF16(view.characters16(), view.length(), static_cast<uint8_t>(encoding));
         }
         break;
     }
@@ -1205,40 +1135,19 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
     JSC::EncodedJSValue ret = 0;
 
     switch (encoding) {
-    case WebCore::BufferEncodingType::buffer:
-    case WebCore::BufferEncodingType::utf8: {
-        ret = Bun__encoding__toStringUTF8(castedThis->typedVector() + offset, length, lexicalGlobalObject);
-        break;
-    }
-
-    case WebCore::BufferEncodingType::ascii: {
-        ret = Bun__encoding__toStringASCII(castedThis->typedVector() + offset, length, lexicalGlobalObject);
-        break;
-    }
-
     case WebCore::BufferEncodingType::latin1: {
         ret = JSC::JSValue::encode(JSC::jsString(vm, WTF::StringImpl::create(reinterpret_cast<const UChar*>(castedThis->typedVector() + offset), length)));
         break;
     }
-
+    case WebCore::BufferEncodingType::buffer:
+    case WebCore::BufferEncodingType::utf8:
+    case WebCore::BufferEncodingType::ascii:
     case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le: {
-        ret = Bun__encoding__toStringUTF16(castedThis->typedVector() + offset, length, lexicalGlobalObject);
-        break;
-    }
-
-    case WebCore::BufferEncodingType::base64: {
-        ret = Bun__encoding__toStringBase64(castedThis->typedVector() + offset, length, lexicalGlobalObject);
-        break;
-    }
-
-    case WebCore::BufferEncodingType::base64url: {
-        ret = Bun__encoding__toStringURLSafeBase64(castedThis->typedVector() + offset, length, lexicalGlobalObject);
-        break;
-    }
-
+    case WebCore::BufferEncodingType::utf16le:
+    case WebCore::BufferEncodingType::base64:
+    case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
-        ret = Bun__encoding__toStringHex(castedThis->typedVector() + offset, length, lexicalGlobalObject);
+        ret = Bun__encoding__toString(castedThis->typedVector() + offset, length, lexicalGlobalObject, static_cast<uint8_t>(encoding));
         break;
     }
     default: {
@@ -1283,12 +1192,12 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
 
     if (callFrame->argumentCount() > 1) {
         if (arg1.value().isAnyInt()) {
-            int32_t ioffset = arg1.value().toInt32(lexicalGlobalObject);
+            int32_t ioffset = arg1.value().toUInt32(lexicalGlobalObject);
             if (ioffset < 0) {
                 throwTypeError(lexicalGlobalObject, scope, "Offset must be a positive integer"_s);
                 return JSC::JSValue::encode(jsUndefined());
             }
-            offset = static_cast<uint32_t>(ioffset);
+            offset = ioffset;
         } else if (arg1.value().isString()) {
             std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1.value());
             if (!encoded) {
@@ -1300,81 +1209,39 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
         }
     }
 
-    if (callFrame->argumentCount() > 2) {
-        length = static_cast<uint32_t>(callFrame->argument(2).toInt32(lexicalGlobalObject));
-    }
-
-    length -= std::min(offset, length);
-
     if (UNLIKELY(length < offset)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(0)));
     }
 
     if (callFrame->argumentCount() > 2) {
-        std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(3));
-        if (!encoded) {
-            throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-            return JSC::JSValue::encode(jsUndefined());
-        }
+        uint32_t arg_len = 0;
+        arg_len = callFrame->argument(2).toUInt32(lexicalGlobalObject);
+        length = std::min(arg_len, length-offset);
+    }
 
-        encoding = encoded.value();
+    if (callFrame->argumentCount() > 2) {
+        std::optional<BufferEncodingType> parsedEncoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(3));
+        if (parsedEncoding.has_value()) {
+            encoding = parsedEncoding.value();
+        }
     }
 
     auto view = str->tryGetValue(lexicalGlobalObject);
     int64_t written = 0;
 
     switch (encoding) {
-    case WebCore::BufferEncodingType::utf8: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__writeLatin1AsUTF8(view.characters8(), view.length(), castedThis->typedVector() + offset, length);
-        } else {
-            written = Bun__encoding__writeUTF16AsUTF8(view.characters16(), view.length(), castedThis->typedVector() + offset, length);
-        }
-        break;
-    }
-
+    case WebCore::BufferEncodingType::utf8:
     case WebCore::BufferEncodingType::latin1:
-    case WebCore::BufferEncodingType::ascii: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__writeLatin1AsASCII(view.characters8(), view.length(), castedThis->typedVector() + offset, length);
-        } else {
-            written = Bun__encoding__writeUTF16AsASCII(view.characters16(), view.length(), castedThis->typedVector() + offset, length);
-        }
-        break;
-    }
+    case WebCore::BufferEncodingType::ascii:
     case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__writeLatin1AsUTF16(view.characters8(), view.length(), castedThis->typedVector() + offset, length);
-        } else {
-            written = Bun__encoding__writeUTF16AsUTF16(view.characters16(), view.length(), castedThis->typedVector() + offset, length);
-        }
-        break;
-    }
-
-    case WebCore::BufferEncodingType::base64: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__writeLatin1AsBase64(view.characters8(), view.length(), castedThis->typedVector() + offset, length);
-        } else {
-            written = Bun__encoding__writeUTF16AsBase64(view.characters16(), view.length(), castedThis->typedVector() + offset, length);
-        }
-        break;
-    }
-
-    case WebCore::BufferEncodingType::base64url: {
-        if (view.is8Bit()) {
-            written = Bun__encoding__writeLatin1AsURLSafeBase64(view.characters8(), view.length(), castedThis->typedVector() + offset, length);
-        } else {
-            written = Bun__encoding__writeUTF16AsURLSafeBase64(view.characters16(), view.length(), castedThis->typedVector() + offset, length);
-        }
-        break;
-    }
-
+    case WebCore::BufferEncodingType::utf16le:
+    case WebCore::BufferEncodingType::base64:
+    case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
         if (view.is8Bit()) {
-            written = Bun__encoding__writeLatin1AsHex(view.characters8(), view.length(), castedThis->typedVector() + offset, length);
+            written = Bun__encoding__writeLatin1(view.characters8(), view.length(), castedThis->typedVector() + offset, length, static_cast<uint8_t>(encoding));
         } else {
-            written = Bun__encoding__writeUTF16AsHex(view.characters16(), view.length(), castedThis->typedVector() + offset, length);
+            written = Bun__encoding__writeUTF16(view.characters16(), view.length(), castedThis->typedVector() + offset, length, static_cast<uint8_t>(encoding));
         }
         break;
     }

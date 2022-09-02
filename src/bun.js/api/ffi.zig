@@ -292,8 +292,21 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected at least one symbol", .{}, global.ref());
         }
 
-        var dylib = std.DynLib.open(name) catch {
-            return JSC.toInvalidArguments("Failed to find or open library", .{}, global.ref());
+        var dylib: std.DynLib = brk: {
+            // First try using the name directly
+            break :brk std.DynLib.open(name) catch {
+                const backup_name = Fs.FileSystem.instance.abs(&[1]string{name});
+                // if that fails, try resolving the filepath relative to the current working directory
+                break :brk std.DynLib.open(backup_name) catch {
+                    // Then, if that fails, report an error.
+                    const system_error = JSC.SystemError{
+                        .code = ZigString.init(@tagName(JSC.Node.ErrorCode.ERR_DLOPEN_FAILED)),
+                        .message = ZigString.init("Failed to open library. This is usually caused by a missing library or an invalid library path."),
+                        .syscall = ZigString.init("dlopen"),
+                    };
+                    return system_error.toErrorInstance(global);
+                };
+            };
         };
 
         var obj = JSC.JSValue.c(JSC.C.JSObjectMake(global.ref(), null, null));

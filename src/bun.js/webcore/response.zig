@@ -99,7 +99,7 @@ pub const Response = struct {
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll("statusText: ");
-            try JSPrinter.writeJSONString(this.status_text, Writer, writer, .ascii);
+            try JSPrinter.writeJSONString(this.body.init.status_text, Writer, writer, .ascii);
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
@@ -150,7 +150,7 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
-        return ZigString.init(this.status_text).withEncoding().toValueGC(globalThis);
+        return ZigString.init(this.body.init.status_text).withEncoding().toValueGC(globalThis);
     }
 
     pub fn getOK(
@@ -3676,6 +3676,7 @@ pub const Body = struct {
     pub const Init = struct {
         headers: ?*FetchHeaders = null,
         status_code: u16,
+        status_text: string = "",
         method: Method = Method.GET,
 
         pub fn clone(this: Init, _: *JSGlobalObject) Init {
@@ -3706,6 +3707,12 @@ pub const Body = struct {
                 const number = status_value.to(i32);
                 if (number > 0)
                     result.status_code = @truncate(u16, @intCast(u32, number));
+            }
+
+            if (response_init.fastGet(ctx, .statusText)) |text| {
+                var str = text.toSlice(ctx, allocator);
+                defer str.deinit();
+                result.status_text = allocator.dupe(u8, str.slice()) catch unreachable;
             }
 
             if (response_init.fastGet(ctx, .method)) |method_value| {

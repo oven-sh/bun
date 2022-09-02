@@ -202,6 +202,7 @@ using namespace JSC;
     macro(startedPromise) \
     macro(state) \
     macro(status) \
+    macro(statusText) \
     macro(storedError) \
     macro(strategy) \
     macro(strategyHWM) \

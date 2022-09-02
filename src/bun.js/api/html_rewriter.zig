@@ -452,7 +452,7 @@ pub const HTMLRewriter = struct {
             result.body.init.status_code = original.body.init.status_code;
 
             result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
-            result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
+            result.body.init.status_text = bun.default_allocator.dupe(u8, original.body.init.status_text) catch unreachable;
 
             var input: JSC.WebCore.Blob = original.body.value.use();
 

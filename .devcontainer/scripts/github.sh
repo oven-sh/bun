@@ -178,7 +178,7 @@ echo "Downloading github CLI..."
 # Import key safely (new method rather than deprecated apt-key approach) and install
 . /etc/os-release
 receive_gpg_keys GITHUB_CLI_ARCHIVE_GPG_KEY /usr/share/keyrings/githubcli-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages ${VERSION_CODENAME} main" >/etc/apt/sources.list.d/github-cli.list
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" >/etc/apt/sources.list.d/github-cli.list
 apt-get update
 apt-get -y install "gh${version_suffix}"
 rm -rf "/tmp/gh/gnupg"

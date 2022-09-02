@@ -236,7 +236,6 @@ pub fn build(b: *std.build.Builder) !void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     mode = b.standardReleaseOptions();
 
-    const cwd: []const u8 = b.pathFromRoot(".");
     var exe: *std.build.LibExeObjStep = undefined;
     var output_dir_buf = std.mem.zeroes([4096]u8);
     var bin_label = if (mode == std.builtin.Mode.Debug) "packages/debug-bun-" else "packages/bun-";
@@ -297,8 +296,6 @@ pub fn build(b: *std.build.Builder) !void {
     exe.setTarget(target);
     exe.setBuildMode(mode);
     b.install_path = output_dir;
-
-    var typings_exe = b.addExecutable("typescript-decls", "src/typegen.zig");
 
     const min_version: std.builtin.Version = if (target.getOsTag() != .freestanding)
         target.getOsVersionMin().semver
@@ -540,25 +537,6 @@ pub fn build(b: *std.build.Builder) !void {
             headers_step.dependOn(&after.step);
         }
     }
-
-    try configureObjectStep(b, typings_exe, target, obj.main_pkg_path.?);
-    try linkObjectFiles(b, typings_exe, target);
-
-    var typings_cmd: *std.build.RunStep = typings_exe.run();
-    typings_cmd.cwd = cwd;
-    typings_cmd.addArg(cwd);
-    typings_cmd.addArg("types");
-    typings_cmd.step.dependOn(&typings_exe.step);
-    if (target.getOsTag() == .macos) {
-        typings_exe.linkSystemLibrary("icucore");
-        typings_exe.linkSystemLibrary("iconv");
-        typings_exe.addLibPath(
-            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib",
-        );
-    }
-
-    var typings_step = b.step("types", "Build TypeScript types");
-    typings_step.dependOn(&typings_cmd.step);
 }
 
 pub var original_make_fn: ?fn (step: *std.build.Step) anyerror!void = null;

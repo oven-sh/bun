@@ -397,7 +397,6 @@ pub const RunCommand = struct {
             this_bundler.runEnvLoader() catch {};
 
             if (root_dir_info.getEntries()) |dir| {
-
                 // Run .env again if it exists in a parent dir
                 if (this_bundler.options.production) {
                     this_bundler.env.load(&this_bundler.fs.fs, dir, false) catch {};

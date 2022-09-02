@@ -2323,7 +2323,6 @@ pub const EventListenerMixin = struct {
             .{
                 .@"callAsFunction" = .{
                     .rfn = Handler.addListener,
-                    .ts = d.ts{},
                 },
             },
             .{},
@@ -2413,7 +2412,6 @@ pub const ResolveError = struct {
             .@"referrer" = .{
                 .@"get" = getReferrer,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"code" = .{
                 .@"get" = getCode,
@@ -2422,27 +2420,22 @@ pub const ResolveError = struct {
             .@"message" = .{
                 .@"get" = getMessage,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"name" = .{
                 .@"get" = getName,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"specifier" = .{
                 .@"get" = getSpecifier,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"importKind" = .{
                 .@"get" = getImportKind,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
             .@"position" = .{
                 .@"get" = getPosition,
                 .ro = true,
-                .ts = d.ts{ .@"return" = "string" },
             },
         },
     );
@@ -2897,9 +2890,9 @@ pub const HardcodedModule = enum {
             .{ "node:path/win32", "node:path" },
             .{ "node:perf_hooks", "node:perf_hooks" },
             .{ "node:process", "node:process" },
+            .{ "node:stream", "node:stream" },
             .{ "node:stream/consumer", "node:stream/consumer" },
             .{ "node:stream/web", "node:stream/web" },
-            .{ "node:stream", "node:stream" },
             .{ "node:string_decoder", "node:string_decoder" },
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
@@ -2910,9 +2903,9 @@ pub const HardcodedModule = enum {
             .{ "path/win32", "node:path" },
             .{ "perf_hooks", "node:perf_hooks" },
             .{ "process", "node:process" },
+            .{ "stream", "node:stream" },
             .{ "stream/consumer", "node:stream/consumer" },
             .{ "stream/web", "node:stream/web" },
-            .{ "stream", "node:stream" },
             .{ "string_decoder", "node:string_decoder" },
             .{ "timers", "node:timers" },
             .{ "timers/promises", "node:timers/promises" },

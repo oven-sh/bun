@@ -6,7 +6,7 @@
       "request": "launch",
       "name": "bun test",
       "program": "bun-debug",
-      "args": ["wiptest", "jsc"],
+      "args": ["wiptest", "${file}"],
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1"

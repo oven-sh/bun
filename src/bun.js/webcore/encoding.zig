@@ -707,10 +707,10 @@ pub const Encoder = struct {
     }
     export fn Bun__encoding__byteLengthLatin1(input: [*]const u8, len: usize, encoding: u8) usize {
         return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
-            .utf8 => byteLengthU8(input, len, .hex),
-            .latin1 =>byteLengthU8(input, len, .ascii),
+            .utf8 => byteLengthU8(input, len, .utf8),
+            .latin1 => byteLengthU8(input, len, .ascii),
             .ascii => byteLengthU8(input, len, .ascii),
-            .ucs2 =>byteLengthU8(input, len, .utf16le),
+            .ucs2 => byteLengthU8(input, len, .utf16le),
             .utf16le => byteLengthU8(input, len, .utf16le),
             .base64 => byteLengthU8(input, len, .base64),
             .base64url => byteLengthU8(input, len, .base64url),
@@ -720,10 +720,10 @@ pub const Encoder = struct {
     }
     export fn Bun__encoding__byteLengthUTF16(input: [*]const u16, len: usize, encoding: u8) usize {
         return switch (@intToEnum(JSC.Node.Encoding, encoding)) {
-            .utf8 => byteLengthU16(input, len, .hex),
-            .latin1 =>byteLengthU16(input, len, .ascii),
+            .utf8 => byteLengthU16(input, len, .utf8),
+            .latin1 => byteLengthU16(input, len, .ascii),
             .ascii => byteLengthU16(input, len, .ascii),
-            .ucs2 =>byteLengthU16(input, len, .utf16le),
+            .ucs2 => byteLengthU16(input, len, .utf16le),
             .utf16le => byteLengthU16(input, len, .utf16le),
             .base64 => byteLengthU16(input, len, .base64),
             .base64url => byteLengthU16(input, len, .base64url),

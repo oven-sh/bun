@@ -1214,7 +1214,7 @@ pub const Command = struct {
         }
     }
 
-    pub fn maybeOpenWithBunJS(ctx: *const Command.Context) bool {
+    fn maybeOpenWithBunJS(ctx: *const Command.Context) bool {
         const script_name_to_search = ctx.args.entry_points[0];
 
         var file_path = script_name_to_search;

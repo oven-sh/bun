@@ -144,6 +144,12 @@ pub const ImportRecord = struct {
 
     tag: Tag = Tag.none,
 
+    /// Tell the printer to print the record as "foo:my-path" instead of "path"
+    /// where "foo" is the namespace
+    ///
+    /// Used to prevent running resolve plugins multiple times for the same path
+    print_namespace_in_path: bool = false,
+
     pub const Tag = enum {
         none,
         react_refresh,

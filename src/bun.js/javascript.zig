@@ -30,6 +30,7 @@ const logger = @import("../logger.zig");
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Bundler = @import("../bundler.zig").Bundler;
+const PluginRunner = @import("../bundler.zig").PluginRunner;
 const ServerEntryPoint = @import("../bundler.zig").ServerEntryPoint;
 const js_printer = @import("../js_printer.zig");
 const js_parser = @import("../js_parser.zig");
@@ -270,6 +271,7 @@ comptime {
         _ = Bun__queueMicrotask;
         _ = Bun__handleRejectedPromise;
         _ = Bun__readOriginTimer;
+        _ = Bun__onDidAppendPlugin;
     }
 }
 
@@ -280,6 +282,18 @@ pub export fn Bun__queueMicrotask(global: *JSGlobalObject, task: *JSC.CppTask) v
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
     const result = promise.result(global.vm());
     global.bunVM().runErrorHandler(result, null);
+}
+
+pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject) void {
+    if (jsc_vm.plugin_runner != null) {
+        return;
+    }
+
+    jsc_vm.plugin_runner = PluginRunner{
+        .global_object = globalObject,
+        .allocator = jsc_vm.allocator,
+    };
+    jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
 // If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
@@ -310,6 +324,8 @@ pub const VirtualMachine = struct {
     has_loaded_node_modules: bool = false,
     timer: Bun.Timer = Bun.Timer{},
     uws_event_loop: ?*uws.Loop = null,
+
+    plugin_runner: ?PluginRunner = null,
 
     /// Do not access this field directly
     /// It exists in the VirtualMachine struct so that
@@ -671,7 +687,7 @@ pub const VirtualMachine = struct {
     };
     fn _fetch(
         jsc_vm: *VirtualMachine,
-        _: *JSGlobalObject,
+        globalObject: *JSGlobalObject,
         _specifier: string,
         _: string,
         log: *logger.Log,
@@ -1054,18 +1070,153 @@ pub const VirtualMachine = struct {
             }
         }
 
-        const specifier = normalizeSpecifier(_specifier);
-
-        std.debug.assert(std.fs.path.isAbsolute(specifier)); // if this crashes, it means the resolver was skipped.
-
-        const path = Fs.Path.init(specifier);
-        const loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
+        var specifier = normalizeSpecifier(_specifier);
+        var path = Fs.Path.init(specifier);
+        const default_loader = jsc_vm.bundler.options.loaders.get(path.name.ext) orelse brk: {
             if (strings.eqlLong(specifier, jsc_vm.main, true)) {
                 break :brk options.Loader.js;
             }
 
             break :brk options.Loader.file;
         };
+        var loader = default_loader;
+        var virtual_source: logger.Source = undefined;
+        var has_virtual_source = false;
+        var source_code_slice: ZigString.Slice = ZigString.Slice.empty;
+        defer source_code_slice.deinit();
+
+        if (jsc_vm.plugin_runner != null) {
+            const namespace = PluginRunner.extractNamespace(_specifier);
+            const after_namespace = if (namespace.len == 0)
+                specifier
+            else
+                _specifier[@minimum(namespace.len + 1, _specifier.len)..];
+
+            if (PluginRunner.couldBePlugin(_specifier)) {
+                if (globalObject.runOnLoadPlugins(ZigString.init(namespace), ZigString.init(after_namespace), .bun)) |plugin_result| {
+                    if (plugin_result.isException(globalObject.vm()) or plugin_result.isAnyError(globalObject)) {
+                        jsc_vm.runErrorHandler(plugin_result, null);
+                        log.addError(null, logger.Loc.Empty, "Failed to run plugin") catch unreachable;
+                        return error.PluginError;
+                    }
+
+                    if (comptime Environment.allow_assert)
+                        std.debug.assert(plugin_result.isObject());
+
+                    if (plugin_result.get(globalObject, "loader")) |loader_value| {
+                        if (!loader_value.isUndefinedOrNull()) {
+                            const loader_string = loader_value.getZigString(globalObject);
+                            if (comptime Environment.allow_assert)
+                                std.debug.assert(loader_string.len > 0);
+
+                            if (loader_string.eqlComptime("js")) {
+                                loader = options.Loader.js;
+                            } else if (loader_string.eqlComptime("jsx")) {
+                                loader = options.Loader.jsx;
+                            } else if (loader_string.eqlComptime("tsx")) {
+                                loader = options.Loader.tsx;
+                            } else if (loader_string.eqlComptime("ts")) {
+                                loader = options.Loader.ts;
+                            } else if (loader_string.eqlComptime("json")) {
+                                loader = options.Loader.json;
+                            } else if (loader_string.eqlComptime("toml")) {
+                                loader = options.Loader.toml;
+                            } else if (loader_string.eqlComptime("object")) {
+                                const exports_object: JSValue = @as(?JSValue, brk: {
+                                    const exports_value = plugin_result.get(globalObject, "exports") orelse break :brk null;
+                                    if (!exports_value.isObject()) {
+                                        break :brk null;
+                                    }
+                                    break :brk exports_value;
+                                }) orelse {
+                                    log.addError(null, logger.Loc.Empty, "Expected object loader to return an \"exports\" object") catch unreachable;
+                                    return error.PluginError;
+                                };
+                                return ResolvedSource{
+                                    .allocator = null,
+                                    .source_code = ZigString{
+                                        .ptr = @ptrCast([*]const u8, exports_object.asVoid()),
+                                        .len = 0,
+                                    },
+                                    .specifier = ZigString.init(_specifier),
+                                    .source_url = ZigString.init(_specifier),
+                                    .hash = 0,
+                                    .tag = .object,
+                                };
+                            } else {
+                                log.addErrorFmt(
+                                    null,
+                                    logger.Loc.Empty,
+                                    jsc_vm.allocator,
+                                    "Expected onLoad() plugin \"loader\" to be one of \"js\", \"jsx\", \"tsx\", \"ts\", \"json\", or \"toml\" but received \"{any}\"",
+                                    .{loader_string},
+                                ) catch unreachable;
+                                return error.PluginError;
+                            }
+                        }
+                    }
+
+                    if (plugin_result.get(globalObject, "contents")) |code| {
+                        if (code.asArrayBuffer(globalObject)) |array_buffer| {
+                            virtual_source = .{
+                                .path = path,
+                                .key_path = path,
+                                .contents = array_buffer.byteSlice(),
+                            };
+                            has_virtual_source = true;
+                        } else if (code.isString()) {
+                            source_code_slice = code.toSlice(globalObject, jsc_vm.allocator);
+                            if (!source_code_slice.allocated) {
+                                if (!strings.isAllASCII(source_code_slice.slice())) {
+                                    var allocated = try strings.allocateLatin1IntoUTF8(jsc_vm.allocator, []const u8, source_code_slice.slice());
+                                    source_code_slice.ptr = allocated.ptr;
+                                    source_code_slice.len = @truncate(u32, allocated.len);
+                                    source_code_slice.allocated = true;
+                                    source_code_slice.allocator = jsc_vm.allocator;
+                                }
+                            }
+
+                            virtual_source = .{
+                                .path = path,
+                                .key_path = path,
+                                .contents = source_code_slice.slice(),
+                            };
+                            has_virtual_source = true;
+                        }
+                    }
+
+                    if (!has_virtual_source) {
+                        log.addError(null, logger.Loc.Empty, "Expected onLoad() plugin to return \"contents\" as a string or ArrayBufferView") catch unreachable;
+                        return error.PluginError;
+                    }
+                } else {
+                    std.debug.assert(std.fs.path.isAbsolute(specifier)); // if this crashes, it means the resolver was skipped.
+                }
+            }
+        }
+
+        const transpiled_result = transpileSourceCode(
+            jsc_vm,
+            specifier,
+            path,
+            loader,
+            log,
+            if (has_virtual_source) &virtual_source else null,
+            flags,
+        );
+        return transpiled_result;
+    }
+
+    fn transpileSourceCode(
+        jsc_vm: *VirtualMachine,
+        specifier: string,
+        path: Fs.Path,
+        loader: options.Loader,
+        log: *logger.Log,
+        virtual_source: ?*const logger.Source,
+        comptime flags: FetchFlags,
+    ) !ResolvedSource {
+        const disable_transpilying = comptime flags.disableTranspiling();
 
         switch (loader) {
             .js, .jsx, .ts, .tsx, .json, .toml => {
@@ -1116,6 +1267,7 @@ pub const VirtualMachine = struct {
                     .file_hash = hash,
                     .macro_remappings = macro_remappings,
                     .jsx = jsc_vm.bundler.options.jsx,
+                    .virtual_source = virtual_source,
                 };
 
                 if (is_node_override) {
@@ -1391,12 +1543,27 @@ pub const VirtualMachine = struct {
 
     pub fn resolveMaybeNeedsTrailingSlash(res: *ErrorableZigString, global: *JSGlobalObject, specifier: ZigString, source: ZigString, comptime is_a_file_path: bool, comptime realpath: bool) void {
         var result = ResolveFunctionResult{ .path = "", .result = null };
+        var jsc_vm = vm;
+        if (jsc_vm.plugin_runner) |plugin_runner| {
+            if (PluginRunner.couldBePlugin(specifier.slice())) {
+                const namespace = PluginRunner.extractNamespace(specifier.slice());
+                const after_namespace = if (namespace.len == 0)
+                    specifier
+                else
+                    specifier.substring(namespace.len + 1);
+
+                if (plugin_runner.onResolveJSC(ZigString.init(namespace), after_namespace, source, .bun)) |resolved_path| {
+                    res.* = resolved_path;
+                    return;
+                }
+            }
+        }
 
         _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path, realpath) catch |err| {
             // This should almost always just apply to dynamic imports
 
             const printed = ResolveError.fmt(
-                vm.allocator,
+                jsc_vm.allocator,
                 specifier.slice(),
                 source.slice(),
                 err,

@@ -1087,9 +1087,13 @@ pub const VirtualMachine = struct {
 
         if (jsc_vm.plugin_runner != null) {
             const namespace = PluginRunner.extractNamespace(_specifier);
+            const after_namespace = if (namespace.len == 0)
+                specifier
+            else
+                _specifier[@minimum(namespace.len + 1, _specifier.len)..];
 
             if (PluginRunner.couldBePlugin(_specifier)) {
-                if (globalObject.runOnLoadPlugins(ZigString.init(namespace), ZigString.init(specifier[namespace.len..]), .bun)) |plugin_result| {
+                if (globalObject.runOnLoadPlugins(ZigString.init(namespace), ZigString.init(after_namespace), .bun)) |plugin_result| {
                     if (plugin_result.isException(globalObject.vm()) or plugin_result.isAnyError(globalObject)) {
                         jsc_vm.runErrorHandler(plugin_result, null);
                         log.addError(null, logger.Loc.Empty, "Failed to run plugin") catch unreachable;
@@ -1521,7 +1525,12 @@ pub const VirtualMachine = struct {
         if (jsc_vm.plugin_runner) |plugin_runner| {
             if (PluginRunner.couldBePlugin(specifier.slice())) {
                 const namespace = PluginRunner.extractNamespace(specifier.slice());
-                if (plugin_runner.onResolveJSC(ZigString.init(namespace), specifier, source, .bun)) |resolved_path| {
+                const after_namespace = if (namespace.len == 0)
+                    specifier
+                else
+                    specifier.substring(namespace.len + 1);
+
+                if (plugin_runner.onResolveJSC(ZigString.init(namespace), after_namespace, source, .bun)) |resolved_path| {
                     res.* = resolved_path;
                     return;
                 }

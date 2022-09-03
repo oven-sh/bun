@@ -142,26 +142,28 @@ pub const PluginRunner = struct {
             // '.' followed by either a letter or a non-ascii character
             // maybe there are non-ascii file extensions?
             // we mostly want to cheaply rule out "../" and ".." and "./"
-            return ext.len > 0 and ((ext[0] > 'a' and ext[0] < 'z') or (ext[0] > 'A' and ext[0] < 'Z') or ext[0] > 127);
+            return ext.len > 0 and ((ext[0] >= 'a' and ext[0] <= 'z') or (ext[0] >= 'A' and ext[0] <= 'Z') or ext[0] > 127);
         }
         return (!std.fs.path.isAbsolute(specifier) and strings.containsChar(specifier, ':'));
     }
 
     pub fn onResolve(
         this: *PluginRunner,
-        path: Fs.Path,
+        specifier: []const u8,
         importer: []const u8,
         log: *logger.Log,
         loc: logger.Loc,
         target: JSC.JSGlobalObject.BunPluginTarget,
     ) ?Fs.Path {
         var global = this.global_object;
+        const namespace_slice = extractNamespace(specifier);
+        const namespace = if (namespace_slice.len > 0 and !strings.eqlComptime(namespace_slice, "file"))
+            JSC.ZigString.init(namespace_slice)
+        else
+            JSC.ZigString.init("");
         const on_resolve_plugin = global.runOnResolvePlugins(
-            if (path.namespace.len > 0 and !strings.eqlComptime(path.namespace, "file"))
-                JSC.ZigString.init(path.namespace)
-            else
-                JSC.ZigString.init(""),
-            JSC.ZigString.init(path.text),
+            namespace,
+            JSC.ZigString.init(specifier).substring(if (namespace.len > 0) namespace.len + 1 else 0),
             JSC.ZigString.init(importer),
             target,
         ) orelse return null;
@@ -173,8 +175,6 @@ pub const PluginRunner = struct {
         }
 
         var file_path = path_value.getZigString(global);
-
-        if (path.name.ext.len > 0) {}
 
         if (file_path.len == 0) {
             log.addError(

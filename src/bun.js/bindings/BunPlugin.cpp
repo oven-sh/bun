@@ -16,9 +16,20 @@
 #include "JavaScriptCore/SubspaceInlines.h"
 #include "JavaScriptCore/RegExpObject.h"
 
+#include "JavaScriptCore/RegularExpression.h"
+
 namespace Zig {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
+
+static bool isValidNamespaceString(String& namespaceString)
+{
+    static JSC::Yarr::RegularExpression* namespaceRegex = nullptr;
+    if (!namespaceRegex) {
+        namespaceRegex = new JSC::Yarr::RegularExpression("^([a-zA-Z0-9_\\-]+)$"_s);
+    }
+    return namespaceRegex->match(namespaceString) > -1;
+}
 
 static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
@@ -49,8 +60,9 @@ static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* glob
     if (JSValue namespaceValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "namespace"_s))) {
         if (namespaceValue.isString()) {
             namespaceString = namespaceValue.toWTFString(globalObject);
-            if (namespaceString.contains(":"_s) || namespaceString.contains("/"_s)) {
-                throwException(globalObject, scope, createError(globalObject, "namespaces cannot contain a \":\" or a \"/\""_s));
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            if (!isValidNamespaceString(namespaceString)) {
+                throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
                 return JSValue::encode(jsUndefined());
             }
         }
@@ -66,7 +78,8 @@ static EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* glob
     }
 
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    global->onLoadPlugins[target].append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
+    auto& plugins = global->onLoadPlugins[target];
+    plugins.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
     Bun__onDidAppendPlugin(reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunVM(), globalObject);
     return JSValue::encode(jsUndefined());
 }
@@ -100,11 +113,13 @@ static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* g
     if (JSValue namespaceValue = filterObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "namespace"_s))) {
         if (namespaceValue.isString()) {
             namespaceString = namespaceValue.toWTFString(globalObject);
-            if (namespaceString.contains(":"_s) || namespaceString.contains("/"_s)) {
-                throwException(globalObject, scope, createError(globalObject, "namespaces cannot contain a \":\" or a \"/\""_s));
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            if (!isValidNamespaceString(namespaceString)) {
+                throwException(globalObject, scope, createError(globalObject, "namespace can only contain letters, numbers, dashes, or underscores"_s));
                 return JSValue::encode(jsUndefined());
             }
         }
+
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
 
@@ -117,7 +132,8 @@ static EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* g
     }
 
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    global->onResolvePlugins[target].append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
+    auto& plugins = global->onResolvePlugins[target];
+    plugins.append(vm, filter->regExp(), jsCast<JSFunction*>(func), namespaceString);
 
     Bun__onDidAppendPlugin(reinterpret_cast<Zig::GlobalObject*>(globalObject)->bunVM(), globalObject);
     return JSValue::encode(jsUndefined());
@@ -156,13 +172,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBrowser, (JSC::JSGlobalO
 extern "C" EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    global->onLoadPlugins[BunPluginTargetNode].fileNamespace.clear();
-    global->onLoadPlugins[BunPluginTargetBun].fileNamespace.clear();
-    global->onLoadPlugins[BunPluginTargetBrowser].fileNamespace.clear();
-
-    global->onResolvePlugins[BunPluginTargetNode].fileNamespace.clear();
-    global->onResolvePlugins[BunPluginTargetBun].fileNamespace.clear();
-    global->onResolvePlugins[BunPluginTargetBrowser].fileNamespace.clear();
+    for (uint8_t i = 0; i < BunPluginTargetMax + 1; i++) {
+        global->onLoadPlugins[i].fileNamespace.clear();
+        global->onResolvePlugins[i].fileNamespace.clear();
+        global->onLoadPlugins[i].groups.clear();
+        global->onResolvePlugins[i].namespaces.clear();
+    }
 
     return JSValue::encode(jsUndefined());
 }
@@ -315,9 +330,10 @@ void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* 
     }
 }
 
-JSFunction* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String path)
+JSFunction* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String& path)
 {
-    for (size_t i = 0; i < filters.size(); i++) {
+    size_t count = filters.size();
+    for (size_t i = 0; i < count; i++) {
         if (filters[i].get()->match(globalObject, path, 0)) {
             return callbacks[i].get();
         }
@@ -328,18 +344,15 @@ JSFunction* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String pat
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, ZigString* namespaceString, ZigString* path)
 {
-    Group& group = fileNamespace;
-
-    if (namespaceString != nullptr) {
-        WTF::String namespaceStr = Zig::toString(*namespaceString);
-        Group* found = this->group(namespaceStr);
-        if (found == nullptr) {
-            return JSValue::encode(jsUndefined());
-        }
-        group = *found;
+    Group* groupPtr = this->group(namespaceString ? Zig::toString(*namespaceString) : String());
+    if (groupPtr == nullptr) {
+        return JSValue::encode(jsUndefined());
     }
+    Group& group = *groupPtr;
 
-    JSC::JSFunction* function = group.find(globalObject, Zig::toString(*path));
+    auto pathString = Zig::toString(*path);
+
+    JSC::JSFunction* function = group.find(globalObject, pathString);
     if (!function) {
         return JSValue::encode(JSC::jsUndefined());
     }
@@ -352,7 +365,7 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, ZigStri
     auto& builtinNames = clientData->builtinNames();
     paramsObject->putDirect(
         vm, clientData->builtinNames().pathPublicName(),
-        Zig::toJSStringValue(*path, globalObject));
+        jsString(vm, pathString));
     arguments.append(paramsObject);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -396,15 +409,11 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, ZigStri
 
 EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, ZigString* namespaceString, ZigString* path, ZigString* importer)
 {
-    Group& group = fileNamespace;
-    if (namespaceString != nullptr) {
-        WTF::String namespaceStr = Zig::toString(*namespaceString);
-        Group* found = this->group(namespaceStr);
-        if (found == nullptr) {
-            return JSValue::encode(jsUndefined());
-        }
-        group = *found;
+    Group* groupPtr = this->group(namespaceString ? Zig::toString(*namespaceString) : String());
+    if (groupPtr == nullptr) {
+        return JSValue::encode(jsUndefined());
     }
+    Group& group = *groupPtr;
     auto& filters = group.filters;
 
     if (filters.size() == 0) {

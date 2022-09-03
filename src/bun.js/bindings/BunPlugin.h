@@ -3,7 +3,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/StrongInlines.h"
+#include "JavaScriptCore/Strong.h"
 #include "helpers.h"
 
 extern "C" JSC_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
@@ -15,15 +15,19 @@ using namespace JSC;
 
 class BunPlugin {
 public:
+    // This is a list of pairs of regexps and functions to match against
     class Group {
 
     public:
+        // JavaScriptCore/RegularExpression does exist however it does not JIT
+        // We want JIT!
+        // TODO: evaluate if using JSInternalFieldImpl(2) is faster
         Vector<JSC::Strong<JSC::RegExp>> filters = {};
         Vector<JSC::Strong<JSC::JSFunction>> callbacks = {};
         BunPluginTarget target { BunPluginTargetBun };
 
         void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func);
-        JSFunction* find(JSC::JSGlobalObject* globalObj, String path);
+        JSFunction* find(JSC::JSGlobalObject* globalObj, String& path);
         void clear()
         {
             filters.clear();
@@ -33,11 +37,11 @@ public:
 
     class Base {
     public:
-        Group fileNamespace;
+        Group fileNamespace = {};
         Vector<String> namespaces = {};
         Vector<Group> groups = {};
 
-        Group* group(String& namespaceStr)
+        Group* group(const String& namespaceStr)
         {
             if (namespaceStr.isEmpty()) {
                 return &fileNamespace;

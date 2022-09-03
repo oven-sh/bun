@@ -101,6 +101,23 @@ pub const ZigString = extern struct {
         return this;
     }
 
+    pub fn substring(this: ZigString, offset: usize) ZigString {
+        if (this.is16Bit()) {
+            return ZigString.from16Slice(this.utf16SliceAligned()[@minimum(this.len, offset)..]);
+        }
+
+        var out = ZigString.init(this.slice()[@minimum(this.len, offset)..]);
+        if (this.isUTF8()) {
+            out.markUTF8();
+        }
+
+        if (this.isGloballyAllocated()) {
+            out.mark();
+        }
+
+        return out;
+    }
+
     pub fn utf8ByteLength(this: ZigString) usize {
         if (this.isUTF8()) {
             return this.len;

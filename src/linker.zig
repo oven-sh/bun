@@ -321,7 +321,7 @@ pub const Linker = struct {
                     if (linker.plugin_runner) |runner| {
                         if (PluginRunner.couldBePlugin(import_record.path.text)) {
                             if (runner.onResolve(
-                                import_record.path,
+                                import_record.path.text,
                                 file_path.text,
                                 linker.log,
                                 import_record.range.loc,
@@ -812,8 +812,22 @@ pub const Linker = struct {
             .napi => {
                 import_record.print_mode = .napi_module;
             },
-            .wasm, .file => {
+            .wasm => {
                 import_record.print_mode = .import_path;
+            },
+            .file => {
+
+                // if we're building for web/node, always print as import path
+                // if we're building for bun
+                // it's more complicated
+                // loader plugins could be executed between when this is called and the import is evaluated
+                // but we want to preserve the semantics of "file" returning import paths for compatibiltiy with frontend frameworks
+                // We choose to only do this for import statements
+                // Import statements would break anyway if we didn't do this
+                // so that's an okay tradeoff
+                if (!linker.options.platform.isBun() or import_record.kind == .stmt) {
+                    import_record.print_mode = .import_path;
+                }
             },
 
             else => {},

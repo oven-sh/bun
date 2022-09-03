@@ -3713,6 +3713,14 @@ pub fn NewPrinter(
                                 p.print(" = ");
                                 p.printImportRecordPath(&p.import_records[s.import_record_index]);
                                 p.printSemicolonAfterStatement();
+                            } else if (p.import_records[s.import_record_index].contains_import_star) {
+                                // this case is particularly important for running files without an extension in bun's runtime
+                                p.print("var ");
+                                p.printSymbol(s.namespace_ref);
+                                p.print(" = {default:");
+                                p.printImportRecordPath(&p.import_records[s.import_record_index]);
+                                p.print("}");
+                                p.printSemicolonAfterStatement();
                             }
                             return;
                         },

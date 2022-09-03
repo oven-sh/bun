@@ -226,6 +226,55 @@ zsh)
         done
     fi
     ;;
+bash)
+    commands=(
+        "export $install_env=$quoted_install_dir"
+        "export PATH=$bin_env:\$PATH"
+    )
+
+    bash_configs=(
+        "$HOME/.bashrc"
+        "$HOME/.bash_profile"
+    )
+
+    if [[ ${XDG_CONFIG_HOME:-} ]]; then
+        bash_configs+=(
+            "$XDG_CONFIG_HOME/.bash_profile"
+            "$XDG_CONFIG_HOME/.bashrc"
+            "$XDG_CONFIG_HOME/bash_profile"
+            "$XDG_CONFIG_HOME/bashrc"
+        )
+    fi
+
+    set_manually=true
+    for bash_config in "${bash_configs[@]}"; do
+        tilde_bash_config=$(tildify "$bash_config")
+
+        if [[ -w $bash_config ]]; then
+            {
+                echo -e '\n# bun'
+
+                for command in "${commands[@]}"; do
+                    echo "$command"
+                done
+            } >>"$bash_config"
+
+            info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_bash_config\""
+
+            refresh_command="source $bash_config"
+            set_manually=false
+            break
+        fi
+    done
+
+    if [[ $set_manually = true ]]; then
+        echo "Manually add the directory to $tilde_bash_config (or similar):"
+
+        for command in "${commands[@]}"; do
+            info_bold "  $command"
+        done
+    fi
+    ;;
 *)
     echo 'Manually add the directory to ~/.bashrc (or similar):'
     info_bold "  export $install_env=$quoted_install_dir"

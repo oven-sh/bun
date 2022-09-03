@@ -16,6 +16,24 @@ Bun.plugin({
   },
 });
 
+var objectModuleResult = {
+  hello: "world",
+};
+Bun.plugin({
+  name: "an object module",
+  setup(builder) {
+    builder.onResolve({ filter: /.*/, namespace: "obj" }, ({ path }) => ({
+      path,
+      namespace: "obj",
+    }));
+
+    builder.onLoad({ filter: /.*/, namespace: "obj" }, () => ({
+      exports: objectModuleResult,
+      loader: "object",
+    }));
+  },
+});
+
 Bun.plugin({
   name: "svelte loader",
   setup(builder) {
@@ -71,6 +89,16 @@ describe("require", () => {
   it("beep:boop returns 42", () => {
     const result = require("beep:boop");
     expect(result.default).toBe(42);
+  });
+
+  it("object module works", () => {
+    const result = require("obj:boop");
+    expect(result.hello).toBe(objectModuleResult.hello);
+    objectModuleResult.there = true;
+    const result2 = require("obj:boop2");
+    expect(result.there).toBe(undefined);
+    expect(result2.there).toBe(objectModuleResult.there);
+    expect(result2.there).toBe(true);
   });
 });
 

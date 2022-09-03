@@ -164,6 +164,7 @@ using JSBuffer = WebCore::JSBuffer;
 #include "../modules/EventsModule.h"
 #include "../modules/ProcessModule.h"
 #include "../modules/StringDecoderModule.h"
+#include "../modules/ObjectModule.h"
 
 // #include <iostream>
 static bool has_loaded_jsc = false;
@@ -2665,6 +2666,22 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
     }
+    case SyntheticModuleType::ObjectModule: {
+        JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(
+            bitwise_cast<int64_t>(reinterpret_cast<size_t>(res.result.value.source_code.ptr)));
+        JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
+        auto function = generateObjectModuleSourceCode(
+            globalObject,
+            object);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTFMove(function),
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
     case SyntheticModuleType::Process: {
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(
@@ -2754,6 +2771,23 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         scope.release();
 
         globalObject->vm().drainMicrotasks();
+        return promise;
+    }
+    case SyntheticModuleType::ObjectModule: {
+        JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(
+            bitwise_cast<int64_t>(reinterpret_cast<size_t>(res.result.value.source_code.ptr)));
+        JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(generateObjectModuleSourceCode(
+                                                     globalObject,
+                                                     object),
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
         return promise;
     }
     case SyntheticModuleType::Buffer: {

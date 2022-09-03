@@ -1121,6 +1121,28 @@ pub const VirtualMachine = struct {
                                 loader = options.Loader.json;
                             } else if (loader_string.eqlComptime("toml")) {
                                 loader = options.Loader.toml;
+                            } else if (loader_string.eqlComptime("object")) {
+                                const exports_object: JSValue = @as(?JSValue, brk: {
+                                    const exports_value = plugin_result.get(globalObject, "exports") orelse break :brk null;
+                                    if (!exports_value.isObject()) {
+                                        break :brk null;
+                                    }
+                                    break :brk exports_value;
+                                }) orelse {
+                                    log.addError(null, logger.Loc.Empty, "Expected object loader to return an \"exports\" object") catch unreachable;
+                                    return error.PluginError;
+                                };
+                                return ResolvedSource{
+                                    .allocator = null,
+                                    .source_code = ZigString{
+                                        .ptr = @ptrCast([*]const u8, exports_object.asVoid()),
+                                        .len = 0,
+                                    },
+                                    .specifier = ZigString.init(_specifier),
+                                    .source_url = ZigString.init(_specifier),
+                                    .hash = 0,
+                                    .tag = .object,
+                                };
                             } else {
                                 log.addErrorFmt(
                                     null,

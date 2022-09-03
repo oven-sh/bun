@@ -184,6 +184,8 @@ typedef struct {
 } Bun__ArrayBuffer;
 
 enum SyntheticModuleType : uint64_t {
+    ObjectModule = 2,
+
     Buffer = 1024,
     Process = 1025,
     Events = 1026,

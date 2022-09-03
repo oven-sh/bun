@@ -821,11 +821,8 @@ pub const Linker = struct {
                 // if we're building for bun
                 // it's more complicated
                 // loader plugins could be executed between when this is called and the import is evaluated
-                // but we want to preserve the semantics of "file" returning import paths for compatibiltiy with frontend frameworks
-                // We choose to only do this for import statements
-                // Import statements would break anyway if we didn't do this
-                // so that's an okay tradeoff
-                if (!linker.options.platform.isBun() or import_record.kind == .stmt) {
+                // but we want to preserve the semantics of "file" returning import paths for compatibiltiy with frontend frameworkss
+                if (!linker.options.platform.isBun()) {
                     import_record.print_mode = .import_path;
                 }
             },

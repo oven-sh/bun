@@ -96,6 +96,68 @@ describe("Bun.Transpiler", () => {
     });
   });
 
+  describe("generated closures", () => {
+    const input1 = `namespace test {
+  export enum x { y }
+}`;
+    const output1 = `var test;
+(function(test) {
+  let x;
+  (function(x) {
+    x[x["y"] = 0] = "y";
+  })(x = test.x || (test.x = {}));
+})(test || (test = {}))`;
+
+    it("namespace with exported enum", () => {
+      ts.expectPrinted_(input1, output1);
+    });
+
+    const input2 = `export namespace test {
+  export enum x { y }
+}`;
+    const output2 = `export var test;
+(function(test) {
+  let x;
+  (function(x) {
+    x[x["y"] = 0] = "y";
+  })(x = test.x || (test.x = {}));
+})(test || (test = {}))`;
+
+    it("exported namespace with exported enum", () => {
+      ts.expectPrinted_(input2, output2);
+    });
+
+    const input3 = `namespace first {
+  export namespace second {
+    enum x { y }
+  }
+}`;
+    const output3 = `var first;
+(function(first) {
+  let second;
+  (function(second) {
+    let x;
+    (function(x) {
+      x[x["y"] = 0] = "y";
+    })(x || (x = {}));
+  })(second = first.second || (first.second = {}));
+})(first || (first = {}))`
+
+    it("exported inner namespace", () => {
+      ts.expectPrinted_(input3, output3);
+    });
+
+    const input4 = `export enum x { y }`
+    const output4 = `export var x;
+(function(x) {
+  x[x["y"] = 0] = "y";
+})(x || (x = {}))`
+
+    it("exported enum", () => {
+      ts.expectPrinted_(input4, output4);
+    });
+  })
+
   describe("exports.replace", () => {
     const transpiler = new Bun.Transpiler({
       exports: {

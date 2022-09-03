@@ -17079,7 +17079,6 @@ fn NewParser_(
                             S.Local{
                                 .kind = .k_let,
                                 .decls = decls,
-                                .is_export = is_export,
                             },
                             stmt_loc,
                         ),

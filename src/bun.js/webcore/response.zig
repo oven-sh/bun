@@ -4169,13 +4169,15 @@ pub const Request = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         const string_contents: string = switch (this.method) {
-            .GET => Properties.UTF8.GET,
-            .HEAD => Properties.UTF8.HEAD,
-            .PATCH => Properties.UTF8.PATCH,
-            .PUT => Properties.UTF8.PUT,
-            .POST => Properties.UTF8.POST,
-            .OPTIONS => Properties.UTF8.OPTIONS,
-            else => "",
+            .GET => "GET",
+            .HEAD => "HEAD",
+            .PATCH => "PATCH",
+            .PUT => "PUT",
+            .POST => "POST",
+            .OPTIONS => "OPTIONS",
+            .CONNECT => "CONNECT",
+            .TRACE => "TRACE",
+            .DELETE => "DELETE",
         };
 
         return ZigString.init(string_contents).toValueGC(globalThis);

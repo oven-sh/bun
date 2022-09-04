@@ -47,40 +47,40 @@ class FunctionExecutable;
 namespace WebCore {
 
 /* ImportMetaObject */
+extern const char* const s_importMetaObjectLoadCJS2ESMCode;
+extern const int s_importMetaObjectLoadCJS2ESMCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectLoadCJS2ESMCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectLoadCJS2ESMCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectLoadCJS2ESMCodeImplementationVisibility;
+extern const char* const s_importMetaObjectRequireESMCode;
+extern const int s_importMetaObjectRequireESMCodeLength;
+extern const JSC::ConstructAbility s_importMetaObjectRequireESMCodeConstructAbility;
+extern const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind;
+extern const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility;
 extern const char* const s_importMetaObjectRequireCode;
 extern const int s_importMetaObjectRequireCodeLength;
 extern const JSC::ConstructAbility s_importMetaObjectRequireCodeConstructAbility;
 extern const JSC::ConstructorKind s_importMetaObjectRequireCodeConstructorKind;
 extern const JSC::ImplementationVisibility s_importMetaObjectRequireCodeImplementationVisibility;
-extern const char* const s_importMetaObjectLoadModuleCode;
-extern const int s_importMetaObjectLoadModuleCodeLength;
-extern const JSC::ConstructAbility s_importMetaObjectLoadModuleCodeConstructAbility;
-extern const JSC::ConstructorKind s_importMetaObjectLoadModuleCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_importMetaObjectLoadModuleCodeImplementationVisibility;
-extern const char* const s_importMetaObjectRequireModuleCode;
-extern const int s_importMetaObjectRequireModuleCodeLength;
-extern const JSC::ConstructAbility s_importMetaObjectRequireModuleCodeConstructAbility;
-extern const JSC::ConstructorKind s_importMetaObjectRequireModuleCodeConstructorKind;
-extern const JSC::ImplementationVisibility s_importMetaObjectRequireModuleCodeImplementationVisibility;
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_DATA(macro) \
+    macro(loadCJS2ESM, importMetaObjectLoadCJS2ESM, 1) \
+    macro(requireESM, importMetaObjectRequireESM, 1) \
     macro(require, importMetaObjectRequire, 1) \
-    macro(loadModule, importMetaObjectLoadModule, 2) \
-    macro(requireModule, importMetaObjectRequireModule, 2) \
 
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_LOADCJS2ESM 1
+#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIREESM 1
 #define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIRE 1
-#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_LOADMODULE 1
-#define WEBCORE_BUILTIN_IMPORTMETAOBJECT_REQUIREMODULE 1
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_CODE(macro) \
+    macro(importMetaObjectLoadCJS2ESMCode, loadCJS2ESM, ASCIILiteral(), s_importMetaObjectLoadCJS2ESMCodeLength) \
+    macro(importMetaObjectRequireESMCode, requireESM, ASCIILiteral(), s_importMetaObjectRequireESMCodeLength) \
     macro(importMetaObjectRequireCode, require, ASCIILiteral(), s_importMetaObjectRequireCodeLength) \
-    macro(importMetaObjectLoadModuleCode, loadModule, ASCIILiteral(), s_importMetaObjectLoadModuleCodeLength) \
-    macro(importMetaObjectRequireModuleCode, requireModule, ASCIILiteral(), s_importMetaObjectRequireModuleCodeLength) \
 
 #define WEBCORE_FOREACH_IMPORTMETAOBJECT_BUILTIN_FUNCTION_NAME(macro) \
-    macro(loadModule) \
+    macro(loadCJS2ESM) \
     macro(require) \
-    macro(requireModule) \
+    macro(requireESM) \
 
 #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \
     JSC::FunctionExecutable* codeName##Generator(JSC::VM&);

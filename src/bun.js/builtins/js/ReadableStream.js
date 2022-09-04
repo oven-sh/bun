@@ -98,7 +98,7 @@ function initializeReadableStream(underlyingSource, strategy)
 }
 
 
-@globalPrivate
+@linkTimeConstant
 function readableStreamToArray(stream) {
     "use strict";
 
@@ -111,7 +111,7 @@ function readableStreamToArray(stream) {
     return @readableStreamIntoArray(stream);
 }
 
-@globalPrivate
+@linkTimeConstant
 function readableStreamToText(stream) {
     "use strict";
 
@@ -124,7 +124,7 @@ function readableStreamToText(stream) {
     return @readableStreamIntoText(stream);
 }
 
-@globalPrivate
+@linkTimeConstant
 function readableStreamToArrayBuffer(stream) {
     "use strict";
 
@@ -138,20 +138,20 @@ function readableStreamToArrayBuffer(stream) {
     return @Bun.readableStreamToArray(stream).@then(@Bun.concatArrayBuffers);
 }
 
-@globalPrivate
+@linkTimeConstant
 function readableStreamToJSON(stream) {
     "use strict";
 
     return @Bun.readableStreamToText(stream).@then(globalThis.JSON.parse);
 }
 
-@globalPrivate
+@linkTimeConstant
 function readableStreamToBlob(stream) {
     "use strict";
     return @Promise.resolve(@Bun.readableStreamToArray(stream)).@then(array => new Blob(array));
 }
 
-@globalPrivate
+@linkTimeConstant
 function consumeReadableStream(nativePtr, nativeType, inputStream) {
     "use strict";
     const symbol = globalThis.Symbol.for("Bun.consumeReadableStreamPrototype");
@@ -268,7 +268,7 @@ function consumeReadableStream(nativePtr, nativeType, inputStream) {
    return new Prototype(inputStream.getReader(), nativePtr);
 }
 
-@globalPrivate
+@linkTimeConstant
 function createEmptyReadableStream() {
     "use strict";
 
@@ -279,7 +279,7 @@ function createEmptyReadableStream() {
     return stream;
 }
 
-@globalPrivate
+@linkTimeConstant
 function createNativeReadableStream(nativePtr, nativeType, autoAllocateChunkSize) {
     "use strict";
     return new @ReadableStream({

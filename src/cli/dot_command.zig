@@ -147,7 +147,7 @@ pub const DotCommand = struct {
 
                 if (new_script.script == null) {
                     Output.prettyErrorln("<r><red>error<r>: Module not found \"<b>{s}<r>\". Invalid \"<b>main</b>\" field in \"{s}\"", .{
-                        script_to_run,
+                        script_to_run.?,
                         package_json_path,
                     });
 
@@ -156,7 +156,8 @@ pub const DotCommand = struct {
                     return false;
                 }
 
-                Output.prettyWarnln("<r><yellow>Warn<r>: Invalid \"<b>main</b>\" field in \"{s}\"", .{
+                Output.prettyWarnln("<r><yellow>Warn<r>: Invalid \"<b>main</b>\" field ({s}) in \"{s}\"", .{
+                    script_to_run.?,
                     package_json_path,
                 });
 

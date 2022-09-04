@@ -4,7 +4,7 @@
 
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/JSBoundFunction.h"
-
+#include "JavaScriptCore/ObjectConstructor.h"
 using namespace Zig;
 using namespace JSC;
 
@@ -53,7 +53,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModulePaths,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callFrame)) {
-  return JSC::JSValue::encode(JSC::JSArray::create(globalObject->vm(), 0));
+  return JSC::JSValue::encode(JSC::JSArray::create(
+      globalObject->vm(),
+      globalObject->arrayStructureForIndexingTypeDuringAllocation(
+          ArrayWithContiguous),
+      0));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap,
@@ -81,8 +85,49 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSourceMap, (JSGlobalObject * globalObject,
   return JSValue::encode(jsUndefined());
 }
 
-namespace Zig {
+JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::CallFrame *callFrame)) {
+  JSC::VM &vm = globalObject->vm();
 
+  switch (callFrame->argumentCount()) {
+  case 0: {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    // not "requires" because "require" could be confusing
+    JSC::throwTypeError(
+        globalObject, scope,
+        "Module._resolveFileName needs 2+ arguments (a string)"_s);
+    scope.release();
+    return JSC::JSValue::encode(JSC::JSValue{});
+  }
+  default: {
+    JSC::JSValue moduleName = callFrame->argument(0);
+
+    if (moduleName.isUndefinedOrNull()) {
+      auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+      JSC::throwTypeError(globalObject, scope,
+                          "Module._resolveFileName expects a string"_s);
+      scope.release();
+      return JSC::JSValue::encode(JSC::JSValue{});
+    }
+
+    auto result =
+        Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName),
+                         JSValue::encode(callFrame->argument(1)));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    if (!JSC::JSValue::decode(result).isString()) {
+      JSC::throwException(globalObject, scope, JSC::JSValue::decode(result));
+      return JSC::JSValue::encode(JSC::JSValue{});
+    }
+
+    scope.release();
+    return result;
+  }
+  }
+}
+
+namespace Zig {
 void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
                               JSC::Identifier moduleKey,
                               Vector<JSC::Identifier, 4> &exportNames,
@@ -111,6 +156,21 @@ void generateNodeModuleModule(JSC::JSGlobalObject *globalObject,
   exportNames.append(JSC::Identifier::fromString(vm, "findSourceMap"_s));
   exportNames.append(JSC::Identifier::fromString(vm, "syncBuiltinExports"_s));
   exportNames.append(JSC::Identifier::fromString(vm, "SourceMap"_s));
+
+  // note: this is not technically correct
+  // it doesn't set process.mainModule
+  exportNames.append(JSC::Identifier::fromString(vm, "_resolveFileName"_s));
+  exportValues.append(JSFunction::create(
+      vm, globalObject, 3, String("_resolveFileName"_s),
+      jsFunctionResolveFileName, ImplementationVisibility::Public));
+
+  exportNames.append(JSC::Identifier::fromString(vm, "_nodeModulePaths"_s));
+  exportValues.append(JSFunction::create(
+      vm, globalObject, 0, String("_nodeModulePaths"_s),
+      jsFunctionNodeModulePaths, ImplementationVisibility::Public));
+
+  exportNames.append(JSC::Identifier::fromString(vm, "_cache"_s));
+  exportValues.append(JSC::constructEmptyObject(globalObject));
 
   exportNames.append(JSC::Identifier::fromString(vm, "builtinModules"_s));
 

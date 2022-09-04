@@ -8,6 +8,10 @@
 
 #include "JSDOMWrapperCache.h"
 
+extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
+extern "C" JSC__JSValue Bun__resolve(JSC::JSGlobalObject* global, JSC__JSValue specifier, JSC__JSValue from);
+extern "C" JSC__JSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC__JSValue specifier, JSC__JSValue from);
+
 namespace Zig {
 
 using namespace JSC;

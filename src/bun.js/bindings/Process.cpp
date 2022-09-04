@@ -111,8 +111,9 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionNextTick,
 
 static JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+    (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSC::VM& vm = globalObject->vm();
 
@@ -133,6 +134,8 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 
     WTF::String filename = callFrame->uncheckedArgument(1).toWTFString(globalObject);
     CString utf8 = filename.utf8();
+
+    globalObject->pendingNapiModule = exports;
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
 
     if (!handle) {
@@ -140,6 +143,16 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         JSC::throwTypeError(globalObject, scope, msg);
         return JSC::JSValue::encode(JSC::JSValue {});
     }
+
+    if (JSValue pendingModule = globalObject->pendingNapiModule) {
+        globalObject->pendingNapiModule = JSValue {};
+        if (pendingModule.isCell() && pendingModule.getObject()->isErrorInstance()) {
+            JSC::throwException(globalObject, scope, pendingModule);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
+        return JSC::JSValue::encode(pendingModule);
+    }
+    globalObject->pendingNapiModule = JSValue {};
 
     JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
         JSC::EncodedJSValue exports);

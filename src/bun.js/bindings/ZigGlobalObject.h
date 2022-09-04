@@ -33,6 +33,9 @@ class EventLoopTask;
 #include "DOMWrapperWorld-class.h"
 #include "DOMIsoSubspaces.h"
 #include "BunPlugin.h"
+
+extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
+
 // #include "EventTarget.h"
 
 // namespace WebCore {
@@ -307,6 +310,9 @@ public:
     BunPlugin::OnLoad onLoadPlugins[BunPluginTargetMax + 1] {};
     BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
     BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
+
+    // When a napi module initializes on dlopen, we need to know what the value is
+    JSValue pendingNapiModule = JSValue {};
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 

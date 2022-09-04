@@ -47,6 +47,10 @@
 #include "JavaScriptCore/JSSourceCode.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 
+#include "../modules/ObjectModule.h"
+
+#include "JavaScriptCore/JSSourceCode.h"
+
 // #include <iostream>
 using namespace JSC;
 using namespace Zig;
@@ -474,18 +478,43 @@ extern "C" void napi_module_register(napi_module* mod)
 {
     auto* globalObject = Bun__getDefaultGlobal();
     JSC::VM& vm = globalObject->vm();
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject);
+    JSC::JSObject* object = globalObject->pendingNapiModule.getObject();
+    if (!object) {
+        object = JSC::constructEmptyObject(globalObject);
+    } else {
+        globalObject->pendingNapiModule = JSC::JSValue();
+    }
+
+    EnsureStillAliveScope ensureAlive(object);
     auto result = reinterpret_cast<JSC::EncodedJSValue>(
         mod->nm_register_func(reinterpret_cast<napi_env>(globalObject), reinterpret_cast<napi_value>(JSC::JSValue::encode(JSC::JSValue(object)))));
 
-    // std::cout << "loaded " << mod->nm_modname << std::endl;
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
-    auto key = JSC::jsString(vm, keyStr);
-    auto sourceCode = Napi::generateSourceCode(keyStr, vm, object, globalObject);
+    JSC::JSValue resultValue = JSC::JSValue::decode(result);
+    EnsureStillAliveScope ensureAlive2(resultValue);
+    if (resultValue.isEmpty()) {
+        globalObject->pendingNapiModule = createError(globalObject, makeString("Node-API module \""_s, keyStr, "\" returned an error"_s));
+        EnsureStillAliveScope ensureAlive(globalObject->pendingNapiModule);
+        return;
+    }
 
-    globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(sourceCode));
-    auto promise = globalObject->moduleLoader()->loadAndEvaluateModule(globalObject, key, jsUndefined(), jsUndefined());
-    vm.drainMicrotasks();
+    if (!resultValue.isObject()) {
+        globalObject->pendingNapiModule = createError(globalObject, makeString("Expected Node-API module \""_s, keyStr, "\" to return an exports object"_s));
+        EnsureStillAliveScope ensureAlive(globalObject->pendingNapiModule);
+        return;
+    }
+
+    // std::cout << "loaded " << mod->nm_modname << std::endl;
+
+    auto source = JSC::SourceCode(
+        JSC::SyntheticSourceProvider::create(generateObjectModuleSourceCode(
+                                                 globalObject,
+                                                 object),
+            JSC::SourceOrigin(), keyStr));
+
+    // Add it to the ESM registry
+    globalObject->moduleLoader()->provideFetch(globalObject, JSC::jsString(vm, WTFMove(keyStr)), WTFMove(source));
+    globalObject->pendingNapiModule = object;
 }
 
 extern "C" napi_status napi_wrap(napi_env env,

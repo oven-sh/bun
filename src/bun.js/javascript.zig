@@ -823,6 +823,7 @@ pub const VirtualMachine = struct {
                 .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder"),
                 .@"node:module" => return jsSyntheticModule(.@"node:module"),
                 .@"node:events" => return jsSyntheticModule(.@"node:events"),
+                .@"node:process" => return jsSyntheticModule(.@"node:process"),
                 .@"node:stream" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -851,16 +852,7 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
-                .@"node:process" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(""),
-                        .specifier = ZigString.init("node:process"),
-                        .source_url = ZigString.init("node:process"),
-                        .hash = 0,
-                        .tag = ResolvedSource.Tag.@"node:process",
-                    };
-                },
+
                 .@"node:os" => {
                     return ResolvedSource{
                         .allocator = null,

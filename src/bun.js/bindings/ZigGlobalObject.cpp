@@ -284,8 +284,6 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
     return true;
 }
 
-extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
-
 #define GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                         \
     JSC_DECLARE_CUSTOM_GETTER(ConstructorName##_getter);                                      \
     JSC_DEFINE_CUSTOM_GETTER(ConstructorName##_getter,                                        \

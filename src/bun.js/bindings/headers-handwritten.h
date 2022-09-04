@@ -190,6 +190,7 @@ enum SyntheticModuleType : uint64_t {
     Process = 1025,
     Events = 1026,
     StringDecoder = 1027,
+    Module = 1028,
 };
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;

@@ -685,6 +685,7 @@ pub const VirtualMachine = struct {
             return this != .transpile;
         }
     };
+
     fn _fetch(
         jsc_vm: *VirtualMachine,
         globalObject: *JSGlobalObject,
@@ -818,16 +819,10 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
-                .@"node:buffer" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(""),
-                        .specifier = ZigString.init("node:buffer"),
-                        .source_url = ZigString.init("node:buffer"),
-                        .hash = 0,
-                        .tag = ResolvedSource.Tag.@"node:buffer",
-                    };
-                },
+                .@"node:buffer" => return jsSyntheticModule(.@"node:buffer"),
+                .@"node:string_decoder" => return jsSyntheticModule(.@"node:string_decoder"),
+                .@"node:module" => return jsSyntheticModule(.@"node:module"),
+                .@"node:events" => return jsSyntheticModule(.@"node:events"),
                 .@"node:stream" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -837,16 +832,7 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
-                .@"node:events" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(""),
-                        .specifier = ZigString.init("node:events"),
-                        .source_url = ZigString.init("node:events"),
-                        .hash = 0,
-                        .tag = ResolvedSource.Tag.@"node:events",
-                    };
-                },
+
                 .@"node:fs/promises" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -882,16 +868,6 @@ pub const VirtualMachine = struct {
                         .specifier = ZigString.init("node:os"),
                         .source_url = ZigString.init("node:os"),
                         .hash = 0,
-                    };
-                },
-                .@"node:string_decoder" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(""),
-                        .specifier = ZigString.init("node:string_decoder"),
-                        .source_url = ZigString.init("node:string_decoder"),
-                        .hash = 0,
-                        .tag = ResolvedSource.Tag.@"node:string_decoder",
                     };
                 },
                 .@"bun:ffi" => {
@@ -940,17 +916,6 @@ pub const VirtualMachine = struct {
                         ),
                         .specifier = ZigString.init("bun:sqlite"),
                         .source_url = ZigString.init("bun:sqlite"),
-                        .hash = 0,
-                    };
-                },
-                .@"node:module" => {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(
-                            @as(string, jsModuleFromFile("./module.exports.js")),
-                        ),
-                        .specifier = ZigString.init("node:module"),
-                        .source_url = ZigString.init("node:module"),
                         .hash = 0,
                     };
                 },
@@ -3122,4 +3087,15 @@ fn jsModuleFromFile(comptime input: string) string {
 
     var contents = file.readToEndAlloc(bun.default_allocator, std.math.maxInt(usize)) catch @panic("Cannot read file: " ++ absolute_path);
     return contents;
+}
+
+inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag) ResolvedSource {
+    return ResolvedSource{
+        .allocator = null,
+        .source_code = ZigString.init(""),
+        .specifier = ZigString.init(@tagName(name)),
+        .source_url = ZigString.init(@tagName(name)),
+        .hash = 0,
+        .tag = name,
+    };
 }

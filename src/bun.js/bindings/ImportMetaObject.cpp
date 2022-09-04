@@ -35,6 +35,7 @@
 #include "JSBufferConstructorBuiltins.h"
 #include "JavaScriptCore/JSBase.h"
 
+#include "JSDOMURL.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 
 namespace Zig {
@@ -131,6 +132,24 @@ JSC_DEFINE_CUSTOM_GETTER(functionRequireResolveLazyGetter,
             });
     require->putDirect(vm, builtinNames.resolvePrivateName(), resolverFunction, 0);
     return JSValue::encode(JSValue(resolverFunction));
+}
+
+Zig::ImportMetaObject* Zig::ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JSValue key)
+{
+    if (WebCore::DOMURL* domURL = WebCoreCast<WebCore::JSDOMURL, WebCore__DOMURL>(JSValue::encode(key))) {
+        return create(globalObject, JSC::jsString(globalObject->vm(), domURL->href().fileSystemPath()));
+    }
+
+    auto* keyString = key.toStringOrNull(globalObject);
+    if (UNLIKELY(!keyString)) {
+        return nullptr;
+    }
+
+    if (keyString->value(globalObject).startsWith("file://"_s)) {
+        return create(globalObject, JSC::jsString(globalObject->vm(), WTF::URL(keyString->value(globalObject)).fileSystemPath()));
+    }
+
+    return create(globalObject, keyString);
 }
 
 JSObject* Zig::ImportMetaObject::createRequireFunction(VM& vm, JSGlobalObject* globalObject, WTF::String& pathString)

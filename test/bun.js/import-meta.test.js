@@ -33,6 +33,17 @@ it("Module.createRequire().resolve", () => {
   expect(result).toBe(expected);
 });
 
+it("Module.createRequire(file://url).resolve(file://url)", () => {
+  const expected = Bun.resolveSync("./require-json.json", import.meta.dir);
+
+  const createdRequire = Module.createRequire(import.meta.url);
+  const result1 = createdRequire.resolve("./require-json.json");
+  const result2 = createdRequire.resolve("file://./require-json.json");
+
+  expect(result1).toBe(expected);
+  expect(result2).toBe(expected);
+});
+
 it("import.meta.require.resolve", () => {
   const expected = Bun.resolveSync("./require-json.json", import.meta.dir);
   var { resolve } = import.meta.require;

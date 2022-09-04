@@ -6,6 +6,8 @@
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
 
+#include "JSDOMWrapperCache.h"
+
 namespace Zig {
 
 using namespace JSC;
@@ -20,6 +22,51 @@ public:
         ImportMetaObject* ptr = new (NotNull, JSC::allocateCell<ImportMetaObject>(vm)) ImportMetaObject(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
+    }
+
+    static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSC::JSValue key);
+    static inline Zig::ImportMetaObject* create(JSC::JSGlobalObject* globalObject, JSC::JSString* keyString)
+    {
+        auto& vm = globalObject->vm();
+        auto view = keyString->value(globalObject);
+        JSC::Structure* structure = WebCore::getDOMStructure<Zig::ImportMetaObject>(vm, *reinterpret_cast<Zig::GlobalObject*>(globalObject));
+        Zig::ImportMetaObject* metaProperties = Zig::ImportMetaObject::create(vm, globalObject, structure);
+        if (UNLIKELY(!metaProperties)) {
+            return nullptr;
+        }
+
+        auto clientData = WebCore::clientData(vm);
+        auto& builtinNames = clientData->builtinNames();
+
+        auto index = view.reverseFind('/', view.length());
+        if (index != WTF::notFound) {
+            metaProperties->putDirect(vm, builtinNames.dirPublicName(),
+                JSC::jsSubstring(globalObject, keyString, 0, index));
+            metaProperties->putDirect(
+                vm, builtinNames.filePublicName(),
+                JSC::jsSubstring(globalObject, keyString, index + 1, view.length() - index - 1));
+        } else {
+            metaProperties->putDirect(vm, builtinNames.filePublicName(), keyString);
+        }
+        metaProperties->putDirect(
+            vm,
+            builtinNames.pathPublicName(),
+            keyString,
+            0);
+
+        metaProperties->putDirect(
+            vm,
+            builtinNames.requirePublicName(),
+            Zig::ImportMetaObject::createRequireFunction(vm, globalObject, view),
+            PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
+
+        if (view.startsWith('/')) {
+            metaProperties->putDirect(vm, builtinNames.urlPublicName(), JSC::JSValue(JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string())));
+        } else {
+            metaProperties->putDirect(vm, builtinNames.urlPublicName(), keyString);
+        }
+
+        return metaProperties;
     }
 
     DECLARE_INFO;

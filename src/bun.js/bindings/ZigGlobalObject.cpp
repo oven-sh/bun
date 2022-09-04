@@ -165,6 +165,7 @@ using JSBuffer = WebCore::JSBuffer;
 #include "../modules/ProcessModule.h"
 #include "../modules/StringDecoderModule.h"
 #include "../modules/ObjectModule.h"
+#include "../modules/NodeModuleModule.h"
 
 // #include <iostream>
 static bool has_loaded_jsc = false;
@@ -2630,6 +2631,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* g
 static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue key = callFrame->argument(0);
@@ -2697,6 +2699,16 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
             JSC::SyntheticSourceProvider::create(
                 generateEventsSourceCode,
                 JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:events"_s)), WTFMove(moduleKey)));
+
+        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+    }
+    case SyntheticModuleType::Module: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(
+                generateNodeModuleModule,
+                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:module"_s)), WTFMove(moduleKey)));
 
         globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
         RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
@@ -2790,6 +2802,19 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
         scope.release();
         return promise;
     }
+    case SyntheticModuleType::Module: {
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(generateNodeModuleModule,
+                JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+
+        promise->resolve(globalObject, sourceCode);
+        scope.release();
+        return promise;
+    }
+
     case SyntheticModuleType::Buffer: {
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(generateBufferSourceCode,
@@ -2863,50 +2888,11 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 {
 
     JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSString* keyString = key.toStringOrNull(globalObject);
+    if (UNLIKELY(!keyString))
+        return JSC::constructEmptyObject(globalObject);
 
-    JSString* keyString = key.toStringOrNull(globalObject);
-    auto view = keyString->value(globalObject);
-    if (UNLIKELY(!keyString)) {
-        RELEASE_AND_RETURN(scope, JSC::constructEmptyObject(globalObject));
-    }
-
-    JSC::Structure* structure = WebCore::getDOMStructure<Zig::ImportMetaObject>(vm, *reinterpret_cast<Zig::GlobalObject*>(globalObject));
-    Zig::ImportMetaObject* metaProperties = Zig::ImportMetaObject::create(vm, globalObject, structure);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    auto clientData = WebCore::clientData(vm);
-    auto& builtinNames = clientData->builtinNames();
-
-    auto index = view.reverseFind('/', view.length());
-    if (index != WTF::notFound) {
-        metaProperties->putDirect(vm, builtinNames.dirPublicName(),
-            JSC::jsSubstring(globalObject, keyString, 0, index));
-        metaProperties->putDirect(
-            vm, builtinNames.filePublicName(),
-            JSC::jsSubstring(globalObject, keyString, index + 1, keyString->length() - index - 1));
-    } else {
-        metaProperties->putDirect(vm, builtinNames.filePublicName(), keyString);
-    }
-    metaProperties->putDirect(
-        vm,
-        builtinNames.pathPublicName(),
-        keyString,
-        0);
-
-    metaProperties->putDirect(
-        vm,
-        builtinNames.requirePublicName(),
-        Zig::ImportMetaObject::createRequireFunction(vm, globalObject, view),
-        PropertyAttribute::Builtin | PropertyAttribute::Function | 0);
-
-    if (view.startsWith('/')) {
-        metaProperties->putDirect(vm, builtinNames.urlPublicName(), JSC::JSValue(JSC::jsString(vm, WTF::URL::fileURLWithFileSystemPath(view).string())));
-    } else {
-        metaProperties->putDirect(vm, builtinNames.urlPublicName(), keyString);
-    }
-
-    RELEASE_AND_RETURN(scope, metaProperties);
+    return Zig::ImportMetaObject::create(globalObject, keyString);
 }
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* globalObject,

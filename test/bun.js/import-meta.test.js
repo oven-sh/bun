@@ -33,6 +33,25 @@ it("Module.createRequire().resolve", () => {
   expect(result).toBe(expected);
 });
 
+// this is stubbed out
+it("Module._nodeModulePaths()", () => {
+  const expected = Module._nodeModulePaths();
+  expect(!!expected).toBe(true);
+});
+
+// this isn't used in bun but exists anyway
+// we just want it to not be undefined
+it("Module._cache", () => {
+  const expected = typeof Module._cache === "object" && Module._cache;
+  expect(!!expected).toBe(true);
+});
+
+it("Module._resolveFileName()", () => {
+  const expected = Bun.resolveSync(import.meta.path, "/");
+  const result = Module._resolveFileName(import.meta.path, "/", true);
+  expect(result).toBe(expected);
+});
+
 it("Module.createRequire(file://url).resolve(file://url)", () => {
   const expected = Bun.resolveSync("./require-json.json", import.meta.dir);
 

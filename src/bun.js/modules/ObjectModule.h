@@ -7,14 +7,14 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
                                JSC::JSObject *object) {
   JSC::VM &vm = globalObject->vm();
 
-  return [strongObject = JSC::Strong<JSC::JSObject>(vm, object)](
-             JSC::JSGlobalObject *lexicalGlobalObject,
-             JSC::Identifier moduleKey, Vector<JSC::Identifier, 4> &exportNames,
-             JSC::MarkedArgumentBuffer &exportValues) -> void {
+  return [object](JSC::JSGlobalObject *lexicalGlobalObject,
+                  JSC::Identifier moduleKey,
+                  Vector<JSC::Identifier, 4> &exportNames,
+                  JSC::MarkedArgumentBuffer &exportValues) -> void {
     JSC::VM &vm = lexicalGlobalObject->vm();
     GlobalObject *globalObject =
         reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
-    JSC::JSObject *object = strongObject.get();
+    JSC::EnsureStillAliveScope stillAlive(object);
 
     PropertyNameArray properties(vm, PropertyNameMode::Strings,
                                  PrivateSymbolMode::Exclude);
@@ -25,7 +25,6 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
       exportNames.append(entry);
       exportValues.append(object->get(globalObject, entry));
     }
-    strongObject.clear();
   };
 }
 

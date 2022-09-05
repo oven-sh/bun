@@ -4,7 +4,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 
 namespace Zig {
-JSC::SyntheticSourceProvider::SyntheticSourceGenerator
+inline JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
                                JSC::JSObject *object) {
   JSC::VM &vm = globalObject->vm();

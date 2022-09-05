@@ -181,35 +181,6 @@ JSC::GCClient::IsoSubspace* JSBufferList::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForBufferList = WTFMove(space); });
 }
 
-class JSBufferListPrototype : public JSC::JSNonFinalObject {
-public:
-    using Base = JSC::JSNonFinalObject;
-    static JSBufferListPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        JSBufferListPrototype* ptr = new (NotNull, JSC::allocateCell<JSBufferListPrototype>(vm)) JSBufferListPrototype(vm, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    DECLARE_INFO;
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        return &vm.plainObjectSpace();
-    }
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-    }
-
-private:
-    JSBufferListPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
-};
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferListPrototype, JSBufferListPrototype::Base);
 
 static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_pushBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBufferList>::ClassParameter castedThis)
@@ -375,14 +346,31 @@ void JSBufferListPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalTh
 
 const ClassInfo JSBufferListPrototype::s_info = { "BufferList"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferListPrototype) };
 
-EncodedJSValue constructJSBufferList(JSGlobalObject* globalObject, CallFrame* callFrame)
+void JSBufferListConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype)
 {
-    JSC::VM& vm = globalObject->vm();
-    JSBufferListPrototype* prototype = JSBufferListPrototype::create(
-        vm, globalObject, JSBufferListPrototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
+    Base::finishCreation(vm, 0, "BufferList"_s, PropertyAdditionMode::WithoutStructureTransition);
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    ASSERT(inherits(info()));
+}
+
+JSBufferListConstructor* JSBufferListConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSBufferListPrototype* prototype) {
+    JSBufferListConstructor* ptr = new (NotNull, JSC::allocateCell<JSBufferListConstructor>(vm)) JSBufferListConstructor(vm, structure, construct);
+    ptr->finishCreation(vm, globalObject, prototype);
+    return ptr;
+}
+
+JSC::EncodedJSValue JSBufferListConstructor::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
     JSBufferList* bufferList = JSBufferList::create(
-        vm, globalObject, JSBufferList::createStructure(vm, globalObject, prototype));
+        vm, lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferListStructure());
     return JSC::JSValue::encode(bufferList);
 }
+
+void JSBufferListConstructor::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype)
+{
+}
+
+const ClassInfo JSBufferListConstructor::s_info = { "BufferList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBufferListConstructor) };
 
 } // namespace Zig

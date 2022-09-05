@@ -1,3 +1,5 @@
+#pragma once
+
 #include "../bindings/ZigGlobalObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 

@@ -453,7 +453,7 @@ pub const VirtualMachine = struct {
         }
 
         this.bundler.options.platform = .bun_macro;
-        this.bundler.resolver.caches.fs.is_macro_mode = true;
+        this.bundler.resolver.caches.fs.use_alternate_source_cache = true;
         this.macro_mode = true;
         this.event_loop = &this.macro_event_loop;
         Analytics.Features.macros = true;
@@ -461,7 +461,7 @@ pub const VirtualMachine = struct {
 
     pub fn disableMacroMode(this: *VirtualMachine) void {
         this.bundler.options.platform = .bun;
-        this.bundler.resolver.caches.fs.is_macro_mode = false;
+        this.bundler.resolver.caches.fs.use_alternate_source_cache = false;
         this.macro_mode = false;
         this.event_loop = &this.regular_event_loop;
     }

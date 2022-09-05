@@ -60,13 +60,13 @@ pub const Fs = struct {
     shared_buffer: MutableString,
     macro_shared_buffer: MutableString,
 
-    is_macro_mode: bool = false,
+    use_alternate_source_cache: bool = false,
     stream: bool = false,
 
     // When we are in a macro, the shared buffer may be in use by the in-progress macro.
     // so we have to dynamically switch it out.
     pub inline fn sharedBuffer(this: *Fs) *MutableString {
-        return if (!this.is_macro_mode)
+        return if (!this.use_alternate_source_cache)
             &this.shared_buffer
         else
             &this.macro_shared_buffer;

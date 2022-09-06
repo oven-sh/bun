@@ -222,6 +222,52 @@ pub const StringOrBuffer = union(Tag) {
     }
 };
 
+/// Like StringOrBuffer but actually returns a Node.js Buffer
+pub const StringOrNodeBuffer = union(Tag) {
+    string: string,
+    buffer: Buffer,
+
+    pub const Tag = enum { string, buffer };
+
+    pub fn slice(this: StringOrNodeBuffer) []const u8 {
+        return switch (this) {
+            .string => this.string,
+            .buffer => this.buffer.slice(),
+        };
+    }
+
+    pub fn toJS(this: StringOrNodeBuffer, ctx: JSC.C.JSContextRef, _: JSC.C.ExceptionRef) JSC.C.JSValueRef {
+        return switch (this) {
+            .string => {
+                const input = this.string;
+                if (strings.toUTF16Alloc(bun.default_allocator, input, false) catch null) |utf16| {
+                    bun.default_allocator.free(bun.constStrToU8(input));
+                    return JSC.ZigString.toExternalU16(utf16.ptr, utf16.len, ctx.ptr()).asObjectRef();
+                }
+
+                return JSC.ZigString.init(input).toExternalValue(ctx.ptr()).asObjectRef();
+            },
+            .buffer => this.buffer.toNodeBuffer(ctx),
+        };
+    }
+
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?StringOrBuffer {
+        return switch (value.jsType()) {
+            JSC.JSValue.JSType.String, JSC.JSValue.JSType.StringObject, JSC.JSValue.JSType.DerivedStringObject, JSC.JSValue.JSType.Object => {
+                var zig_str = value.toSlice(global, allocator);
+                return StringOrNodeBuffer{ .string = zig_str.slice() };
+            },
+            JSC.JSValue.JSType.ArrayBuffer => StringOrNodeBuffer{
+                .buffer = Buffer.fromArrayBuffer(global.ref(), value, exception),
+            },
+            JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => StringOrBuffer{
+                .buffer = Buffer.fromArrayBuffer(global.ref(), value, exception),
+            },
+            else => null,
+        };
+    }
+};
+
 pub const SliceOrBuffer = union(Tag) {
     string: JSC.ZigString.Slice,
     buffer: Buffer,

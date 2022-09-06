@@ -2290,7 +2290,7 @@ const Return = struct {
             };
         }
     };
-    pub const ReadFile = StringOrBuffer;
+    pub const ReadFile = JSC.Node.StringOrNodeBuffer;
     pub const Readlink = StringOrBuffer;
     pub const Realpath = StringOrBuffer;
     pub const RealpathNative = Realpath;

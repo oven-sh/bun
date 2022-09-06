@@ -2600,7 +2600,14 @@ pub const MarkedArrayBuffer = struct {
         return container;
     }
 
+    pub fn toNodeBuffer(this: MarkedArrayBuffer, ctx: js.JSContextRef) js.JSObjectRef {
+        return JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator).asObjectRef();
+    }
+
     pub fn toJSObjectRef(this: MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
+        if (!this.buffer.value.isEmptyOrUndefinedOrNull()) {
+            return this.buffer.value.asObjectRef();
+        }
         return js.JSObjectMakeTypedArrayWithBytesNoCopy(
             ctx,
             this.buffer.typed_array_type.toC(),

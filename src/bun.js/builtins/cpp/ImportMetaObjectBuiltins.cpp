@@ -168,7 +168,7 @@ const char* const s_importMetaObjectLoadCJS2ESMCode =
 const JSC::ConstructAbility s_importMetaObjectRequireESMCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_importMetaObjectRequireESMCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_importMetaObjectRequireESMCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_importMetaObjectRequireESMCodeLength = 559;
+const int s_importMetaObjectRequireESMCodeLength = 561;
 static const JSC::Intrinsic s_importMetaObjectRequireESMCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_importMetaObjectRequireESMCode =
     "(function (resolved) {\n" \
@@ -184,7 +184,7 @@ const char* const s_importMetaObjectRequireESMCode =
     "  }\n" \
     "  var exports = @Loader.getModuleNamespaceObject(entry.module);\n" \
     "  var commonJS = exports.default;\n" \
-    "  if (commonJS && @isObject(commonJS) && @commonJSSymbol in commonJS) {\n" \
+    "  if (commonJS && @isCallable(commonJS) && @commonJSSymbol in commonJS) {\n" \
     "    return commonJS();\n" \
     "  }\n" \
     "  return exports;\n" \
@@ -212,7 +212,6 @@ const char* const s_importMetaObjectRequireCode =
     "\n" \
     "    return cached;\n" \
     "  }\n" \
-    "\n" \
     "  \n" \
     "  //\n" \
     "  if (last5 === \".json\") {\n" \
@@ -227,7 +226,7 @@ const char* const s_importMetaObjectRequireCode =
     "    return module.exports;\n" \
     "  } else if (last5 === \".toml\") {\n" \
     "    var fs = (globalThis[Symbol.for(\"_fs\")] ||= @Bun.fs());\n" \
-    "    var exports = Bun.TOML.parse(fs.readFileSync(resolved, \"utf8\"));\n" \
+    "    var exports = @Bun.TOML.parse(fs.readFileSync(resolved, \"utf8\"));\n" \
     "    @requireMap.@set(resolved, exports);\n" \
     "    return exports;\n" \
     "  } else {\n" \

@@ -787,7 +787,7 @@ pub const VirtualMachine = struct {
                 .@"bun:jsc" => {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(@embedFile("bun-jsc.exports.js") ++ JSC.Node.fs.constants_string),
+                        .source_code = ZigString.init(jsModuleFromFile("bun-jsc.exports.js")),
                         .specifier = ZigString.init("bun:jsc"),
                         .source_url = ZigString.init("bun:jsc"),
                         .hash = 0,
@@ -829,7 +829,7 @@ pub const VirtualMachine = struct {
                 .@"node:path" => {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(Node.Path.code),
+                        .source_code = ZigString.init(jsModuleFromFile("path.exports.js")),
                         .specifier = ZigString.init("node:path"),
                         .source_url = ZigString.init("node:path"),
                         .hash = 0,
@@ -839,7 +839,7 @@ pub const VirtualMachine = struct {
                 .@"node:os" => {
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = ZigString.init(Node.Os.code),
+                        .source_code = ZigString.init(jsModuleFromFile("os.exports.js")),
                         .specifier = ZigString.init("node:os"),
                         .source_url = ZigString.init("node:os"),
                         .hash = 0,
@@ -3035,16 +3035,30 @@ pub const ModuleLoader = struct {
             },
         };
         var ast_copy = parse_result.ast;
+        ast_copy.import_records = try jsc_vm.allocator.dupe(ImportRecord, ast_copy.import_records);
+        defer jsc_vm.allocator.free(ast_copy.import_records);
         ast_copy.parts = &parts;
         ast_copy.prepend_part = null;
         var temporary_source = parse_result.source;
         var source_name = try std.fmt.allocPrint(jsc_vm.allocator, "{s}.plugin.{s}", .{ temporary_source.path.text, temporary_source.path.name.ext[1..] });
         temporary_source.path = Fs.Path.init(source_name);
 
+        var temp_parse_result = parse_result.*;
+        temp_parse_result.ast = ast_copy;
+
+        try jsc_vm.bundler.linker.link(
+            temporary_source.path,
+            &temp_parse_result,
+            jsc_vm.origin,
+            .absolute_path,
+            false,
+            true,
+        );
+
         _ = brk: {
             defer source_code_printer.* = printer;
             break :brk try jsc_vm.bundler.printWithSourceMapMaybe(
-                ast_copy,
+                temp_parse_result.ast,
                 &temporary_source,
                 @TypeOf(&printer),
                 &printer,
@@ -3060,7 +3074,7 @@ pub const ModuleLoader = struct {
                 try dumpSource(temporary_source.path.text, &printer);
 
             var exception = [1]JSC.JSValue{JSC.JSValue.zero};
-            _ = JSC.JSModuleLoader.evaluate(
+            const promise = JSC.JSModuleLoader.evaluate(
                 jsc_vm.global,
                 wrote.ptr,
                 wrote.len,
@@ -3075,6 +3089,20 @@ pub const ModuleLoader = struct {
                     exception[0].asVoid(),
                 );
                 return error.PluginError;
+            }
+
+            if (!promise.isEmptyOrUndefinedOrNull()) {
+                if (promise.asInternalPromise()) |promise_value| {
+                    jsc_vm.waitForPromise(promise_value);
+
+                    if (promise_value.status(jsc_vm.global.vm()) == .Rejected) {
+                        ret.* = JSC.ErrorableResolvedSource.err(
+                            error.JSErrorObject,
+                            promise_value.result(jsc_vm.global.vm()).asVoid(),
+                        );
+                        return error.PluginError;
+                    }
+                }
             }
         }
     }
@@ -3167,7 +3195,7 @@ pub const ModuleLoader = struct {
                 VirtualMachine.source_code_printer.?,
                 FetchFlags.transpile,
             ) catch |err| {
-                if (err == error.PluginERror) {
+                if (err == error.PluginError) {
                     return true;
                 }
                 VirtualMachine.processFetchLog(globalObject, specifier_ptr.*, referrer.*, &log, ret, err);

@@ -1,5 +1,4 @@
-var _fs = Bun.fs();
-var fs = Object.create(_fs);
+var fs = Bun.fs();
 
 export var access = function access(...args) {
   callbackify(fs.accessSync, args);
@@ -109,7 +108,7 @@ function callbackify(fsFunction, args) {
     try {
       args[args.length - 1](
         null,
-        fsFunction.apply(_fs, args.slice(0, args.length - 1))
+        fsFunction.apply(fs, args.slice(0, args.length - 1))
       );
     } catch (err) {
       args[args.length - 1](err);
@@ -131,7 +130,7 @@ function promisify(fsFunction) {
     [fsFunction.name]: function (resolve, reject, args) {
       var result;
       try {
-        result = fsFunction.apply(_fs, args);
+        result = fsFunction.apply(fs, args);
         args = undefined;
       } catch (err) {
         args = undefined;
@@ -153,43 +152,43 @@ function promisify(fsFunction) {
   };
 }
 
-export var accessSync = fs.accessSync.bind(_fs);
-export var appendFileSync = fs.appendFileSync.bind(_fs);
-export var closeSync = fs.closeSync.bind(_fs);
-export var copyFileSync = fs.copyFileSync.bind(_fs);
-export var existsSync = fs.existsSync.bind(_fs);
-export var chownSync = fs.chownSync.bind(_fs);
-export var chmodSync = fs.chmodSync.bind(_fs);
-export var fchmodSync = fs.fchmodSync.bind(_fs);
-export var fchownSync = fs.fchownSync.bind(_fs);
-export var fstatSync = fs.fstatSync.bind(_fs);
-export var fsyncSync = fs.fsyncSync.bind(_fs);
-export var ftruncateSync = fs.ftruncateSync.bind(_fs);
-export var futimesSync = fs.futimesSync.bind(_fs);
-export var lchmodSync = fs.lchmodSync.bind(_fs);
-export var lchownSync = fs.lchownSync.bind(_fs);
-export var linkSync = fs.linkSync.bind(_fs);
-export var lstatSync = fs.lstatSync.bind(_fs);
-export var mkdirSync = fs.mkdirSync.bind(_fs);
-export var mkdtempSync = fs.mkdtempSync.bind(_fs);
-export var openSync = fs.openSync.bind(_fs);
-export var readSync = fs.readSync.bind(_fs);
-export var writeSync = fs.writeSync.bind(_fs);
-export var readdirSync = fs.readdirSync.bind(_fs);
-export var readFileSync = fs.readFileSync.bind(_fs);
-export var writeFileSync = fs.writeFileSync.bind(_fs);
-export var readlinkSync = fs.readlinkSync.bind(_fs);
-export var realpathSync = fs.realpathSync.bind(_fs);
-export var renameSync = fs.renameSync.bind(_fs);
-export var statSync = fs.statSync.bind(_fs);
-export var symlinkSync = fs.symlinkSync.bind(_fs);
-export var truncateSync = fs.truncateSync.bind(_fs);
-export var unlinkSync = fs.unlinkSync.bind(_fs);
-export var utimesSync = fs.utimesSync.bind(_fs);
-export var lutimesSync = fs.lutimesSync.bind(_fs);
+export var accessSync = fs.accessSync.bind(fs);
+export var appendFileSync = fs.appendFileSync.bind(fs);
+export var closeSync = fs.closeSync.bind(fs);
+export var copyFileSync = fs.copyFileSync.bind(fs);
+export var existsSync = fs.existsSync.bind(fs);
+export var chownSync = fs.chownSync.bind(fs);
+export var chmodSync = fs.chmodSync.bind(fs);
+export var fchmodSync = fs.fchmodSync.bind(fs);
+export var fchownSync = fs.fchownSync.bind(fs);
+export var fstatSync = fs.fstatSync.bind(fs);
+export var fsyncSync = fs.fsyncSync.bind(fs);
+export var ftruncateSync = fs.ftruncateSync.bind(fs);
+export var futimesSync = fs.futimesSync.bind(fs);
+export var lchmodSync = fs.lchmodSync.bind(fs);
+export var lchownSync = fs.lchownSync.bind(fs);
+export var linkSync = fs.linkSync.bind(fs);
+export var lstatSync = fs.lstatSync.bind(fs);
+export var mkdirSync = fs.mkdirSync.bind(fs);
+export var mkdtempSync = fs.mkdtempSync.bind(fs);
+export var openSync = fs.openSync.bind(fs);
+export var readSync = fs.readSync.bind(fs);
+export var writeSync = fs.writeSync.bind(fs);
+export var readdirSync = fs.readdirSync.bind(fs);
+export var readFileSync = fs.readFileSync.bind(fs);
+export var writeFileSync = fs.writeFileSync.bind(fs);
+export var readlinkSync = fs.readlinkSync.bind(fs);
+export var realpathSync = fs.realpathSync.bind(fs);
+export var renameSync = fs.renameSync.bind(fs);
+export var statSync = fs.statSync.bind(fs);
+export var symlinkSync = fs.symlinkSync.bind(fs);
+export var truncateSync = fs.truncateSync.bind(fs);
+export var unlinkSync = fs.unlinkSync.bind(fs);
+export var utimesSync = fs.utimesSync.bind(fs);
+export var lutimesSync = fs.lutimesSync.bind(fs);
 
-export var createReadStream = fs.createReadStream.bind(_fs);
-export var createWriteStream = fs.createWriteStream.bind(_fs);
+export var createReadStream = fs.createReadStream.bind(fs);
+export var createWriteStream = fs.createWriteStream.bind(fs);
 
 export var promises = {
   access: promisify(fs.accessSync),

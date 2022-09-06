@@ -888,8 +888,10 @@ JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, co
     globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), WTFMove(sourceCode));
     auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSValue(), JSValue());
 
-    if (promise->status(vm) == JSC::JSPromise::Status::Pending) {
-        vm.drainMicrotasks();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (scope.exception()) {
+        promise->rejectWithCaughtException(globalObject, scope);
     }
 
     if (promise->status(vm) == JSC::JSPromise::Status::Fulfilled) {

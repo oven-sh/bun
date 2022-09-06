@@ -677,157 +677,6 @@ bun --loader=.js:js
 
 This will disable JSX transforms for `.js` files.
 
-## Loader API
-
-Bun v0.1.11 introduces custom loaders.
-
-- import and require `.svelte`, `.vue`, `.yaml`, `.scss`, `.less` and other file extensions that Bun doesn't implement a builtin loader for
-- Dynamically generate ESM & CJS modules
-
-**YAML loader via `js-yaml`**
-
-This is an `"object"` loader. `object` loaders let you return a JS object that Bun converts to an ESM & CJS module.
-
-Plugin implementation:
-
-```js
-import { plugin } from "bun";
-
-plugin({
-  name: "YAML",
-
-  setup(builder) {
-    const { load } = require("js-yaml");
-    const { readFileSync } = require("fs");
-    // Run this function on any import that ends with .yaml or .yml
-    builder.onLoad({ filter: /\.(yaml|yml)$/ }, (args) => {
-      // Read the YAML file from disk
-      const text = readFileSync(args.path, "utf8");
-
-      // parse the YAML file with js-yaml
-      const exports = load(text);
-
-      return {
-        // Copy the keys and values from the parsed YAML file into the ESM module namespace object
-        exports,
-
-        // we're returning an object
-        loader: "object",
-      };
-    });
-  },
-});
-```
-
-Plugin usage:
-
-```js
-import { hello } from "./myfile.yaml";
-
-console.log(hello); // "world"
-```
-
-**A Svelte loader using `svelte/compiler`**
-
-This is a `"js"` loader, which lets you return a JS string or `ArrayBufferView` that Bun converts to an ESM & CJS module.
-
-Plugin implementation:
-
-```js
-import { plugin } from "bun";
-
-await plugin({
-  name: "svelte loader",
-  async setup(builder) {
-    const { compile } = await import("svelte/compiler");
-    const { readFileSync } = await import("fs");
-
-    // Register a loader for .svelte files
-    builder.onLoad({ filter: /\.svelte$/ }, ({ path }) => ({
-      // Run the Svelte compiler on the import path
-      contents: compile(readFileSync(path, "utf8"), {
-        filename: path,
-        generate: "ssr",
-      }).js.code,
-
-      // Set the loader to "js"
-      // This runs it through Bun's transpiler
-      loader: "js",
-    }));
-  },
-});
-```
-
-Note: in a production implementation, you'd want to cache the compiled output and include additional error handling.
-
-Plugin usage:
-
-```js
-import MySvelteComponent from "./component.svelte";
-
-console.log(mySvelteComponent.render());
-```
-
-### Loader API Reference
-
-Bun's loader API interface is loosely based on [esbuild](https://esbuild.github.io/plugins). Some esbuild plugins "just work" in Bun.
-
-At the core of the loader API are `filter` and `namespace`. `filter` is a RegExp matched against import paths. `namespace` is a prefix inserted into the import path (unlike esbuild, Bun inserts the prefix into transpiled output). For example, if you have a loader with a `filter` of `\.yaml$` and a `namespace` of `yaml:`, then the import path `./myfile.yaml` will be transformed to `yaml:./myfile.yaml`.
-
-**`plugin` function**
-
-At the top-level, a `plugin` function exported from `"bun"` expects a `"name"` string and a `"setup"` function that takes a `builder` object.
-
-For plugins to automatically activate, the `plugin` function must be from an import statement like this:
-
-```js
-import { plugin } from "bun";
-
-// This automatically activates on import
-plugin({
-  name: "my plugin",
-  setup(builder) {},
-});
-
-/* Bun.plugin() does not automatically activate. */
-```
-
-Inside the `setup` function, you can:
-
-- register loaders using `builder.onLoad()`
-- register resolvers using `builder.onResolve()`
-
-Internally, Bun's transpiler automatically turns `plugin()` calls into separate files (at most 1 per file). This lets loaders activate before the rest of your application runs with zero configuration.
-
-#### `builder.onLoad({ filter, namespace?: "optional-namespace" }, callback)`
-
-`builder.onLoad()` registers a loader for a matching `filter` RegExp and `namespace` string.
-
-The `callback` function is called with an `args` object that contains the following properties:
-
-- `path`: the path of the file being loaded
-
-For now, that's the only property. More will likely be added in the future.
-
-**Loader types**
-
-There are different types of loaders:
-
-- `"js"`, `"jsx"`, `"ts"`, `"tsx"`: these loaders run the source text through Bun's transpiler
-- `"json"`, `"toml"`: these loaders run the source text through Bun's built-in parsers
-- `"object"`: this loader inserts a new ECMAScript Module into the ECMAScript Module registry by copying all the keys and values from the `"exports"` object into the [Module Namespace Object](https://tc39.es/ecma262/#module-namespace-exotic-object)
-
-The `callback` function expects a return value that contains `contents` and `loader` properties,
-unless the loader is `"object"`.
-
-`"contents"` is the source code. It can be a string or an `ArrayBufferView`.
-
-`"loader"` is the loader type. It can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"toml"`, or `"object"`.
-
-If `"loader"` is `"object"`, the `callback` function expects a `"exports"` object instead of `"contents"`. The keys and values will be copied onto the ESM module namespace object.
-
-`"object"` loaders are useful when the return value is parsed into an object, like when parsing YAML, JSON, or other data formats. Most loader APIs force you to stringify values and parse again. This loader lets you skip that step, which improves performance and is a little easier sometimes.
-
 #### CSS in JS (bun dev only)
 
 When importing CSS in JavaScript-like loaders, CSS is treated special.
@@ -1829,6 +1678,174 @@ Added in Bun v0.1.7.
 This command installs completions for `zsh` and/or `fish`. It runs automatically on every `bun upgrade` and on install. It reads from `$SHELL` to determine which shell to install for. It tries several common shell completion directories for your shell and OS.
 
 If you want to copy the completions manually, run `bun completions > path-to-file`. If you know the completions directory to install them to, run `bun completions /path/to/directory`.
+
+## Loader API
+
+Bun v0.1.11 introduces custom loaders.
+
+- import and require `.svelte`, `.vue`, `.yaml`, `.scss`, `.less` and other file extensions that Bun doesn't implement a builtin loader for
+- Dynamically generate ESM & CJS modules
+
+**YAML loader via `js-yaml`**
+
+This is an `"object"` loader. `object` loaders let you return a JS object that Bun converts to an ESM & CJS module.
+
+Plugin implementation (`my-yaml-plugin.js`)
+
+```js
+import { plugin } from "bun";
+
+plugin({
+  name: "YAML",
+
+  setup(builder) {
+    const { load } = require("js-yaml");
+    const { readFileSync } = require("fs");
+    // Run this function on any import that ends with .yaml or .yml
+    builder.onLoad({ filter: /\.(yaml|yml)$/ }, (args) => {
+      // Read the YAML file from disk
+      const text = readFileSync(args.path, "utf8");
+
+      // parse the YAML file with js-yaml
+      const exports = load(text);
+
+      return {
+        // Copy the keys and values from the parsed YAML file into the ESM module namespace object
+        exports,
+
+        // we're returning an object
+        loader: "object",
+      };
+    });
+  },
+});
+```
+
+Plugin usage:
+
+```js
+import "./my-yaml-plugin.js";
+import { hello } from "./myfile.yaml";
+
+console.log(hello); // "world"
+```
+
+**Svelte loader using `svelte/compiler`**
+
+This is a `"js"` loader, which lets you return a JS string or `ArrayBufferView` that Bun converts to an ESM & CJS module.
+
+Plugin implementation (`myplugin.js`)
+
+```js
+import { plugin } from "bun";
+
+await plugin({
+  name: "svelte loader",
+  async setup(builder) {
+    const { compile } = await import("svelte/compiler");
+    const { readFileSync } = await import("fs");
+
+    // Register a loader for .svelte files
+    builder.onLoad({ filter: /\.svelte$/ }, ({ path }) => ({
+      // Run the Svelte compiler on the import path
+      contents: compile(readFileSync(path, "utf8"), {
+        filename: path,
+        generate: "ssr",
+      }).js.code,
+
+      // Set the loader to "js"
+      // This runs it through Bun's transpiler
+      loader: "js",
+    }));
+  },
+});
+```
+
+Note: in a production implementation, you'd want to cache the compiled output and include additional error handling.
+
+Plugin usage:
+
+```js
+import "./myplugin.js";
+import MySvelteComponent from "./component.svelte";
+
+console.log(mySvelteComponent.render());
+```
+
+### Loader API Reference
+
+Bun's loader API interface is loosely based on [esbuild](https://esbuild.github.io/plugins). Some esbuild plugins "just work" in Bun.
+
+MDX:
+
+```jsx
+import { plugin } from "bun";
+import { renderToStaticMarkup } from "react-dom/server";
+
+// it's the esbuild plugin, but it works using Bun's transpiler.
+import mdx from "@mdx-js/esbuild";
+
+plugin(mdx());
+
+import Foo from "./bar.mdx";
+console.log(renderToStaticMarkup(<Foo />));
+```
+
+At the core of the loader API are `filter` and `namespace`. `filter` is a RegExp matched against import paths. `namespace` is a prefix inserted into the import path (unlike esbuild, Bun inserts the prefix into transpiled output). For example, if you have a loader with a `filter` of `\.yaml$` and a `namespace` of `yaml:`, then the import path `./myfile.yaml` will be transformed to `yaml:./myfile.yaml`.
+
+**`plugin` function**
+
+At the top-level, a `plugin` function exported from `"bun"` expects a `"name"` string and a `"setup"` function that takes a `builder` object.
+
+For plugins to automatically activate, the `plugin` function must be from an import statement like this:
+
+```js
+import { plugin } from "bun";
+
+// This automatically activates on import
+plugin({
+  name: "my plugin",
+  setup(builder) {},
+});
+
+/* Bun.plugin() does not automatically activate. */
+```
+
+Inside the `setup` function, you can:
+
+- register loaders using `builder.onLoad()`
+- register resolvers using `builder.onResolve()`
+
+Internally, Bun's transpiler automatically turns `plugin()` calls into separate files (at most 1 per file). This lets loaders activate before the rest of your application runs with zero configuration.
+
+#### `builder.onLoad({ filter, namespace?: "optional-namespace" }, callback)`
+
+`builder.onLoad()` registers a loader for a matching `filter` RegExp and `namespace` string.
+
+The `callback` function is called with an `args` object that contains the following properties:
+
+- `path`: the path of the file being loaded
+
+For now, that's the only property. More will likely be added in the future.
+
+**Loader types**
+
+There are different types of loaders:
+
+- `"js"`, `"jsx"`, `"ts"`, `"tsx"`: these loaders run the source text through Bun's transpiler
+- `"json"`, `"toml"`: these loaders run the source text through Bun's built-in parsers
+- `"object"`: this loader inserts a new ECMAScript Module into the ECMAScript Module registry by copying all the keys and values from the `"exports"` object into the [Module Namespace Object](https://tc39.es/ecma262/#module-namespace-exotic-object)
+
+The `callback` function expects a return value that contains `contents` and `loader` properties,
+unless the loader is `"object"`.
+
+`"contents"` is the source code. It can be a string or an `ArrayBufferView`.
+
+`"loader"` is the loader type. It can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"toml"`, or `"object"`.
+
+If `"loader"` is `"object"`, the `callback` function expects a `"exports"` object instead of `"contents"`. The keys and values will be copied onto the ESM module namespace object.
+
+`"object"` loaders are useful when the return value is parsed into an object, like when parsing YAML, JSON, or other data formats. Most loader APIs force you to stringify values and parse again. This loader lets you skip that step, which improves performance and is a little easier sometimes.
 
 ## `Bun.serve` - fast HTTP server
 

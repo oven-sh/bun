@@ -3057,17 +3057,15 @@ pub fn firstNonASCII16CheckMin_simd(comptime Slice: type, slice: Slice, comptime
     var i: usize = 0;    
     while (i < remaining.len) : (i += ascii_u16_vector_size) {
         const mins: @Vector(ascii_u16_vector_size, u16) = remaining[i..][0..ascii_u16_vector_size].*;
-        // building a mask where @select works as an Or so we can check min and/or max
+        // building a mask where @select works as an OR so we can check min and/or max
         const mask: @Vector(ascii_u16_vector_size, bool) = if (comptime check_min) @select(bool, mins < min_u16_ascii, @splat(ascii_u16_vector_size, true), mins > max_u16_ascii) else mins > max_u16_ascii; 
-        // we keep all indices that the mask has True in it.
+        // we keep all indices that the mask has TRUE in it.
         const nonascii_indices  = @select(usize,  mask, indices, @splat(ascii_u16_vector_size, slice.len + 2));
-        // counting all tues to know if any isn't ascii
-        const trues = @reduce(.Add, @select(usize, mask, @splat(ascii_u16_vector_size, @as(usize, 1)), @splat(ascii_u16_vector_size, @as(usize, 0))));
 
-        if (trues > 0) {
-            // if any return the first index
+        // checking if any element on mask is TRUE
+        if (@reduce(.Or, mask)) {
             return @intCast(u32, @reduce(.Min, nonascii_indices));
-        }
+        } 
 
         indices += increment;
     }

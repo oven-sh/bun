@@ -4,22 +4,31 @@
       "name": "Mac",
       "forcedInclude": ["${workspaceFolder}/src/bun.js/bindings/root.h"],
       "includePath": [
-        "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/",
-        "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers",
-        "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/*",
-        "${workspaceFolder}/src/JavaScript/jsc/bindings/",
-        "${workspaceFolder}/src/JavaScript/jsc/WebKit/Source/bmalloc/",
-        "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/"
+        "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/",
+        "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/WTF/Headers",
+        "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/*",
+        "${workspaceFolder}/src/bun.js/bindings/",
+        "${workspaceFolder}/src/bun.js/builtins/",
+        "${workspaceFolder}/src/bun.js/builtins/cpp",
+        "${workspaceFolder}/src/bun.js/bindings/WebCore/",
+        "${workspaceFolder}/src/bun.js/WebKit/Source/bmalloc/",
+        "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/",
+        "${workspaceFolder}/../webkit-build/include/"
       ],
       "browse": {
         "path": [
           "${workspaceFolder}/src/bun.js/bindings/*",
-          "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/",
-          "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/WTF/Headers/**",
-          "${workspaceFolder}/src/JavaScript/jsc/WebKit/WebKitBuild/Release/*",
-          "${workspaceFolder}/src/JavaScript/jsc/bindings/**",
-          "${workspaceFolder}/src/JavaScript/jsc/WebKit/Source/bmalloc/**",
-          "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/"
+          "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/JavaScriptCore/PrivateHeaders/**",
+          "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/JavaScriptCore/Headers/**",
+          "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/WTF/Headers/**",
+          "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/*",
+          "${workspaceFolder}/src/bun.js/bindings/**",
+          "${workspaceFolder}/src/bun.js/modules/**",
+          "${workspaceFolder}/src/bun.js/builtins/**",
+          "${workspaceFolder}/src/bun.js/builtins/cpp/**",
+          "${workspaceFolder}/src/bun.js/WebKit/Source/bmalloc/**",
+          "${workspaceFolder}/src/bun.js/WebKit/WebKitBuild/Release/ICU/Headers/",
+          "${workspaceFolder}/../webkit-build/include/"
         ],
         "limitSymbolsToIncludedHeaders": true,
         "databaseFilename": ".vscode/cppdb"
@@ -36,9 +45,9 @@
         "DU_DISABLE_RENAMING=1"
       ],
       "macFrameworkPath": [],
-      "compilerPath": "/usr/local/opt/llvm/bin/clang",
+      "compilerPath": "clang++",
       "cStandard": "c17",
-      "cppStandard": "c++11",
+      "cppStandard": "c++20",
       "intelliSenseMode": "macos-clang-x64"
     }
   ],

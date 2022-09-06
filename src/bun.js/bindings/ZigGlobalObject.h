@@ -32,6 +32,12 @@ class EventLoopTask;
 #include "DOMConstructors.h"
 #include "DOMWrapperWorld-class.h"
 #include "DOMIsoSubspaces.h"
+#include "BunPlugin.h"
+
+extern "C" void Bun__reportError(JSC__JSGlobalObject*, JSC__JSValue);
+// defined in ModuleLoader.cpp
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 // #include "EventTarget.h"
 
 // namespace WebCore {
@@ -243,7 +249,10 @@ public:
         Bun__HTTPRequestContextDebugTLS__onResolve,
         Bun__HTTPRequestContextDebugTLS__onResolveStream,
 
+        jsFunctionOnLoadObjectResultResolve,
+        jsFunctionOnLoadObjectResultReject,
     };
+    static constexpr size_t promiseFunctionsSize = 18;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
     {
@@ -279,6 +288,14 @@ public:
             return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolve;
         } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
             return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+        } else if (handler == Bun__HTTPRequestContextDebugTLS__onResolveStream) {
+            return PromiseFunctions::Bun__HTTPRequestContextDebugTLS__onResolveStream;
+        } else if (handler == jsFunctionOnLoadObjectResultResolve) {
+            return PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
+        } else if (handler == jsFunctionOnLoadObjectResultReject) {
+            return PromiseFunctions::jsFunctionOnLoadObjectResultReject;
         } else {
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -304,12 +321,21 @@ public:
     mutable WriteBarrier<JSFunction> m_readableStreamToJSON;
     mutable WriteBarrier<JSFunction> m_readableStreamToArrayBuffer;
     mutable WriteBarrier<JSFunction> m_assignToStream;
-    mutable WriteBarrier<JSFunction> m_thenables[16];
+    mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
     void trackFFIFunction(JSC::JSFunction* function)
     {
         this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
     }
+
+    BunPlugin::OnLoad onLoadPlugins[BunPluginTargetMax + 1] {};
+    BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};
+    BunPluginTarget defaultBunPluginTarget = BunPluginTargetBun;
+
+    JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
+
+    // When a napi module initializes on dlopen, we need to know what the value is
+    JSValue pendingNapiModule = JSValue {};
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -342,6 +368,8 @@ private:
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
+
+    LazyProperty<JSGlobalObject, JSC::Structure> m_pendingVirtualModuleResultStructure;
 
     LazyProperty<JSGlobalObject, JSObject> m_encodeIntoObjectPrototype;
 

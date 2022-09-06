@@ -873,27 +873,33 @@ bool JSC__JSModuleLoader__checkSyntax(JSC__JSGlobalObject* arg0, const JSC__Sour
 
     return result;
 }
-JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* arg0, const unsigned char* arg1,
+JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
     size_t arg2, const unsigned char* arg3, size_t arg4,
     JSC__JSValue JSValue5, JSC__JSValue* arg6)
 {
-    WTF::String src = WTF::String(WTF::StringImpl::createWithoutCopying(arg1, arg2));
-    WTF::URL origin = WTF::URL::fileURLWithFileSystemPath(WTF::StringView(arg3, arg4));
+    WTF::String src = WTF::String::fromUTF8(arg1, arg2).isolatedCopy();
+    WTF::URL origin = WTF::URL::fileURLWithFileSystemPath(WTF::String(WTF::StringImpl::createWithoutCopying(arg3, arg4))).isolatedCopy();
 
-    JSC::VM& vm = arg0->vm();
-    JSC::JSLockHolder locker(vm);
+    JSC::VM& vm = globalObject->vm();
 
     JSC::SourceCode sourceCode = JSC::makeSource(
-        src, JSC::SourceOrigin { origin }, origin.lastPathComponent().toStringWithoutCopying(),
+        src, JSC::SourceOrigin { origin }, origin.fileSystemPath(),
         WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
-    WTF::NakedPtr<JSC::Exception> exception;
-    auto val = JSC::evaluate(arg0, sourceCode, JSC::JSValue(), exception);
-    if (exception.get()) {
-        *arg6 = JSC::JSValue::encode(JSC::JSValue(exception.get()));
+    globalObject->moduleLoader()->provideFetch(globalObject, jsString(vm, origin.fileSystemPath()), WTFMove(sourceCode));
+    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSValue(), JSValue());
+
+    if (promise->status(vm) == JSC::JSPromise::Status::Pending) {
+        vm.drainMicrotasks();
     }
 
-    vm.drainMicrotasks();
-    return JSC::JSValue::encode(val);
+    if (promise->status(vm) == JSC::JSPromise::Status::Fulfilled) {
+        return JSC::JSValue::encode(promise->result(vm));
+    } else if (promise->status(vm) == JSC::JSPromise::Status::Rejected) {
+        *arg6 = JSC::JSValue::encode(promise->result(vm));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    } else {
+        return JSC::JSValue::encode(promise);
+    }
 }
 JSC__JSInternalPromise* JSC__JSModuleLoader__importModule(JSC__JSGlobalObject* arg0,
     const JSC__Identifier* arg1)

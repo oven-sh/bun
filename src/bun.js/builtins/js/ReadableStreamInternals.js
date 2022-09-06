@@ -849,7 +849,7 @@ function readDirectStream(stream, sink, underlyingSource) {
 
 }
 
-@globalPrivate;
+@linkTimeConstant;
 function assignToStream(stream, sink) {
   "use strict";
 

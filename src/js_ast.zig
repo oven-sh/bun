@@ -4391,7 +4391,10 @@ pub const Ast = struct {
     wrapper_ref: ?Ref = null,
     require_ref: Ref = Ref.None,
 
+    bun_plugin: BunPlugin = .{},
+
     bundle_namespace_ref: ?Ref = null,
+
     prepend_part: ?Part = null,
 
     // These are used when bundling. They are filled in during the parser pass
@@ -4520,6 +4523,7 @@ pub const Part = struct {
         cjs_imports,
         react_fast_refresh,
         dirname_filename,
+        bun_plugin,
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);
@@ -4749,6 +4753,11 @@ pub fn printmem(comptime format: string, args: anytype) void {
     Output.initTest();
     Output.print(format, args);
 }
+
+pub const BunPlugin = struct {
+    ref: Ref = Ref.None,
+    hoisted_stmts: std.ArrayListUnmanaged(Stmt) = .{},
+};
 
 pub const Macro = struct {
     const JavaScript = @import("javascript_core");

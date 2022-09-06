@@ -114,7 +114,7 @@ function validateAndNormalizeQueuingStrategy(size, highWaterMark)
     return { size: size, highWaterMark: newHighWaterMark };
 }
 
-@globalPrivate
+@linkTimeConstant
 function createFIFO() {
     "use strict";
     class Denqueue {

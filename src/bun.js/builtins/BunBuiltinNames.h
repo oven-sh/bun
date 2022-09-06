@@ -25,6 +25,7 @@ using namespace JSC;
 #define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
     macro(AbortSignal) \
     macro(Bun) \
+    macro(Loader) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
@@ -99,6 +100,7 @@ using namespace JSC;
     macro(file) \
     macro(filePath) \
     macro(fillFromJS) \
+    macro(filter) \
     macro(finishConsumingStream) \
     macro(flush) \
     macro(flushAlgorithm) \
@@ -115,6 +117,7 @@ using namespace JSC;
     macro(hostname) \
     macro(href) \
     macro(ignoreBOM) \
+    macro(importer) \
     macro(inFlightCloseRequest) \
     macro(inFlightWriteRequest) \
     macro(initializeWith) \
@@ -131,6 +134,7 @@ using namespace JSC;
     macro(lazy) \
     macro(lazyLoad) \
     macro(lazyStreamPrototypeMap) \
+    macro(loadCJS2ESM) \
     macro(loadModule) \
     macro(localStreams) \
     macro(main) \
@@ -181,8 +185,8 @@ using namespace JSC;
     macro(releaseLock) \
     macro(removeEventListener) \
     macro(require) \
+    macro(requireESM) \
     macro(requireMap) \
-    macro(requireModule) \
     macro(resolve) \
     macro(resolveSync) \
     macro(resume) \
@@ -192,6 +196,7 @@ using namespace JSC;
     macro(sep) \
     macro(setBody) \
     macro(setStatus) \
+    macro(setup) \
     macro(sink) \
     macro(size) \
     macro(start) \

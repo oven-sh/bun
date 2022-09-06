@@ -2390,9 +2390,6 @@ pub const Parser = struct {
         } else {
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for (stmts) |stmt| {
-                // switch (stmt.data) {
-
-                // }
                 switch (stmt.data) {
                     .s_local => |local| {
                         if (local.decls.len > 1) {
@@ -3899,7 +3896,7 @@ fn NewParser_(
         filename_ref: Ref = Ref.None,
         dirname_ref: Ref = Ref.None,
         import_meta_ref: Ref = Ref.None,
-        promise_ref: ?Ref = null,
+        bun_plugin: js_ast.BunPlugin = .{},
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,
@@ -4334,13 +4331,12 @@ fn NewParser_(
 
                 parts.* = parts_;
             }
+            const default_export_ref =
+                if (p.named_exports.get("default")) |default_| default_.ref else Ref.None;
+
             while (parts_.len > 1) {
                 var parts_end: usize = 0;
                 var last_end = parts_.len;
-                var default_export_ref = Ref.None;
-                if (p.named_exports.get("default")) |named| {
-                    default_export_ref = named.ref;
-                }
 
                 for (parts_) |part| {
                     const is_dead = part.can_be_removed_if_unused and can_remove_part: {
@@ -6295,6 +6291,38 @@ fn NewParser_(
                 }
 
                 return p.s(S.Empty{}, loc);
+            }
+
+            if (p.options.features.hoist_bun_plugin and strings.eqlComptime(path.text, "bun")) {
+                var plugin_i: usize = std.math.maxInt(usize);
+                const items = stmt.items;
+                for (items) |item, i| {
+                    // Mark Bun.plugin()
+                    // TODO: remove if they have multiple imports of the same name?
+                    if (strings.eqlComptime(item.alias, "plugin")) {
+                        const name = p.loadNameFromRef(item.name.ref.?);
+                        const ref = try p.declareSymbol(.other, item.name.loc, name);
+                        try p.is_import_item.put(p.allocator, ref, .{});
+                        p.bun_plugin.ref = ref;
+                        plugin_i = i;
+                        break;
+                    }
+                }
+
+                if (plugin_i != std.math.maxInt(usize)) {
+                    var list = std.ArrayListUnmanaged(@TypeOf(stmt.items[0])){
+                        .items = stmt.items,
+                        .capacity = stmt.items.len,
+                    };
+                    // remove it from the list
+                    _ = list.swapRemove(plugin_i);
+                    stmt.items = list.items;
+                }
+
+                // if the import statement is now empty, remove it completely
+                if (stmt.items.len == 0 and stmt.default_name == null and stmt.star_name_loc == null) {
+                    return p.s(S.Empty{}, loc);
+                }
             }
 
             const macro_remap = if ((comptime allow_macros) and !is_macro)
@@ -12409,6 +12437,13 @@ fn NewParser_(
             const allocator = p.allocator;
             var opts = PrependTempRefsOpts{};
             var partStmts = ListManaged(Stmt).fromOwnedSlice(allocator, stmts);
+
+            //
+            const bun_plugin_usage_count_before: usize = if (p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull())
+                p.symbols.items[p.bun_plugin.ref.innerIndex()].use_count_estimate
+            else
+                0;
+
             try p.visitStmtsAndPrependTempRefs(&partStmts, &opts);
 
             // Insert any relocated variable statements now
@@ -12448,6 +12483,22 @@ fn NewParser_(
 
             if (partStmts.items.len > 0) {
                 const _stmts = partStmts.toOwnedSlice();
+
+                // -- hoist_bun_plugin --
+                if (_stmts.len == 1 and p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull()) {
+                    const bun_plugin_usage_count_after: usize = p.symbols.items[p.bun_plugin.ref.innerIndex()].use_count_estimate;
+                    if (bun_plugin_usage_count_after > bun_plugin_usage_count_before) {
+                        // Single-statement part which uses Bun.plugin()
+                        // It's effectively an unrelated file
+                        if (p.declared_symbols.items.len > 0 or p.symbol_uses.count() > 0) {
+                            p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols.items, .symbol_uses = p.symbol_uses });
+                        }
+
+                        p.bun_plugin.hoisted_stmts.append(p.allocator, _stmts[0]) catch unreachable;
+                        return;
+                    }
+                }
+                // -- hoist_bun_plugin --
 
                 try parts.append(js_ast.Part{
                     .stmts = _stmts,
@@ -18730,6 +18781,7 @@ fn NewParser_(
                 else
                     false,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
+                .bun_plugin = p.bun_plugin,
             };
         }
 

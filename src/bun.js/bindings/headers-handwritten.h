@@ -46,6 +46,12 @@ typedef struct SystemError {
 
 typedef void* ArrayBufferSink;
 
+typedef uint8_t BunPluginTarget;
+const BunPluginTarget BunPluginTargetBun = 0;
+const BunPluginTarget BunPluginTargetBrowser = 1;
+const BunPluginTarget BunPluginTargetNode = 2;
+const BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
+
 typedef uint8_t ZigStackFrameCode;
 const ZigStackFrameCode ZigStackFrameCodeNone = 0;
 const ZigStackFrameCode ZigStackFrameCodeEval = 1;
@@ -109,6 +115,19 @@ const JSErrorCode JSErrorCodeAggregateError = 7;
 const JSErrorCode JSErrorCodeOutOfMemoryError = 8;
 const JSErrorCode JSErrorCodeStackOverflow = 253;
 const JSErrorCode JSErrorCodeUserErrorCode = 254;
+
+typedef uint8_t BunLoaderType;
+const BunLoaderType BunLoaderTypeNone = 0;
+const BunLoaderType BunLoaderTypeJSX = 1;
+const BunLoaderType BunLoaderTypeJS = 2;
+const BunLoaderType BunLoaderTypeTS = 3;
+const BunLoaderType BunLoaderTypeTSX = 4;
+const BunLoaderType BunLoaderTypeCSS = 5;
+const BunLoaderType BunLoaderTypeFILE = 6;
+const BunLoaderType BunLoaderTypeJSON = 7;
+const BunLoaderType BunLoaderTypeTOML = 8;
+const BunLoaderType BunLoaderTypeWASM = 9;
+const BunLoaderType BunLoaderTypeNAPI = 10;
 
 #pragma mark - Stream
 
@@ -178,10 +197,13 @@ typedef struct {
 } Bun__ArrayBuffer;
 
 enum SyntheticModuleType : uint64_t {
+    ObjectModule = 2,
+
     Buffer = 1024,
     Process = 1025,
     Events = 1026,
     StringDecoder = 1027,
+    Module = 1028,
 };
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
@@ -189,6 +211,32 @@ extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
 extern "C" void Microtask__run(void* ptr, void* global);
 extern "C" void Microtask__run_default(void* ptr, void* global);
+
+extern "C" bool Bun__transpileVirtualModule(
+    JSC::JSGlobalObject* global,
+    ZigString* specifier,
+    ZigString* referrer,
+    ZigString* sourceCode,
+    BunLoaderType loader,
+    ErrorableResolvedSource* result);
+
+extern "C" JSC::EncodedJSValue Bun__runVirtualModule(
+    JSC::JSGlobalObject* global,
+    ZigString* specifier);
+
+extern "C" bool Bun__transpileFile(
+    void* bunVM,
+    JSC::JSGlobalObject* global,
+    ZigString* specifier,
+    ZigString* referrer,
+    ErrorableResolvedSource* result);
+
+extern "C" bool Bun__fetchBuiltinModule(
+    void* bunVM,
+    JSC::JSGlobalObject* global,
+    ZigString* specifier,
+    ZigString* referrer,
+    ErrorableResolvedSource* result);
 
 // Used in process.version
 extern "C" const char* Bun__version;

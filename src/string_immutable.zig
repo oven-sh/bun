@@ -3045,57 +3045,53 @@ pub fn getLinesInText(text: []const u8, line: u32, comptime line_range_count: us
     return results;
 }
 
-// copied from std.simd.vectorLength because it is not public
-fn vectorLength(comptime VectorType: type) comptime_int {
-    return switch (@typeInfo(VectorType)) {
-        .Vector => |info| info.len,
-        .Array => |info| info.len,
-        else => @compileError("Invalid type" ++ @typeName(VectorType)),
-    };
-}
 
-// Will return the Index of the first value found
-fn findValueIndexInVector(vec: anytype, value: std.meta.Child(@TypeOf(vec))) ?std.simd.VectorIndex(@TypeOf(vec)) {
-    const len = vectorLength(@TypeOf(vec));
-    const vector = vec == @splat(len, value);
-    const IndexInt = std.simd.VectorIndex(@TypeOf(vector));
-    const indices = @select(IndexInt, vector, std.simd.iota(IndexInt, len), @splat(len, ~@as(IndexInt, 0)));
-    return @reduce(.Min, indices);
-}
+pub fn firstNonASCII16CheckMin_simd(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
+    const remainder = slice.len % ascii_u16_vector_size; // vector size could be cpu based
+    
+    const remaining = if (remainder != 0) slice[0..slice.len - remainder] else slice;
 
-pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
-    var remaining = slice;
+    var indices: @Vector(ascii_u16_vector_size, usize) = std.simd.iota(usize, ascii_u16_vector_size);
+    const increment:  @Vector(ascii_u16_vector_size, usize) =  @splat(ascii_u16_vector_size, @as(usize, ascii_u16_vector_size));
 
-    if (comptime Environment.enableSIMD) {
-        const end_ptr = remaining.ptr + remaining.len - (remaining.len % ascii_u16_vector_size);
-        if (remaining.len > ascii_u16_vector_size) {
-            const remaining_start = remaining.ptr;
-            while (remaining.ptr != end_ptr) {
-                const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
-                const max_value = @reduce(.Max, vec);
+    var i: usize = 0;    
+    while (i < remaining.len) : (i += ascii_u16_vector_size) {
+        const mins: @Vector(ascii_u16_vector_size, u16) = remaining[i..][0..ascii_u16_vector_size].*;
+        // building a mask where @select works as an Or so we can check min and/or max
+        const mask: @Vector(ascii_u16_vector_size, bool) = if (comptime check_min) @select(bool, mins < min_u16_ascii, @splat(ascii_u16_vector_size, true), mins > max_u16_ascii) else mins > max_u16_ascii; 
+        // we keep all indices that the mask has True in it.
+        const nonascii_indices  = @select(usize,  mask, indices, @splat(ascii_u16_vector_size, slice.len + 2));
+        // counting all tues to know if any isn't ascii
+        const trues = @reduce(.Add, @select(usize, mask, @splat(ascii_u16_vector_size, @as(usize, 1)), @splat(ascii_u16_vector_size, @as(usize, 0))));
 
-                if (comptime check_min) {
-                    // by using @reduce here, we make it only do one comparison
-                    // @reduce doesn't tell us the index though
-                    const min_value = @reduce(.Min, vec);
-                    if (min_value < 0x20 or max_value > 127) {
-                        remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
-                        // SIMD instruction is faster
-                        return @intCast(u32, findValueIndexInVector(vec, min_value).?);
-                    }
-                } else if (comptime !check_min) {
-                    if (max_value > 127) {
-                        remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
-                        return @intCast(u32, findValueIndexInVector(vec, max_value).?);
-                    }
-                }
+        if (trues > 0) {
+            // if any return the first index
+            return @intCast(u32, @reduce(.Min, nonascii_indices));
+        }
 
-                remaining.ptr += ascii_u16_vector_size;
+        indices += increment;
+    }
+    // here we handle what was left out
+    if (remainder > 0) {
+        i = slice.len - remainder;
+        while (i < remainder): (i += 1) {
+            const char = slice[i];
+            if (char > max_u16_ascii[0] or char < min_u16_ascii[0]) {
+                return @intCast(u32, i);
             }
-            remaining.len -= (@ptrToInt(remaining.ptr) - @ptrToInt(remaining_start)) / 2;
         }
     }
 
+    return null;
+}
+
+pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime check_min: bool) ?u32 {
+    
+    if (comptime Environment.enableSIMD) {
+        return firstNonASCII16CheckMin_simd(Slice, slice, check_min);
+    }
+
+    var remaining = slice;
     if (comptime check_min) {
         for (remaining) |char| {
             if (char > 127 or char < 0x20) {
@@ -3192,7 +3188,7 @@ test "firstNonASCII" {
     }
 
     {
-        const no = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3";
+       const no = "aspdokasdpokasdpokasd aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd123123aspdokasdpokasdpokasdaspdokasdpokasdpokasdaspdokasdpokasdpokasd12312🙂3";
         try std.testing.expectEqual(@as(u32, 366), firstNonASCII(no).?);
     }
 }

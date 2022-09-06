@@ -27,7 +27,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSSinkController;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSink;
     std::unique_ptr<IsoSubspace> m_subspaceForStringDecoder;
-    std::unique_ptr<IsoSubspace> m_subspaceForStringDecoderConstructor;
+    std::unique_ptr<IsoSubspace> m_subspaceForReadableState;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 

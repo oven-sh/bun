@@ -2512,7 +2512,6 @@ var require_readable = __commonJS({
       },
     } = require_errors();
     var { validateObject } = require_validators();
-    var kPaused = Symbol2("kPaused");
     var { StringDecoder } = __require("string_decoder");
     var from = require_from();
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
@@ -2639,7 +2638,7 @@ var require_readable = __commonJS({
     }
     Readable.prototype.isPaused = function () {
       const state = this._readableState;
-      return state[kPaused] === true || state.flowing === false;
+      return state.paused === true || state.flowing === false;
     };
     Readable.prototype.setEncoding = function (enc) {
       const decoder = new StringDecoder(enc);
@@ -3032,7 +3031,7 @@ var require_readable = __commonJS({
     function updateReadableListening(self) {
       const state = self._readableState;
       state.readableListening = self.listenerCount("readable") > 0;
-      if (state.resumeScheduled && state[kPaused] === false) {
+      if (state.resumeScheduled && state.paused === false) {
         state.flowing = true;
       } else if (self.listenerCount("data") > 0) {
         self.resume();
@@ -3051,7 +3050,7 @@ var require_readable = __commonJS({
         state.flowing = !state.readableListening;
         resume(this, state);
       }
-      state[kPaused] = false;
+      state.paused = false;
       return this;
     };
     function resume(stream, state) {
@@ -3077,7 +3076,7 @@ var require_readable = __commonJS({
         this._readableState.flowing = false;
         this.emit("pause");
       }
-      this._readableState[kPaused] = true;
+      this._readableState.paused = true;
       return this;
     };
     function flow(stream) {

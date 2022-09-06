@@ -11,7 +11,7 @@ class JSReadableState : public JSC::JSDestructibleObject {
 
 public:
     JSReadableState(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
+        : Base(vm, structure), m_paused(0)
     {
     }
 
@@ -19,10 +19,14 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    template<typename, JSC::SubspaceAccess mode> static JSC::CompleteSubspace* subspaceFor(JSC::VM& vm)
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
-        return &vm.destructibleObjectSpace();
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return subspaceForImpl(vm);
     }
+
+    static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)
@@ -40,6 +44,9 @@ public:
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isDuplex, JSObject* options);
     static void destroy(JSCell*) {}
+
+    // 0 for null, 1 for true, -1 for false
+    int8_t m_paused;
 };
 
 class JSReadableStatePrototype : public JSC::JSNonFinalObject {
@@ -90,6 +97,7 @@ public:
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
     DECLARE_EXPORT_INFO;
+
 private:
     JSReadableStateConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
         : Base(vm, structure, nativeFunction, nativeFunction)

@@ -87,8 +87,6 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     putDirect(vm, JSC::Identifier::fromString(vm, "emittedReadable"_s), JSC::jsBoolean(false));
     putDirect(vm, JSC::Identifier::fromString(vm, "readableListening"_s), JSC::jsBoolean(false));
     putDirect(vm, JSC::Identifier::fromString(vm, "resumeScheduled"_s), JSC::jsBoolean(false));
-    // True if the error was already emitted and should not be thrown again.
-    putDirect(vm, JSC::Identifier::fromUid(vm.symbolRegistry().symbolForKey("kPaused"_s)), JSC::jsNull());
 
     // Should close be emitted on destroy. Defaults to true.
     putDirect(vm, JSC::Identifier::fromString(vm, "errorEmitted"_s), JSC::jsBoolean(false));
@@ -172,6 +170,16 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 
 const JSC::ClassInfo JSReadableState::s_info = { "ReadableState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableState) };
 
+JSC::GCClient::IsoSubspace* JSReadableState::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSReadableState, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForReadableState.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableState = WTFMove(space); },
+        [](auto& spaces) { return spaces.m_subspaceForReadableState.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableState = WTFMove(space); });
+}
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStatePrototype, JSReadableStatePrototype::Base);
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableState_pipesCount, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -197,24 +205,24 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableState_paused, (JSGlobalObject * lexicalGlobal
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSObject* thisObject = JSC::jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
-    if (!thisObject) {
+    JSReadableState* state = JSC::jsDynamicCast<JSReadableState*>(JSValue::decode(thisValue));
+    if (!state) {
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
     }
-    JSC::JSValue pausedVal = thisObject->getDirect(vm, JSC::Identifier::fromUid(vm.symbolRegistry().symbolForKey("kPaused"_s)));
-    bool result = !pausedVal.isBoolean() || pausedVal.toBoolean(lexicalGlobalObject);
-    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsBoolean(result)));
+    if (state->m_paused == 0)
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNull()));
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsBoolean(state->m_paused > 0)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setJSReadableState_paused, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSObject* thisObject = JSC::jsDynamicCast<JSObject*>(JSValue::decode(thisValue));
-    if (!thisObject) {
+    JSReadableState* state = JSC::jsDynamicCast<JSReadableState*>(JSValue::decode(thisValue));
+    if (!state) {
         RETURN_IF_EXCEPTION(throwScope, false);
     }
-    thisObject->putDirect(vm, JSC::Identifier::fromUid(vm.symbolRegistry().symbolForKey("kPaused"_s)), JSC::jsBoolean(JSC::JSValue::decode(encodedValue).toBoolean(lexicalGlobalObject)));
+    state->m_paused = JSC::JSValue::decode(encodedValue).toBoolean(lexicalGlobalObject) ? 1 : -1;
     RELEASE_AND_RETURN(throwScope, true);
 }
 

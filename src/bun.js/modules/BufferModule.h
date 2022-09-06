@@ -29,9 +29,9 @@ inline void generateBufferSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   exportNames.append(JSC::Identifier::fromString(vm, "SlowBuffer"_s));
   exportValues.append(slowBuffer);
 
-  // substitute after JSBlob is implemented.
   exportNames.append(JSC::Identifier::fromString(vm, "Blob"_s));
-  exportValues.append(JSC::jsUndefined());
+  exportValues.append(lexicalGlobalObject->get(
+      globalObject, PropertyName(Identifier::fromString(vm, "Blob"_s))));
 
   exportNames.append(JSC::Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s));
   exportValues.append(JSC::jsNumber(50));

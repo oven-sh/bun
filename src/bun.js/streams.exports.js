@@ -23,24 +23,13 @@ var __copyProps = (to, from, except, desc) => {
       if (!__hasOwnProp.call(to, key) && key !== except)
         __defProp(to, key, {
           get: () => from[key],
+          set: (val) => (from[key] = val),
           enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
+          configurable: true,
         });
   }
   return to;
 };
-var __reExport = (target, mod, secondTarget) => (
-  __copyProps(target, mod, "default"),
-  secondTarget && __copyProps(secondTarget, mod, "default")
-);
-var __toESM = (mod, isNodeMode, target) => (
-  (target = mod != null ? __create(__getProtoOf(mod)) : {}),
-  __copyProps(
-    isNodeMode || !mod || !mod.__esModule
-      ? __defProp(target, "default", { value: mod, enumerable: true })
-      : target,
-    mod
-  )
-);
 
 var runOnNextTick = process.nextTick;
 
@@ -141,7 +130,6 @@ var require_primordials = __commonJS({
     };
   },
 });
-
 // node_modules/readable-stream/lib/ours/util.js
 var require_util = __commonJS({
   "node_modules/readable-stream/lib/ours/util.js"(exports, module) {
@@ -1143,7 +1131,6 @@ var require_utils = __commonJS({
       const wState = stream._writableState;
       const rState = stream._readableState;
       const state = wState || rState;
-      console.log("");
       return (
         (!state && isServerResponse(stream)) ||
         !!(
@@ -2498,7 +2485,8 @@ var require_readable = __commonJS({
     var debug = require_util().debuglog("stream", (fn) => {
       debug = fn;
     });
-    var BufferList = globalThis[Symbol.for("Bun.lazy")]("bun:stream").BufferList;
+    var BufferList =
+      globalThis[Symbol.for("Bun.lazy")]("bun:stream").BufferList;
     var destroyImpl = require_destroy();
     var { getHighWaterMark, getDefaultHighWaterMark } = require_state();
     var {
@@ -5290,6 +5278,7 @@ var require_stream = __commonJS({
     var {
       promisify: { custom: customPromisify },
     } = require_util();
+
     var { streamReturningOperators, promiseReturningOperators } =
       require_operators();
     var {
@@ -5411,6 +5400,7 @@ var require_ours = __commonJS({
     module.exports.destroy = originalDestroy;
     module.exports.pipeline = CustomStream.pipeline;
     module.exports.compose = CustomStream.compose;
+
     Object.defineProperty(CustomStream, "promises", {
       configurable: true,
       enumerable: true,
@@ -5423,16 +5413,15 @@ var require_ours = __commonJS({
   },
 });
 
-// stream.js
-var stream_exports = {};
-__reExport(stream_exports, __toESM(require_ours()));
-var wrapper =
+var stream_exports, wrapper;
+stream_exports = require_ours();
+wrapper =
   (0,
   function () {
     return stream_exports;
   });
-wrapper[Symbol.for("CommonJS")] = true;
 
+wrapper[Symbol.for("CommonJS")] = true;
 export default wrapper;
 export var _uint8ArrayToBuffer = stream_exports._uint8ArrayToBuffer;
 export var _isUint8Array = stream_exports._isUint8Array;

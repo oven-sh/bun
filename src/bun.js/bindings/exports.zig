@@ -2234,7 +2234,7 @@ pub const ZigConsoleClient = struct {
 
                         while (props_iter.next()) |key| {
                             var property_value = props_iter.value;
-                            const tag = Tag.get(JSValue.fromRef(property_value.asObjectRef()), this.globalThis);
+                            const tag = Tag.get(property_value, this.globalThis);
 
                             if (tag.cell.isHidden()) continue;
 

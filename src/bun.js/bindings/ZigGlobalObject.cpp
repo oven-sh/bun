@@ -88,6 +88,7 @@
 #include "JSCloseEvent.h"
 #include "JSFetchHeaders.h"
 #include "JSStringDecoder.h"
+#include "JSReadableState.h"
 
 #include "Process.h"
 
@@ -1070,9 +1071,8 @@ JSC:
 
         if (string == bunStreamString) {
             auto* obj = constructEmptyObject(globalObject);
-            auto* bufferList = JSC::JSFunction::create(
-                vm, globalObject, 0, "BufferList"_s, WebCore::constructJSBufferList, ImplementationVisibility::Public, NoIntrinsic, WebCore::constructJSBufferList);
-            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), bufferList, 0);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList(), 0);
+            obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "ReadableState"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSReadableState(), 0);
             return JSValue::encode(obj);
         }
 
@@ -1995,6 +1995,18 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_JSBufferListClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = JSBufferListPrototype::create(
+                init.vm, init.global, JSBufferListPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = JSBufferList::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSBufferListConstructor::create(
+                init.vm, init.global, JSBufferListConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
     m_JSStringDecoderClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             auto* prototype = JSStringDecoderPrototype::create(
@@ -2002,6 +2014,18 @@ void GlobalObject::finishCreation(VM& vm)
             auto* structure = JSStringDecoder::createStructure(init.vm, init.global, prototype);
             auto* constructor = JSStringDecoderConstructor::create(
                 init.vm, init.global, JSStringDecoderConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSReadableStateClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = JSReadableStatePrototype::create(
+                init.vm, init.global, JSReadableStatePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = JSReadableState::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSReadableStateConstructor::create(
+                init.vm, init.global, JSReadableStateConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);

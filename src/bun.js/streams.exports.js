@@ -2489,6 +2489,7 @@ var require_readable = __commonJS({
       Symbol: Symbol2,
     } = require_primordials();
     module.exports = Readable;
+    var ReadableState = globalThis[Symbol.for("Bun.lazy")]("bun:stream").ReadableState;
     Readable.ReadableState = ReadableState;
     var { EventEmitter: EE } = __require("events");
     var { Stream, prependListener } = require_legacy();
@@ -2511,56 +2512,12 @@ var require_readable = __commonJS({
       },
     } = require_errors();
     var { validateObject } = require_validators();
-    var kPaused = Symbol2("kPaused");
     var { StringDecoder } = __require("string_decoder");
     var from = require_from();
     ObjectSetPrototypeOf(Readable.prototype, Stream.prototype);
     ObjectSetPrototypeOf(Readable, Stream);
     var nop = () => {};
     var { errorOrDestroy } = destroyImpl;
-    function ReadableState(options, stream, isDuplex) {
-      if (typeof isDuplex !== "boolean")
-        isDuplex = stream instanceof require_duplex();
-      this.objectMode = !!(options && options.objectMode);
-      if (isDuplex)
-        this.objectMode =
-          this.objectMode || !!(options && options.readableObjectMode);
-      this.highWaterMark = options
-        ? getHighWaterMark(this, options, "readableHighWaterMark", isDuplex)
-        : getDefaultHighWaterMark(false);
-      this.buffer = new BufferList();
-      this.length = 0;
-      this.pipes = [];
-      this.flowing = null;
-      this.ended = false;
-      this.endEmitted = false;
-      this.reading = false;
-      this.constructed = true;
-      this.sync = true;
-      this.needReadable = false;
-      this.emittedReadable = false;
-      this.readableListening = false;
-      this.resumeScheduled = false;
-      this[kPaused] = null;
-      this.errorEmitted = false;
-      this.emitClose = !options || options.emitClose !== false;
-      this.autoDestroy = !options || options.autoDestroy !== false;
-      this.destroyed = false;
-      this.errored = null;
-      this.closed = false;
-      this.closeEmitted = false;
-      this.defaultEncoding = (options && options.defaultEncoding) || "utf8";
-      this.awaitDrainWriters = null;
-      this.multiAwaitDrain = false;
-      this.readingMore = false;
-      this.dataEmitted = false;
-      this.decoder = null;
-      this.encoding = null;
-      if (options && options.encoding) {
-        this.decoder = new StringDecoder(options.encoding);
-        this.encoding = options.encoding;
-      }
-    }
     function Readable(options) {
       if (!(this instanceof Readable)) return new Readable(options);
       const isDuplex = this instanceof require_duplex();
@@ -2681,7 +2638,7 @@ var require_readable = __commonJS({
     }
     Readable.prototype.isPaused = function () {
       const state = this._readableState;
-      return state[kPaused] === true || state.flowing === false;
+      return state.paused === true || state.flowing === false;
     };
     Readable.prototype.setEncoding = function (enc) {
       const decoder = new StringDecoder(enc);
@@ -3074,7 +3031,7 @@ var require_readable = __commonJS({
     function updateReadableListening(self) {
       const state = self._readableState;
       state.readableListening = self.listenerCount("readable") > 0;
-      if (state.resumeScheduled && state[kPaused] === false) {
+      if (state.resumeScheduled && state.paused === false) {
         state.flowing = true;
       } else if (self.listenerCount("data") > 0) {
         self.resume();
@@ -3093,7 +3050,7 @@ var require_readable = __commonJS({
         state.flowing = !state.readableListening;
         resume(this, state);
       }
-      state[kPaused] = false;
+      state.paused = false;
       return this;
     };
     function resume(stream, state) {
@@ -3119,7 +3076,7 @@ var require_readable = __commonJS({
         this._readableState.flowing = false;
         this.emit("pause");
       }
-      this._readableState[kPaused] = true;
+      this._readableState.paused = true;
       return this;
     };
     function flow(stream) {
@@ -3337,21 +3294,6 @@ var require_readable = __commonJS({
         enumerable: false,
         get() {
           return this._readableState ? this._readableState.endEmitted : false;
-        },
-      },
-    });
-    ObjectDefineProperties(ReadableState.prototype, {
-      pipesCount: {
-        get() {
-          return this.pipes.length;
-        },
-      },
-      paused: {
-        get() {
-          return this[kPaused] !== false;
-        },
-        set(value) {
-          this[kPaused] = !!value;
         },
       },
     });

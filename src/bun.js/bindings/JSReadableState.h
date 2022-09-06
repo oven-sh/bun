@@ -6,12 +6,12 @@
 namespace WebCore {
 using namespace JSC;
 
-class JSStringDecoder : public JSC::JSDestructibleObject {
+class JSReadableState : public JSC::JSDestructibleObject {
     using Base = JSC::JSDestructibleObject;
 
 public:
-    JSStringDecoder(JSC::VM& vm, JSC::Structure* structure, BufferEncodingType encoding)
-        : Base(vm, structure), m_lastNeed(0), m_lastTotal(0), m_encoding(encoding)
+    JSReadableState(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure), m_paused(0)
     {
     }
 
@@ -35,37 +35,26 @@ public:
             JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSStringDecoder* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, BufferEncodingType encoding)
+    static JSReadableState* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, bool isDuplex, JSObject* options)
     {
-        JSStringDecoder* accessor = new (NotNull, JSC::allocateCell<JSStringDecoder>(vm)) JSStringDecoder(vm, structure, encoding);
-        accessor->finishCreation(vm, globalObject);
+        JSReadableState* accessor = new (NotNull, JSC::allocateCell<JSReadableState>(vm)) JSReadableState(vm, structure);
+        accessor->finishCreation(vm, globalObject, isDuplex, options);
         return accessor;
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isDuplex, JSObject* options);
     static void destroy(JSCell*) {}
 
-    JSC::JSValue write(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
-    JSC::JSValue end(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
-
-    uint8_t m_lastNeed;
-    uint8_t m_lastTotal;
-    uint8_t m_lastChar[4];
-
-private:
-    JSC::JSValue fillLast(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
-    JSC::JSValue text(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t, uint32_t);
-    uint8_t utf8CheckIncomplete(uint8_t*, uint32_t, uint32_t);
-
-    BufferEncodingType m_encoding;
+    // 0 for null, 1 for true, -1 for false
+    int8_t m_paused;
 };
 
-class JSStringDecoderPrototype : public JSC::JSNonFinalObject {
+class JSReadableStatePrototype : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static JSStringDecoderPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    static JSReadableStatePrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSStringDecoderPrototype* ptr = new (NotNull, JSC::allocateCell<JSStringDecoderPrototype>(vm)) JSStringDecoderPrototype(vm, structure);
+        JSReadableStatePrototype* ptr = new (NotNull, JSC::allocateCell<JSReadableStatePrototype>(vm)) JSReadableStatePrototype(vm, structure);
         ptr->finishCreation(vm, globalObject);
         return ptr;
     }
@@ -82,7 +71,7 @@ public:
     }
 
 private:
-    JSStringDecoderPrototype(JSC::VM& vm, JSC::Structure* structure)
+    JSReadableStatePrototype(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
     }
@@ -90,10 +79,10 @@ private:
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
 
-class JSStringDecoderConstructor final : public JSC::InternalFunction {
+class JSReadableStateConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
-    static JSStringDecoderConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSStringDecoderPrototype* prototype);
+    static JSReadableStateConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSReadableStatePrototype* prototype);
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr bool needsDestruction = false;
@@ -103,18 +92,19 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
     }
 
-    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype);
+    void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStatePrototype* prototype);
 
     // Must be defined for each specialization class.
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
     DECLARE_EXPORT_INFO;
+
 private:
-    JSStringDecoderConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
+    JSReadableStateConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
         : Base(vm, structure, nativeFunction, nativeFunction)
     {
     }
 
-    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSStringDecoderPrototype* prototype);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSReadableStatePrototype* prototype);
 };
 
 }

@@ -411,16 +411,6 @@ void JSStringDecoderConstructor::initializeProperties(VM& vm, JSC::JSGlobalObjec
 {
 }
 
-JSC::GCClient::IsoSubspace* JSStringDecoderConstructor::subspaceForImpl(JSC::VM& vm)
-{
-    return WebCore::subspaceForImpl<JSStringDecoderConstructor, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStringDecoderConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStringDecoderConstructor = WTFMove(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStringDecoderConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStringDecoderConstructor = WTFMove(space); });
-}
-
 const ClassInfo JSStringDecoderConstructor::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderConstructor) };
 
 } // namespace Zig

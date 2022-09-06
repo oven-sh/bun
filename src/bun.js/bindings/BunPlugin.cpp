@@ -26,7 +26,7 @@ static bool isValidNamespaceString(String& namespaceString)
 {
     static JSC::Yarr::RegularExpression* namespaceRegex = nullptr;
     if (!namespaceRegex) {
-        namespaceRegex = new JSC::Yarr::RegularExpression("^([a-zA-Z0-9_\\-]+)$"_s);
+        namespaceRegex = new JSC::Yarr::RegularExpression("^([@a-zA-Z0-9_\\-]+)$"_s);
     }
     return namespaceRegex->match(namespaceString) > -1;
 }

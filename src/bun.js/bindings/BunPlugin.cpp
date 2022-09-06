@@ -300,6 +300,7 @@ extern "C" EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject,
     JSFunction* function = jsCast<JSFunction*>(setupFunctionValue);
     JSC::CallData callData = JSC::getCallData(function);
     JSValue result = call(globalObject, function, callData, JSC::jsUndefined(), args);
+
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
@@ -375,9 +376,7 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, ZigStri
 
     auto result = call(globalObject, function, callData, JSC::jsUndefined(), arguments);
     if (UNLIKELY(scope.exception())) {
-        JSC::Exception* exception = scope.exception();
-        scope.clearException();
-        return JSValue::encode(exception);
+        return JSValue::encode(scope.exception());
     }
 
     if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {

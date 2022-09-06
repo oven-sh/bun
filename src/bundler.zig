@@ -142,7 +142,8 @@ pub const PluginRunner = struct {
             // '.' followed by either a letter or a non-ascii character
             // maybe there are non-ascii file extensions?
             // we mostly want to cheaply rule out "../" and ".." and "./"
-            return ext.len > 0 and ((ext[0] >= 'a' and ext[0] <= 'z') or (ext[0] >= 'A' and ext[0] <= 'Z') or ext[0] > 127);
+            if (ext.len > 0 and ((ext[0] >= 'a' and ext[0] <= 'z') or (ext[0] >= 'A' and ext[0] <= 'Z') or ext[0] > 127))
+                return true;
         }
         return (!std.fs.path.isAbsolute(specifier) and strings.containsChar(specifier, ':'));
     }

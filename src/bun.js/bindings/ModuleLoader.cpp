@@ -136,12 +136,17 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     auto scope = DECLARE_THROW_SCOPE(vm);
     BunLoaderType loader = BunLoaderTypeNone;
 
+    if (JSC::Exception* exception = JSC::jsDynamicCast<JSC::Exception*>(objectValue)) {
+        result.value.error = exception->value();
+        scope.release();
+        return result;
+    }
+
     JSC::JSObject* object = objectValue.getObject();
     if (UNLIKELY(!object)) {
         scope.throwException(globalObject, JSC::createError(globalObject, "Expected onLoad callback to return an object"_s));
         result.value.error = scope.exception();
-        scope.clearException();
-        scope.release();
+        result.type = OnLoadResultTypeError;
         return result;
     }
 
@@ -171,8 +176,6 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     if (UNLIKELY(loader == BunLoaderTypeNone)) {
         throwException(globalObject, scope, createError(globalObject, "Expected loader to be one of \"js\", \"jsx\", \"object\", \"ts\", \"tsx\", \"toml\", or \"json\""_s));
         result.value.error = scope.exception();
-        scope.clearException();
-        scope.release();
         return result;
     }
 
@@ -195,8 +198,6 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     if (UNLIKELY(result.value.sourceText.value.isEmpty())) {
         throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
         result.value.error = scope.exception();
-        scope.clearException();
-        scope.release();
         return result;
     }
 

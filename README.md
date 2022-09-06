@@ -646,7 +646,7 @@ editor = "code"
 
 TODO: list each property name
 
-### Loaders
+## Loaders
 
 A loader determines how to map imports &amp; file extensions to transforms and output.
 
@@ -677,7 +677,135 @@ bun --loader=.js:js
 
 This will disable JSX transforms for `.js` files.
 
-### CSS in JS
+## Loader API
+
+Bun v0.1.11 introduces custom loaders.
+
+- Import `.svelte`, `.vue`, `.yaml`, `.scss`, `.less` and other file extensions that Bun doesn't implement a builtin loader for
+- Dynamically generate ESM & CJS modules
+
+**A YAML loader using `js-yaml`**
+
+This is an `"object"` loader. `object` loaders let you return a JS object that Bun converts to an ESM & CJS module.
+
+```js
+import { plugin } from "bun";
+
+plugin({
+  name: "YAML",
+
+  setup(builder) {
+    const { load } = require("js-yaml");
+    const { readFileSync } = require("fs");
+    // Run this function on any import that ends with .yaml or .yml
+    builder.onLoad({ filter: /\.(yaml|yml)$/ }, (args) => {
+      // Read the YAML file from disk
+      const text = readFileSync(args.path, "utf8");
+
+      // parse the YAML file with js-yaml
+      const exports = load(text);
+
+      return {
+        // Copy the keys and values from the parsed YAML file into the ESM module namespace object
+        exports,
+
+        // we're returning an object
+        loader: "object",
+      };
+    });
+  },
+});
+```
+
+Plugin usage:
+
+```js
+import { hello } from "./myfile.yaml";
+
+console.log(hello); // "world"
+```
+
+**A Svelte loader using `svelte/compiler`**
+
+This is a `"js"` loader, which lets you return a JS string or `ArrayBufferView` that Bun converts to an ESM & CJS module.
+
+```js
+import { plugin } from "bun";
+
+await plugin({
+  name: "svelte loader",
+  async setup(builder) {
+    const { compile } = await import("svelte/compiler");
+    const { readFileSync } = await import("fs");
+
+    // Register a loader for .svelte files
+    builder.onLoad({ filter: /\.svelte$/ }, ({ path }) => ({
+      // Run the Svelte compiler on the import path
+      contents: compile(readFileSync(path, "utf8"), {
+        filename: path,
+        generate: "ssr",
+      }).js.code,
+
+      // Set the loader to "js"
+      // This runs it through Bun's transpiler
+      loader: "js",
+    }));
+  },
+});
+```
+
+Plugin usage:
+
+```js
+import MySvelteComponent from "./component.svelte";
+
+console.log(mySvelteComponent.render());
+```
+
+### Loader API Reference
+
+Bun's loader API is loosely based on [esbuild](https://esbuild.github.io/plugins).
+
+**`plugin` function**
+
+At the top-level, a `plugin` function exported from `"bun"` expects a `"name"` string and a `"setup"` function that takes a `builder` object.
+
+For plugins to automatically activate, the `plugin` function must be from an import statement like this:
+
+```js
+import { plugin } from "bun";
+
+// This automatically activates on import
+plugin({
+  name: "my plugin",
+  setup(builder) {},
+});
+
+/* Bun.plugin() does not automatically activate. */
+```
+
+Inside the `setup` function, you can:
+
+- register loaders using `builder.onLoad()`
+- register resolvers using `builder.onResolve()`
+
+#### `builder.onLoad({ filter, namespace?: "optional-namespace" }, callback)`
+
+`builder.onLoad()` registers a loader for a matching `filter` RegExp and `namespace` string.
+
+The `callback` function is called with an `args` object that contains the following properties:
+
+- `path`: the path of the file being loaded
+
+For now, that's the only property. More will likely be added in the future.
+
+There are different types of loaders:
+
+- `"js"`, `"jsx"`, `"ts"`, `"tsx"`: these loaders run the source text through Bun's transpiler
+- `"json"`, `"toml"`: these loaders run the source text through Bun's built-in parsers (not really a transpiler here)
+- `"object"`: this loader inserts a new ECMAScript Module into the ECMAScript Module registry by copying all the keys and values from the `"exports"` object into the [Module Namespace Object](https://tc39.es/ecma262/#module-namespace-exotic-object)
+
+#### CSS in JS (bun dev only)
 
 When importing CSS in JavaScript-like loaders, CSS is treated special.
 

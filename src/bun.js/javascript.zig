@@ -883,6 +883,17 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:assert" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(
+                            @as(string, jsModuleFromFile("assert.exports.js")),
+                        ),
+                        .specifier = ZigString.init("node:assert"),
+                        .source_url = ZigString.init("node:assert"),
+                        .hash = 0,
+                    };
+                },
                 .@"bun:sqlite" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -1202,6 +1213,11 @@ pub const VirtualMachine = struct {
                     return;
                 }
             }
+        }
+
+        if (HardcodedModule.Aliases.getWithEql(specifier, ZigString.eqlComptime)) |hardcoded| {
+            res.* = ErrorableZigString.ok(ZigString.init(hardcoded));
+            return;
         }
 
         _resolve(&result, global, specifier.slice(), source.slice(), is_a_file_path, realpath) catch |err| {
@@ -2574,6 +2590,7 @@ pub const HardcodedModule = enum {
     @"bun:sqlite",
     @"depd",
     @"detect-libc",
+    @"node:assert",
     @"node:buffer",
     @"node:events",
     @"node:fs",
@@ -2581,19 +2598,23 @@ pub const HardcodedModule = enum {
     @"node:http",
     @"node:module",
     @"node:os",
-    @"node:stream",
-    @"node:string_decoder",
     @"node:path",
     @"node:perf_hooks",
     @"node:process",
+    @"node:stream",
     @"node:stream/consumer",
     @"node:stream/web",
+    @"node:string_decoder",
     @"node:timers",
     @"node:timers/promises",
     @"node:url",
     @"undici",
     @"ws",
 
+    /// Already resolved modules go in here.
+    /// This does not remap the module name, it is just a hash table.
+    /// Do not put modules that have aliases in here
+    /// Put those in Aliases
     pub const Map = bun.ComptimeStringMap(
         HardcodedModule,
         .{
@@ -2604,11 +2625,7 @@ pub const HardcodedModule = enum {
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "depd", HardcodedModule.@"depd" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
-            .{ "events", HardcodedModule.@"node:events" },
-            .{ "ffi", HardcodedModule.@"bun:ffi" },
-            .{ "fs", HardcodedModule.@"node:fs" },
-            .{ "http", HardcodedModule.@"node:http" },
-            .{ "module", HardcodedModule.@"node:module" },
+            .{ "node:assert", HardcodedModule.@"node:assert" },
             .{ "node:buffer", HardcodedModule.@"node:buffer" },
             .{ "node:events", HardcodedModule.@"node:events" },
             .{ "node:fs", HardcodedModule.@"node:fs" },
@@ -2628,18 +2645,14 @@ pub const HardcodedModule = enum {
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
             .{ "node:url", HardcodedModule.@"node:url" },
-            .{ "os", HardcodedModule.@"node:os" },
-            .{ "path", HardcodedModule.@"node:path" },
-            .{ "process", HardcodedModule.@"node:process" },
-            .{ "streams", HardcodedModule.@"node:stream" },
-            .{ "string_decoder", HardcodedModule.@"node:string_decoder" },
             .{ "undici", HardcodedModule.@"undici" },
             .{ "ws", HardcodedModule.@"ws" },
         },
     );
-    pub const LinkerMap = bun.ComptimeStringMap(
+    pub const Aliases = bun.ComptimeStringMap(
         string,
         .{
+            .{ "assert", "node:assert" },
             .{ "buffer", "node:buffer" },
             .{ "bun", "bun" },
             .{ "bun:ffi", "bun:ffi" },
@@ -2655,6 +2668,7 @@ pub const HardcodedModule = enum {
             .{ "fs/promises", "node:fs/promises" },
             .{ "http", "node:http" },
             .{ "module", "node:module" },
+            .{ "node:assert", "node:assert" },
             .{ "node:buffer", "node:buffer" },
             .{ "node:events", "node:events" },
             .{ "node:fs", "node:fs" },
@@ -2763,6 +2777,17 @@ fn dumpSource(specifier: string, printer: anytype) !void {
 }
 
 pub const ModuleLoader = struct {
+    pub export fn Bun__getDefaultLoader(global: *JSC.JSGlobalObject, str: *ZigString) Api.Loader {
+        var jsc_vm = global.bunVM();
+        const filename = str.toSlice(jsc_vm.allocator);
+        defer filename.deinit();
+        const loader = jsc_vm.bundler.options.loader(Fs.PathName.init(filename.slice()).ext).toAPI();
+        if (loader == .file) {
+            return Api.Loader.js;
+        }
+
+        return loader;
+    }
     pub fn transpileSourceCode(
         jsc_vm: *VirtualMachine,
         specifier: string,
@@ -3285,6 +3310,7 @@ pub const ModuleLoader = struct {
         _ = Bun__runVirtualModule;
         _ = Bun__transpileFile;
         _ = Bun__fetchBuiltinModule;
+        _ = Bun__getDefaultLoader;
     }
 };
 

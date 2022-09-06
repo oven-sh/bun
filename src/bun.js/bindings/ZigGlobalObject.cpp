@@ -103,6 +103,7 @@
 #include "JSSQLStatement.h"
 #include "ReadableStreamBuiltins.h"
 #include "BunJSCModule.h"
+#include "ModuleLoader.h"
 
 #include "ZigGeneratedClasses.h"
 
@@ -159,13 +160,6 @@ using JSBuffer = WebCore::JSBuffer;
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
-
-#include "../modules/BufferModule.h"
-#include "../modules/EventsModule.h"
-#include "../modules/ProcessModule.h"
-#include "../modules/StringDecoderModule.h"
-#include "../modules/ObjectModule.h"
-#include "../modules/NodeModuleModule.h"
 
 // #include <iostream>
 static bool has_loaded_jsc = false;
@@ -1022,6 +1016,7 @@ JSC:
         static NeverDestroyed<const String> bunJSCString(MAKE_STATIC_STRING_IMPL("bun:jsc"));
         static NeverDestroyed<const String> bunStreamString(MAKE_STATIC_STRING_IMPL("bun:stream"));
         static NeverDestroyed<const String> noopString(MAKE_STATIC_STRING_IMPL("noop"));
+        static NeverDestroyed<const String> createImportMeta(MAKE_STATIC_STRING_IMPL("createImportMeta"));
 
         JSC::JSValue moduleName = callFrame->argument(0);
         if (moduleName.isNumber()) {
@@ -1078,6 +1073,11 @@ JSC:
             auto* bufferList = JSC::JSFunction::create(
                 vm, globalObject, 0, "BufferList"_s, WebCore::constructJSBufferList, ImplementationVisibility::Public, NoIntrinsic, WebCore::constructJSBufferList);
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), bufferList, 0);
+            return JSValue::encode(obj);
+        }
+
+        if (string == createImportMeta) {
+            Zig::ImportMetaObject* obj = Zig::ImportMetaObject::create(globalObject, callFrame->argument(1));
             return JSValue::encode(obj);
         }
 
@@ -1884,6 +1884,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
+    this->m_pendingVirtualModuleResultStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
     this->initGeneratedLazyClasses();
 
     m_NapiClassStructure.initLater(
@@ -2655,87 +2660,27 @@ static JSC_DEFINE_HOST_FUNCTION(functionFulfillModuleSync,
     res.result.err.code = 0;
     res.result.err.ptr = nullptr;
 
-    Zig__GlobalObject__fetch(&res, globalObject, &specifier, &specifier);
+    JSValue result = Bun::fetchSourceCodeSync(
+        reinterpret_cast<Zig::GlobalObject*>(globalObject),
+        &res,
+        &specifier,
+        &specifier);
 
-    if (!res.success) {
-        throwException(scope, res.result.err, globalObject);
-        return JSValue::encode(JSC::jsUndefined());
+    if (result.isUndefined() || !result) {
+        return JSValue::encode(result);
     }
 
-    switch (res.result.value.tag) {
-    case SyntheticModuleType::Buffer: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(
-                generateBufferSourceCode,
-                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:buffer"_s)), WTFMove(moduleKey)));
+    globalObject->moduleLoader()->provideFetch(globalObject, key, jsCast<JSC::JSSourceCode*>(result)->sourceCode());
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
+}
 
-        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
-    }
-    case SyntheticModuleType::ObjectModule: {
-        JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(
-            bitwise_cast<int64_t>(reinterpret_cast<size_t>(res.result.value.source_code.ptr)));
-        JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
-        auto function = generateObjectModuleSourceCode(
-            globalObject,
-            object);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTFMove(function),
-                JSC::SourceOrigin(), WTFMove(moduleKey)));
-
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
-    }
-    case SyntheticModuleType::Process: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(
-                generateProcessSourceCode,
-                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:process"_s)), WTFMove(moduleKey)));
-
-        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
-    }
-    case SyntheticModuleType::Events: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(
-                generateEventsSourceCode,
-                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:events"_s)), WTFMove(moduleKey)));
-
-        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
-    }
-    case SyntheticModuleType::Module: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(
-                generateNodeModuleModule,
-                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:module"_s)), WTFMove(moduleKey)));
-
-        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
-    }
-    case SyntheticModuleType::StringDecoder: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(
-                generateStringDecoderSourceCode,
-                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath("node:string_decoder"_s)), WTFMove(moduleKey)));
-
-        globalObject->moduleLoader()->provideFetch(globalObject, key, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
-    }
-    default: {
-        auto provider = Zig::SourceProvider::create(res.result.value);
-        globalObject->moduleLoader()->provideFetch(globalObject, key, JSC::SourceCode(provider));
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
-        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsUndefined()));
-    }
-    }
+static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
+{
+    JSC::VM& vm = globalObject->vm();
+    JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
+    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
+    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
+    return promise;
 }
 
 JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
@@ -2743,20 +2688,15 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     JSValue value1, JSValue value2)
 {
     JSC::VM& vm = globalObject->vm();
-    JSC::JSInternalPromise* promise = JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto rejectWithError = [&](JSC::JSValue error) {
-        promise->reject(globalObject, error);
-        return promise;
-    };
-
     auto moduleKey = key.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+    if (UNLIKELY(scope.exception()))
+        return rejectedInternalPromise(globalObject, scope.exception()->value());
 
     if (moduleKey.endsWith(".node"_s)) {
-        return rejectWithError(createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
+        return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
     }
 
     auto moduleKeyZig = toZigString(moduleKey);
@@ -2766,123 +2706,19 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
     res.result.err.code = 0;
     res.result.err.ptr = nullptr;
 
-    Zig__GlobalObject__fetch(&res, globalObject, &moduleKeyZig, &source);
+    JSValue result = Bun::fetchSourceCodeAsync(
+        reinterpret_cast<Zig::GlobalObject*>(globalObject),
+        &res,
+        &moduleKeyZig,
+        &source);
 
-    if (!res.success) {
-        throwException(scope, res.result.err, globalObject);
-        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
+    if (auto* internalPromise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(result)) {
+        return internalPromise;
+    } else if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
+        return jsCast<JSC::JSInternalPromise*>(promise);
+    } else {
+        return rejectedInternalPromise(globalObject, result);
     }
-
-    switch (res.result.value.tag) {
-    case 1: {
-        auto buffer = Vector<uint8_t>(res.result.value.source_code.ptr, res.result.value.source_code.len);
-        auto source = JSC::SourceCode(
-            JSC::WebAssemblySourceProvider::create(WTFMove(buffer),
-                JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(Zig::toString(res.result.value.source_url))),
-                WTFMove(moduleKey)));
-
-        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
-
-        promise->resolve(globalObject, sourceCode);
-        scope.release();
-
-        globalObject->vm().drainMicrotasks();
-        return promise;
-    }
-    case SyntheticModuleType::ObjectModule: {
-        JSC::EncodedJSValue encodedValue = reinterpret_cast<JSC::EncodedJSValue>(
-            bitwise_cast<int64_t>(reinterpret_cast<size_t>(res.result.value.source_code.ptr)));
-        JSC::JSObject* object = JSC::JSValue::decode(encodedValue).getObject();
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(generateObjectModuleSourceCode(
-                                                     globalObject,
-                                                     object),
-                JSC::SourceOrigin(), WTFMove(moduleKey)));
-
-        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
-
-        promise->resolve(globalObject, sourceCode);
-        scope.release();
-        return promise;
-    }
-    case SyntheticModuleType::Module: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(generateNodeModuleModule,
-                JSC::SourceOrigin(), WTFMove(moduleKey)));
-
-        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
-
-        promise->resolve(globalObject, sourceCode);
-        scope.release();
-        return promise;
-    }
-
-    case SyntheticModuleType::Buffer: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(generateBufferSourceCode,
-                JSC::SourceOrigin(), WTFMove(moduleKey)));
-
-        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
-
-        promise->resolve(globalObject, sourceCode);
-        scope.release();
-        return promise;
-    }
-    case SyntheticModuleType::Process: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(generateProcessSourceCode,
-                JSC::SourceOrigin(), WTFMove(moduleKey)));
-
-        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
-
-        promise->resolve(globalObject, sourceCode);
-        scope.release();
-        return promise;
-    }
-    case SyntheticModuleType::Events: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(generateEventsSourceCode,
-                JSC::SourceOrigin(), WTFMove(moduleKey)));
-
-        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
-
-        promise->resolve(globalObject, sourceCode);
-        scope.release();
-        return promise;
-    }
-    case SyntheticModuleType::StringDecoder: {
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(generateStringDecoderSourceCode,
-                JSC::SourceOrigin(), WTFMove(moduleKey)));
-
-        auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
-        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(globalObject, scope));
-
-        promise->resolve(globalObject, sourceCode);
-        scope.release();
-        return promise;
-    }
-    default: {
-        auto provider = Zig::SourceProvider::create(res.result.value);
-        auto jsSourceCode = JSC::JSSourceCode::create(vm, JSC::SourceCode(provider));
-        promise->resolve(globalObject, jsSourceCode);
-    }
-    }
-
-    // if (provider.ptr()->isBytecodeCacheEnabled()) {
-    //     provider.ptr()->readOrGenerateByteCodeCache(vm, jsSourceCode->sourceCode());
-    // }
-
-    scope.release();
-
-    globalObject->vm().drainMicrotasks();
-    return promise;
 }
 
 JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* globalObject,

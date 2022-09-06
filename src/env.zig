@@ -36,3 +36,4 @@ pub const baseline = BuildOptions.baseline;
 pub const enableSIMD: bool = !baseline;
 pub const git_sha = BuildOptions.sha;
 pub const is_canary = BuildOptions.is_canary;
+pub const dump_source = isDebug and !isTest;

@@ -286,7 +286,7 @@ pub const FileSystem = struct {
             var scratch_lookup_buffer: [256]u8 = undefined;
             std.debug.assert(scratch_lookup_buffer.len >= _query.len);
 
-            const query = strings.copyLowercase(_query, &scratch_lookup_buffer);
+            const query = strings.copyLowercaseIfNeeded(_query, &scratch_lookup_buffer);
             const result = entry.data.get(query) orelse return null;
             const basename = result.base();
             if (!strings.eql(basename, _query)) {
@@ -810,7 +810,7 @@ pub const FileSystem = struct {
             // This custom map implementation:
             // - Preallocates a fixed amount of directory name space
             // - Doesn't store directory names which don't exist.
-            pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 128, true);
+            pub const Map = allocators.BSSMap(EntriesOption, Preallocate.Counts.dir_entry, false, 256, true);
         };
 
         pub fn openDir(_: *RealFS, unsafe_dir_string: string) std.fs.File.OpenError!std.fs.Dir {

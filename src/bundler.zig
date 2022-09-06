@@ -859,7 +859,8 @@ pub const Bundler = struct {
                     return BuildResolveResultPair{
                         .written = switch (result.ast.exports_kind) {
                             .esm => try bundler.printWithSourceMapMaybe(
-                                result,
+                                result.ast,
+                                &result.source,
                                 Writer,
                                 writer,
                                 .esm_ascii,
@@ -867,7 +868,8 @@ pub const Bundler = struct {
                                 source_map_handler,
                             ),
                             .cjs => try bundler.printWithSourceMapMaybe(
-                                result,
+                                result.ast,
+                                &result.source,
                                 Writer,
                                 writer,
                                 .cjs_ascii,
@@ -885,7 +887,8 @@ pub const Bundler = struct {
                 return BuildResolveResultPair{
                     .written = switch (result.ast.exports_kind) {
                         .none, .esm => try bundler.printWithSourceMapMaybe(
-                            result,
+                            result.ast,
+                            &result.source,
                             Writer,
                             writer,
                             .esm,
@@ -893,7 +896,8 @@ pub const Bundler = struct {
                             source_map_handler,
                         ),
                         .cjs => try bundler.printWithSourceMapMaybe(
-                            result,
+                            result.ast,
+                            &result.source,
                             Writer,
                             writer,
                             .cjs,
@@ -1101,14 +1105,14 @@ pub const Bundler = struct {
 
     pub fn printWithSourceMapMaybe(
         bundler: *ThisBundler,
-        result: ParseResult,
+        ast: js_ast.Ast,
+        source: *const logger.Source,
         comptime Writer: type,
         writer: Writer,
         comptime format: js_printer.Format,
         comptime enable_source_map: bool,
         source_map_context: ?js_printer.SourceMapHandler,
     ) !usize {
-        const ast = result.ast;
         var symbols: [][]js_ast.Symbol = &([_][]js_ast.Symbol{ast.symbols});
 
         return switch (format) {
@@ -1117,7 +1121,7 @@ pub const Bundler = struct {
                 writer,
                 ast,
                 js_ast.Symbol.Map.initList(symbols),
-                &result.source,
+                source,
                 false,
                 js_printer.Options{
                     .to_module_ref = Ref.RuntimeRef,
@@ -1138,7 +1142,7 @@ pub const Bundler = struct {
                 writer,
                 ast,
                 js_ast.Symbol.Map.initList(symbols),
-                &result.source,
+                source,
                 false,
                 js_printer.Options{
                     .to_module_ref = Ref.RuntimeRef,
@@ -1159,7 +1163,7 @@ pub const Bundler = struct {
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
-                    &result.source,
+                    source,
                     true,
                     js_printer.Options{
                         .to_module_ref = Ref.RuntimeRef,
@@ -1180,7 +1184,7 @@ pub const Bundler = struct {
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
-                    &result.source,
+                    source,
                     false,
                     js_printer.Options{
                         .to_module_ref = Ref.RuntimeRef,
@@ -1201,7 +1205,7 @@ pub const Bundler = struct {
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
-                    &result.source,
+                    source,
                     true,
                     js_printer.Options{
                         .to_module_ref = Ref.RuntimeRef,
@@ -1222,7 +1226,7 @@ pub const Bundler = struct {
                     writer,
                     ast,
                     js_ast.Symbol.Map.initList(symbols),
-                    &result.source,
+                    source,
                     false,
                     js_printer.Options{
                         .to_module_ref = Ref.RuntimeRef,
@@ -1248,7 +1252,8 @@ pub const Bundler = struct {
         comptime format: js_printer.Format,
     ) !usize {
         return bundler.printWithSourceMapMaybe(
-            result,
+            result.ast,
+            &result.source,
             Writer,
             writer,
             format,
@@ -1266,7 +1271,8 @@ pub const Bundler = struct {
         handler: js_printer.SourceMapHandler,
     ) !usize {
         return bundler.printWithSourceMapMaybe(
-            result,
+            result.ast,
+            &result.source,
             Writer,
             writer,
             format,
@@ -1287,6 +1293,7 @@ pub const Bundler = struct {
         macro_js_ctx: MacroJSValueType = default_macro_js_value,
         virtual_source: ?*const logger.Source = null,
         replace_exports: runtime.Runtime.Features.ReplaceableExport.Map = .{},
+        hoist_bun_plugin: bool = false,
     };
 
     pub fn parse(
@@ -1403,7 +1410,7 @@ pub const Bundler = struct {
                     (jsx.runtime == .automatic or jsx.runtime == .classic);
 
                 opts.features.jsx_optimization_hoist = bundler.options.jsx_optimization_hoist orelse opts.features.jsx_optimization_inline;
-
+                opts.features.hoist_bun_plugin = this_parse.hoist_bun_plugin;
                 if (bundler.macro_context == null) {
                     bundler.macro_context = js_ast.Macro.MacroContext.init(bundler);
                 }

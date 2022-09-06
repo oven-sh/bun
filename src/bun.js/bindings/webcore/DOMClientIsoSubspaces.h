@@ -28,6 +28,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSink;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStringDecoder;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStringDecoderConstructor;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPendingVirtualModuleResult;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 

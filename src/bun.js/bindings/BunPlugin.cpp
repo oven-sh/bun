@@ -303,8 +303,7 @@ extern "C" EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
-        JSC::throwTypeError(globalObject, throwScope, "setup() does not support promises yet"_s);
-        return JSValue::encode(jsUndefined());
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(promise));
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
@@ -384,8 +383,7 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, ZigStri
     if (auto* promise = JSC::jsDynamicCast<JSPromise*>(result)) {
         switch (promise->status(vm)) {
         case JSPromise::Status::Pending: {
-            JSC::throwTypeError(globalObject, throwScope, "onLoad() doesn't support pending promises yet"_s);
-            return JSValue::encode({});
+            return JSValue::encode(promise);
         }
         case JSPromise::Status::Rejected: {
             promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));

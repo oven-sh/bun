@@ -38,6 +38,8 @@ namespace Bun {
 using namespace Zig;
 using namespace WebCore;
 
+extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, ZigString* specifier);
+
 static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     JSC::VM& vm = globalObject->vm();
@@ -126,14 +128,14 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObje
     return virtualModule;
 }
 
-OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue)
+OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier)
 {
     OnLoadResult result = {};
     result.type = OnLoadResultTypeError;
     JSC::VM& vm = globalObject->vm();
     result.value.error = JSC::jsUndefined();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunLoaderType loader = BunLoaderTypeNone;
+    BunLoaderType loader = Bun__getDefaultLoader(globalObject, specifier);
 
     if (JSC::Exception* exception = JSC::jsDynamicCast<JSC::Exception*>(objectValue)) {
         result.value.error = exception->value();
@@ -204,7 +206,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     return result;
 }
 
-static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue)
+static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, ZigString* specifier)
 {
     if (JSC::JSPromise* promise = JSC::jsDynamicCast<JSC::JSPromise*>(objectValue)) {
         OnLoadResult result = {};
@@ -213,7 +215,7 @@ static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSV
         return result;
     }
 
-    return handleOnLoadResultNotPromise(globalObject, objectValue);
+    return handleOnLoadResultNotPromise(globalObject, objectValue, specifier);
 }
 
 template<bool allowPromise>
@@ -224,7 +226,7 @@ static JSValue handleVirtualModuleResult(
     ZigString* specifier,
     ZigString* referrer)
 {
-    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult);
+    auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier);
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

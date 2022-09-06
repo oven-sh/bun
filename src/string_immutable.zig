@@ -3072,7 +3072,7 @@ pub fn firstNonASCII16CheckMin_simd(comptime Slice: type, slice: Slice, comptime
     // here we handle what was left out
     if (remainder > 0) {
         i = slice.len - remainder;
-        while (i < remainder): (i += 1) {
+        while (i < slice.len): (i += 1) {
             const char = slice[i];
             if (char > max_u16_ascii[0] or char < min_u16_ascii[0]) {
                 return @intCast(u32, i);

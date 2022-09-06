@@ -42,15 +42,14 @@ static JSC::JSInternalPromise* rejectedInternalPromise(JSC::JSGlobalObject* glob
 {
     JSC::VM& vm = globalObject->vm();
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
-    promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
-    promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Rejected)));
-    return promise;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    scope.throwException(globalObject, value);
+    return promise->rejectWithCaughtException(globalObject, scope);
 }
 
 static JSC::JSInternalPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject, JSC::JSValue value)
 {
     JSC::VM& vm = globalObject->vm();
-
     JSInternalPromise* promise = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     promise->internalField(JSC::JSPromise::Field::ReactionsOrResult).set(vm, promise, value);
     promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(promise->internalField(JSC::JSPromise::Field::Flags).get().asUInt32AsAnyInt() | JSC::JSPromise::isFirstResolvingFunctionCalledFlag | static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
@@ -241,6 +240,7 @@ static JSValue handleVirtualModuleResult(
     auto resolve = [&](JSValue code) -> JSValue {
         res->success = true;
         if constexpr (allowPromise) {
+            scope.release();
             return resolvedInternalPromise(globalObject, code);
         } else {
             return code;
@@ -260,6 +260,7 @@ static JSValue handleVirtualModuleResult(
         res->success = true;
 
         if constexpr (allowPromise) {
+            scope.release();
             return resolvedInternalPromise(globalObject, code);
         } else {
             return code;
@@ -340,7 +341,9 @@ static JSValue fetchSourceCode(
 
     auto resolve = [&](JSValue code) -> JSValue {
         if constexpr (allowPromise) {
-            return resolvedInternalPromise(globalObject, code);
+            auto* ret = resolvedInternalPromise(globalObject, code);
+            scope.release();
+            return ret;
         } else {
             return code;
         }
@@ -353,7 +356,9 @@ static JSValue fetchSourceCode(
         }
 
         if constexpr (allowPromise) {
-            return resolvedInternalPromise(globalObject, code);
+            auto* ret = resolvedInternalPromise(globalObject, code);
+            scope.release();
+            return ret;
         } else {
             return code;
         }
@@ -382,8 +387,6 @@ static JSValue fetchSourceCode(
             auto source = JSC::SourceCode(
                 JSC::SyntheticSourceProvider::create(generateBufferSourceCode,
                     JSC::SourceOrigin(), WTFMove(moduleKey)));
-
-            auto sourceCode = JSSourceCode::create(vm, WTFMove(source));
 
             return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
         }

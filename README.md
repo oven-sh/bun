@@ -681,12 +681,14 @@ This will disable JSX transforms for `.js` files.
 
 Bun v0.1.11 introduces custom loaders.
 
-- Import `.svelte`, `.vue`, `.yaml`, `.scss`, `.less` and other file extensions that Bun doesn't implement a builtin loader for
+- import and require `.svelte`, `.vue`, `.yaml`, `.scss`, `.less` and other file extensions that Bun doesn't implement a builtin loader for
 - Dynamically generate ESM & CJS modules
 
-**A YAML loader using `js-yaml`**
+**YAML loader via `js-yaml`**
 
 This is an `"object"` loader. `object` loaders let you return a JS object that Bun converts to an ESM & CJS module.
+
+Plugin implementation:
 
 ```js
 import { plugin } from "bun";
@@ -729,6 +731,8 @@ console.log(hello); // "world"
 
 This is a `"js"` loader, which lets you return a JS string or `ArrayBufferView` that Bun converts to an ESM & CJS module.
 
+Plugin implementation:
+
 ```js
 import { plugin } from "bun";
 
@@ -754,6 +758,8 @@ await plugin({
 });
 ```
 
+Note: in a production implementation, you'd want to cache the compiled output and include additional error handling.
+
 Plugin usage:
 
 ```js
@@ -764,7 +770,9 @@ console.log(mySvelteComponent.render());
 
 ### Loader API Reference
 
-Bun's loader API is loosely based on [esbuild](https://esbuild.github.io/plugins).
+Bun's loader API interface is loosely based on [esbuild](https://esbuild.github.io/plugins). Some esbuild plugins "just work" in Bun.
+
+At the core of the loader API are `filter` and `namespace`. `filter` is a RegExp matched against import paths. `namespace` is a prefix inserted into the import path (unlike esbuild, Bun inserts the prefix into transpiled output). For example, if you have a loader with a `filter` of `\.yaml$` and a `namespace` of `yaml:`, then the import path `./myfile.yaml` will be transformed to `yaml:./myfile.yaml`.
 
 **`plugin` function**
 
@@ -789,6 +797,8 @@ Inside the `setup` function, you can:
 - register loaders using `builder.onLoad()`
 - register resolvers using `builder.onResolve()`
 
+Internally, Bun's transpiler automatically turns `plugin()` calls into separate files (at most 1 per file). This lets loaders activate before the rest of your application runs with zero configuration.
+
 #### `builder.onLoad({ filter, namespace?: "optional-namespace" }, callback)`
 
 `builder.onLoad()` registers a loader for a matching `filter` RegExp and `namespace` string.
@@ -799,11 +809,24 @@ The `callback` function is called with an `args` object that contains the follow
 
 For now, that's the only property. More will likely be added in the future.
 
+**Loader types**
+
 There are different types of loaders:
 
 - `"js"`, `"jsx"`, `"ts"`, `"tsx"`: these loaders run the source text through Bun's transpiler
-- `"json"`, `"toml"`: these loaders run the source text through Bun's built-in parsers (not really a transpiler here)
+- `"json"`, `"toml"`: these loaders run the source text through Bun's built-in parsers
 - `"object"`: this loader inserts a new ECMAScript Module into the ECMAScript Module registry by copying all the keys and values from the `"exports"` object into the [Module Namespace Object](https://tc39.es/ecma262/#module-namespace-exotic-object)
+
+The `callback` function expects a return value that contains `contents` and `loader` properties,
+unless the loader is `"object"`.
+
+`"contents"` is the source code. It can be a string or an `ArrayBufferView`.
+
+`"loader"` is the loader type. It can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"toml"`, or `"object"`.
+
+If `"loader"` is `"object"`, the `callback` function expects a `"exports"` object instead of `"contents"`. The keys and values will be copied onto the ESM module namespace object.
+
+`"object"` loaders are useful when the return value is parsed into an object, like when parsing YAML, JSON, or other data formats. Most loader APIs force you to stringify values and parse again. This loader lets you skip that step, which improves performance and is a little easier sometimes.
 
 #### CSS in JS (bun dev only)
 

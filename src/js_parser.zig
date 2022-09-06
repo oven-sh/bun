@@ -12488,13 +12488,40 @@ fn NewParser_(
                 if (_stmts.len == 1 and p.options.features.hoist_bun_plugin and !p.bun_plugin.ref.isNull()) {
                     const bun_plugin_usage_count_after: usize = p.symbols.items[p.bun_plugin.ref.innerIndex()].use_count_estimate;
                     if (bun_plugin_usage_count_after > bun_plugin_usage_count_before) {
+                        var previous_parts: []js_ast.Part = parts.items;
+
+                        for (previous_parts) |*previous_part, j| {
+                            if (previous_part.stmts.len == 0) continue;
+
+                            const declared_symbols = previous_part.declared_symbols;
+
+                            for (declared_symbols) |decl| {
+                                if (p.symbol_uses.contains(decl.ref)) {
+                                    // we move this part to our other file
+                                    for (previous_parts[0..j]) |*this_part| {
+                                        if (this_part.stmts.len == 0) continue;
+                                        const this_declared_symbols = this_part.declared_symbols;
+                                        for (this_declared_symbols) |this_decl| {
+                                            if (previous_part.symbol_uses.contains(this_decl.ref)) {
+                                                try p.bun_plugin.hoisted_stmts.appendSlice(p.allocator, this_part.stmts);
+                                                this_part.stmts = &.{};
+                                                break;
+                                            }
+                                        }
+                                    }
+
+                                    try p.bun_plugin.hoisted_stmts.appendSlice(p.allocator, previous_part.stmts);
+                                    break;
+                                }
+                            }
+                        }
+                        p.bun_plugin.hoisted_stmts.append(p.allocator, _stmts[0]) catch unreachable;
+
                         // Single-statement part which uses Bun.plugin()
                         // It's effectively an unrelated file
                         if (p.declared_symbols.items.len > 0 or p.symbol_uses.count() > 0) {
                             p.clearSymbolUsagesFromDeadPart(.{ .stmts = undefined, .declared_symbols = p.declared_symbols.items, .symbol_uses = p.symbol_uses });
                         }
-
-                        p.bun_plugin.hoisted_stmts.append(p.allocator, _stmts[0]) catch unreachable;
                         return;
                     }
                 }

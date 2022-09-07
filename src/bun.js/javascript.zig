@@ -1008,16 +1008,14 @@ pub const VirtualMachine = struct {
         } else if (specifier.len > js_ast.Macro.namespaceWithColon.len and
             strings.eqlComptimeIgnoreLen(specifier[0..js_ast.Macro.namespaceWithColon.len], js_ast.Macro.namespaceWithColon))
         {
-            if (comptime !disable_transpilying) {
-                if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier))) |entry| {
-                    return ResolvedSource{
-                        .allocator = null,
-                        .source_code = ZigString.init(entry.source.contents),
-                        .specifier = ZigString.init(specifier),
-                        .source_url = ZigString.init(specifier),
-                        .hash = 0,
-                    };
-                }
+            if (jsc_vm.macro_entry_points.get(MacroEntryPoint.generateIDFromSpecifier(specifier))) |entry| {
+                return ResolvedSource{
+                    .allocator = null,
+                    .source_code = ZigString.init(entry.source.contents),
+                    .specifier = ZigString.init(specifier),
+                    .source_url = ZigString.init(specifier),
+                    .hash = 0,
+                };
             }
         }
 

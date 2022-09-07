@@ -152,7 +152,10 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     }
 
     if (JSC::JSValue loaderValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "loader"_s))) {
-        if (loaderValue.isString()) {
+        if (!loaderValue.isUndefinedOrNull()) {
+            // If a loader is passed, we must validate it
+            loader = BunLoaderTypeNone;
+
             if (JSC::JSString* loaderJSString = loaderValue.toStringOrNull(globalObject)) {
                 WTF::String loaderString = loaderJSString->value(globalObject);
                 if (loaderString == "js"_s) {
@@ -169,8 +172,6 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                     loader = BunLoaderTypeJSON;
                 } else if (loaderString == "toml"_s) {
                     loader = BunLoaderTypeTOML;
-                } else if (loaderString.length() > 0) {
-                    loader = BunLoaderTypeNone;
                 }
             }
         }

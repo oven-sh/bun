@@ -694,12 +694,13 @@ pub const TestScope = struct {
     ) Result {
         if (comptime is_bindgen) return undefined;
         var vm = VirtualMachine.vm;
+        var callback = this.callback;
         defer {
-            js.JSValueUnprotect(vm.global.ref(), this.callback);
+            js.JSValueUnprotect(vm.global.ref(), callback);
             this.callback = null;
         }
         JSC.markBinding();
-        const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), this.callback, null, 0, null);
+        const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), callback, null, 0, null);
 
         if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
             vm.runErrorHandler(initial_value, null);
@@ -711,21 +712,21 @@ pub const TestScope = struct {
                 return .{ .pending = .{} };
             }
 
-            this.promise = JSC.JSInternalPromise.resolvedPromise(vm.global, initial_value);
+            var promise = JSC.JSInternalPromise.resolvedPromise(vm.global, initial_value);
+            this.promise = promise;
+
             defer {
                 this.promise = null;
             }
 
-            vm.waitForPromise(this.promise.?);
-            switch (this.promise.?.status(vm.global.vm())) {
+            vm.waitForPromise(promise);
+            switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    vm.runErrorHandler(this.promise.?.result(vm.global.vm()), null);
+                    vm.runErrorHandler(promise.result(vm.global.vm()), null);
                     return .{ .fail = this.counter.actual };
                 },
                 else => {
-                    if (this.promise != null)
-                        // don't care about the result
-                        _ = this.promise.?.result(vm.global.vm());
+                    _ = promise.result(vm.global.vm());
                 },
             }
         }

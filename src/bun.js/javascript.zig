@@ -772,6 +772,9 @@ pub const VirtualMachine = struct {
                         );
                     }
 
+                    if (comptime Environment.dump_source)
+                        try dumpSource(main_file_name, &printer);
+
                     if (written == 0) {
                         return error.PrintingErrorWriteFailed;
                     }
@@ -1441,8 +1444,7 @@ pub const VirtualMachine = struct {
             // The contents of the node_modules bundle are lazy, so hopefully this should be pretty quick.
             if (this.node_modules != null and !this.has_loaded_node_modules) {
                 this.has_loaded_node_modules = true;
-                promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(bun_file_import_path)));
-
+                promise = JSModuleLoader.loadAndEvaluateModule(this.global, ZigString.static(bun_file_import_path));
                 this.waitForPromise(promise);
                 if (promise.status(this.global.vm()) == .Rejected)
                     return promise;
@@ -3174,7 +3176,7 @@ pub const ModuleLoader = struct {
         JSC.markBinding();
         var log = logger.Log.init(jsc_vm.bundler.allocator);
         defer log.deinit();
-        if (jsc_vm.fetchBuiltinModule(specifier.slice(), &log, true) catch |err| {
+        if (jsc_vm.fetchBuiltinModule(specifier.slice(), &log, false) catch |err| {
             VirtualMachine.processFetchLog(globalObject, specifier.*, referrer.*, &log, ret, err);
             return true;
         }) |builtin| {

@@ -290,4 +290,20 @@ describe("HTMLRewriter", () => {
       "<div><h1><span>1</span></h1><span>new</span><b>3</b></div>"
     );
   });
+
+  it("writes and reads statusText", async () => {
+    await gcTick();
+    const res = new HTMLRewriter()
+      .on("div", {
+        async element(element) {
+          await setTimeoutAsync(() => {
+            element.setInnerContent("<span>replace</span>", { html: true });
+          }, 5);
+        },
+      })
+      .transform(new Response("<div>example.com</div>", { statusText: 'it works' }));
+    await gcTick();
+    expect(res.statusText).toBe("it works");
+    await gcTick();
+  });
 });

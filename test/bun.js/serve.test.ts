@@ -487,3 +487,16 @@ it(`should work for ArrayBuffer ${count} times serial`, async () => {
 
   server.stop();
 });
+
+it("should write and read statusText", async () => {
+  const server = serve({
+    port: port++,
+    fetch(req) {
+      return new Response('This is bun', { status: 200, statusText: 'it works' });
+    },
+  });
+
+  const response = await fetch(`http://localhost:${server.port}`);
+  expect(response.statusText).toBe("it works");
+  server.stop();
+});

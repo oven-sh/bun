@@ -30,6 +30,22 @@ it("Blob inspect", () => {
 }`);
 });
 
+it("Response inspect", () => {
+  const ins = Bun.inspect(
+    new Response("This is bun", { statusText: 'it works' })
+  );
+
+  expect(ins).toBe(`Response (11 bytes) {
+  ok: true,
+  url: "",
+  statusText: "it works",
+  redirected: false,
+  bodyUsed: false,
+  status: 200,
+  Blob (11 bytes)
+}`);
+});
+
 it("utf16 property name", () => {
   var { Database } = require("bun:sqlite");
   const db = Database.open(":memory:");

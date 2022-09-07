@@ -281,6 +281,14 @@ pub const ZigString = extern struct {
         return ZigString{ .ptr = slice_.ptr, .len = slice_.len };
     }
 
+    pub fn static(comptime slice_: []const u8) *const ZigString {
+        const Holder = struct {
+            pub const value = ZigString{ .ptr = slice_.ptr, .len = slice_.len };
+        };
+
+        return &Holder.value;
+    }
+
     pub fn toAtomicValue(this: *const ZigString, globalThis: *JSC.JSGlobalObject) JSValue {
         return shim.cppFn("toAtomicValue", .{ this, globalThis });
     }
@@ -2627,6 +2635,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn createEmptyObject(global: *JSGlobalObject, len: usize) JSValue {
+        std.debug.assert(len <= 64); // max inline capacity JSC allows is 64. If you run into this, just set it to 0.
         return cppFn("createEmptyObject", .{ global, len });
     }
 

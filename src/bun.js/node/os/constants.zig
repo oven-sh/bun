@@ -6,32 +6,32 @@ const JSC = @import("../../../jsc.zig");
 
 const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, DLOPEN, OTHER };
 
-fn getErrnoConstant(comptime name: []const u8) comptime_int {
+fn getErrnoConstant(comptime name: []const u8) ?comptime_int {
     return if (@hasField(std.os.E, name))
         return @enumToInt(@field(std.os.E, name))
     else
-        return -1;
+        return null;
 }
 
-fn getWindowsErrnoConstant(comptime name: []const u8) comptime_int {
+fn getWindowsErrnoConstant(comptime name: []const u8) ?comptime_int {
     return if (@hasField(std.os.E, name))
         return @enumToInt(@field(std.os.windows.ws2_32.WinsockError, name))
     else
-        return -1;
+        return null;
 }
 
-fn getSignalsConstant(comptime name: []const u8) comptime_int {
+fn getSignalsConstant(comptime name: []const u8) ?comptime_int {
     return if (@hasDecl(std.os.SIG, name))
         return @field(std.os.SIG, name)
     else
-        return -1;
+        return null;
 }
 
-fn getDlopenConstant(comptime name: []const u8) comptime_int {
+fn getDlopenConstant(comptime name: []const u8) ?comptime_int {
     return if (@hasDecl(std.os.system.RTLD, name))
         return @field(std.os.system.RTLD, name)
     else
-        return -1;
+        return null;
 }
 
 fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, comptime ctype: ConstantType, comptime name: string) void {
@@ -41,38 +41,38 @@ fn defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, compti
 fn __defineConstant(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue, comptime ctype: ConstantType, comptime name: string, comptime value: ?i32) void {
     switch (ctype) {
         .ERRNO => {
-            const constant = getErrnoConstant(name);
-            if (comptime constant != -1)
-                object.put(globalObject, &JSC.ZigString.init("E" ++ name), JSC.JSValue.jsNumber(constant));
+            if (comptime getErrnoConstant(name)) |constant| {
+                object.put(globalObject, JSC.ZigString.static("E" ++ name), JSC.JSValue.jsNumber(constant));
+            }
         },
         .ERRNO_WIN => {
-            const constant = getWindowsErrnoConstant(name);
-            if (comptime constant != -1)
-                object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumber(constant));
+            if (comptime getWindowsErrnoConstant(name)) |constant| {
+                object.put(globalObject, JSC.ZigString.static(name), JSC.JSValue.jsNumber(constant));
+            }
         },
         .SIG => {
-            const constant = getSignalsConstant(name);
-            if (comptime constant != -1)
-                object.put(globalObject, &JSC.ZigString.init("SIG" ++ name), JSC.JSValue.jsNumber(constant));
+            if (comptime getSignalsConstant(name)) |constant| {
+                object.put(globalObject, JSC.ZigString.static("SIG" ++ name), JSC.JSValue.jsNumber(constant));
+            }
         },
         .DLOPEN => {
-            const constant = getDlopenConstant(name);
-            if (comptime constant != -1)
-                object.put(globalObject, &JSC.ZigString.init("RTLD_" ++ name), JSC.JSValue.jsNumber(constant));
+            if (comptime getDlopenConstant(name)) |constant| {
+                object.put(globalObject, JSC.ZigString.static("RTLD_" ++ name), JSC.JSValue.jsNumber(constant));
+            }
         },
         .OTHER => {
-            object.put(globalObject, &JSC.ZigString.init(name), JSC.JSValue.jsNumberFromInt32(value.?));
+            object.put(globalObject, JSC.ZigString.static(name), JSC.JSValue.jsNumberFromInt32(value.?));
         },
     }
 }
 
 pub fn create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    const object = JSC.JSValue.createEmptyObject(globalObject, 4);
+    const object = JSC.JSValue.createEmptyObject(globalObject, 0);
 
-    object.put(globalObject, &JSC.ZigString.init("errno"), createErrno(globalObject));
-    object.put(globalObject, &JSC.ZigString.init("signals"), createSignals(globalObject));
-    object.put(globalObject, &JSC.ZigString.init("priority"), createPriority(globalObject));
-    object.put(globalObject, &JSC.ZigString.init("dlopen"), createDlopen(globalObject));
+    object.put(globalObject, JSC.ZigString.static("errno"), createErrno(globalObject));
+    object.put(globalObject, JSC.ZigString.static("signals"), createSignals(globalObject));
+    object.put(globalObject, JSC.ZigString.static("priority"), createPriority(globalObject));
+    object.put(globalObject, JSC.ZigString.static("dlopen"), createDlopen(globalObject));
     __defineConstant(globalObject, object, .OTHER, "UV_UDP_REUSEADDR", 4);
 
     return object;
@@ -283,7 +283,7 @@ fn createPriority(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
 }
 
 fn createDlopen(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    const object = JSC.JSValue.createEmptyObject(globalObject, 6);
+    const object = JSC.JSValue.createEmptyObject(globalObject, 5);
 
     defineConstant(globalObject, object, .DLOPEN, "LAZY");
     defineConstant(globalObject, object, .DLOPEN, "NOW");

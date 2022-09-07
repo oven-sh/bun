@@ -1839,7 +1839,7 @@ pub const JSGlobalObject = extern struct {
             export_names[i] = ZigString.init(export_name);
             const function = @field(module, export_name).@"0";
             const len = @field(module, export_name).@"1";
-            export_values[i] = JSC.NewFunction(this, &export_names[i], len, function);
+            export_values[i] = JSC.NewFunction(this, &export_names[i], len, function, true);
         }
 
         createSyntheticModule_(this, &export_names, names.len, &export_values, names.len);
@@ -3944,6 +3944,7 @@ const private = struct {
         symbolName: ?*const ZigString,
         argCount: u32,
         functionPointer: *const anyopaque,
+        strong: bool,
     ) *anyopaque;
 
     pub extern fn Bun__CreateFFIFunctionValue(
@@ -3951,16 +3952,17 @@ const private = struct {
         symbolName: ?*const ZigString,
         argCount: u32,
         functionPointer: *const anyopaque,
+        strong: bool,
     ) JSValue;
+
+    pub extern fn Bun__untrackFFIFunction(
+        globalObject: *JSGlobalObject,
+        function: JSValue,
+    ) bool;
 };
-pub fn NewFunctionPtr(
-    globalObject: *JSGlobalObject,
-    symbolName: ?*const ZigString,
-    argCount: u32,
-    functionPointer: anytype,
-) *anyopaque {
+pub fn NewFunctionPtr(globalObject: *JSGlobalObject, symbolName: ?*const ZigString, argCount: u32, functionPointer: anytype, strong: bool) *anyopaque {
     if (comptime JSC.is_bindgen) unreachable;
-    return private.Bun__CreateFFIFunction(globalObject, symbolName, argCount, @ptrCast(*const anyopaque, functionPointer));
+    return private.Bun__CreateFFIFunction(globalObject, symbolName, argCount, @ptrCast(*const anyopaque, functionPointer), strong);
 }
 
 pub fn NewFunction(
@@ -3968,9 +3970,18 @@ pub fn NewFunction(
     symbolName: ?*const ZigString,
     argCount: u32,
     functionPointer: anytype,
+    strong: bool,
 ) JSValue {
     if (comptime JSC.is_bindgen) unreachable;
-    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, @ptrCast(*const anyopaque, functionPointer));
+    return private.Bun__CreateFFIFunctionValue(globalObject, symbolName, argCount, @ptrCast(*const anyopaque, functionPointer), strong);
+}
+
+pub fn untrackFunction(
+    globalObject: *JSGlobalObject,
+    value: JSValue,
+) bool {
+    if (comptime JSC.is_bindgen) unreachable;
+    return private.Bun__untrackFFIFunction(globalObject, value);
 }
 
 pub const ObjectPrototype = _JSCellStub("ObjectPrototype");

@@ -2130,11 +2130,11 @@ pub fn ReadableStreamSource(
                 }
 
                 return JSC.JSArray.from(globalThis, &.{
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.pull),
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.start),
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.cancel),
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.setClose),
-                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.deinit),
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.pull, true),
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.start, true),
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.cancel, true),
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.setClose, true),
+                    JSC.NewFunction(globalThis, null, 1, JSReadableStreamSource.deinit, true),
                 });
             }
 

@@ -148,18 +148,12 @@ static bool JSVALUE_IS_NUMBER(EncodedJSValue val) {
 
 static void* JSVALUE_TO_PTR(EncodedJSValue val) {
   // must be a double
-  if (val.asInt64 == TagValueNull)
-    return 0;
-  return (void*)(val.asInt64 - DoubleEncodeOffset);
+  return val.asInt64 == TagValueNull ? 0 : (void*)(val.asInt64 - DoubleEncodeOffset);
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   EncodedJSValue val;
-  if (ptr == 0) {
-    val.asInt64 = TagValueNull;
-    return val;
-  }
-  val.asInt64 = (int64_t)ptr + DoubleEncodeOffset;
+  val.asInt64 = ptr == 0 ? TagValueNull : (int64_t)ptr + DoubleEncodeOffset;
   return val;
 }
 

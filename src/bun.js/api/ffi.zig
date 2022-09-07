@@ -119,13 +119,13 @@ pub const FFI = struct {
                 JSC.C.JSValueUnprotect(globalThis.ref(), js_callback.asObjectRef());
                 const message = ZigString.init(err.msg).toErrorInstance(globalThis);
 
-                func.deinit(allocator);
+                func.deinit(globalThis, allocator);
 
                 return message;
             },
             .pending => {
                 JSC.C.JSValueUnprotect(globalThis.ref(), js_callback.asObjectRef());
-                func.deinit(allocator);
+                func.deinit(globalThis, allocator);
                 return ZigString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
             },
             .compiled => {
@@ -136,7 +136,10 @@ pub const FFI = struct {
         }
     }
 
-    pub fn close(this: *FFI) JSValue {
+    pub fn close(
+        this: *FFI,
+        globalThis: *JSC.JSGlobalObject,
+    ) JSValue {
         JSC.markBinding();
         if (this.closed) {
             return JSC.JSValue.jsUndefined();
@@ -150,7 +153,7 @@ pub const FFI = struct {
         const allocator = VirtualMachine.vm.allocator;
 
         for (this.functions.values()) |*val| {
-            val.deinit(allocator);
+            val.deinit(globalThis, allocator);
         }
         this.functions.deinit(allocator);
 
@@ -353,7 +356,7 @@ pub const FFI = struct {
                     }
 
                     const res = ZigString.init(err.msg).toErrorInstance(global);
-                    function.deinit(allocator);
+                    function.deinit(global, allocator);
                     symbols.clearAndFree(allocator);
                     dylib.close();
                     return res;
@@ -367,15 +370,16 @@ pub const FFI = struct {
                     dylib.close();
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
-                .compiled => |compiled| {
+                .compiled => |*compiled| {
                     const str = ZigString.init(std.mem.span(function_name));
                     const cb = JSC.NewFunction(
                         global,
                         &str,
                         @intCast(u32, function.arg_types.items.len),
                         compiled.ptr,
+                        false,
                     );
-
+                    compiled.js_function = cb;
                     obj.put(global, &str, cb);
                 },
             }
@@ -413,9 +417,9 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected at least one symbol", .{}, global.ref());
         }
 
-        var obj = JSC.JSValue.c(JSC.C.JSObjectMake(global.ref(), null, null));
-        JSC.C.JSValueProtect(global.ref(), obj.asObjectRef());
-        defer JSC.C.JSValueUnprotect(global.ref(), obj.asObjectRef());
+        var obj = JSValue.createEmptyObject(global, if (symbols.count() < 64) symbols.count() else 0);
+        obj.ensureStillAlive();
+        defer obj.ensureStillAlive();
         for (symbols.values()) |*function| {
             const function_name = function.base_name.?;
 
@@ -449,7 +453,7 @@ pub const FFI = struct {
                     }
 
                     const res = ZigString.init(err.msg).toErrorInstance(global);
-                    function.deinit(allocator);
+                    function.deinit(global, allocator);
                     symbols.clearAndFree(allocator);
                     return res;
                 },
@@ -459,17 +463,21 @@ pub const FFI = struct {
                         value.arg_types.clearAndFree(allocator);
                     }
                     symbols.clearAndFree(allocator);
-                    return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
+                    return ZigString.static("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
-                .compiled => |compiled| {
+                .compiled => |*compiled| {
+                    const name = &ZigString.init(std.mem.span(function_name));
+
                     const cb = JSC.NewFunction(
                         global,
-                        &ZigString.init(std.mem.span(function_name)),
+                        name,
                         @intCast(u32, function.arg_types.items.len),
                         compiled.ptr,
+                        false,
                     );
+                    compiled.js_function = cb;
 
-                    obj.put(global, &ZigString.init(std.mem.span(function_name)), cb);
+                    obj.put(global, name, cb);
                 },
             }
         }
@@ -482,7 +490,7 @@ pub const FFI = struct {
 
         var close_object = JSC.JSValue.c(Class.make(global.ref(), lib));
 
-        return JSC.JSValue.createObject2(global, &ZigString.init("close"), &ZigString.init("symbols"), close_object, obj);
+        return JSC.JSValue.createObject2(global, ZigString.static("close"), ZigString.static("symbols"), close_object, obj);
     }
     pub fn generateSymbolForFunction(global: *JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, function: *Function) !?JSValue {
         JSC.markBinding();
@@ -491,7 +499,7 @@ pub const FFI = struct {
 
         if (value.get(global, "args")) |args| {
             if (args.isEmptyOrUndefinedOrNull() or !args.jsType().isArray()) {
-                return ZigString.init("Expected an object with \"args\" as an array").toErrorInstance(global);
+                return ZigString.static("Expected an object with \"args\" as an array").toErrorInstance(global);
             }
 
             var array = args.arrayIterator(global);
@@ -500,7 +508,7 @@ pub const FFI = struct {
             while (array.next()) |val| {
                 if (val.isEmptyOrUndefinedOrNull()) {
                     abi_types.clearAndFree(allocator);
-                    return ZigString.init("param must be a string (type name) or number").toErrorInstance(global);
+                    return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
                 if (val.isAnyInt()) {
@@ -512,14 +520,14 @@ pub const FFI = struct {
                         },
                         else => {
                             abi_types.clearAndFree(allocator);
-                            return ZigString.init("invalid ABI type").toErrorInstance(global);
+                            return ZigString.static("invalid ABI type").toErrorInstance(global);
                         },
                     }
                 }
 
                 if (!val.jsType().isStringLike()) {
                     abi_types.clearAndFree(allocator);
-                    return ZigString.init("param must be a string (type name) or number").toErrorInstance(global);
+                    return ZigString.static("param must be a string (type name) or number").toErrorInstance(global);
                 }
 
                 var type_name = val.toSlice(global, allocator);
@@ -543,7 +551,7 @@ pub const FFI = struct {
                     },
                     else => {
                         abi_types.clearAndFree(allocator);
-                        return ZigString.init("invalid ABI type").toErrorInstance(global);
+                        return ZigString.static("invalid ABI type").toErrorInstance(global);
                     },
                 }
             }
@@ -620,7 +628,7 @@ pub const FFI = struct {
 
         pub var lib_dirZ: [*:0]const u8 = "";
 
-        pub fn deinit(val: *Function, allocator: std.mem.Allocator) void {
+        pub fn deinit(val: *Function, globalThis: *JSC.JSGlobalObject, allocator: std.mem.Allocator) void {
             if (val.base_name) |base_name| {
                 if (std.mem.span(base_name).len > 0) {
                     allocator.free(bun.constStrToU8(std.mem.span(base_name)));
@@ -636,8 +644,10 @@ pub const FFI = struct {
 
             if (val.step == .compiled) {
                 // allocator.free(val.step.compiled.buf);
-                if (val.step.compiled.js_function) |js_function| {
-                    JSC.C.JSValueUnprotect(@ptrCast(JSC.C.JSContextRef, val.step.compiled.js_context.?), @ptrCast(JSC.C.JSObjectRef, js_function));
+                if (val.step.compiled.js_function != .zero) {
+                    _ = globalThis;
+                    // _ = JSC.untrackFunction(globalThis, val.step.compiled.js_function);
+                    val.step.compiled.js_function = .zero;
                 }
             }
 
@@ -652,7 +662,7 @@ pub const FFI = struct {
                 ptr: *anyopaque,
                 fast_path_ptr: ?*anyopaque = null,
                 buf: []u8,
-                js_function: ?*anyopaque = null,
+                js_function: JSValue = JSValue.zero,
                 js_context: ?*anyopaque = null,
             },
             failed: struct {
@@ -956,7 +966,7 @@ pub const FFI = struct {
                 .compiled = .{
                     .ptr = symbol,
                     .buf = bytes,
-                    .js_function = js_function,
+                    .js_function = JSC.JSValue.fromPtr(js_function),
                     .js_context = js_context,
                 },
             };

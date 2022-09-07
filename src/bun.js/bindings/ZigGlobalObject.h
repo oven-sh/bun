@@ -327,6 +327,17 @@ public:
     {
         this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
     }
+    bool untrackFFIFunction(JSC::JSFunction* function)
+    {
+        for (size_t i = 0; i < this->m_ffiFunctions.size(); ++i) {
+            if (this->m_ffiFunctions[i].get() == function) {
+                this->m_ffiFunctions[i].clear();
+                this->m_ffiFunctions.remove(i);
+                return true;
+            }
+        }
+        return false;
+    }
 
     BunPlugin::OnLoad onLoadPlugins[BunPluginTargetMax + 1] {};
     BunPlugin::OnResolve onResolvePlugins[BunPluginTargetMax + 1] {};

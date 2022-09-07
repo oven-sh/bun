@@ -1262,7 +1262,7 @@ pub const Resolver = struct {
                                 var esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
                                 if ((esm_resolution.status == .Inexact or esm_resolution.status == .Exact) and
-                                    strings.startsWith(esm_resolution.path, "/"))
+                                    esm_resolution.path.len > 0 and esm_resolution.path[0] == '/')
                                 {
                                     const abs_esm_path: string = brk: {
                                         var parts = [_]string{

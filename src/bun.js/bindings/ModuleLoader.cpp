@@ -169,6 +169,8 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
                     loader = BunLoaderTypeJSON;
                 } else if (loaderString == "toml"_s) {
                     loader = BunLoaderTypeTOML;
+                } else if (loaderString.length() > 0) {
+                    loader = BunLoaderTypeNone;
                 }
             }
         }

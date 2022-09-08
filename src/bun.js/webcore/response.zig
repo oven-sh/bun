@@ -2777,6 +2777,18 @@ pub const Blob = struct {
         seekable: ?bool = null,
         max_size: SizeType = 0,
 
+        pub fn isSeekable(this: *const FileStore) ?bool {
+            if (this.seekable) |seekable| {
+                return seekable;
+            }
+
+            if (this.mode != 0) {
+                return std.os.S.ISREG(this.mode);
+            }
+
+            return null;
+        }
+
         pub fn init(pathlike: JSC.Node.PathOrFileDescriptor, mime_type: ?HTTPClient.MimeType) FileStore {
             return .{ .pathlike = pathlike, .mime_type = mime_type orelse HTTPClient.MimeType.other };
         }

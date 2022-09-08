@@ -647,6 +647,7 @@ pub const ArgumentsSlice = struct {
             .remaining = arguments,
             .vm = vm,
             .all = arguments,
+            .arena = std.heap.ArenaAllocator.init(vm.allocator),
         };
     }
 

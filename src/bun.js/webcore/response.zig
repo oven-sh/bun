@@ -1209,6 +1209,11 @@ pub const Blob = struct {
             return null;
         }
 
+        if (path_or_blob == .blob and path_or_blob.blob.store == null) {
+            exception.* = JSC.toInvalidArguments("Blob is detached", .{}, ctx).asObjectRef();
+            return null;
+        }
+
         if (data.isString()) {
             const len = data.getLengthOfArray(ctx);
             if (len == 0)
@@ -1344,31 +1349,40 @@ pub const Blob = struct {
         return writeFileWithSourceDestination(ctx, &source_blob, &destination_blob);
     }
 
+    const write_permissions = 0o664;
+
     fn writeStringToFileFast(
         globalThis: *JSC.JSGlobalObject,
         pathlike: JSC.Node.PathOrFileDescriptor,
         str: ZigString,
         comptime needs_open: bool,
     ) JSC.JSValue {
-        var fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else std.math.maxInt(JSC.Node.FileDescriptor);
-
-        if (needs_open) {
+        const fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-            switch (JSC.Node.Syscall.open(pathlike.path.sliceZ(&file_path), std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK, 0o644)) {
+            switch (JSC.Node.Syscall.open(
+                pathlike.path.sliceZ(&file_path),
+                // we deliberately don't use O_TRUNC here
+                // it's a perf optimization
+                std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                write_permissions,
+            )) {
                 .result => |result| {
-                    fd = result;
+                    break :brk result;
                 },
                 .err => |err| {
                     return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                 },
             }
-        }
+            unreachable;
+        };
 
         var truncate = needs_open;
         var jsc_vm = globalThis.bunVM();
         var written: usize = 0;
 
         defer {
+            // we only truncate if it's a path
+            // if it's a file descriptor, we assume they want manual control over that behavior
             if (truncate) {
                 _ = JSC.Node.Syscall.system.ftruncate(fd, @intCast(i64, written));
             }
@@ -1419,8 +1433,7 @@ pub const Blob = struct {
             }
         } else {
             var decoded = str.toOwnedSlice(jsc_vm.allocator) catch {
-                globalThis.vm().throwError(globalThis, ZigString.static("Out of memory").toErrorInstance(globalThis));
-                return JSC.JSValue.jsUndefined();
+                return JSC.JSPromise.rejectedPromiseValue(globalThis, ZigString.static("Out of memory").toErrorInstance(globalThis));
             };
             defer jsc_vm.allocator.free(decoded);
             var remain = decoded;
@@ -1450,19 +1463,24 @@ pub const Blob = struct {
         bytes: []const u8,
         comptime needs_open: bool,
     ) JSC.JSValue {
-        var fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else std.math.maxInt(JSC.Node.FileDescriptor);
-
-        if (needs_open) {
+        const fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else brk: {
             var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
-            switch (JSC.Node.Syscall.open(pathlike.path.sliceZ(&file_path), std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK, 0644)) {
+            switch (JSC.Node.Syscall.open(
+                pathlike.path.sliceZ(&file_path),
+                // we deliberately don't use O_TRUNC here
+                // it's a perf optimization
+                std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK,
+                write_permissions,
+            )) {
                 .result => |result| {
-                    fd = result;
+                    break :brk result;
                 },
                 .err => |err| {
                     return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
                 },
             }
-        }
+            unreachable;
+        };
 
         var truncate = needs_open;
         var written: usize = 0;

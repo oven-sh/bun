@@ -884,6 +884,26 @@ const PathOrBlob = union(enum) {
 
         return null;
     }
+
+    pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
+        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, exception)) |path| {
+            return PathOrBlob{ .path = .{
+                .path = .{
+                    .string = bun.PathString.init(path.path.slice()),
+                },
+            } };
+        }
+
+        const arg = args.nextEat() orelse return null;
+
+        if (arg.as(Blob)) |blob| {
+            return PathOrBlob{
+                .blob = blob.*,
+            };
+        }
+
+        return null;
+    }
 };
 
 pub const Blob = struct {
@@ -1174,10 +1194,57 @@ pub const Blob = struct {
         var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
         defer args.deinit();
         // accept a path or a blob
-        var path_or_blob = PathOrBlob.fromJS(ctx, &args, exception) orelse {
+        var path_or_blob = PathOrBlob.fromJSNoCopy(ctx, &args, exception) orelse {
             exception.* = JSC.toInvalidArguments("Bun.write expects a path, file descriptor or a blob", .{}, ctx).asObjectRef();
             return null;
         };
+
+        var data = args.nextEat() orelse {
+            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
+            return null;
+        };
+
+        if (data.isEmptyOrUndefinedOrNull()) {
+            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
+            return null;
+        }
+
+        if (data.isString()) {
+            const len = data.getLengthOfArray(ctx);
+            if (len == 0)
+                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0)).asObjectRef();
+
+            if (len < 256 * 1024) {
+                const str = data.getZigString(ctx);
+
+                const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
+                    path_or_blob.path
+                else
+                    path_or_blob.blob.store.?.data.file.pathlike;
+
+                if (pathlike == .path) {
+                    return writeStringToFileFast(ctx, pathlike, str, true).asObjectRef();
+                } else {
+                    return writeStringToFileFast(ctx, pathlike, str, false).asObjectRef();
+                }
+            }
+        } else if (data.asArrayBuffer(ctx)) |buffer_view| {
+            if (buffer_view.byte_len == 0)
+                return JSC.JSPromise.resolvedPromiseValue(ctx, JSC.JSValue.jsNumber(0)).asObjectRef();
+
+            if (buffer_view.byte_len < 256 * 1024) {
+                const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
+                    path_or_blob.path
+                else
+                    path_or_blob.blob.store.?.data.file.pathlike;
+
+                if (pathlike == .path) {
+                    return writeBytesToFileFast(ctx, pathlike, buffer_view.byteSlice(), true).asObjectRef();
+                } else {
+                    return writeBytesToFileFast(ctx, pathlike, buffer_view.byteSlice(), false).asObjectRef();
+                }
+            }
+        }
 
         // if path_or_blob is a path, convert it into a file blob
         var destination_blob: Blob = if (path_or_blob == .path)
@@ -1187,16 +1254,6 @@ pub const Blob = struct {
 
         if (destination_blob.store == null) {
             exception.* = JSC.toInvalidArguments("Writing to an empty blob is not implemented yet", .{}, ctx).asObjectRef();
-            return null;
-        }
-
-        var data = args.nextEat() orelse {
-            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
-            return null;
-        };
-
-        if (data.isUndefinedOrNull() or data.isEmpty()) {
-            exception.* = JSC.toInvalidArguments("Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write", .{}, ctx).asObjectRef();
             return null;
         }
 
@@ -1285,6 +1342,159 @@ pub const Blob = struct {
         };
 
         return writeFileWithSourceDestination(ctx, &source_blob, &destination_blob);
+    }
+
+    fn writeStringToFileFast(
+        globalThis: *JSC.JSGlobalObject,
+        pathlike: JSC.Node.PathOrFileDescriptor,
+        str: ZigString,
+        comptime needs_open: bool,
+    ) JSC.JSValue {
+        var fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else std.math.maxInt(JSC.Node.FileDescriptor);
+
+        if (needs_open) {
+            var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+            switch (JSC.Node.Syscall.open(pathlike.path.sliceZ(&file_path), std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK, 0o644)) {
+                .result => |result| {
+                    fd = result;
+                },
+                .err => |err| {
+                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                },
+            }
+        }
+
+        var truncate = true;
+        var jsc_vm = globalThis.bunVM();
+        var written: usize = 0;
+
+        defer {
+            if (truncate) {
+                _ = JSC.Node.Syscall.system.ftruncate(fd, @intCast(i64, written));
+            }
+
+            if (needs_open) {
+                _ = JSC.Node.Syscall.close(fd);
+            }
+        }
+
+        if (str.is16Bit()) {
+            var decoded = str.toSlice(jsc_vm.allocator);
+            defer decoded.deinit();
+
+            var remain = decoded.slice();
+            const end = remain.ptr + remain.len;
+
+            while (remain.ptr != end) {
+                const result = JSC.Node.Syscall.write(fd, remain);
+                switch (result) {
+                    .result => |res| {
+                        written += res;
+                        remain = remain[res..];
+                        if (res == 0) break;
+                    },
+                    .err => |err| {
+                        truncate = false;
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    },
+                }
+            }
+        } else if (str.isUTF8() or strings.isAllASCII(str.slice())) {
+            var remain = str.slice();
+            const end = remain.ptr + remain.len;
+
+            while (remain.ptr != end) {
+                const result = JSC.Node.Syscall.write(fd, remain);
+                switch (result) {
+                    .result => |res| {
+                        written += res;
+                        remain = remain[res..];
+                        if (res == 0) break;
+                    },
+                    .err => |err| {
+                        truncate = false;
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    },
+                }
+            }
+        } else {
+            var decoded = str.toOwnedSlice(jsc_vm.allocator) catch {
+                globalThis.vm().throwError(globalThis, ZigString.static("Out of memory").toErrorInstance(globalThis));
+                return JSC.JSValue.jsUndefined();
+            };
+            defer jsc_vm.allocator.free(decoded);
+            var remain = decoded;
+            const end = remain.ptr + remain.len;
+            while (remain.ptr != end) {
+                const result = JSC.Node.Syscall.write(fd, remain);
+                switch (result) {
+                    .result => |res| {
+                        written += res;
+                        remain = remain[res..];
+                        if (res == 0) break;
+                    },
+                    .err => |err| {
+                        truncate = false;
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                    },
+                }
+            }
+        }
+
+        return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(written));
+    }
+
+    fn writeBytesToFileFast(
+        globalThis: *JSC.JSGlobalObject,
+        pathlike: JSC.Node.PathOrFileDescriptor,
+        bytes: []const u8,
+        comptime needs_open: bool,
+    ) JSC.JSValue {
+        var fd: JSC.Node.FileDescriptor = if (comptime !needs_open) pathlike.fd else std.math.maxInt(JSC.Node.FileDescriptor);
+
+        if (needs_open) {
+            var file_path: [bun.MAX_PATH_BYTES]u8 = undefined;
+            switch (JSC.Node.Syscall.open(pathlike.path.sliceZ(&file_path), std.os.O.WRONLY | std.os.O.CREAT | std.os.O.NONBLOCK, 0644)) {
+                .result => |result| {
+                    fd = result;
+                },
+                .err => |err| {
+                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                },
+            }
+        }
+
+        var truncate = true;
+        var written: usize = 0;
+        defer {
+            if (truncate) {
+                _ = JSC.Node.Syscall.system.ftruncate(fd, @intCast(i64, written));
+            }
+
+            if (needs_open) {
+                _ = JSC.Node.Syscall.close(fd);
+            }
+        }
+
+        var remain = bytes;
+        const end = remain.ptr + remain.len;
+
+        while (remain.ptr != end) {
+            const result = JSC.Node.Syscall.write(fd, remain);
+            switch (result) {
+                .result => |res| {
+                    written += res;
+                    remain = remain[res..];
+                    if (res == 0) break;
+                },
+                .err => |err| {
+                    truncate = false;
+                    return JSC.JSPromise.rejectedPromiseValue(globalThis, err.toJSC(globalThis));
+                },
+            }
+        }
+
+        return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(written));
     }
 
     pub fn constructFile(
@@ -3196,6 +3406,10 @@ pub const Blob = struct {
             }
 
             if (lifetime != .temporary) this.setIsASCIIFlag(true);
+        }
+
+        if (buf.len == 0) {
+            return ZigString.Empty.toValue(global);
         }
 
         switch (comptime lifetime) {

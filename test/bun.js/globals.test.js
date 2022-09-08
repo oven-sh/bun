@@ -10,6 +10,7 @@ it("extendable", () => {
     Headers,
     HTMLRewriter,
     Bun.Transpiler,
+    Buffer,
   ];
   // None of these should error
   for (let Class of classes) {
@@ -29,7 +30,8 @@ it("writable", () => {
     // ["TextEncoder", TextEncoder],
     ["Request", Request],
     ["Response", Response],
-    // ["Headers", Headers],
+    ["Headers", Headers],
+    ["Buffer", Buffer],
     // ["HTMLRewriter", HTMLRewriter],
     // ["Transpiler", Bun.Transpiler],
   ];
@@ -51,6 +53,7 @@ it("name", () => {
     ["Headers", Headers],
     ["HTMLRewriter", HTMLRewriter],
     ["Transpiler", Bun.Transpiler],
+    ["Buffer", Buffer],
   ];
   for (let [name, Class] of classes) {
     expect(Class.name).toBe(name);

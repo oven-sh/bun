@@ -323,6 +323,13 @@ public:
     mutable WriteBarrier<JSFunction> m_assignToStream;
     mutable WriteBarrier<JSFunction> m_thenables[promiseFunctionsSize + 1];
 
+    mutable WriteBarrier<Unknown> m_JSBufferSetterValue;
+    mutable WriteBarrier<Unknown> m_JSTextEncoderSetterValue;
+    mutable WriteBarrier<Unknown> m_JSMessageEventSetterValue;
+    mutable WriteBarrier<Unknown> m_JSWebSocketSetterValue;
+    mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
+    mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
+
     void trackFFIFunction(JSC::JSFunction* function)
     {
         this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });

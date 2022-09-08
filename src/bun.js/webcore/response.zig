@@ -1364,7 +1364,7 @@ pub const Blob = struct {
             }
         }
 
-        var truncate = true;
+        var truncate = needs_open;
         var jsc_vm = globalThis.bunVM();
         var written: usize = 0;
 
@@ -1464,7 +1464,7 @@ pub const Blob = struct {
             }
         }
 
-        var truncate = true;
+        var truncate = needs_open;
         var written: usize = 0;
         defer {
             if (truncate) {

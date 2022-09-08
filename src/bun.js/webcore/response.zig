@@ -867,11 +867,9 @@ const PathOrBlob = union(enum) {
 
     pub fn fromJS(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
         if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, exception)) |path| {
-            return PathOrBlob{ .path = .{
-                .path = .{
-                    .string = bun.PathString.init((bun.default_allocator.dupeZ(u8, path.path.slice()) catch unreachable)[0..path.path.slice().len]),
-                },
-            } };
+            return PathOrBlob{
+                .path = path,
+            };
         }
 
         const arg = args.nextEat() orelse return null;
@@ -887,11 +885,9 @@ const PathOrBlob = union(enum) {
 
     pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
         if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, exception)) |path| {
-            return PathOrBlob{ .path = .{
-                .path = .{
-                    .string = bun.PathString.init(path.path.slice()),
-                },
-            } };
+            return PathOrBlob{
+                .path = path,
+            };
         }
 
         const arg = args.nextEat() orelse return null;

@@ -46,7 +46,30 @@ public:
     static void destroy(JSCell*) {}
 
     // 0 for null, 1 for true, -1 for false
-    int8_t m_paused;
+    int8_t m_paused = 0;
+    int8_t m_flowing = 0;
+    bool m_ended = false;
+    bool m_endEmitted = false;
+    bool m_reading = false;
+    bool m_constructed = true;
+    bool m_sync = true;
+    bool m_needReadable = false;
+    bool m_emittedReadable = false;
+    bool m_readableListening = false;
+    bool m_resumeScheduled = false;
+    bool m_errorEmitted = false;
+    // These 2 are initialized from options
+    bool m_emitClose;
+    bool m_autoDestroy;
+    bool m_destroyed = false;
+    bool m_closed = false;
+    bool m_closeEmitted = false;
+    bool m_multiAwaitDrain = false;
+    bool m_readingMore = false;
+    bool m_dataEmitted = false;
+
+    int64_t m_length = 0;
+    int64_t m_highWaterMark;
 };
 
 class JSReadableStatePrototype : public JSC::JSNonFinalObject {

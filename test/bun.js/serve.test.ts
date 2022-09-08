@@ -1,7 +1,9 @@
-import { file, serve } from "bun";
-import { describe, expect, it } from "bun:test";
+import { file, gc, serve } from "bun";
+import { afterEach, describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+
+afterEach(() => Bun.gc(true));
 
 var port = 40001;
 
@@ -38,8 +40,11 @@ describe("streaming", () => {
         });
 
         const response = await fetch(`http://localhost:${server.port}`);
-        if (response.status > 0) expect(response.status).toBe(500);
-        expect(await response.text()).toBe("fail");
+        if (response.status > 0) {
+          expect(response.status).toBe(500);
+          expect(await response.text()).toBe("fail");
+        }
+
         expect(pass).toBe(true);
       } catch (e) {
         throw e;
@@ -74,8 +79,10 @@ describe("streaming", () => {
 
         const response = await fetch(`http://localhost:${server.port}`);
         // connection terminated
-        if (response.status > 0) expect(response.status).toBe(200);
-        expect(await response.text()).toBe("such fail");
+        if (response.status > 0) {
+          expect(response.status).toBe(200);
+          expect(await response.text()).toBe("such fail");
+        }
         expect(pass).toBe(true);
       } catch (e) {
         throw e;
@@ -151,6 +158,7 @@ describe("streaming", () => {
       });
 
       const response = await fetch(`http://localhost:${server.port}`);
+      console.log("here");
       expect(response.status).toBe(500);
     } catch (e) {
       if (!e || !(e instanceof TestPass)) {
@@ -159,6 +167,7 @@ describe("streaming", () => {
     } finally {
       server?.stop();
     }
+    gc(true);
   });
 
   it("text from JS throws on start has error handler", async () => {
@@ -465,7 +474,6 @@ it(`should work for text ${count} times serial`, async () => {
 
   server.stop();
 });
-
 it(`should work for ArrayBuffer ${count} times serial`, async () => {
   const textToExpect = "hello";
   var ran = 0;

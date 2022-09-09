@@ -47,8 +47,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore_, (JSGlobalObject * lexicalGlo
     args.append(jsNumber(0));
 
     while (
-        !state->m_reading &&
-        !state->m_ended &&
+        !state->getBool(JSReadableState::reading) &&
+        !state->getBool(JSReadableState::ended) &&
         (state->m_length < state->m_highWaterMark || (state->m_flowing > 0 && state->m_length == 0))) {
         int64_t len = state->m_length;
 
@@ -97,7 +97,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume_, (JSGlobalObject * lexicalGlobalObje
 {
     JSReadableHelper_EXTRACT_STREAM_STATE
 
-    if (!state->m_reading) {
+    if (!state->getBool(JSReadableState::reading)) {
         // stream.read(0)
         auto read = stream->get(lexicalGlobalObject, Identifier::fromString(vm, "read"_s));
         auto callData = JSC::getCallData(read);
@@ -110,7 +110,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume_, (JSGlobalObject * lexicalGlobalObje
         JSC::call(lexicalGlobalObject, read, callData, JSValue(stream), args);
     }
 
-    state->m_resumeScheduled = true;
+    state->setBool(JSReadableState::resumeScheduled, true);
     // stream.emit('resume')
     auto eventType = Identifier::fromString(vm, "resume"_s);
     MarkedArgumentBuffer args;
@@ -123,7 +123,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume_, (JSGlobalObject * lexicalGlobalObje
 
     flow(lexicalGlobalObject, stream, state);
 
-    if (state->m_flowing && !state->m_reading) {
+    if (state->m_flowing > 0 && !state->getBool(JSReadableState::reading)) {
         // stream.read(0)
         auto read = stream->get(lexicalGlobalObject, Identifier::fromString(vm, "read"_s));
         auto callData = JSC::getCallData(read);
@@ -142,8 +142,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObjec
 {
     JSReadableHelper_EXTRACT_STREAM_STATE
 
-    if (!state->m_resumeScheduled) {
-        state->m_resumeScheduled = true;
+    if (!state->getBool(JSReadableState::resumeScheduled)) {
+        state->setBool(JSReadableState::resumeScheduled, true);
         // make this static?
         JSFunction* resume_ = JSC::JSFunction::create(
             vm, lexicalGlobalObject, 0, "resume_"_s, jsReadable_resume_, ImplementationVisibility::Public);
@@ -153,28 +153,29 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObjec
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
-void emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stream, JSReadableState* state)
+EncodedJSValue emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stream, JSReadableState* state)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue errored = state->getDirect(vm, JSC::Identifier::fromString(vm, "errored"_s));
-    if (!state->m_destroyed && !errored.toBoolean(lexicalGlobalObject) && (state->m_length || state->m_ended)) {
+    JSValue errored = state->m_errored.get();
+    if (!state->getBool(JSReadableState::destroyed) && !errored.toBoolean(lexicalGlobalObject) && (state->m_length || state->getBool(JSReadableState::ended))) {
         // stream.emit('readable')
         auto eventType = Identifier::fromString(vm, "readable"_s);
         MarkedArgumentBuffer args;
         auto emitter = jsDynamicCast<JSEventEmitter*>(stream);
         if (!emitter) {
             throwTypeError(lexicalGlobalObject, throwScope, "stream is not EventEmitter"_s);
-            return;
+            return JSValue::encode(jsUndefined());
         }
         emitter->wrapped().emitForBindings(eventType, args);
 
-        state->m_emittedReadable = false;
+        state->setBool(JSReadableState::emittedReadable, false);
     }
 
-    state->m_needReadable = state->m_flowing <= 0 && !state->m_ended && state->m_length <= state->m_highWaterMark;
+    state->setBool(JSReadableState::needReadable, state->m_flowing <= 0 && !state->getBool(JSReadableState::ended) && state->m_length <= state->m_highWaterMark);
     flow(lexicalGlobalObject, stream, state);
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsReadable_emitReadable_);
@@ -187,62 +188,59 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable_, (JSGlobalObject * lexicalGlob
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
-void emitReadable(JSGlobalObject* lexicalGlobalObject, JSObject* stream, JSReadableState* state)
+EncodedJSValue emitReadable(JSGlobalObject* lexicalGlobalObject, JSObject* stream, JSReadableState* state)
 {
     VM& vm = lexicalGlobalObject->vm();
 
-    state->m_needReadable = false;
-    if (!state->m_emittedReadable) {
-        state->m_emittedReadable = true;
+    state->setBool(JSReadableState::needReadable, false);
+    if (!state->getBool(JSReadableState::emittedReadable)) {
+        state->setBool(JSReadableState::emittedReadable, true);
         // make this static?
         JSFunction* emitReadable_ = JSC::JSFunction::create(
             vm, lexicalGlobalObject, 0, "emitReadable_"_s, jsReadable_emitReadable_, ImplementationVisibility::Public);
 
         lexicalGlobalObject->queueMicrotask(emitReadable_, JSValue(stream), JSValue(state), JSValue{}, JSValue{});
     }
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     JSReadableHelper_EXTRACT_STREAM_STATE
 
-    emitReadable(lexicalGlobalObject, stream, state);
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
+    RELEASE_AND_RETURN(throwScope, emitReadable(lexicalGlobalObject, stream, state));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsReadable_onEofChunk, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     JSReadableHelper_EXTRACT_STREAM_STATE
 
-    if (state->m_ended)
+    if (state->getBool(JSReadableState::ended))
         RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 
-    auto decoder = jsCast<JSStringDecoder*>(stream->getDirect(vm, Identifier::fromString(vm, "decoder"_s)));
+    auto decoder = jsDynamicCast<JSStringDecoder*>(state->m_decoder.get());
     if (decoder) {
-        JSString* chunk = jsCast<JSString*>(decoder->end(vm, lexicalGlobalObject, nullptr, 0));
+        JSString* chunk = jsDynamicCast<JSString*>(decoder->end(vm, lexicalGlobalObject, nullptr, 0));
         if (chunk && chunk->length()) {
-            auto buffer = jsCast<JSBufferList*>(stream->getDirect(vm, Identifier::fromString(vm, "buffer"_s)));
+            auto buffer = jsDynamicCast<JSBufferList*>(state->m_buffer.get());
             if (!buffer) {
                 throwTypeError(lexicalGlobalObject, throwScope, "Not buffer on stream"_s);
                 return JSValue::encode(jsUndefined());
             }
             buffer->push(vm, JSValue(chunk));
-            state->m_length += state->m_objectMode ? 1 : chunk->length();
+            state->m_length += state->getBool(JSReadableState::objectMode) ? 1 : chunk->length();
         }
     }
 
-    state->m_ended = true;
+    state->setBool(JSReadableState::ended, true);
 
-    if (state->m_sync) {
-        emitReadable(lexicalGlobalObject, stream, state);
+    if (state->getBool(JSReadableState::sync)) {
+        RELEASE_AND_RETURN(throwScope, emitReadable(lexicalGlobalObject, stream, state));
     } else {
-        state->m_needReadable = false;
-        state->m_emittedReadable = true;
-        emitReadable_(lexicalGlobalObject, stream, state);
+        state->setBool(JSReadableState::needReadable, false);
+        state->setBool(JSReadableState::emittedReadable, true);
+        RELEASE_AND_RETURN(throwScope, emitReadable_(lexicalGlobalObject, stream, state));
     }
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
 #undef JSReadableHelper_EXTRACT_STREAM_STATE

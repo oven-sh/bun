@@ -45,32 +45,52 @@ public:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isDuplex, JSObject* options);
     static void destroy(JSCell*) {}
 
+    enum Mask {
+        objectMode = 1 << 0,
+        emitClose = 1 << 1,
+        autoDestroy = 1 << 2,
+        ended = 1 << 3,
+        endEmitted = 1 << 4,
+        reading = 1 << 5,
+        constructed = 1 << 6,
+        sync = 1 << 7,
+        needReadable = 1 << 8,
+        emittedReadable = 1 << 9,
+        readableListening = 1<< 10,
+        resumeScheduled = 1 << 11,
+        errorEmitted = 1 << 12,
+        destroyed = 1 << 13,
+        closed = 1 << 14,
+        closeEmitted = 1 << 15,
+        multiAwaitDrain = 1 << 16,
+        readingMore = 1 << 17,
+        dataEmitted = 1 << 18,
+    };
+
+    bool getBool(Mask mask) { return m_bools & mask; }
+    void setBool(Mask mask, bool val) {
+        if (val)
+            m_bools = m_bools | mask;
+        else
+            m_bools = m_bools & mask;
+    }
+
     // 0 for null, 1 for true, -1 for false
     int8_t m_paused = 0;
     int8_t m_flowing = 0;
-    // These 3 are initialized from options
-    bool m_objectMode;
-    bool m_emitClose;
-    bool m_autoDestroy;
-    bool m_ended = false;
-    bool m_endEmitted = false;
-    bool m_reading = false;
-    bool m_constructed = true;
-    bool m_sync = true;
-    bool m_needReadable = false;
-    bool m_emittedReadable = false;
-    bool m_readableListening = false;
-    bool m_resumeScheduled = false;
-    bool m_errorEmitted = false;
-    bool m_destroyed = false;
-    bool m_closed = false;
-    bool m_closeEmitted = false;
-    bool m_multiAwaitDrain = false;
-    bool m_readingMore = false;
-    bool m_dataEmitted = false;
+
+    uint32_t m_bools = Mask::constructed | Mask::sync;
 
     int64_t m_length = 0;
     int64_t m_highWaterMark;
+
+    WriteBarrier<Unknown> m_buffer;
+    WriteBarrier<Unknown> m_pipes;
+    WriteBarrier<Unknown> m_errored;
+    WriteBarrier<Unknown> m_defaultEncoding;
+    WriteBarrier<Unknown> m_awaitDrainWriters;
+    WriteBarrier<Unknown> m_decoder;
+    WriteBarrier<Unknown> m_encoding;
 };
 
 class JSReadableStatePrototype : public JSC::JSNonFinalObject {

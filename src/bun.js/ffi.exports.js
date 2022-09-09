@@ -385,3 +385,5 @@ export function CFunction(options) {
 export function callback(options, cb) {
   return nativeCallback(options, cb);
 }
+
+export const read = ffi.read;

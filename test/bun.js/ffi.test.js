@@ -12,6 +12,7 @@ import {
   FFIType,
   callback,
   CFunction,
+  read,
 } from "bun:ffi";
 
 const dlopen = (...args) => {
@@ -612,6 +613,28 @@ function ffiRunner(fast) {
 // it("run ffi fast", () => {
 //   ffiRunner(true);
 // });
+
+it("FFI.read", () => {
+  const buffer = new BigInt64Array(64);
+  const view = new DataView(buffer.buffer);
+  const ptr_ = ptr(buffer);
+
+  for (let i = 0; i < 64; i++) {
+    buffer[i] = BigInt(i);
+    expect(read.intptr(ptr_, i * 8)).toBe(
+      Number(view.getBigInt64(i * 8, true))
+    );
+    expect(read.ptr(ptr_, i * 8)).toBe(Number(view.getBigUint64(i * 8, true)));
+  }
+  for (let i = 0; i < buffer.byteLength / 4; i++) {
+    expect(read.i8(ptr_, i)).toBe(view.getInt8(i, true));
+    expect(read.i16(ptr_, i)).toBe(view.getInt16(i, true));
+    expect(read.i32(ptr_, i)).toBe(view.getInt32(i, true));
+    expect(read.u8(ptr_, i)).toBe(view.getUint8(i, true));
+    expect(read.u16(ptr_, i)).toBe(view.getUint16(i, true));
+    expect(read.u32(ptr_, i)).toBe(view.getUint32(i, true));
+  }
+});
 
 it("run ffi", () => {
   ffiRunner(false);

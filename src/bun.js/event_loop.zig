@@ -470,12 +470,14 @@ pub const EventLoop = struct {
     }
 
     pub fn ensureWaker(this: *EventLoop) void {
+        JSC.markBinding();
         if (this.waker == null) {
             this.waker = AsyncIO.Waker.init(this.virtual_machine.allocator) catch unreachable;
         }
     }
 
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: Task) void {
+        JSC.markBinding();
         this.concurrent_lock.lock();
         defer this.concurrent_lock.unlock();
         this.concurrent_tasks.writeItem(task) catch unreachable;

@@ -2581,16 +2581,12 @@ pub const JSValue = enum(JSValueReprInt) {
             ?*JSPromise => asPromise(this),
 
             u52 => @truncate(u52, @intCast(u64, @maximum(this.toInt64(), 0))),
-
             u64 => toUInt64NoTruncate(this),
-
             u8 => @truncate(u8, toU32(this)),
             i16 => @truncate(i16, toInt32(this)),
             i8 => @truncate(i8, toInt32(this)),
             i32 => @truncate(i32, toInt32(this)),
-
             i64 => this.toInt64(),
-
             bool => this.toBoolean(),
             else => @compileError("Not implemented yet"),
         };
@@ -2735,9 +2731,7 @@ pub const JSValue = enum(JSValueReprInt) {
             JSValue => number,
             f64 => jsNumberFromDouble(number),
             u8 => jsNumberFromChar(number),
-            u16 => jsNumberFromInt32(@intCast(i32, number)),
-            i32 => jsNumberFromInt32(@intCast(i32, number)),
-            c_int => jsNumberFromInt32(@intCast(i32, number)),
+            i16, i32, c_int, i8, u16 => jsNumberFromInt32(@intCast(i32, number)),
             i64 => jsNumberFromInt64(@intCast(i64, number)),
             c_uint => jsNumberFromUint64(@intCast(u64, number)),
             u64 => jsNumberFromUint64(@intCast(u64, number)),
@@ -3216,11 +3210,15 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn asPtr(this: JSValue, comptime Pointer: type) *Pointer {
-        return @intToPtr(*Pointer, @bitCast(usize, this.asDouble()));
+        return @intToPtr(*Pointer, this.asPtrAddress());
     }
 
     pub fn fromPtrAddress(addr: anytype) JSValue {
         return jsNumber(@bitCast(f64, @as(usize, addr)));
+    }
+
+    pub fn asPtrAddress(this: JSValue) usize {
+        return @bitCast(usize, this.asDouble());
     }
 
     pub fn fromPtr(addr: anytype) JSValue {
@@ -4215,7 +4213,15 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
 
 // DOMCall Fields
 pub const __DOMCall_ptr = @import("../api/bun.zig").FFI.Class.functionDefinitions.ptr;
-
+pub const __DOMCall__reader_u8 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"u8";
+pub const __DOMCall__reader_u16 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"u16";
+pub const __DOMCall__reader_u32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"u32";
+pub const __DOMCall__reader_ptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"ptr";
+pub const __DOMCall__reader_i8 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i8";
+pub const __DOMCall__reader_i16 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i16";
+pub const __DOMCall__reader_i32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i32";
+pub const __DOMCall__reader_intptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"intptr";
 pub const DOMCalls = .{
     @import("../api/bun.zig").FFI,
+    @import("../api/bun.zig").FFI.Reader,
 };

@@ -3029,7 +3029,9 @@ pub const DOMEffect = struct {
 fn DOMCallArgumentType(comptime Type: type) []const u8 {
     const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
     return switch (ChildType) {
-        i32 => "JSC::SpecInt32Only",
+        i8, u8, i16, u16, i32 => "JSC::SpecInt32Only",
+        u32, i64, u64 => "JSC::SpecInt52Any",
+        f64 => "JSC::SpecDoubleReal",
         bool => "JSC::SpecBoolean",
         JSC.JSString => "JSC::SpecString",
         JSC.JSUint8Array => "JSC::SpecUint8Array",
@@ -3041,6 +3043,9 @@ fn DOMCallArgumentTypeWrapper(comptime Type: type) []const u8 {
     const ChildType = if (@typeInfo(Type) == .Pointer) std.meta.Child(Type) else Type;
     return switch (ChildType) {
         i32 => "int32_t",
+        f64 => "double",
+        u64 => "uint64_t",
+        i64 => "int64_t",
         bool => "bool",
         JSC.JSString => "JSC::JSString*",
         JSC.JSUint8Array => "JSC::JSUint8Array*",
@@ -3056,7 +3061,7 @@ fn DOMCallResultType(comptime Type: type) []const u8 {
         JSC.JSString => "JSC::SpecString",
         JSC.JSUint8Array => "JSC::SpecUint8Array",
         JSC.JSCell => "JSC::SpecCell",
-        f64 => "JSC::SpecNonIntAsDouble",
+        f64 => "JSC::SpecDoubleReal",
         else => "JSC::SpecHeapTop",
     };
 }
@@ -3165,7 +3170,7 @@ pub fn DOMCall(
                     2 => {
                         try writer.writeAll(", ");
                         try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
-                        try writer.writeAll("arg1, ");
+                        try writer.writeAll(" arg1, ");
                         try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].field_type));
                         try writer.writeAll(" arg2)) {\n");
                     },

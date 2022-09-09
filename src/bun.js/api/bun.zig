@@ -274,7 +274,7 @@ pub fn getStdin(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunSTDIN"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunSTDIN"));
     if (existing.isEmpty()) {
         var rare_data = JSC.VirtualMachine.vm.rareData();
         var store = rare_data.stdin();
@@ -297,7 +297,7 @@ pub fn getStderr(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunSTDERR"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunSTDERR"));
     if (existing.isEmpty()) {
         var rare_data = JSC.VirtualMachine.vm.rareData();
         var store = rare_data.stderr();
@@ -320,7 +320,7 @@ pub fn getStdout(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunSTDOUT"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunSTDOUT"));
     if (existing.isEmpty()) {
         var rare_data = JSC.VirtualMachine.vm.rareData();
         var store = rare_data.stdout();
@@ -1681,7 +1681,7 @@ pub fn getTranspilerConstructor(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunTranspiler"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunTranspiler"));
     if (existing.isEmpty()) {
         return ctx.ptr().putCachedObject(
             &ZigString.init("BunTranspiler"),
@@ -1699,7 +1699,7 @@ pub fn getHashObject(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("BunHash"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("BunHash"));
     if (existing.isEmpty()) {
         return ctx.ptr().putCachedObject(
             &ZigString.init("BunHash"),
@@ -1833,7 +1833,7 @@ pub fn getTOMLObject(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("TOML"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("TOML"));
     if (existing.isEmpty()) {
         return ctx.ptr().putCachedObject(
             &ZigString.init("TOML"),
@@ -1851,7 +1851,7 @@ pub fn getUnsafe(
     _: js.JSStringRef,
     _: js.ExceptionRef,
 ) js.JSValueRef {
-    var existing = ctx.ptr().getCachedObject(&ZigString.init("Unsafe"));
+    var existing = ctx.ptr().getCachedObject(ZigString.static("Unsafe"));
     if (existing.isEmpty()) {
         return ctx.ptr().putCachedObject(
             &ZigString.init("Unsafe"),
@@ -2290,6 +2290,7 @@ pub const FFI = struct {
                 .rfn = JSC.wrapWithHasContainer(JSC.FFI, "linkSymbols", false, false, false),
             },
             .ptr = JSC.DOMCall("FFI", @This(), "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties)),
+
             .toBuffer = .{
                 .rfn = JSC.wrapWithHasContainer(@This(), "toBuffer", false, false, true),
             },
@@ -2298,11 +2299,208 @@ pub const FFI = struct {
             },
         },
         .{
+            .read = .{
+                .get = FFI.Reader.getter,
+            },
             .CString = .{
                 .get = UnsafeCString.getter,
             },
         },
     );
+
+    pub const Reader = struct {
+        pub const Class = NewClass(
+            void,
+            .{ .name = "FFI", .has_dom_calls = true },
+            .{
+                .@"u8" = JSC.DOMCall("Reader", @This(), "u8", i32, JSC.DOMEffect.forRead(.World)),
+                .@"u16" = JSC.DOMCall("Reader", @This(), "u16", i32, JSC.DOMEffect.forRead(.World)),
+                .@"u32" = JSC.DOMCall("Reader", @This(), "u32", i32, JSC.DOMEffect.forRead(.World)),
+                .@"ptr" = JSC.DOMCall("Reader", @This(), "ptr", i64, JSC.DOMEffect.forRead(.World)),
+                .@"i8" = JSC.DOMCall("Reader", @This(), "i8", i32, JSC.DOMEffect.forRead(.World)),
+                .@"i16" = JSC.DOMCall("Reader", @This(), "i16", i32, JSC.DOMEffect.forRead(.World)),
+                .@"i32" = JSC.DOMCall("Reader", @This(), "i32", i32, JSC.DOMEffect.forRead(.World)),
+                .@"intptr" = JSC.DOMCall("Reader", @This(), "intptr", i64, JSC.DOMEffect.forRead(.World)),
+            },
+            .{},
+        );
+
+        pub fn @"u8"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + @intCast(usize, arguments[1].to(i32));
+            const value = @intToPtr(*align(1) u8, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"u16"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + @intCast(usize, arguments[1].to(i32));
+            const value = @intToPtr(*align(1) u16, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"u32"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const value = @intToPtr(*align(1) u32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"ptr"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const value = @intToPtr(*align(1) u64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i8"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const value = @intToPtr(*align(1) i8, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i16"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const value = @intToPtr(*align(1) i16, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i32"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const value = @intToPtr(*align(1) i32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"intptr"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const value = @intToPtr(*align(1) i64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"u8WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const value = @intToPtr(*align(1) u8, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"u16WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const value = @intToPtr(*align(1) u16, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"u32WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const value = @intToPtr(*align(1) u32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"ptrWithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const value = @intToPtr(*align(1) u64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i8WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const value = @intToPtr(*align(1) i8, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i16WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const value = @intToPtr(*align(1) i16, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"i32WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const value = @intToPtr(*align(1) i32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+        pub fn @"intptrWithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const value = @intToPtr(*align(1) i64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn getter(
+            _: void,
+            ctx: js.JSContextRef,
+            _: js.JSValueRef,
+            _: js.JSStringRef,
+            _: js.ExceptionRef,
+        ) js.JSValueRef {
+            var existing = ctx.ptr().getCachedObject(ZigString.static("FFIReader"));
+            if (existing.isEmpty()) {
+                var prototype = JSC.C.JSObjectMake(ctx, FFI.Reader.Class.get().?[0], null);
+                var base = JSC.C.JSObjectMake(ctx, null, null);
+                JSC.C.JSObjectSetPrototype(ctx, base, prototype);
+                FFI.Reader.Class.putDOMCalls(ctx, JSC.JSValue.c(base));
+                return ctx.ptr().putCachedObject(
+                    ZigString.static("FFIReader"),
+                    JSValue.fromRef(base),
+                ).asObjectRef();
+            }
+
+            return existing.asObjectRef();
+        }
+    };
 
     pub fn ptr(
         globalThis: *JSGlobalObject,
@@ -2583,14 +2781,14 @@ pub const FFI = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        var existing = ctx.ptr().getCachedObject(&ZigString.init("FFI"));
+        var existing = ctx.ptr().getCachedObject(ZigString.static("FFI"));
         if (existing.isEmpty()) {
             var prototype = JSC.C.JSObjectMake(ctx, FFI.Class.get().?[0], null);
             var base = JSC.C.JSObjectMake(ctx, null, null);
             JSC.C.JSObjectSetPrototype(ctx, base, prototype);
             FFI.Class.putDOMCalls(ctx, JSC.JSValue.c(base));
             return ctx.ptr().putCachedObject(
-                &ZigString.init("FFI"),
+                ZigString.static("FFI"),
                 JSValue.fromRef(base),
             ).asObjectRef();
         }
@@ -2633,10 +2831,10 @@ pub const UnsafeCString = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        var existing = ctx.ptr().getCachedObject(&ZigString.init("UnsafeCString"));
+        var existing = ctx.ptr().getCachedObject(ZigString.static("UnsafeCString"));
         if (existing.isEmpty()) {
             return ctx.ptr().putCachedObject(
-                &ZigString.init("UnsafeCString"),
+                ZigString.static("UnsafeCString"),
                 JSValue.fromRef(JSC.C.JSObjectMakeConstructor(ctx, null, constructor)),
             ).asObjectRef();
         }
@@ -2687,10 +2885,10 @@ pub const EnvironmentVariables = struct {
         _: js.JSStringRef,
         _: js.ExceptionRef,
     ) js.JSValueRef {
-        var existing = ctx.ptr().getCachedObject(&ZigString.init("Bun.env"));
+        var existing = ctx.ptr().getCachedObject(ZigString.static("Bun.env"));
         if (existing.isEmpty()) {
             return ctx.ptr().putCachedObject(
-                &ZigString.init("Bun.env"),
+                ZigString.static("Bun.env"),
                 JSValue.fromRef(js.JSObjectMake(ctx, EnvironmentVariables.Class.get().*, null)),
             ).asObjectRef();
         }

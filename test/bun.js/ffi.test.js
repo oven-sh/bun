@@ -1,18 +1,14 @@
-import { describe, it, expect } from "bun:test";
-import { unsafe } from "bun";
+import { expect, it } from "bun:test";
 //
 import {
-  native,
-  viewSource,
-  dlopen as _dlopen,
-  CString,
-  ptr,
-  toBuffer,
-  toArrayBuffer,
-  FFIType,
-  callback,
   CFunction,
+  CString,
+  dlopen as _dlopen,
+  ptr,
   read,
+  toArrayBuffer,
+  toBuffer,
+  viewSource,
 } from "bun:ffi";
 
 const dlopen = (...args) => {
@@ -614,25 +610,28 @@ function ffiRunner(fast) {
 //   ffiRunner(true);
 // });
 
-it("FFI.read", () => {
+it("read", () => {
   const buffer = new BigInt64Array(64);
-  const view = new DataView(buffer.buffer);
-  const ptr_ = ptr(buffer);
+  const dataView = new DataView(buffer.buffer);
+  const addr = ptr(buffer);
 
   for (let i = 0; i < 64; i++) {
     buffer[i] = BigInt(i);
-    expect(read.intptr(ptr_, i * 8)).toBe(
-      Number(view.getBigInt64(i * 8, true))
+    expect(read.intptr(addr, i * 8)).toBe(
+      Number(dataView.getBigInt64(i * 8, true))
     );
-    expect(read.ptr(ptr_, i * 8)).toBe(Number(view.getBigUint64(i * 8, true)));
+    expect(read.ptr(addr, i * 8)).toBe(
+      Number(dataView.getBigUint64(i * 8, true))
+    );
   }
-  for (let i = 0; i < buffer.byteLength / 4; i++) {
-    expect(read.i8(ptr_, i)).toBe(view.getInt8(i, true));
-    expect(read.i16(ptr_, i)).toBe(view.getInt16(i, true));
-    expect(read.i32(ptr_, i)).toBe(view.getInt32(i, true));
-    expect(read.u8(ptr_, i)).toBe(view.getUint8(i, true));
-    expect(read.u16(ptr_, i)).toBe(view.getUint16(i, true));
-    expect(read.u32(ptr_, i)).toBe(view.getUint32(i, true));
+
+  for (let i = 0; i < buffer.byteLength - 4; i++) {
+    expect(read.i8(addr, i)).toBe(dataView.getInt8(i, true));
+    expect(read.i16(addr, i)).toBe(dataView.getInt16(i, true));
+    expect(read.i32(addr, i)).toBe(dataView.getInt32(i, true));
+    expect(read.u8(addr, i)).toBe(dataView.getUint8(i, true));
+    expect(read.u16(addr, i)).toBe(dataView.getUint16(i, true));
+    expect(read.u32(addr, i)).toBe(dataView.getUint32(i, true));
   }
 });
 

@@ -2488,7 +2488,8 @@ var require_readable = __commonJS({
     const {
       maybeReadMore,
       resume,
-      emitReadable_,
+      emitReadable,
+      onEofChunk,
     } = globalThis[Symbol.for("Bun.lazy")]("bun:stream");
     var destroyImpl = require_destroy();
     var {
@@ -2622,7 +2623,7 @@ var require_readable = __commonJS({
         state.length += state.objectMode ? 1 : chunk.length;
         if (addToFront) state.buffer.unshift(chunk);
         else state.buffer.push(chunk);
-        if (state.needReadable) emitReadable(stream);
+        if (state.needReadable) emitReadable(stream, state);
       }
       maybeReadMore(stream, state);
     }
@@ -2695,7 +2696,7 @@ var require_readable = __commonJS({
       ) {
         debug("read: emitReadable", state.length, state.ended);
         if (state.length === 0 && state.ended) endReadable(this);
-        else emitReadable(this);
+        else emitReadable(this, state);
         return null;
       }
       n = howMuchToRead(n, state);
@@ -2755,35 +2756,6 @@ var require_readable = __commonJS({
       }
       return ret;
     };
-    function onEofChunk(stream, state) {
-      debug("onEofChunk");
-      if (state.ended) return;
-      if (state.decoder) {
-        const chunk = state.decoder.end();
-        if (chunk && chunk.length) {
-          state.buffer.push(chunk);
-          state.length += state.objectMode ? 1 : chunk.length;
-        }
-      }
-      state.ended = true;
-      if (state.sync) {
-        emitReadable(stream);
-      } else {
-        state.needReadable = false;
-        state.emittedReadable = true;
-        emitReadable_(stream, state);
-      }
-    }
-    function emitReadable(stream) {
-      const state = stream._readableState;
-      debug("emitReadable", state.needReadable, state.emittedReadable);
-      state.needReadable = false;
-      if (!state.emittedReadable) {
-        debug("emitReadable", state.flowing);
-        state.emittedReadable = true;
-        runOnNextTick(emitReadable_, stream, state);
-      }
-    }
     Readable.prototype._read = function (n) {
       throw new ERR_METHOD_NOT_IMPLEMENTED("_read()");
     };
@@ -2963,7 +2935,7 @@ var require_readable = __commonJS({
           state.emittedReadable = false;
           debug("on readable", state.length, state.reading);
           if (state.length) {
-            emitReadable(this);
+            emitReadable(this, state);
           } else if (!state.reading) {
             runOnNextTick(nReadingNextTick, this);
           }
@@ -3022,11 +2994,6 @@ var require_readable = __commonJS({
       this._readableState.paused = true;
       return this;
     };
-    function flow(stream) {
-      const state = stream._readableState;
-      debug("flow", state.flowing);
-      while (state.flowing && stream.read() !== null);
-    }
     Readable.prototype.wrap = function (stream) {
       let paused = false;
       stream.on("data", (chunk) => {

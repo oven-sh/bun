@@ -38,19 +38,17 @@ void JSReadableState::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 {
     Base::finishCreation(vm);
 
-    bool objectMode = false;
-    auto objectModeIdent = JSC::Identifier::fromString(vm, "objectMode"_s);
+    m_objectMode = false;
     if (options != nullptr) {
-        JSC::JSValue objectModeVal = options->getDirect(vm, objectModeIdent);
+        JSC::JSValue objectModeVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "objectMode"_s));
         if (isDuplex && !objectModeVal) {
             objectModeVal = options->getDirect(vm, JSC::Identifier::fromString(vm, "readableObjectMode"_s));
         }
         if (objectModeVal)
-            objectMode = objectModeVal.toBoolean(globalObject);
+            m_objectMode = objectModeVal.toBoolean(globalObject);
     }
-    putDirect(vm, WTFMove(objectModeIdent), JSC::jsBoolean(objectMode));
 
-    m_highWaterMark = objectMode ? 16 : 16 * 1024;  // default value
+    m_highWaterMark = m_objectMode ? 16 : 16 * 1024;  // default value
     if (options != nullptr) {
         int64_t customHightWaterMark = getHighWaterMark(vm, globalObject, isDuplex, options);
         if (customHightWaterMark >= 0)
@@ -212,6 +210,7 @@ JSReadableState_NULLABLE_BOOLEAN_GETTER_SETTER(flowing)
 #define JSReadableState_NUMBER_GETTER_SETTER(NAME)        \
     JSReadableState_GETTER_SETTER(NAME, Number)
 
+JSReadableState_BOOLEAN_GETTER_SETTER(objectMode)
 JSReadableState_BOOLEAN_GETTER_SETTER(ended)
 JSReadableState_BOOLEAN_GETTER_SETTER(endEmitted)
 JSReadableState_BOOLEAN_GETTER_SETTER(reading)
@@ -248,6 +247,7 @@ static const HashTableValue JSReadableStatePrototypeTableValues[]
           JSReadableState_GETTER_SETTER_HASH_TABLE_VALUE(paused),
           JSReadableState_GETTER_SETTER_HASH_TABLE_VALUE(flowing),
           
+          JSReadableState_GETTER_SETTER_HASH_TABLE_VALUE(objectMode),
           JSReadableState_GETTER_SETTER_HASH_TABLE_VALUE(ended),
           JSReadableState_GETTER_SETTER_HASH_TABLE_VALUE(endEmitted),
           JSReadableState_GETTER_SETTER_HASH_TABLE_VALUE(reading),

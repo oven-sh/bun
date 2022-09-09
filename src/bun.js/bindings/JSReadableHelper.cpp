@@ -3,6 +3,7 @@
 #include "JSBufferList.h"
 #include "JSBuffer.h"
 #include "JSEventEmitter.h"
+#include "JSStringDecoder.h"
 #include "JavaScriptCore/Lookup.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "ZigGlobalObject.h"
@@ -14,24 +15,27 @@
 namespace WebCore {
 using namespace JSC;
 
+#define JSReadableHelper_EXTRACT_STREAM_STATE \
+    VM& vm = lexicalGlobalObject->vm(); \
+    auto throwScope = DECLARE_THROW_SCOPE(vm); \
+    \
+    if (callFrame->argumentCount() < 2) { \
+        throwTypeError(lexicalGlobalObject, throwScope, "Not enough arguments"_s); \
+        return JSValue::encode(jsUndefined()); \
+    } \
+    \
+    JSObject* stream = callFrame->uncheckedArgument(0).toObject(lexicalGlobalObject); \
+    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined())); \
+    JSReadableState* state = jsCast<JSReadableState*>(callFrame->uncheckedArgument(1)); \
+    if (!state) { \
+        throwTypeError(lexicalGlobalObject, throwScope, "Second argument not ReadableState"_s); \
+        return JSValue::encode(jsUndefined()); \
+    }
+
 static JSC_DECLARE_HOST_FUNCTION(jsReadable_maybeReadMore_);
 JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 2) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Not enough arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSObject* stream = callFrame->uncheckedArgument(0).toObject(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-    JSReadableState* state = jsDynamicCast<JSReadableState*>(callFrame->uncheckedArgument(1));
-    if (!state) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Second argument not ReadableState"_s);
-        return JSValue::encode(jsUndefined());
-    }
+    JSReadableHelper_EXTRACT_STREAM_STATE
 
     auto read = stream->get(lexicalGlobalObject, Identifier::fromString(vm, "read"_s));
     auto callData = JSC::getCallData(read);
@@ -58,22 +62,13 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore_, (JSGlobalObject * lexicalGlo
 
 JSC_DEFINE_HOST_FUNCTION(jsReadable_maybeReadMore, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 2) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Not enough arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue streamVal = callFrame->uncheckedArgument(0);
-    JSValue stateVal = callFrame->uncheckedArgument(1);
+    JSReadableHelper_EXTRACT_STREAM_STATE
 
     // make this static?
     JSFunction* maybeReadMore_ = JSC::JSFunction::create(
         vm, lexicalGlobalObject, 0, "maybeReadMore_"_s, jsReadable_maybeReadMore_, ImplementationVisibility::Public);
 
-    lexicalGlobalObject->queueMicrotask(maybeReadMore_, streamVal, stateVal, JSValue{}, JSValue{});
+    lexicalGlobalObject->queueMicrotask(maybeReadMore_, JSValue(stream), JSValue(state), JSValue{}, JSValue{});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
@@ -100,21 +95,7 @@ void flow(JSGlobalObject* lexicalGlobalObject, JSObject* stream, JSReadableState
 static JSC_DECLARE_HOST_FUNCTION(jsReadable_resume_);
 JSC_DEFINE_HOST_FUNCTION(jsReadable_resume_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 2) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Not enough arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSObject* stream = callFrame->uncheckedArgument(0).toObject(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-    JSReadableState* state = jsDynamicCast<JSReadableState*>(callFrame->uncheckedArgument(1));
-    if (!state) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Second argument not ReadableState"_s);
-        return JSValue::encode(jsUndefined());
-    }
+    JSReadableHelper_EXTRACT_STREAM_STATE
 
     if (!state->m_reading) {
         // stream.read(0)
@@ -159,22 +140,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume_, (JSGlobalObject * lexicalGlobalObje
 
 JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    VM& vm = lexicalGlobalObject->vm();
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 2) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Not enough arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSValue streamVal = callFrame->uncheckedArgument(0);
-    JSValue stateVal = callFrame->uncheckedArgument(1);
-
-    JSReadableState* state = jsDynamicCast<JSReadableState*>(callFrame->uncheckedArgument(1));
-    if (!state) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Second argument not ReadableState"_s);
-        return JSValue::encode(jsUndefined());
-    }
+    JSReadableHelper_EXTRACT_STREAM_STATE
 
     if (!state->m_resumeScheduled) {
         state->m_resumeScheduled = true;
@@ -182,28 +148,15 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_resume, (JSGlobalObject * lexicalGlobalObjec
         JSFunction* resume_ = JSC::JSFunction::create(
             vm, lexicalGlobalObject, 0, "resume_"_s, jsReadable_resume_, ImplementationVisibility::Public);
 
-        lexicalGlobalObject->queueMicrotask(resume_, streamVal, stateVal, JSValue{}, JSValue{});
+        lexicalGlobalObject->queueMicrotask(resume_, JSValue(stream), JSValue(state), JSValue{}, JSValue{});
     }
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+void emitReadable_(JSGlobalObject* lexicalGlobalObject, JSObject* stream, JSReadableState* state)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-
-    if (callFrame->argumentCount() < 2) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Not enough arguments"_s);
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSObject* stream = callFrame->uncheckedArgument(0).toObject(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, JSValue::encode(jsUndefined()));
-    JSReadableState* state = jsDynamicCast<JSReadableState*>(callFrame->uncheckedArgument(1));
-    if (!state) {
-        throwTypeError(lexicalGlobalObject, throwScope, "Second argument not ReadableState"_s);
-        return JSValue::encode(jsUndefined());
-    }
 
     JSValue errored = state->getDirect(vm, JSC::Identifier::fromString(vm, "errored"_s));
     if (!state->m_destroyed && !errored.toBoolean(lexicalGlobalObject) && (state->m_length || state->m_ended)) {
@@ -213,7 +166,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable_, (JSGlobalObject * lexicalGlob
         auto emitter = jsDynamicCast<JSEventEmitter*>(stream);
         if (!emitter) {
             throwTypeError(lexicalGlobalObject, throwScope, "stream is not EventEmitter"_s);
-            return JSValue::encode(jsUndefined());
+            return;
         }
         emitter->wrapped().emitForBindings(eventType, args);
 
@@ -222,7 +175,76 @@ JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable_, (JSGlobalObject * lexicalGlob
 
     state->m_needReadable = state->m_flowing <= 0 && !state->m_ended && state->m_length <= state->m_highWaterMark;
     flow(lexicalGlobalObject, stream, state);
+}
+
+JSC_DECLARE_HOST_FUNCTION(jsReadable_emitReadable_);
+JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable_, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    JSReadableHelper_EXTRACT_STREAM_STATE
+
+    emitReadable_(lexicalGlobalObject, stream, state);
+
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
+
+void emitReadable(JSGlobalObject* lexicalGlobalObject, JSObject* stream, JSReadableState* state)
+{
+    VM& vm = lexicalGlobalObject->vm();
+
+    state->m_needReadable = false;
+    if (!state->m_emittedReadable) {
+        state->m_emittedReadable = true;
+        // make this static?
+        JSFunction* emitReadable_ = JSC::JSFunction::create(
+            vm, lexicalGlobalObject, 0, "emitReadable_"_s, jsReadable_emitReadable_, ImplementationVisibility::Public);
+
+        lexicalGlobalObject->queueMicrotask(emitReadable_, JSValue(stream), JSValue(state), JSValue{}, JSValue{});
+    }
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsReadable_emitReadable, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    JSReadableHelper_EXTRACT_STREAM_STATE
+
+    emitReadable(lexicalGlobalObject, stream, state);
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsReadable_onEofChunk, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    JSReadableHelper_EXTRACT_STREAM_STATE
+
+    if (state->m_ended)
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
+
+    auto decoder = jsCast<JSStringDecoder*>(stream->getDirect(vm, Identifier::fromString(vm, "decoder"_s)));
+    if (decoder) {
+        JSString* chunk = jsCast<JSString*>(decoder->end(vm, lexicalGlobalObject, nullptr, 0));
+        if (chunk && chunk->length()) {
+            auto buffer = jsCast<JSBufferList*>(stream->getDirect(vm, Identifier::fromString(vm, "buffer"_s)));
+            if (!buffer) {
+                throwTypeError(lexicalGlobalObject, throwScope, "Not buffer on stream"_s);
+                return JSValue::encode(jsUndefined());
+            }
+            buffer->push(vm, JSValue(chunk));
+            state->m_length += state->m_objectMode ? 1 : chunk->length();
+        }
+    }
+
+    state->m_ended = true;
+
+    if (state->m_sync) {
+        emitReadable(lexicalGlobalObject, stream, state);
+    } else {
+        state->m_needReadable = false;
+        state->m_emittedReadable = true;
+        emitReadable_(lexicalGlobalObject, stream, state);
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
+}
+
+#undef JSReadableHelper_EXTRACT_STREAM_STATE
 
 } // namespace WebCore

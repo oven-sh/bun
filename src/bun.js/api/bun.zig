@@ -2330,7 +2330,7 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + @intCast(usize, arguments[1].to(i32));
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
             const value = @intToPtr(*align(1) u8, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2339,7 +2339,7 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + @intCast(usize, arguments[1].to(i32));
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
             const value = @intToPtr(*align(1) u16, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2348,7 +2348,7 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
             const value = @intToPtr(*align(1) u32, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2357,7 +2357,7 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
             const value = @intToPtr(*align(1) u64, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2366,7 +2366,7 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
             const value = @intToPtr(*align(1) i8, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2375,7 +2375,7 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
             const value = @intToPtr(*align(1) i16, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2384,7 +2384,7 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
             const value = @intToPtr(*align(1) i32, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2393,7 +2393,7 @@ pub const FFI = struct {
             _: JSValue,
             arguments: []const JSValue,
         ) JSValue {
-            const addr = arguments[0].asPtrAddress() + @intCast(usize, if (arguments.len > 1) arguments[1].to(i32) else @as(i32, 0));
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
             const value = @intToPtr(*align(1) i64, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2404,7 +2404,7 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
             const value = @intToPtr(*align(1) u8, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2414,7 +2414,7 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
             const value = @intToPtr(*align(1) u16, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2424,7 +2424,7 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
             const value = @intToPtr(*align(1) u32, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2434,7 +2434,7 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
             const value = @intToPtr(*align(1) u64, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2444,7 +2444,7 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
             const value = @intToPtr(*align(1) i8, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2454,7 +2454,7 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
             const value = @intToPtr(*align(1) i16, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2464,7 +2464,7 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
             const value = @intToPtr(*align(1) i32, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2474,7 +2474,7 @@ pub const FFI = struct {
             raw_addr: i64,
             offset: i32,
         ) callconv(.C) JSValue {
-            const addr = @intCast(usize, raw_addr + @as(i64, offset));
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
             const value = @intToPtr(*align(1) i64, addr).*;
             return JSValue.jsNumber(value);
         }
@@ -2574,6 +2574,10 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref());
         }
 
+        if (comptime Environment.allow_assert) {
+            std.debug.assert(JSC.JSValue.fromPtrAddress(addr).asPtrAddress() == addr);
+        }
+
         return JSC.JSValue.fromPtrAddress(addr);
     }
 
@@ -2587,14 +2591,14 @@ pub const FFI = struct {
             return .{ .err = JSC.toInvalidArguments("ptr must be a number.", .{}, globalThis.ref()) };
         }
 
-        const num = value.asNumber();
+        const num = value.asPtrAddress();
         if (num == 0) {
             return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis.ref()) };
         }
 
-        if (!std.math.isFinite(num)) {
-            return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis.ref()) };
-        }
+        // if (!std.math.isFinite(num)) {
+        //     return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis.ref()) };
+        // }
 
         var addr = @bitCast(usize, num);
 

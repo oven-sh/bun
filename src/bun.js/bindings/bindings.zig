@@ -3214,11 +3214,11 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn fromPtrAddress(addr: anytype) JSValue {
-        return jsNumber(@bitCast(f64, @as(usize, addr)));
+        return jsNumber(@intToFloat(f64, @bitCast(usize, @as(usize, addr))));
     }
 
     pub fn asPtrAddress(this: JSValue) usize {
-        return @bitCast(usize, this.asDouble());
+        return @bitCast(usize, @floatToInt(usize, this.asDouble()));
     }
 
     pub fn fromPtr(addr: anytype) JSValue {

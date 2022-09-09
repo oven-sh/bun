@@ -212,7 +212,6 @@ var reader_stream_utils = __commonJS({
     let Readable = null;
     if (!Readable) {
       Readable = import.meta.require("node:stream").Readable;
-      console.log("Readable Initialized")
     }
     module.exports = {
       Readable,

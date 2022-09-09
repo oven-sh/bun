@@ -2485,10 +2485,12 @@ var require_readable = __commonJS({
     var debug = require_util().debuglog("stream", (fn) => {
       debug = fn;
     });
-    var BufferList =
-      globalThis[Symbol.for("Bun.lazy")]("bun:stream").BufferList;
+    const {
+      maybeReadMore,
+      resume,
+      emitReadable_,
+    } = globalThis[Symbol.for("Bun.lazy")]("bun:stream");
     var destroyImpl = require_destroy();
-    var { getHighWaterMark, getDefaultHighWaterMark } = require_state();
     var {
       aggregateTwoErrors,
       codes: {
@@ -2769,7 +2771,7 @@ var require_readable = __commonJS({
       } else {
         state.needReadable = false;
         state.emittedReadable = true;
-        emitReadable_(stream);
+        emitReadable_(stream, state);
       }
     }
     function emitReadable(stream) {
@@ -2779,39 +2781,8 @@ var require_readable = __commonJS({
       if (!state.emittedReadable) {
         debug("emitReadable", state.flowing);
         state.emittedReadable = true;
-        runOnNextTick(emitReadable_, stream);
+        runOnNextTick(emitReadable_, stream, state);
       }
-    }
-    function emitReadable_(stream) {
-      const state = stream._readableState;
-      debug("emitReadable_", state.destroyed, state.length, state.ended);
-      if (!state.destroyed && !state.errored && (state.length || state.ended)) {
-        stream.emit("readable");
-        state.emittedReadable = false;
-      }
-      state.needReadable =
-        !state.flowing && !state.ended && state.length <= state.highWaterMark;
-      flow(stream);
-    }
-    function maybeReadMore(stream, state) {
-      if (!state.readingMore && state.constructed) {
-        state.readingMore = true;
-        runOnNextTick(maybeReadMore_, stream, state);
-      }
-    }
-    function maybeReadMore_(stream, state) {
-      while (
-        !state.reading &&
-        !state.ended &&
-        (state.length < state.highWaterMark ||
-          (state.flowing && state.length === 0))
-      ) {
-        const len = state.length;
-        debug("maybeReadMore read 0");
-        stream.read(0);
-        if (len === state.length) break;
-      }
-      state.readingMore = false;
     }
     Readable.prototype._read = function (n) {
       throw new ERR_METHOD_NOT_IMPLEMENTED("_read()");
@@ -3041,22 +3012,6 @@ var require_readable = __commonJS({
       state.paused = false;
       return this;
     };
-    function resume(stream, state) {
-      if (!state.resumeScheduled) {
-        state.resumeScheduled = true;
-        runOnNextTick(resume_, stream, state);
-      }
-    }
-    function resume_(stream, state) {
-      debug("resume", state.reading);
-      if (!state.reading) {
-        stream.read(0);
-      }
-      state.resumeScheduled = false;
-      stream.emit("resume");
-      flow(stream);
-      if (state.flowing && !state.reading) stream.read(0);
-    }
     Readable.prototype.pause = function () {
       debug("call pause flowing=%j", this._readableState.flowing);
       if (this._readableState.flowing !== false) {

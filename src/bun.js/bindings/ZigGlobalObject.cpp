@@ -89,6 +89,7 @@
 #include "JSFetchHeaders.h"
 #include "JSStringDecoder.h"
 #include "JSReadableState.h"
+#include "JSReadableHelper.h"
 
 #include "Process.h"
 
@@ -1042,6 +1043,15 @@ JSC:
             auto* obj = constructEmptyObject(globalObject);
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "BufferList"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferList(), 0);
             obj->putDirect(vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "ReadableState"_s)), reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSReadableState(), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "maybeReadMore"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "maybeReadMore"_s, jsReadable_maybeReadMore, ImplementationVisibility::Public), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "resume"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "resume"_s, jsReadable_resume, ImplementationVisibility::Public), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "emitReadable_"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "emitReadable_"_s, jsReadable_emitReadable_, ImplementationVisibility::Public), 0);
             return JSValue::encode(obj);
         }
 

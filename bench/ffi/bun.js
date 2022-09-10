@@ -1,6 +1,8 @@
+import { ptr, dlopen, CString, toBuffer } from "bun:ffi";
 import { run, bench, group } from "mitata";
-import { ptr, dlopen, CString } from "bun:ffi";
-const { napiNoop, napiHash, napiString } = require("./src/ffi_napi_bench.node");
+
+const { napiNoop, napiHash, napiString } = require(import.meta.dir +
+  "/src/ffi_napi_bench.node");
 
 const {
   symbols: {
@@ -8,7 +10,7 @@ const {
     ffi_hash: { native: ffi_hash },
     ffi_string: { native: ffi_string },
   },
-} = dlopen("./src/ffi_napi_bench.node", {
+} = dlopen(import.meta.dir + "/src/ffi_napi_bench.node", {
   ffi_noop: { args: [], returns: "void" },
   ffi_string: { args: [], returns: "ptr" },
   ffi_hash: { args: ["ptr", "u32"], returns: "u32" },

@@ -15,6 +15,7 @@ public:
     {
     }
 
+    DECLARE_VISIT_CHILDREN;
     DECLARE_INFO;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
@@ -84,13 +85,13 @@ public:
     int64_t m_length = 0;
     int64_t m_highWaterMark;
 
-    WriteBarrier<Unknown> m_buffer;
-    WriteBarrier<Unknown> m_pipes;
-    WriteBarrier<Unknown> m_errored;
-    WriteBarrier<Unknown> m_defaultEncoding;
-    WriteBarrier<Unknown> m_awaitDrainWriters;
-    WriteBarrier<Unknown> m_decoder;
-    WriteBarrier<Unknown> m_encoding;
+    mutable WriteBarrier<Unknown> m_buffer;
+    mutable WriteBarrier<Unknown> m_pipes;
+    mutable WriteBarrier<Unknown> m_errored;
+    mutable WriteBarrier<Unknown> m_defaultEncoding;
+    mutable WriteBarrier<Unknown> m_awaitDrainWriters;
+    mutable WriteBarrier<Unknown> m_decoder;
+    mutable WriteBarrier<Unknown> m_encoding;
 };
 
 class JSReadableStatePrototype : public JSC::JSNonFinalObject {

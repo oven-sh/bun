@@ -183,6 +183,17 @@ JSC::GCClient::IsoSubspace* JSBufferList::subspaceForImpl(JSC::VM& vm)
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferListPrototype, JSBufferListPrototype::Base);
 
+template<typename Visitor>
+void JSBufferList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSBufferList* buffer = jsCast<JSBufferList*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(buffer, info());
+    Base::visitChildren(buffer, visitor);
+    for (auto& val : buffer->m_deque)
+        visitor.append(val);
+}
+DEFINE_VISIT_CHILDREN(JSBufferList);
+
 static inline JSC::EncodedJSValue jsBufferListPrototypeFunction_pushBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSBufferList>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

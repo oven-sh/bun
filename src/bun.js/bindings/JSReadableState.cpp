@@ -118,6 +118,22 @@ JSC::GCClient::IsoSubspace* JSReadableState::subspaceForImpl(JSC::VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableState = WTFMove(space); });
 }
 
+template<typename Visitor>
+void JSReadableState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    JSReadableState* state = jsCast<JSReadableState*>(cell);
+    ASSERT_GC_OBJECT_INHERITS(state, info());
+    Base::visitChildren(state, visitor);
+    visitor.append(state->m_buffer);
+    visitor.append(state->m_pipes);
+    visitor.append(state->m_errored);
+    visitor.append(state->m_defaultEncoding);
+    visitor.append(state->m_awaitDrainWriters);
+    visitor.append(state->m_decoder);
+    visitor.append(state->m_encoding);
+}
+DEFINE_VISIT_CHILDREN(JSReadableState);
+
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSReadableStatePrototype, JSReadableStatePrototype::Base);
 
 JSC_DEFINE_CUSTOM_GETTER(jsReadableState_pipesCount, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))

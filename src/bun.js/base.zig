@@ -2399,6 +2399,8 @@ pub const ArrayBuffer = extern struct {
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
 
+    pub const empty = ArrayBuffer{ .offset = 0, .len = 0, .byte_len = 0, .typed_array_type = .Uint8Array, .ptr = undefined };
+
     pub const name = "Bun__ArrayBuffer";
     pub const Stream = std.io.FixedBufferStream([]u8);
 
@@ -2580,6 +2582,11 @@ pub const MarkedArrayBuffer = struct {
         };
     }
 
+    pub const empty = MarkedArrayBuffer{
+        .allocator = null,
+        .buffer = ArrayBuffer.empty,
+    };
+
     pub inline fn slice(this: *const @This()) []u8 {
         return this.buffer.slice();
     }
@@ -2608,6 +2615,15 @@ pub const MarkedArrayBuffer = struct {
         if (!this.buffer.value.isEmptyOrUndefinedOrNull()) {
             return this.buffer.value.asObjectRef();
         }
+        if (this.buffer.byte_len == 0) {
+            return js.JSObjectMakeTypedArray(
+                ctx,
+                this.buffer.typed_array_type.toC(),
+                0,
+                exception,
+            );
+        }
+
         return js.JSObjectMakeTypedArrayWithBytesNoCopy(
             ctx,
             this.buffer.typed_array_type.toC(),

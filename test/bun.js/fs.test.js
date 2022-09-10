@@ -231,6 +231,18 @@ describe("readFileSync", () => {
     expect(text).toBe("File read successfully");
   });
 
+  it("works with special files in the filesystem", () => {
+    {
+      const text = readFileSync("/dev/null", "utf8");
+      expect(text).toBe("");
+    }
+
+    if (process.platform === "linux") {
+      const text = readFileSync("/proc/filesystems");
+      expect(text.length > 0).toBe(true);
+    }
+  });
+
   it("returning Buffer works", () => {
     const text = readFileSync(import.meta.dir + "/readFileSync.txt");
     const encoded = [

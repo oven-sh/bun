@@ -3334,11 +3334,14 @@ pub const NodeFS = struct {
                     .result => |stat_| stat_,
                 };
 
+                // For certain files, the size might be 0 but the file might still have contents.
                 const size = @intCast(u64, @maximum(stat_.size, 0));
+
                 var buf = std.ArrayList(u8).init(bun.default_allocator);
                 buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
                 buf.expandToCapacity();
                 var total: usize = 0;
+
                 while (total < size) {
                     switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
                         .err => |err| return .{
@@ -3358,8 +3361,47 @@ pub const NodeFS = struct {
                             }
                         },
                     }
+                } else {
+                    // https://github.com/oven-sh/bun/issues/1220
+                    while (true) {
+                        switch (Syscall.read(fd, buf.items.ptr[total..buf.capacity])) {
+                            .err => |err| return .{
+                                .err = err,
+                            },
+                            .result => |amt| {
+                                total += amt;
+                                // There are cases where stat()'s size is wrong or out of date
+                                if (total > size and amt != 0) {
+                                    buf.ensureUnusedCapacity(8096) catch unreachable;
+                                    buf.expandToCapacity();
+                                    continue;
+                                }
+
+                                if (amt == 0) {
+                                    break;
+                                }
+                            },
+                        }
+                    }
                 }
+
                 buf.items.len = total;
+                if (total == 0) {
+                    buf.deinit();
+                    return switch (args.encoding) {
+                        .buffer => .{
+                            .result = .{
+                                .buffer = Buffer.empty,
+                            },
+                        },
+                        else => .{
+                            .result = .{
+                                .string = "",
+                            },
+                        },
+                    };
+                }
+
                 return switch (args.encoding) {
                     .buffer => .{
                         .result = .{

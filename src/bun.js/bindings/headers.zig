@@ -418,6 +418,10 @@ pub extern fn Reader__ptr__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSVal
 pub extern fn Reader__i8__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Reader__i16__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Reader__i32__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
+pub extern fn Reader__f32__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
+pub extern fn Reader__f64__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
+pub extern fn Reader__i64__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
+pub extern fn Reader__u64__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Reader__intptr__put(arg0: ?*JSC__JSGlobalObject, JSValue1: JSC__JSValue) void;
 pub extern fn Zig__GlobalObject__create(arg0: [*c]JSClassRef, arg1: i32, arg2: ?*anyopaque) ?*JSC__JSGlobalObject;
 pub extern fn Zig__GlobalObject__getModuleRegistryMap(arg0: ?*JSC__JSGlobalObject) ?*anyopaque;

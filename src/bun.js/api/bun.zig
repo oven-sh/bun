@@ -2316,11 +2316,15 @@ pub const FFI = struct {
                 .@"u8" = JSC.DOMCall("Reader", @This(), "u8", i32, JSC.DOMEffect.forRead(.World)),
                 .@"u16" = JSC.DOMCall("Reader", @This(), "u16", i32, JSC.DOMEffect.forRead(.World)),
                 .@"u32" = JSC.DOMCall("Reader", @This(), "u32", i32, JSC.DOMEffect.forRead(.World)),
-                .@"ptr" = JSC.DOMCall("Reader", @This(), "ptr", i64, JSC.DOMEffect.forRead(.World)),
+                .@"ptr" = JSC.DOMCall("Reader", @This(), "ptr", i52, JSC.DOMEffect.forRead(.World)),
                 .@"i8" = JSC.DOMCall("Reader", @This(), "i8", i32, JSC.DOMEffect.forRead(.World)),
                 .@"i16" = JSC.DOMCall("Reader", @This(), "i16", i32, JSC.DOMEffect.forRead(.World)),
                 .@"i32" = JSC.DOMCall("Reader", @This(), "i32", i32, JSC.DOMEffect.forRead(.World)),
-                .@"intptr" = JSC.DOMCall("Reader", @This(), "intptr", i64, JSC.DOMEffect.forRead(.World)),
+                .@"i64" = JSC.DOMCall("Reader", @This(), "i64", i64, JSC.DOMEffect.forRead(.World)),
+                .@"u64" = JSC.DOMCall("Reader", @This(), "u64", u64, JSC.DOMEffect.forRead(.World)),
+                .@"intptr" = JSC.DOMCall("Reader", @This(), "intptr", i52, JSC.DOMEffect.forRead(.World)),
+                .@"f32" = JSC.DOMCall("Reader", @This(), "f32", f64, JSC.DOMEffect.forRead(.World)),
+                .@"f64" = JSC.DOMCall("Reader", @This(), "f64", f64, JSC.DOMEffect.forRead(.World)),
             },
             .{},
         );
@@ -2396,6 +2400,46 @@ pub const FFI = struct {
             const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
             const value = @intToPtr(*align(1) i64, addr).*;
             return JSValue.jsNumber(value);
+        }
+
+        pub fn @"f32"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) f32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"f64"(
+            _: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) f64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"i64"(
+            global: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) i64, addr).*;
+            return JSValue.fromInt64NoTruncate(global, value);
+        }
+
+        pub fn @"u64"(
+            global: *JSGlobalObject,
+            _: JSValue,
+            arguments: []const JSValue,
+        ) JSValue {
+            const addr = arguments[0].asPtrAddress() + if (arguments.len > 1) @intCast(usize, arguments[1].to(i32)) else @as(usize, 0);
+            const value = @intToPtr(*align(1) u64, addr).*;
+            return JSValue.fromUInt64NoTruncate(global, value);
         }
 
         pub fn @"u8WithoutTypeChecks"(
@@ -2477,6 +2521,50 @@ pub const FFI = struct {
             const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
             const value = @intToPtr(*align(1) i64, addr).*;
             return JSValue.jsNumber(value);
+        }
+
+        pub fn @"f32WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) f32, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"f64WithoutTypeChecks"(
+            _: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) f64, addr).*;
+            return JSValue.jsNumber(value);
+        }
+
+        pub fn @"u64WithoutTypeChecks"(
+            global: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) u64, addr).*;
+            return JSValue.fromUInt64NoTruncate(global, value);
+        }
+
+        pub fn @"i64WithoutTypeChecks"(
+            global: *JSGlobalObject,
+            _: *anyopaque,
+            raw_addr: i64,
+            offset: i32,
+        ) callconv(.C) JSValue {
+            const addr = @intCast(usize, raw_addr) + @intCast(usize, offset);
+            const value = @intToPtr(*align(1) i64, addr).*;
+            return JSValue.fromInt64NoTruncate(global, value);
         }
 
         pub fn getter(

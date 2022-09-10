@@ -3061,6 +3061,7 @@ fn DOMCallResultType(comptime Type: type) []const u8 {
         JSC.JSString => "JSC::SpecString",
         JSC.JSUint8Array => "JSC::SpecUint8Array",
         JSC.JSCell => "JSC::SpecCell",
+        u52, i52 => "JSC::SpecInt52Any",
         f64 => "JSC::SpecDoubleReal",
         else => "JSC::SpecHeapTop",
     };

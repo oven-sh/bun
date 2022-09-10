@@ -2729,7 +2729,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn jsNumberWithType(comptime Number: type, number: Number) JSValue {
         return switch (comptime Number) {
             JSValue => number,
-            f64 => jsNumberFromDouble(number),
+            f32, f64 => jsNumberFromDouble(@as(f64, number)),
             u8 => jsNumberFromChar(number),
             i16, i32, c_int, i8, u16 => jsNumberFromInt32(@intCast(i32, number)),
             i64 => jsNumberFromInt64(@intCast(i64, number)),
@@ -4220,6 +4220,10 @@ pub const __DOMCall__reader_ptr = @import("../api/bun.zig").FFI.Reader.Class.fun
 pub const __DOMCall__reader_i8 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i8";
 pub const __DOMCall__reader_i16 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i16";
 pub const __DOMCall__reader_i32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i32";
+pub const __DOMCall__reader_f32 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"f32";
+pub const __DOMCall__reader_f64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"f64";
+pub const __DOMCall__reader_i64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i64";
+pub const __DOMCall__reader_u64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"u64";
 pub const __DOMCall__reader_intptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"intptr";
 pub const DOMCalls = .{
     @import("../api/bun.zig").FFI,

@@ -208,7 +208,7 @@ extern "C" void Reader__ptr__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
     Reader__ptr__fastpathWrapper,
     thisObject->classInfo(),
     JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
-  JSC::SpecHeapTop,
+  JSC::SpecInt52Any,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
   );
@@ -359,6 +359,92 @@ extern "C" void Reader__i32__put(JSC::JSGlobalObject *globalObject, JSC::Encoded
 
 
 
+extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__i64__slowpathWrapper);
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__i64__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, int64_t, int32_t));
+
+JSC_DEFINE_JIT_OPERATION(Reader__i64__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2)) {
+VM& vm = JSC::getVM(lexicalGlobalObject);
+IGNORE_WARNINGS_BEGIN("frame-address")
+CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+IGNORE_WARNINGS_END
+JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+return Reader__i64__fastpath(lexicalGlobalObject, thisValue, arg1, arg2);
+}
+JSC_DEFINE_HOST_FUNCTION(Reader__i64__slowpathWrapper, (JSC::JSGlobalObject *globalObject, JSC::CallFrame* frame)) {
+    return Reader__i64__slowpath(globalObject, JSValue::encode(frame->thisValue()), reinterpret_cast<JSC::EncodedJSValue*>(frame->addressOfArgumentsStart()), frame->argumentCount());
+}
+
+extern "C" void Reader__i64__put(JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value) {
+  JSC::JSObject *thisObject = JSC::jsCast<JSC::JSObject *>(JSC::JSValue::decode(value));
+  static const JSC::DOMJIT::Signature DOMJIT_i64_signature(
+    Reader__i64__fastpathWrapper,
+    thisObject->classInfo(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+  JSC::SpecHeapTop,
+  JSC::SpecInt52Any,
+  JSC::SpecInt32Only
+  );
+                  JSFunction* function = JSFunction::create(
+                    globalObject->vm(),
+                    globalObject,
+                    2,
+                    String("i64"_s),
+                    Reader__i64__slowpathWrapper, ImplementationVisibility::Public, NoIntrinsic, Reader__i64__slowpathWrapper,
+                    &DOMJIT_i64_signature
+                );
+           thisObject->putDirect(
+             globalObject->vm(),
+             Identifier::fromString(globalObject->vm(), "i64"_s),
+             function,
+             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0
+           );
+}
+
+
+
+extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__u64__slowpathWrapper);
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__u64__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, int64_t, int32_t));
+
+JSC_DEFINE_JIT_OPERATION(Reader__u64__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2)) {
+VM& vm = JSC::getVM(lexicalGlobalObject);
+IGNORE_WARNINGS_BEGIN("frame-address")
+CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+IGNORE_WARNINGS_END
+JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+return Reader__u64__fastpath(lexicalGlobalObject, thisValue, arg1, arg2);
+}
+JSC_DEFINE_HOST_FUNCTION(Reader__u64__slowpathWrapper, (JSC::JSGlobalObject *globalObject, JSC::CallFrame* frame)) {
+    return Reader__u64__slowpath(globalObject, JSValue::encode(frame->thisValue()), reinterpret_cast<JSC::EncodedJSValue*>(frame->addressOfArgumentsStart()), frame->argumentCount());
+}
+
+extern "C" void Reader__u64__put(JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value) {
+  JSC::JSObject *thisObject = JSC::jsCast<JSC::JSObject *>(JSC::JSValue::decode(value));
+  static const JSC::DOMJIT::Signature DOMJIT_u64_signature(
+    Reader__u64__fastpathWrapper,
+    thisObject->classInfo(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+  JSC::SpecHeapTop,
+  JSC::SpecInt52Any,
+  JSC::SpecInt32Only
+  );
+                  JSFunction* function = JSFunction::create(
+                    globalObject->vm(),
+                    globalObject,
+                    2,
+                    String("u64"_s),
+                    Reader__u64__slowpathWrapper, ImplementationVisibility::Public, NoIntrinsic, Reader__u64__slowpathWrapper,
+                    &DOMJIT_u64_signature
+                );
+           thisObject->putDirect(
+             globalObject->vm(),
+             Identifier::fromString(globalObject->vm(), "u64"_s),
+             function,
+             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0
+           );
+}
+
+
+
 extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__intptr__slowpathWrapper);
 extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__intptr__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, int64_t, int32_t));
 
@@ -380,7 +466,7 @@ extern "C" void Reader__intptr__put(JSC::JSGlobalObject *globalObject, JSC::Enco
     Reader__intptr__fastpathWrapper,
     thisObject->classInfo(),
     JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
-  JSC::SpecHeapTop,
+  JSC::SpecInt52Any,
   JSC::SpecInt52Any,
   JSC::SpecInt32Only
   );
@@ -395,6 +481,92 @@ extern "C" void Reader__intptr__put(JSC::JSGlobalObject *globalObject, JSC::Enco
            thisObject->putDirect(
              globalObject->vm(),
              Identifier::fromString(globalObject->vm(), "intptr"_s),
+             function,
+             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0
+           );
+}
+
+
+
+extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__f32__slowpathWrapper);
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__f32__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, int64_t, int32_t));
+
+JSC_DEFINE_JIT_OPERATION(Reader__f32__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2)) {
+VM& vm = JSC::getVM(lexicalGlobalObject);
+IGNORE_WARNINGS_BEGIN("frame-address")
+CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+IGNORE_WARNINGS_END
+JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+return Reader__f32__fastpath(lexicalGlobalObject, thisValue, arg1, arg2);
+}
+JSC_DEFINE_HOST_FUNCTION(Reader__f32__slowpathWrapper, (JSC::JSGlobalObject *globalObject, JSC::CallFrame* frame)) {
+    return Reader__f32__slowpath(globalObject, JSValue::encode(frame->thisValue()), reinterpret_cast<JSC::EncodedJSValue*>(frame->addressOfArgumentsStart()), frame->argumentCount());
+}
+
+extern "C" void Reader__f32__put(JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value) {
+  JSC::JSObject *thisObject = JSC::jsCast<JSC::JSObject *>(JSC::JSValue::decode(value));
+  static const JSC::DOMJIT::Signature DOMJIT_f32_signature(
+    Reader__f32__fastpathWrapper,
+    thisObject->classInfo(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+  JSC::SpecDoubleReal,
+  JSC::SpecInt52Any,
+  JSC::SpecInt32Only
+  );
+                  JSFunction* function = JSFunction::create(
+                    globalObject->vm(),
+                    globalObject,
+                    2,
+                    String("f32"_s),
+                    Reader__f32__slowpathWrapper, ImplementationVisibility::Public, NoIntrinsic, Reader__f32__slowpathWrapper,
+                    &DOMJIT_f32_signature
+                );
+           thisObject->putDirect(
+             globalObject->vm(),
+             Identifier::fromString(globalObject->vm(), "f32"_s),
+             function,
+             JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0
+           );
+}
+
+
+
+extern "C" JSC_DECLARE_HOST_FUNCTION(Reader__f64__slowpathWrapper);
+extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__f64__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, int64_t, int32_t));
+
+JSC_DEFINE_JIT_OPERATION(Reader__f64__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2)) {
+VM& vm = JSC::getVM(lexicalGlobalObject);
+IGNORE_WARNINGS_BEGIN("frame-address")
+CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+IGNORE_WARNINGS_END
+JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+return Reader__f64__fastpath(lexicalGlobalObject, thisValue, arg1, arg2);
+}
+JSC_DEFINE_HOST_FUNCTION(Reader__f64__slowpathWrapper, (JSC::JSGlobalObject *globalObject, JSC::CallFrame* frame)) {
+    return Reader__f64__slowpath(globalObject, JSValue::encode(frame->thisValue()), reinterpret_cast<JSC::EncodedJSValue*>(frame->addressOfArgumentsStart()), frame->argumentCount());
+}
+
+extern "C" void Reader__f64__put(JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value) {
+  JSC::JSObject *thisObject = JSC::jsCast<JSC::JSObject *>(JSC::JSValue::decode(value));
+  static const JSC::DOMJIT::Signature DOMJIT_f64_signature(
+    Reader__f64__fastpathWrapper,
+    thisObject->classInfo(),
+    JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
+  JSC::SpecDoubleReal,
+  JSC::SpecInt52Any,
+  JSC::SpecInt32Only
+  );
+                  JSFunction* function = JSFunction::create(
+                    globalObject->vm(),
+                    globalObject,
+                    2,
+                    String("f64"_s),
+                    Reader__f64__slowpathWrapper, ImplementationVisibility::Public, NoIntrinsic, Reader__f64__slowpathWrapper,
+                    &DOMJIT_f64_signature
+                );
+           thisObject->putDirect(
+             globalObject->vm(),
+             Identifier::fromString(globalObject->vm(), "f64"_s),
              function,
              JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction | 0
            );

@@ -611,11 +611,11 @@ function ffiRunner(fast) {
 // });
 
 it("read", () => {
-  const buffer = new BigInt64Array(64);
+  const buffer = new BigInt64Array(16);
   const dataView = new DataView(buffer.buffer);
   const addr = ptr(buffer);
 
-  for (let i = 0; i < 64; i++) {
+  for (let i = 0; i < buffer.length; i++) {
     buffer[i] = BigInt(i);
     expect(read.intptr(addr, i * 8)).toBe(
       Number(dataView.getBigInt64(i * 8, true))
@@ -623,15 +623,24 @@ it("read", () => {
     expect(read.ptr(addr, i * 8)).toBe(
       Number(dataView.getBigUint64(i * 8, true))
     );
+    expect(read.f64(addr, i + 8)).toBe(dataView.getFloat64(i + 8, true));
+    expect(read.i64(addr, i * 8)).toBe(dataView.getBigInt64(i * 8, true));
+    expect(read.u64(addr, i * 8)).toBe(dataView.getBigUint64(i * 8, true));
   }
 
   for (let i = 0; i < buffer.byteLength - 4; i++) {
+    // read is intended to behave like DataView
+    // but instead of doing
+    //    new DataView(toArrayBuffer(myPtr)).getInt8(0, true)
+    // you can do
+    //    read.i8(myPtr, 0)
     expect(read.i8(addr, i)).toBe(dataView.getInt8(i, true));
     expect(read.i16(addr, i)).toBe(dataView.getInt16(i, true));
     expect(read.i32(addr, i)).toBe(dataView.getInt32(i, true));
     expect(read.u8(addr, i)).toBe(dataView.getUint8(i, true));
     expect(read.u16(addr, i)).toBe(dataView.getUint16(i, true));
     expect(read.u32(addr, i)).toBe(dataView.getUint32(i, true));
+    expect(read.f32(addr, i)).toBe(dataView.getFloat32(i, true));
   }
 });
 

@@ -3000,7 +3000,7 @@ const myPtr = ptr(myTypedArray);
 myTypedArray = new Uint8Array(toArrayBuffer(myPtr, 0, 32), 0, 32);
 ```
 
-**To read data from a pointer**:
+**To read data from a pointer**
 
 You have two options.
 
@@ -3018,14 +3018,15 @@ console.log(
 );
 ```
 
-_Available in Bun v0.1.12+_
-
 For short-lived pointers, `read` is the fastest option:
+
+_Available in Bun v0.1.12+_
 
 ```ts
 import { read } from "bun:ffi";
 
 console.log(
+  // ptr, byteOffset
   read.u8(myPtr, 0),
   read.u8(myPtr, 1),
   read.u8(myPtr, 2),
@@ -3033,7 +3034,21 @@ console.log(
 );
 ```
 
-Read behaves similarly to `DataView`, but it can be faster because it doesn't need to create a `DataView` or `ArrayBuffer`.
+`read` behaves similarly to `DataView`, but it can be faster because it doesn't need to create a `DataView` or `ArrayBuffer`.
+
+| `FFIType` | `read` function |
+| --------- | --------------- |
+| ptr       | `read.ptr`      |
+| i8        | `read.i8`       |
+| i16       | `read.i16`      |
+| i32       | `read.i32`      |
+| i64       | `read.i64`      |
+| u8        | `read.u8`       |
+| u16       | `read.u16`      |
+| u32       | `read.u32`      |
+| u64       | `read.u64`      |
+| f32       | `read.f32`      |
+| f64       | `read.f64`      |
 
 **Memory management with pointers**:
 

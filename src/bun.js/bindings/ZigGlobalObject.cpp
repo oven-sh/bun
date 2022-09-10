@@ -1050,8 +1050,11 @@ JSC:
                 vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "resume"_s)),
                 JSC::JSFunction::create(vm, globalObject, 0, "resume"_s, jsReadable_resume, ImplementationVisibility::Public), 0);
             obj->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "emitReadable_"_s)),
-                JSC::JSFunction::create(vm, globalObject, 0, "emitReadable_"_s, jsReadable_emitReadable_, ImplementationVisibility::Public), 0);
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "emitReadable"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "emitReadable"_s, jsReadable_emitReadable, ImplementationVisibility::Public), 0);
+            obj->putDirect(
+                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "onEofChunk"_s)),
+                JSC::JSFunction::create(vm, globalObject, 0, "onEofChunk"_s, jsReadable_onEofChunk, ImplementationVisibility::Public), 0);
             return JSValue::encode(obj);
         }
 
@@ -2501,6 +2504,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
+    thisObject->m_JSBufferListClassStructure.visit(visitor);
+    thisObject->m_JSStringDecoderClassStructure.visit(visitor);
+    thisObject->m_JSReadableStateClassStructure.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
     thisObject->m_requireMap.visit(visitor);
     thisObject->m_processEnvObject.visit(visitor);

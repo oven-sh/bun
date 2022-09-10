@@ -15,6 +15,7 @@ public:
     {
     }
 
+    DECLARE_VISIT_CHILDREN;
     DECLARE_INFO;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;

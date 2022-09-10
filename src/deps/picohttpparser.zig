@@ -10,10 +10,10 @@ pub extern fn phr_parse_request(buf: [*c]const u8, len: usize, method: [*c][*c]c
 pub extern fn phr_parse_response(_buf: [*c]const u8, len: usize, minor_version: [*c]c_int, status: [*c]c_int, msg: [*c][*c]const u8, msg_len: [*c]usize, headers: [*c]struct_phr_header, num_headers: [*c]usize, last_len: usize) c_int;
 pub extern fn phr_parse_headers(buf: [*c]const u8, len: usize, headers: [*c]struct_phr_header, num_headers: [*c]usize, last_len: usize) c_int;
 pub const struct_phr_chunked_decoder = extern struct {
-    bytes_left_in_chunk: usize,
-    consume_trailer: u8,
-    _hex_count: u8,
-    _state: u8,
+    bytes_left_in_chunk: usize = 0,
+    consume_trailer: u8 = 0,
+    _hex_count: u8 = 0,
+    _state: u8 = 0,
 };
 pub extern fn phr_decode_chunked(decoder: *struct_phr_chunked_decoder, buf: [*]u8, bufsz: *usize) isize;
 pub extern fn phr_decode_chunked_is_in_data(decoder: *struct_phr_chunked_decoder) c_int;

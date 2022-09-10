@@ -70,12 +70,21 @@ pub const Lexer = struct {
             switch (variable.value[i]) {
                 '$' => {
                     i += 1;
-                    const start = i;
+                    var start: usize = i;
+                    
+                    const with_curly_braces = (variable.value[i] == '{');
+                    if (with_curly_braces) i += 1;
 
                     while (i < variable.value.len) {
                         switch (variable.value[i]) {
                             'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {
                                 i += 1;
+                            },
+                            '}' => {
+                                if (with_curly_braces) {
+                                    i += 1;
+                                    break;
+                                }
                             },
                             else => {
                                 break;
@@ -85,7 +94,12 @@ pub const Lexer = struct {
 
                     try writer.writeAll(variable.value[last_flush .. start - 1]);
                     last_flush = i;
-                    const name = variable.value[start..i];
+                    var end: usize = i;
+                    if (with_curly_braces) {
+                        start += 1;
+                        end -= 1;
+                    }
+                    const name = variable.value[start..end];
 
                     if (@call(.{ .modifier = .always_inline }, getter, .{ ctx, name })) |new_value| {
                         if (new_value.len > 0) {
@@ -1089,9 +1103,16 @@ test "DotEnv Loader - basic" {
         \\
         \\NESTED_VALUE='$API_KEY'
         \\
+        \\NESTED_VALUE_WITH_CURLY_BRACES='${API_KEY}'
+        \\NESTED_VALUE_WITHOUT_OPENING_CURLY_BRACE='$API_KEY}'
+        \\
         \\RECURSIVE_NESTED_VALUE=$NESTED_VALUE:$API_KEY
         \\
+        \\RECURSIVE_NESTED_VALUE_WITH_CURLY_BRACES=${NESTED_VALUE}:${API_KEY}
+        \\
         \\NESTED_VALUES_RESPECT_ESCAPING='\$API_KEY'
+        \\
+        \\NESTED_VALUES_WITH_CURLY_BRACES_RESPECT_ESCAPING='\${API_KEY}'
         \\
         \\EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING=''
         \\
@@ -1108,9 +1129,13 @@ test "DotEnv Loader - basic" {
         false,
     );
     try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "\\$API_KEY");
+    try expectString(map.get("NESTED_VALUES_WITH_CURLY_BRACES_RESPECT_ESCAPING").?, "\\${API_KEY}");
 
     try expectString(map.get("NESTED_VALUE").?, "verysecure");
+    try expectString(map.get("NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure");
+    try expectString(map.get("NESTED_VALUE_WITHOUT_OPENING_CURLY_BRACE").?, "verysecure}");
     try expectString(map.get("RECURSIVE_NESTED_VALUE").?, "verysecure:verysecure");
+    try expectString(map.get("RECURSIVE_NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure:verysecure");
 
     try expectString(map.get("API_KEY").?, "verysecure");
     try expectString(map.get("process.env.WAT").?, "ABCDEFGHIJKLMNOPQRSTUVWXYZZ10239457123");

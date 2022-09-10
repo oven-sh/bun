@@ -131,7 +131,7 @@ pub const FFI = struct {
             .compiled => {
                 var function_ = bun.default_allocator.create(Function) catch unreachable;
                 function_.* = func.*;
-                return JSC.JSValue.jsNumber(@bitCast(f64, @as(usize, @ptrToInt(function_.step.compiled.ptr))));
+                return JSC.JSValue.fromPtrAddress(@ptrToInt(function_.step.compiled.ptr));
             },
         }
     }
@@ -572,7 +572,7 @@ pub const FFI = struct {
 
         if (value.get(global, "ptr")) |ptr| {
             if (ptr.isNumber()) {
-                const num = @bitCast(usize, ptr.asNumber());
+                const num = ptr.asPtrAddress();
                 if (num > 0)
                     function.symbol_from_dynamic_library = @intToPtr(*anyopaque, num);
             } else {

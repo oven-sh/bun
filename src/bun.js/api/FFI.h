@@ -152,6 +152,8 @@ static bool JSVALUE_IS_NUMBER(EncodedJSValue val) {
 // This behavior change enables the JIT to handle it better
 // It also is better readability when console.log(myPtr)
 static void* JSVALUE_TO_PTR(EncodedJSValue val) {
+  if (val.asInt64 == TagValueNull)
+    return 0;
   val.asInt64 -= DoubleEncodeOffset;
   size_t ptr = (size_t)val.asDouble;
   return (void*)ptr;
@@ -159,7 +161,13 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   EncodedJSValue val;
-  val.asPtr = ptr;
+  if (ptr == 0)
+  {
+      val.asInt64 = TagValueNull;
+      return val;
+  }
+
+  val.asDouble = (double)(size_t)ptr;
   val.asInt64 += DoubleEncodeOffset;
   return val;
 }

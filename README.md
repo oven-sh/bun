@@ -2823,11 +2823,13 @@ rustc --crate-type cdylib add.rs
 | i8        | `int8_t`   | `int8_t`                    |
 | i16       | `int16_t`  | `int16_t`                   |
 | i32       | `int32_t`  | `int32_t`, `int`            |
-| i64       | `int64_t`  | `int32_t`                   |
+| i64       | `int64_t`  | `int64_t`                   |
+| i64_fast  | `int64_t`  |                             |
 | u8        | `uint8_t`  | `uint8_t`                   |
 | u16       | `uint16_t` | `uint16_t`                  |
 | u32       | `uint32_t` | `uint32_t`                  |
-| u64       | `uint64_t` | `uint32_t`                  |
+| u64       | `uint64_t` | `uint64_t`                  |
+| u64_fast  | `uint64_t` |                             |
 | f32       | `float`    | `float`                     |
 | f64       | `double`   | `double`                    |
 | bool      | `bool`     |                             |
@@ -2997,6 +2999,41 @@ const myPtr = ptr(myTypedArray);
 // if `byteLength` is not provided, it is assumed to be a null-terminated pointer
 myTypedArray = new Uint8Array(toArrayBuffer(myPtr, 0, 32), 0, 32);
 ```
+
+**To read data from a pointer**:
+
+You have two options.
+
+For long-lived pointers, a `DataView` is the fastest option:
+
+```ts
+import { toArrayBuffer } from "bun:ffi";
+var myDataView = new DataView(toArrayBuffer(myPtr, 0, 32));
+
+console.log(
+  myDataView.getUint8(0, true),
+  myDataView.getUint8(1, true),
+  myDataView.getUint8(2, true),
+  myDataView.getUint8(3, true)
+);
+```
+
+_Available in Bun v0.1.12+_
+
+For short-lived pointers, `read` is the fastest option:
+
+```ts
+import { read } from "bun:ffi";
+
+console.log(
+  read.u8(myPtr, 0),
+  read.u8(myPtr, 1),
+  read.u8(myPtr, 2),
+  read.u8(myPtr, 3)
+);
+```
+
+Read behaves similarly to `DataView`, but it can be faster because it doesn't need to create a `DataView` or `ArrayBuffer`.
 
 **Memory management with pointers**:
 

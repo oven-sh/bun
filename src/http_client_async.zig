@@ -252,7 +252,12 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return null;
         }
 
-        pub fn connect(this: *@This(), client: *HTTPClient, hostname: []const u8, port: u16) !HTTPSocket {
+        pub fn connect(this: *@This(), client: *HTTPClient, hostname_: []const u8, port: u16) !HTTPSocket {
+            const hostname = if (FeatureFlags.hardcode_localhost_to_127_0_0_1 and strings.eqlComptime(hostname_, "localhost"))
+                "127.0.0.1"
+            else
+                hostname_;
+
             if (this.existingSocket(hostname, port)) |sock| {
                 sock.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                 client.onOpen(comptime ssl, sock);
@@ -1715,6 +1720,7 @@ pub fn handleResponseMetadata(
                     if (location.len > url_buf.data.len) {
                         return error.RedirectURLTooLong;
                     }
+
                     deferred_redirect.* = this.redirect;
                     std.mem.copy(u8, &url_buf.data, location);
                     this.url = URL.parse(url_buf.data[0..location.len]);

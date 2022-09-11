@@ -40,6 +40,7 @@ const URL = @import("../url.zig").URL;
 const AsyncHTTP = @import("http").AsyncHTTP;
 const HTTPChannel = @import("http").HTTPChannel;
 const NetworkThread = @import("http").NetworkThread;
+const HTTP = @import("http");
 
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = @import("clap");
@@ -183,9 +184,9 @@ const NetworkTask = struct {
         binlink: void,
     },
 
-    pub fn notify(http: *AsyncHTTP) void {
+    pub fn notify(this: *NetworkTask, _: anytype) void {
         defer PackageManager.instance.wake();
-        PackageManager.instance.network_channel.writeItem(@fieldParentPtr(NetworkTask, "http", http)) catch {};
+        PackageManager.instance.network_channel.writeItem(this) catch {};
     }
 
     // We must use a less restrictive Accept header value
@@ -319,7 +320,7 @@ const NetworkTask = struct {
         this.request_buffer = try MutableString.init(allocator, 0);
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
-        this.http = try AsyncHTTP.init(
+        this.http = AsyncHTTP.init(
             allocator,
             .GET,
             URL.parse(this.url_buf),
@@ -328,6 +329,7 @@ const NetworkTask = struct {
             &this.response_buffer,
             &this.request_buffer,
             0,
+            this.getCompletionCallback(),
         );
         this.http.max_retry_count = PackageManager.instance.options.max_retry_count;
         this.callback = .{
@@ -347,8 +349,10 @@ const NetworkTask = struct {
             this.http.client.force_last_modified = true;
             this.http.client.if_modified_since = last_modified;
         }
+    }
 
-        this.http.callback = notify;
+    pub fn getCompletionCallback(this: *NetworkTask) HTTP.HTTPClientResult.Callback {
+        return HTTP.HTTPClientResult.Callback.New(*NetworkTask, notify).init(this);
     }
 
     pub fn schedule(this: *NetworkTask, batch: *ThreadPool.Batch) void {
@@ -399,7 +403,7 @@ const NetworkTask = struct {
             header_buf = header_builder.content.ptr.?[0..header_builder.content.len];
         }
 
-        this.http = try AsyncHTTP.init(
+        this.http = AsyncHTTP.init(
             allocator,
             .GET,
             URL.parse(this.url_buf),
@@ -408,8 +412,8 @@ const NetworkTask = struct {
             &this.response_buffer,
             &this.request_buffer,
             0,
+            this.getCompletionCallback(),
         );
-        this.http.callback = notify;
         this.http.max_retry_count = PackageManager.instance.options.max_retry_count;
         this.callback = .{ .extract = tarball };
     }

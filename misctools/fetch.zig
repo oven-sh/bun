@@ -17,7 +17,7 @@ const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const NetworkThread = @import("http").NetworkThread;
+const HTTPThread = @import("http").HTTPThread;
 const HTTP = @import("http");
 fn noop_resolver(in: string) !string {
     return in;
@@ -184,7 +184,7 @@ pub fn main() anyerror!void {
 
     try channel.buffer.ensureTotalCapacity(1);
 
-    try NetworkThread.init();
+    try HTTPThread.init();
 
     var ctx = try default_allocator.create(HTTP.HTTPChannelContext);
     ctx.* = .{
@@ -202,12 +202,12 @@ pub fn main() anyerror!void {
         ),
     };
     ctx.http.callback = HTTP.HTTPChannelContext.callback;
-    var batch = NetworkThread.Batch{};
+    var batch = HTTPThread.Batch{};
     ctx.http.schedule(default_allocator, &batch);
     ctx.http.client.verbose = args.verbose;
 
     ctx.http.verbose = args.verbose;
-    NetworkThread.global.schedule(batch);
+    HTTPThread.global.schedule(batch);
 
     while (true) {
         while (channel.tryReadItem() catch null) |http| {

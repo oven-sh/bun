@@ -43,6 +43,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
             // aligned to the size of T
             const index = (@ptrToInt(value) - @ptrToInt(start)) / @sizeOf(T);
             assert(index < capacity);
+            assert(&self.buffer[index] == value);
             return @truncate(u63, index);
         }
 

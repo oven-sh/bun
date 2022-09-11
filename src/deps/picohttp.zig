@@ -118,10 +118,10 @@ pub const Request = struct {
 };
 
 pub const Response = struct {
-    minor_version: usize,
-    status_code: usize,
-    status: []const u8,
-    headers: []Header,
+    minor_version: usize = 0,
+    status_code: usize = 0,
+    status: []const u8 = "",
+    headers: []Header = &.{},
     bytes_read: c_int = 0,
 
     pub fn format(self: Response, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
@@ -147,6 +147,10 @@ pub const Response = struct {
         for (this.headers) |header, i| {
             headers[i] = header.clone(builder);
         }
+
+        that.headers = headers[0..this.headers.len];
+
+        return that;
     }
 
     pub fn parseParts(buf: []const u8, src: []Header, offset: ?*usize) !Response {

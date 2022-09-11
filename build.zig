@@ -140,6 +140,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         io,
         boringssl,
         thread_pool,
+        uws,
     };
     thread_pool.dependencies = &.{ io, http };
     http.dependencies = &.{
@@ -148,6 +149,7 @@ fn addInternalPackages(step: *std.build.LibExeObjStep, _: std.mem.Allocator, tar
         io,
         boringssl,
         thread_pool,
+        uws,
     };
     thread_pool.dependencies = &.{ io, http };
 

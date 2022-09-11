@@ -501,13 +501,16 @@ pub const Waker = struct {
     kq: os.fd_t,
     machport: *anyopaque = undefined,
     machport_buf: []u8 = &.{},
+    has_pending_wake: bool = false,
 
     const zeroed = std.mem.zeroes([16]Kevent64);
 
-    pub fn wake(this: Waker) !void {
-        if (!io_darwin_schedule_wakeup(this.machport)) {
-            return error.WakeUpFailed;
+    pub fn wake(this: *Waker) !void {
+        if (io_darwin_schedule_wakeup(this.machport)) {
+            this.has_pending_wake = false;
+            return;
         }
+        this.has_pending_wake = true;
     }
 
     pub fn wait(this: Waker) !usize {

@@ -145,7 +145,19 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             vm.uws_event_loop = loop;
 
-            Socket.configure(ctx, HTTPClient, handleOpen, handleClose, handleData, handleWritable, handleTimeout, handleConnectError, handleEnd);
+            Socket.configure(
+                ctx,
+                HTTPClient,
+                .{
+                    .onOpen = handleOpen,
+                    .onClose = handleClose,
+                    .onData = handleData,
+                    .onWritable = handleWritable,
+                    .onTimeout = handleTimeout,
+                    .onConnectError = handleConnectError,
+                    .onEnd = handleEnd,
+                },
+            );
             if (is_new_loop) {
                 vm.prepareLoop();
             }
@@ -805,13 +817,14 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             Socket.configure(
                 ctx,
                 WebSocket,
-                null,
-                handleClose,
-                handleData,
-                handleWritable,
-                handleTimeout,
-                handleConnectError,
-                handleEnd,
+                .{
+                    .onClose = handleClose,
+                    .onData = handleData,
+                    .onWritable = handleWritable,
+                    .onTimeout = handleTimeout,
+                    .onConnectError = handleConnectError,
+                    .onEnd = handleEnd,
+                },
             );
         }
 

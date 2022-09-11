@@ -97,7 +97,7 @@ pub fn onStartIOThread(waker: AsyncIO.Waker) void {
     };
     AsyncIO.global_loaded = true;
     NetworkThread.global.io = &AsyncIO.global;
-    NetworkThread.processEvents();
+    NetworkThread.global.processEvents();
 }
 
 fn queueEvents(this: *@This()) void {
@@ -238,7 +238,7 @@ pub fn init() !void {
         @compileLog("TODO: Waker");
     }
 
-    global.thread = try std.Thread.spawn(.{ .stack_size = 64 * 1024 * 1024 }, HTTP.onThreadStartNew, .{
+    global.thread = try std.Thread.spawn(.{ .stack_size = 64 * 1024 * 1024 }, onStartIOThread, .{
         global.waker,
     });
     global.thread.detach();

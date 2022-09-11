@@ -486,7 +486,7 @@ pub const EventLoop = struct {
         }
 
         if (this.ready_tasks_count.fetchAdd(1, .Monotonic) == 0) {
-            if (this.waker) |waker| {
+            if (this.waker) |*waker| {
                 waker.wake() catch unreachable;
             }
         }

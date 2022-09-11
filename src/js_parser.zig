@@ -17275,6 +17275,7 @@ fn NewParser_(
 
                     var class = stmt.data.s_class.class;
                     var stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
+                    stmts[0] = stmt;
 
                     for (class.properties) |prop| {
                         if (prop.flags.contains(Flags.Property.is_method)) {
@@ -17300,16 +17301,29 @@ fn NewParser_(
 
                                 var args = p.allocator.alloc(Expr, 4) catch unreachable;
                                 args[0] = p.e(E.Array{ .items = prop.ts_decorators }, loc);
-                                // args[1] = p.e(E.Dot{.target = }, loc);
-                                args[2] = p.e(E.Identifier{.ref = prop.})
-                                var decorator = p.callRuntime(
-                                    loc,
-                                    "__decorateClass",
-                                );
+                                // args[1] = p.e(E.Dot{ .target = js_ast.Expr, .name = "prototype", .name_loc = loc }, loc);
+                                switch (prop.key.?.data) {
+                                    .e_identifier => |k| {
+                                        args[2] = p.e(E.Identifier{ .ref = k.ref }, loc);
+                                    },
+                                    .e_number => |k| {
+                                        args[2] = p.e(E.Number{ .value = k.value }, loc);
+                                    },
+                                    .e_string => |k| {
+                                        args[2] = p.e(E.String{ .data = k.data }, loc);
+                                    },
+                                    else => {},
+                                }
+
+                                args[3] = p.e(E.Number{ .value = 2 }, loc);
+                                // var decorator = p.callRuntime(
+                                //     loc,
+                                //     "__decorateClass",
+                                // );
+                                // stmts[1] = p.e({p.callRuntime(loc, "__decorateClass", args)}, loc);
                             }
                         }
                     }
-                    stmts[0] = stmt;
 
                     if (class.ts_decorators.len > 0) {
                         var class_loc = stmt.loc;
@@ -17317,7 +17331,7 @@ fn NewParser_(
 
                         args[0] = p.e(E.Array{ .items = class.ts_decorators }, class_loc);
                         args[1] = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
-                        stmts[1] = Expr.assignStmt(
+                        stmts[2] = Expr.assignStmt(
                             p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
                             p.callRuntime(class_loc, "__decorateClass", args),
                             p.allocator,

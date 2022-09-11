@@ -28,5 +28,6 @@
   "/caught-require.js",
   "/package-json-utf8.js",
   "/multiple-var.js",
-  "/export-default-module-hot.js"
+  "/export-default-module-hot.js",
+  "/decorators.ts"
 ]

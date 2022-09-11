@@ -1696,7 +1696,7 @@ pub const E = struct {
 
         pub fn slice(this: *String, allocator: std.mem.Allocator) []const u8 {
             this.resovleRopeIfNeeded(allocator);
-            return @ptrCast([*]const u8, @alignCast(@alignOf(u8), this.data.ptr))[0..this.data.len];
+            return this.string(allocator) catch unreachable;
         }
 
         pub var empty = String{};

@@ -4134,7 +4134,7 @@ fn NewParser_(
                     return p.e(E.Null{}, arg.loc);
                 }
 
-                const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
+                const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.slice(p.allocator));
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
                 return p.e(E.Import{

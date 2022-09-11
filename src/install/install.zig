@@ -2428,7 +2428,7 @@ pub const PackageManager = struct {
         manager.pending_tasks += @truncate(u32, count);
         manager.total_tasks += @truncate(u32, count);
         manager.network_resolve_batch.push(manager.network_tarball_batch);
-        NetworkThread.global.schedule(manager.network_resolve_batch);
+        HTTP.http_thread.schedule(manager.network_resolve_batch);
         manager.network_tarball_batch = .{};
         manager.network_resolve_batch = .{};
         return count;
@@ -2467,7 +2467,7 @@ pub const PackageManager = struct {
         this.pending_tasks += @truncate(u32, count);
         this.total_tasks += @truncate(u32, count);
         this.network_resolve_batch.push(this.network_tarball_batch);
-        NetworkThread.global.schedule(this.network_resolve_batch);
+        HTTP.http_thread.schedule(this.network_resolve_batch);
         this.network_tarball_batch = .{};
         this.network_resolve_batch = .{};
     }
@@ -2835,7 +2835,7 @@ pub const PackageManager = struct {
             manager.total_tasks += @truncate(u32, count);
             manager.thread_pool.schedule(batch);
             manager.network_resolve_batch.push(manager.network_tarball_batch);
-            NetworkThread.global.schedule(manager.network_resolve_batch);
+            HTTP.http_thread.schedule(manager.network_resolve_batch);
             manager.network_tarball_batch = .{};
             manager.network_resolve_batch = .{};
 
@@ -3615,7 +3615,7 @@ pub const PackageManager = struct {
         cli: CommandLineArguments,
     ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
-        try NetworkThread.warmup();
+        try HTTP.HTTPThread.init();
 
         if (cli.global) {
             var explicit_global_dir: string = "";

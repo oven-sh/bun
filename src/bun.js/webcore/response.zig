@@ -517,6 +517,7 @@ pub const Fetch = struct {
     pub const FetchTasklet = struct {
         promise: *JSPromise = undefined,
         http: HTTPClient.AsyncHTTP = undefined,
+        result: HTTPClient.HTTPClientResult = undefined,
         status: Status = Status.pending,
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
@@ -592,12 +593,13 @@ pub const Fetch = struct {
                 this.blob_store = null;
                 store.deref();
             }
+            defer this.result.deinitMetadata();
             const fetch_error = std.fmt.allocPrint(
                 default_allocator,
                 "fetch() failed {s}\nurl: \"{s}\"",
                 .{
                     @errorName(this.http.err orelse error.HTTPFail),
-                    this.http.url.href,
+                    this.result.href,
                 },
             ) catch unreachable;
             return ZigString.init(fetch_error).toErrorInstance(this.global_this);
@@ -611,11 +613,12 @@ pub const Fetch = struct {
                 this.blob_store = null;
                 store.deref();
             }
+            defer this.result.deinitMetadata();
             response.* = Response{
                 .allocator = allocator,
-                .url = allocator.dupe(u8, this.http.url.href) catch unreachable,
+                .url = allocator.dupe(u8, this.result.href) catch unreachable,
                 .status_text = allocator.dupe(u8, http_response.status) catch unreachable,
-                .redirected = this.http.redirect_count > 0,
+                .redirected = this.http.redirected,
                 .body = .{
                     .init = .{
                         .headers = FetchHeaders.createFromPicoHeaders(this.global_this, http_response.headers),
@@ -645,7 +648,7 @@ pub const Fetch = struct {
             // linked_list.data.pooled_body = BodyPool.get(allocator);
             linked_list.data.blob_store = request_body_store;
             linked_list.data.response_buffer = MutableString.initEmpty(allocator);
-            linked_list.data.http = try HTTPClient.AsyncHTTP.init(
+            linked_list.data.http = HTTPClient.AsyncHTTP.init(
                 allocator,
                 method,
                 url,
@@ -653,10 +656,16 @@ pub const Fetch = struct {
                 headers_buf,
                 &linked_list.data.response_buffer,
                 request_body orelse &linked_list.data.empty_request_body,
-
                 timeout,
+                undefined,
             );
             linked_list.data.context = .{ .tasklet = &linked_list.data };
+            linked_list.data.http.completion_callback = HTTPClient.HTTPClientResult.Callback.New(
+                *FetchTasklet,
+                FetchTasklet.callback,
+            ).init(
+                &linked_list.data,
+            );
 
             return linked_list;
         }
@@ -672,21 +681,20 @@ pub const Fetch = struct {
             timeout: usize,
             request_body_store: ?*Blob.Store,
         ) !*FetchTasklet.Pool.Node {
-            try NetworkThread.init();
+            try HTTPClient.HTTPThread.init();
             var node = try get(allocator, method, url, headers, headers_buf, request_body, timeout, request_body_store);
 
             node.data.global_this = global;
-            node.data.http.callback = callback;
             var batch = NetworkThread.Batch{};
             node.data.http.schedule(allocator, &batch);
-            NetworkThread.global.schedule(batch);
+            HTTPClient.http_thread.schedule(batch);
             VirtualMachine.vm.active_tasks +|= 1;
             return node;
         }
 
-        pub fn callback(http_: *HTTPClient.AsyncHTTP) void {
-            var task: *FetchTasklet = @fieldParentPtr(FetchTasklet, "http", http_);
-            @atomicStore(Status, &task.status, Status.done, .Monotonic);
+        pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
+            task.response_buffer = result.body.?.*;
+            task.result = result;
             task.javascript_vm.eventLoop().enqueueTaskConcurrent(Task.init(task));
         }
     };

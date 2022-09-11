@@ -20,6 +20,8 @@ pub fn init(allocator: std.mem.Allocator) ZlibPool {
 }
 
 pub fn get(this: *ZlibPool) !*MutableString {
+    std.debug.assert(loaded);
+
     switch (this.items.items.len) {
         0 => {
             var mutable = try getAllocator().create(MutableString);
@@ -35,6 +37,7 @@ pub fn get(this: *ZlibPool) !*MutableString {
 }
 
 pub fn put(this: *ZlibPool, mutable: *MutableString) !void {
+    std.debug.assert(loaded);
     mutable.reset();
     try this.items.append(mutable);
 }

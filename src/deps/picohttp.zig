@@ -8,6 +8,7 @@ const Environment = @import("../global.zig").Environment;
 const fmt = std.fmt;
 
 const assert = std.debug.assert;
+const StringBuilder = @import("../string_builder.zig");
 
 pub const Header = struct {
     name: []const u8,
@@ -33,6 +34,18 @@ pub const Header = struct {
         }
     }
 
+    pub fn count(this: *const Header, builder: *StringBuilder) void {
+        builder.count(this.name);
+        builder.count(this.value);
+    }
+
+    pub fn clone(this: *const Header, builder: *StringBuilder) Header {
+        return .{
+            .name = builder.append(this.name),
+            .value = builder.append(this.value),
+        };
+    }
+
     comptime {
         assert(@sizeOf(Header) == @sizeOf(c.phr_header));
         assert(@alignOf(Header) == @alignOf(c.phr_header));
@@ -44,6 +57,21 @@ pub const Request = struct {
     path: []const u8,
     minor_version: usize,
     headers: []const Header,
+    bytes_read: u32 = 0,
+
+    pub fn clone(this: *const Request, headers: []Header, builder: *StringBuilder) Request {
+        for (this.headers) |header, i| {
+            headers[i] = header.clone(builder);
+        }
+
+        return .{
+            .method = builder.append(this.method),
+            .path = builder.append(this.path),
+            .minor_version = this.minor_version,
+            .headers = headers,
+            .bytes_read = this.bytes_read,
+        };
+    }
 
     pub fn format(self: Request, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
         try fmt.format(writer, "{s} {s}\n", .{ self.method, self.path });
@@ -83,16 +111,17 @@ pub const Request = struct {
                 .path = path,
                 .minor_version = @intCast(usize, minor_version),
                 .headers = src[0..num_headers],
+                .bytes_read = @intCast(u32, rc),
             },
         };
     }
 };
 
 pub const Response = struct {
-    minor_version: usize,
-    status_code: usize,
-    status: []const u8,
-    headers: []Header,
+    minor_version: usize = 0,
+    status_code: usize = 0,
+    status: []const u8 = "",
+    headers: []Header = &.{},
     bytes_read: c_int = 0,
 
     pub fn format(self: Response, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
@@ -101,6 +130,27 @@ pub const Response = struct {
             _ = try writer.write("< \t");
             try fmt.format(writer, "{s}\n", .{header});
         }
+    }
+
+    pub fn count(this: *const Response, builder: *StringBuilder) void {
+        builder.count(this.status);
+
+        for (this.headers) |header| {
+            header.count(builder);
+        }
+    }
+
+    pub fn clone(this: *const Response, headers: []Header, builder: *StringBuilder) Response {
+        var that = this.*;
+        that.status = builder.append(this.status);
+
+        for (this.headers) |header, i| {
+            headers[i] = header.clone(builder);
+        }
+
+        that.headers = headers[0..this.headers.len];
+
+        return that;
     }
 
     pub fn parseParts(buf: []const u8, src: []Header, offset: ?*usize) !Response {

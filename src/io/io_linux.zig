@@ -999,7 +999,7 @@ pub const Waker = struct {
         return @intCast(u64, bytes);
     }
 
-    pub fn wake(this: Waker) !void {
+    pub fn wake(this: *const Waker) !void {
         var bytes: usize = 1;
         _ = std.os.write(
             this.fd,

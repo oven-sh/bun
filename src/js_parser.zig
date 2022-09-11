@@ -1014,6 +1014,7 @@ const StaticSymbolName = struct {
         pub const __HMRClient = NewStaticSymbol("Bun");
         pub const __FastRefreshModule = NewStaticSymbol("FastHMR");
         pub const __FastRefreshRuntime = NewStaticSymbol("FastRefresh");
+        pub const __decorateClass = NewStaticSymbol("__decorateClass");
 
         pub const @"$$m" = NewStaticSymbol("$$m");
 
@@ -17355,8 +17356,61 @@ fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
-                    var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                    if (stmt.data != .s_class) {
+                        // syntax error?
+                    }
+
+                    var class = stmt.data.s_class.class;
+                    var stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
+
+                    for (class.properties) |prop| {
+                        if (prop.flags.contains(Flags.Property.is_method)) {
+                            if (prop.ts_decorators.len > 0) {
+
+                                // Instance properties use the prototype, static properties use the class
+                                // var target js_ast.Expr
+                                // if prop.Flags.Has(js_ast.PropertyIsStatic) {
+                                // 	target = nameFunc()
+                                // } else {
+                                // 	target = js_ast.Expr{Loc: loc, Data: &js_ast.EDot{Target: nameFunc(), Name: "prototype", NameLoc: loc}}
+                                // }
+
+                                // decorator := p.callRuntime(loc, "__decorateClass", []js_ast.Expr{
+                                // 	{Loc: loc, Data: &js_ast.EArray{Items: prop.TSDecorators}},
+                                // 	target,
+                                // 	descriptorKey,
+                                // 	{Loc: loc, Data: &js_ast.ENumber{Value: descriptorKind}},
+                                // })
+
+                                std.debug.print("prop has decorator and is a method", .{});
+                                var loc = prop.key.?.loc;
+
+                                var args = p.allocator.alloc(Expr, 4) catch unreachable;
+                                args[0] = p.e(E.Array{ .items = prop.ts_decorators }, loc);
+                                // args[1] = p.e(E.Dot{.target = }, loc);
+                                args[2] = p.e(E.Identifier{.ref = prop.})
+                                var decorator = p.callRuntime(
+                                    loc,
+                                    "__decorateClass",
+                                );
+                            }
+                        }
+                    }
                     stmts[0] = stmt;
+
+                    if (class.ts_decorators.len > 0) {
+                        var class_loc = stmt.loc;
+                        var args = p.allocator.alloc(Expr, 2) catch unreachable;
+
+                        args[0] = p.e(E.Array{ .items = class.ts_decorators }, class_loc);
+                        args[1] = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
+                        stmts[1] = Expr.assignStmt(
+                            p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
+                            p.callRuntime(class_loc, "__decorateClass", args),
+                            p.allocator,
+                        );
+                    }
+
                     return stmts;
                 },
                 .expr => |expr| {

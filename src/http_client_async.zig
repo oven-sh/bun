@@ -65,6 +65,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         pending_sockets: HiveArray(PooledSocket, pool_size) = HiveArray(PooledSocket, pool_size).init(),
         keep_alive_sockets: std.bit_set.IntegerBitSet(pool_size + 1) = std.bit_set.IntegerBitSet(pool_size + 1).initEmpty(),
         us_socket_context: *uws.us_socket_context_t,
+
         const Context = @This();
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
 
@@ -165,6 +166,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 var tagged = ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onWritable(
+                        false,
                         comptime ssl,
                         socket,
                     );
@@ -420,9 +422,8 @@ pub fn onOpen(
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("Connected {s} \n", .{client.url.href});
-
     if (client.state.request_stage == .pending) {
-        client.onWritable(comptime is_ssl, socket);
+        client.onWritable(true, comptime is_ssl, socket);
     }
 }
 pub fn onClose(
@@ -530,6 +531,7 @@ pub const InternalState = struct {
     body_out_str: ?*MutableString = null,
     compressed_body: ?*MutableString = null,
     body_size: usize = 0,
+    chunked_offset: usize = 0,
     request_body: []const u8 = "",
     request_sent_len: usize = 0,
     fail: anyerror = error.NoError,
@@ -931,6 +933,8 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn sendSync(this: *AsyncHTTP, comptime _: bool) anyerror!picohttp.Response {
+        try HTTPThread.init();
+
         var ctx = try bun.default_allocator.create(SingleHTTPChannel);
         ctx.* = SingleHTTPChannel.init();
         this.completion_callback = HTTPClientResult.Callback.New(
@@ -1133,7 +1137,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
 
 const Task = ThreadPool.Task;
 
-pub fn onWritable(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     switch (this.state.request_stage) {
         .pending, .headers => {
             var stack_fallback = std.heap.stackFallback(16384, default_allocator);
@@ -1168,6 +1172,13 @@ pub fn onWritable(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPConte
                 std.debug.assert(!socket.isClosed());
             }
             const amount = socket.write(to_send, true);
+            if (comptime is_first_call) {
+                if (amount == 0) {
+                    // don't worry about it
+                    return;
+                }
+            }
+
             if (amount < 0) {
                 this.fail(error.WriteFailed);
                 socket.close(0, null);
@@ -1366,6 +1377,8 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                         return;
                     }
                 }
+
+                socket.timeout(60);
             }
         },
 
@@ -1549,7 +1562,7 @@ pub fn handleResponseBodyChunk(
     var decoder = &this.state.chunked_decoder;
     var buffer_ = this.state.getBodyBuffer();
     var buffer = buffer_.*;
-    var rsize = buffer.list.items.len;
+    this.state.chunked_offset += incoming_data.len;
     try buffer.appendSlice(incoming_data);
 
     // set consume_trailer to 1 to discard the trailing header
@@ -1559,7 +1572,13 @@ pub fn handleResponseBodyChunk(
     // these variable names are terrible
     // it's copypasta from https://github.com/h2o/picohttpparser#phr_decode_chunked
     // (but ported from C -> zig)
-    var pret: isize = picohttp.phr_decode_chunked(decoder, buffer.list.items.ptr, &rsize);
+    const pret = picohttp.phr_decode_chunked(
+        decoder,
+        buffer.list.items.ptr,
+
+        // this represents the position that we are currently at in the buffer
+        &this.state.chunked_offset,
+    );
 
     switch (pret) {
         // Invalid HTTP response body
@@ -1575,9 +1594,9 @@ pub fn handleResponseBodyChunk(
             }
 
             if (this.state.compressed_body) |compressed| {
-                compressed.* = buffer_.*;
+                compressed.* = buffer;
             } else {
-                this.state.body_out_str.?.* = buffer_.*;
+                this.state.body_out_str.?.* = buffer;
             }
 
             return false;

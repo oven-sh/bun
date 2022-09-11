@@ -623,6 +623,7 @@ method: Method,
 header_entries: Headers.Entries,
 header_buf: string,
 url: URL,
+connected_url: URL = URL{},
 allocator: std.mem.Allocator,
 verbose: bool = Environment.isTest,
 remaining_redirect_count: i8 = default_redirect_count,
@@ -1124,6 +1125,7 @@ pub fn start(this: *HTTPClient, body: []const u8, body_out_str: *MutableString) 
 }
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
+    this.connected_url = this.url;
     var socket = http_thread.connect(this, is_ssl) catch |err| {
         this.fail(err);
         return;
@@ -1295,7 +1297,16 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 pending_buffers[1] = "";
             }
 
-            const can_continue = this.handleResponseMetadata(response) catch |err| {
+            var deferred_redirect: ?*URLBufferPool.Node = null;
+            const can_continue = this.handleResponseMetadata(
+                response,
+                // If there are multiple consecutive redirects
+                // and the redirect differs in hostname
+                // the new URL buffer may point to invalid memory after
+                // this function is called
+                // That matters because for Keep Alive, the hostname must point to valid memory
+                &deferred_redirect,
+            ) catch |err| {
                 if (err == error.Redirect) {
                     if (this.state.request_message) |msg| {
                         msg.release();
@@ -1303,10 +1314,18 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                     }
 
                     if (this.state.allow_keepalive) {
-                        ctx.releaseSocket(socket, this.url.hostname, this.url.getPortAuto());
+                        std.debug.assert(this.connected_url.hostname.len > 0);
+                        ctx.releaseSocket(socket, this.connected_url.hostname, this.connected_url.getPortAuto());
                     } else {
                         socket.close(0, null);
                     }
+
+                    if (deferred_redirect) |redirect| {
+                        std.debug.assert(redirect != this.redirect);
+                        // connected_url no longer points to valid memory
+                        redirect.release();
+                    }
+                    this.connected_url = URL{};
                     this.doRedirect();
                     return;
                 }
@@ -1446,7 +1465,7 @@ pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ss
 
     if (this.state.allow_keepalive and !socket.isClosed()) {
         socket.timeout(60 * 5);
-        ctx.releaseSocket(socket, this.url.hostname, this.url.getPortAuto());
+        ctx.releaseSocket(socket, this.connected_url.hostname, this.connected_url.getPortAuto());
     } else if (!socket.isClosed()) {
         socket.close(0, null);
     }
@@ -1618,7 +1637,11 @@ pub fn handleResponseBodyChunk(
     }
 }
 
-pub fn handleResponseMetadata(this: *HTTPClient, response: picohttp.Response) !bool {
+pub fn handleResponseMetadata(
+    this: *HTTPClient,
+    response: picohttp.Response,
+    deferred_redirect: *?*URLBufferPool.Node,
+) !bool {
     var location: string = "";
     var pretend_304 = false;
     for (response.headers) |header, header_i| {
@@ -1682,13 +1705,17 @@ pub fn handleResponseMetadata(this: *HTTPClient, response: picohttp.Response) !b
         switch (this.state.pending_response.status_code) {
             302, 301, 307, 308, 303 => {
                 if (strings.indexOf(location, "://")) |i| {
-                    var url_buf = this.redirect orelse URLBufferPool.get(default_allocator);
+                    var url_buf = URLBufferPool.get(default_allocator);
 
                     const protocol_name = location[0..i];
                     if (strings.eqlComptime(protocol_name, "http") or strings.eqlComptime(protocol_name, "https")) {} else {
                         return error.UnsupportedRedirectProtocol;
                     }
 
+                    if (location.len > url_buf.data.len) {
+                        return error.RedirectURLTooLong;
+                    }
+                    deferred_redirect.* = this.redirect;
                     std.mem.copy(u8, &url_buf.data, location);
                     this.url = URL.parse(url_buf.data[0..location.len]);
                     this.redirect = url_buf;
@@ -1701,10 +1728,7 @@ pub fn handleResponseMetadata(this: *HTTPClient, response: picohttp.Response) !b
                         .{ original_url.displayProtocol(), original_url.displayHostname(), location },
                     ) catch return error.RedirectURLTooLong);
 
-                    if (this.redirect) |red| {
-                        red.release();
-                    }
-
+                    deferred_redirect.* = this.redirect;
                     this.redirect = url_buf;
                 }
 

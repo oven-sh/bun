@@ -147,6 +147,14 @@ it("Buffer.from", () => {
   );
   gc();
   expect(Buffer.from([254]).join(",")).toBe("254");
+
+  expect(Buffer.from([254], "utf8").join(",")).toBe("254");
+  expect(Buffer.from([254], "utf-8").join(",")).toBe("254");
+  expect(Buffer.from([254], "latin").join(",")).toBe("254");
+  expect(Buffer.from([254], "uc2").join(",")).toBe("254");
+  expect(Buffer.from([254], "utf16").join(",")).toBe("254");
+  expect(Buffer.isBuffer(Buffer.from([254], "utf16"))).toBe(true);
+
   expect(Buffer.from(123).join(",")).toBe(Uint8Array.from(123).join(","));
   expect(Buffer.from({ length: 124 }).join(",")).toBe(
     Uint8Array.from({ length: 124 }).join(",")

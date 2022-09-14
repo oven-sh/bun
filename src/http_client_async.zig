@@ -1178,7 +1178,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 std.debug.assert(!socket.isShutdown());
                 std.debug.assert(!socket.isClosed());
             }
-            const amount = socket.write(to_send, true);
+            const amount = socket.write(to_send, false);
             if (comptime is_first_call) {
                 if (amount == 0) {
                     // don't worry about it

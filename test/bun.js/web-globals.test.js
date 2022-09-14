@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, it, test } from "bun:test";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -43,4 +43,40 @@ test("MessageEvent", () => {
   });
   target.dispatchEvent(event);
   expect(called).toBe(true);
+});
+
+it("crypto.getRandomValues", () => {
+  var foo = new Uint8Array(32);
+
+  // run it once
+  var array = crypto.getRandomValues(foo);
+  expect(array).toBe(foo);
+  expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
+    true
+  );
+
+  // run it again to check that the fast path works
+  for (var i = 0; i < 9000; i++) {
+    var array = crypto.getRandomValues(foo);
+    expect(array).toBe(foo);
+  }
+});
+
+it("crypto.randomUUID", () => {
+  var uuid = crypto.randomUUID();
+  expect(uuid.length).toBe(36);
+  expect(uuid[8]).toBe("-");
+  expect(uuid[13]).toBe("-");
+  expect(uuid[18]).toBe("-");
+  expect(uuid[23]).toBe("-");
+
+  // check that the fast path works
+  for (let i = 0; i < 9000; i++) {
+    var uuid2 = crypto.randomUUID();
+    expect(uuid2.length).toBe(36);
+    expect(uuid2[8]).toBe("-");
+    expect(uuid2[13]).toBe("-");
+    expect(uuid2[18]).toBe("-");
+    expect(uuid2[23]).toBe("-");
+  }
 });

@@ -3152,7 +3152,9 @@ pub fn DOMCall(
             }
             {
                 switch (Fields.len - 2) {
-                    0 => @compileError("Must be > 0 arguments"),
+                    0 => {
+                        try writer.writeAll("));\n");
+                    },
                     1 => {
                         try writer.writeAll(", ");
                         try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
@@ -3178,7 +3180,9 @@ pub fn DOMCall(
             }
             {
                 switch (Fields.len - 2) {
-                    0 => @compileError("Must be > 0 arguments"),
+                    0 => {
+                        try writer.writeAll(")) {\n");
+                    },
                     1 => {
                         try writer.writeAll(", ");
                         try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].field_type));
@@ -3206,7 +3210,9 @@ pub fn DOMCall(
                 }
                 {
                     switch (Fields.len - 2) {
-                        0 => @compileError("Must be > 0 arguments"),
+                        0 => {
+                            try writer.writeAll(");\n}\n");
+                        },
                         1 => {
                             try writer.writeAll(", arg1);\n}\n");
                         },
@@ -3267,16 +3273,17 @@ pub fn DOMCall(
 
             {
                 try writer.writeAll(DOMCallResultType(ResultType));
-                try writer.writeAll(",\n  ");
             }
 
             switch (Fields.len - 2) {
-                0 => @compileError("Must be > 0 arguments"),
+                0 => {},
                 1 => {
+                    try writer.writeAll(",\n  ");
                     try writer.writeAll(DOMCallArgumentType(Fields[2].field_type));
                     try writer.writeAll("\n  ");
                 },
                 2 => {
+                    try writer.writeAll(",\n  ");
                     try writer.writeAll(DOMCallArgumentType(Fields[2].field_type));
                     try writer.writeAll(",\n  ");
                     try writer.writeAll(DOMCallArgumentType(Fields[3].field_type));

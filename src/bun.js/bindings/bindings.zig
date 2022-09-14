@@ -4225,7 +4225,10 @@ pub const __DOMCall__reader_f64 = @import("../api/bun.zig").FFI.Reader.Class.fun
 pub const __DOMCall__reader_i64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"i64";
 pub const __DOMCall__reader_u64 = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"u64";
 pub const __DOMCall__reader_intptr = @import("../api/bun.zig").FFI.Reader.Class.functionDefinitions.@"intptr";
+pub const __Crypto_getRandomValues = @import("../webcore.zig").Crypto.Class.functionDefinitions.@"getRandomValues";
+pub const __Crypto_randomUUID = @import("../webcore.zig").Crypto.Class.functionDefinitions.@"randomUUID";
 pub const DOMCalls = .{
     @import("../api/bun.zig").FFI,
     @import("../api/bun.zig").FFI.Reader,
+    @import("../webcore.zig").Crypto,
 };

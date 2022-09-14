@@ -94,6 +94,7 @@ pub const GlobalConstructors = [_]type{
 
 pub const GlobalClasses = [_]type{
     Bun.Class,
+    WebCore.Crypto.Class,
     EventListenerMixin.addEventListener(VirtualMachine),
     BuildError.Class,
     ResolveError.Class,
@@ -101,7 +102,6 @@ pub const GlobalClasses = [_]type{
     Fetch.Class,
     js_ast.Macro.JSNode.BunJSXCallbackFunction,
 
-    WebCore.Crypto.Class,
     WebCore.Crypto.Prototype,
 
     WebCore.Alert.Class,

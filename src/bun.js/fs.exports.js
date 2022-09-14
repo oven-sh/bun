@@ -205,16 +205,21 @@ var __commonJS = (cb, mod) =>
   };
 
 
-var reader_stream_utils = __commonJS({
+var stream_utils = __commonJS({
   "utils for ReaderStream"(exports, module) {
     "use strict";
 
     let Readable = null;
+    let Writable = null;
     if (!Readable) {
       Readable = import.meta.require("node:stream").Readable;
     }
+    if (!Writable) {
+      Writable = import.meta.require("node:stream").Writable;
+    }
     module.exports = {
       Readable,
+      Writable,
       finished: import.meta.require("node:stream"),
       validateInteger(value,
         name,
@@ -316,7 +321,7 @@ var reader_stream_utils = __commonJS({
           // that the descriptor won't get closed, or worse, replaced with
           // another one
           // https://github.com/nodejs/node/issues/35862
-          stream[kFs] = options.fs || fs;
+          stream["kFs"] = options.fs || fs;
           return options.fd;
         } else if (typeof options.fd === 'object' &&
           options.fd instanceof FileHandle) {
@@ -325,9 +330,9 @@ var reader_stream_utils = __commonJS({
             // FileHandle is not supported with custom fs operations
             throw new Error('FileHandle with fs');
           }
-          stream[kHandle] = options.fd;
-          stream[kFs] = FileHandleOperations(stream[kHandle]);
-          stream[kHandle][kRef]();
+          stream["kHandle"] = options.fd;
+          stream["kFs"] = FileHandleOperations(stream[kHandle]);
+          stream["kHandle"]["kRef"]();
           // options.fd.on('close', FunctionPrototypeBind(stream.close, stream));
           return options.fd.fd;
         }
@@ -342,9 +347,9 @@ var reader_stream_utils = __commonJS({
 
 
 
-var utils = reader_stream_utils();
+var utils = stream_utils();
 
-export class ReadStream extends utils.Readable {
+class ReadStream extends utils.Readable {
 
   static kIoDone = "end";
   static kIsPerformingIO = Symbol('kIsPerformingIO');
@@ -515,11 +520,162 @@ export class ReadStream extends utils.Readable {
     this.destroy();
   };
 }
+class WriteStream extends utils.Writable {
+  constructor(path, options = {}) {
+    super();
+    options.decodeStrings = true;
+    if (options.fd == null) {
+      this.fd = null;
+      this["kFs"] = options.fs || import.meta.require("node:fs");
+      //utils.validateFunction(this[kFs].open, 'options.fs.open');
+
+      // Path will be ignored when fd is specified, so it can be falsy
+      this.path = utils.toPathIfFileURL(path);
+      this.flags = options.flags === undefined ? 'w' : options.flags;
+      this.mode = options.mode === undefined ? 0o666 : options.mode;
+
+      //validatePath(this.path);
+    } else {
+      this.fd = utils.getValidatedFd(utils.importFd(this, options));
+    }
+    options.autoDestroy = options.autoClose === undefined ?
+      true : options.autoClose;
+
+    if (!this["kFs"].write && !this[kFs].writev) {
+      throw new Error('options.fs.write' + ' function ' +
+        this["kFs"].write);
+    }
+
+    if (this["kFs"].write) {
+      //utils.validateFunction(this["kFs"].write, 'options.fs.write');
+    }
+
+    if (this["kFs"].writev) {
+      // utils.validateFunction(this["kFs"].writev, 'options.fs.writev');
+    }
+
+    if (options.autoDestroy) {
+      //utils.validateFunction(this["kFs"].close, 'options.fs.close');
+    }
+
+    // It's enough to override either, in which case only one will be used.
+    if (!this["kFs"].write) {
+      this._write = null;
+    }
+    if (!this["kFs"].writev) {
+      this._writev = null;
+    }
+
+    this.start = options.start;
+    this.pos = undefined;
+    this.bytesWritten = 0;
+    this["kIsPerformingIO"] = false;
+
+    if (this.start !== undefined) {
+      utils.validateInteger(this.start, 'start', 0);
+
+      this.pos = this.start;
+    }
+
+    Reflect.apply(utils.Writable, this, [options]);
+
+    if (options.encoding)
+      this.setDefaultEncoding(options.encoding);
+  }
+
+  _open(callback) {
+    const kFs = this["kFs"];
+    console.log(this.path);
+    console.log(this.flags);
+    console.log(this.mode);
+    kFs.open(this.path, this.flags, this.mode, (er, fd) => {
+      console.log(fd)
+      if (er) {
+        callback(er);
+        console.log(er)
+      } else {
+        this.fd = fd;
+        callback();
+        this.emit('open', this.fd);
+        this.emit('ready');
+      }
+    });
+  }
+
+  _construct(callback) {
+    const stream = this;
+
+    if (typeof stream.fd === 'number') {
+      callback();
+      return;
+    }
+
+    this._open(callback);
+  }
+
+  _write(data, cb) {
+    this["kIsPerformingIO"] = true;
+    console.log("data");
+    this["kFs"].write(this.fd, data, 0, data.length, this.pos, (er, bytes) => {
+      this["kIsPerformingIO"] = false;
+      if (this.destroyed) {
+        // Tell ._destroy() that it's safe to close the fd now.
+        cb(er);
+        return this.emit(kIoDone, er);
+      }
+
+      if (er) {
+        return cb(er);
+      }
+
+      this.bytesWritten += bytes;
+      cb();
+    });
+
+    if (this.pos !== undefined)
+      this.pos += data.length;
+  };
+
+  _writev(data, cb) {
+    const len = data.length;
+    const chunks = new Array(len);
+    let size = 0;
+
+    for (let i = 0; i < len; i++) {
+      const chunk = data[i].chunk;
+
+      chunks[i] = chunk;
+      size += chunk.length;
+    }
+
+    this["kIsPerformingIO"] = true;
+    this["kFs"].writev(this.fd, chunks, this.pos, (er, bytes) => {
+      this["kIsPerformingIO"] = false;
+      if (this.destroyed) {
+        // Tell ._destroy() that it's safe to close the fd now.
+        cb(er);
+        return this.emit("kIoDone", er);
+      }
+
+      if (er) {
+        return cb(er);
+      }
+
+      this.bytesWritten += bytes;
+      cb();
+    });
+
+    if (this.pos !== undefined)
+      this.pos += size;
+  };
+}
 
 export var createReadStream = function (path, options = {}) {
   return new ReadStream(path, options);
 }
-export var createWriteStream = fs.createWriteStream.bind(fs);
+export var createWriteStream = function (path, options = {}) {
+  return new WriteStream(path, options);
+}
 
 export var promises = {
   access: promisify(fs.accessSync),

@@ -297,7 +297,14 @@ function slice(start, end) {
       end = end || this.byteLength;
   }
 
-  return new Buffer(this.buffer, this.byteOffset + start, end - start);
+  let len = end - start;
+  start = this.byteOffset + start;
+
+  if (len > this.byteLength) {
+    len = this.byteLength - start;
+  }
+
+  return new Buffer(this.buffer, start, len);
 }
 
 

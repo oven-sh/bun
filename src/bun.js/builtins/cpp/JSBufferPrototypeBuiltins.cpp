@@ -733,7 +733,7 @@ const char* const s_jsBufferPrototypeSubarrayCode =
 const JSC::ConstructAbility s_jsBufferPrototypeSliceCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_jsBufferPrototypeSliceCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_jsBufferPrototypeSliceCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_jsBufferPrototypeSliceCodeLength = 308;
+const int s_jsBufferPrototypeSliceCodeLength = 414;
 static const JSC::Intrinsic s_jsBufferPrototypeSliceCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_jsBufferPrototypeSliceCode =
     "(function (start, end) {\n" \
@@ -749,7 +749,14 @@ const char* const s_jsBufferPrototypeSliceCode =
     "      end = end || this.byteLength;\n" \
     "  }\n" \
     "\n" \
-    "  return new Buffer(this.buffer, this.byteOffset + start, end - start);\n" \
+    "  let len = end - start;\n" \
+    "  start = this.byteOffset + start;\n" \
+    "\n" \
+    "  if (len > this.byteLength) {\n" \
+    "    len = this.byteLength - start;\n" \
+    "  }\n" \
+    "\n" \
+    "  return new Buffer(this.buffer, start, len);\n" \
     "})\n" \
 ;
 

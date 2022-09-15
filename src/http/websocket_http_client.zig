@@ -147,14 +147,14 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             Socket.configure(
                 ctx,
                 HTTPClient,
-                .{
-                    .onOpen = handleOpen,
-                    .onClose = handleClose,
-                    .onData = handleData,
-                    .onWritable = handleWritable,
-                    .onTimeout = handleTimeout,
-                    .onConnectError = handleConnectError,
-                    .onEnd = handleEnd,
+                struct {
+                    pub const onOpen = handleOpen;
+                    pub const onClose = handleClose;
+                    pub const onData = handleData;
+                    pub const onWritable = handleWritable;
+                    pub const onTimeout = handleTimeout;
+                    pub const onConnectError = handleConnectError;
+                    pub const onEnd = handleEnd;
                 },
             );
             if (is_new_loop) {
@@ -816,13 +816,13 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             Socket.configure(
                 ctx,
                 WebSocket,
-                .{
-                    .onClose = handleClose,
-                    .onData = handleData,
-                    .onWritable = handleWritable,
-                    .onTimeout = handleTimeout,
-                    .onConnectError = handleConnectError,
-                    .onEnd = handleEnd,
+                struct {
+                    pub const onClose = handleClose;
+                    pub const onData = handleData;
+                    pub const onWritable = handleWritable;
+                    pub const onTimeout = handleTimeout;
+                    pub const onConnectError = handleConnectError;
+                    pub const onEnd = handleEnd;
                 },
             );
         }

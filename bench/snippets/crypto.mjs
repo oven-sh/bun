@@ -1,18 +1,25 @@
 // so it can run in environments without node module resolution
 import { bench, run } from "../node_modules/mitata/src/cli.mjs";
 
+var crypto = globalThis.crypto;
 // web crypto is not a global in node
-if (!globalThis.crypto) {
-  globalThis.crypto = await import("crypto");
+if (!crypto) {
+  crypto = await import("crypto");
 }
 
-var foo = new Uint8Array(2);
-bench("crypto.getRandomValues()", () => {
+var foo = new Uint8Array(65536);
+bench("crypto.getRandomValues(65536)", () => {
   crypto.getRandomValues(foo);
 });
 
+var small = new Uint8Array(32);
+bench("crypto.getRandomValues(32)", () => {
+  crypto.getRandomValues(small);
+});
+
 bench("crypto.randomUUID()", () => {
-  crypto.randomUUID();
+  // node uses a rope string for each hex byte so any subsequent operation after creating it is slow
+  return crypto.randomUUID()[2];
 });
 
 await run();

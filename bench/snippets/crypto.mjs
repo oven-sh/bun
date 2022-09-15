@@ -1,10 +1,10 @@
 // so it can run in environments without node module resolution
 import { bench, run } from "../node_modules/mitata/src/cli.mjs";
 
-var crypto = require("crypto");
+var crypto = globalThis.crytpto;
 
-if (!crypto.getRandomValues) {
-  crypto.getRandomValues = globalThis.crypto.getRandomValues;
+if (!crypto) {
+  crypto = await import("node:crypto");
 }
 
 var foo = new Uint8Array(65536);

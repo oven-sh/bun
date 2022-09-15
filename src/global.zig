@@ -324,6 +324,5 @@ pub const HiveArray = @import("./hive_array.zig").HiveArray;
 
 pub fn rand(bytes: []u8) void {
     const BoringSSL = @import("boringssl");
-    if (bytes.len > 512)
-        _ = BoringSSL.RAND_bytes(bytes.ptr, bytes.len);
+    _ = BoringSSL.RAND_bytes(bytes.ptr, bytes.len);
 }

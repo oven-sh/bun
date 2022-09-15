@@ -1,7 +1,7 @@
 // so it can run in environments without node module resolution
 import { bench, run } from "../node_modules/mitata/src/cli.mjs";
 
-var crypto = globalThis.crytpto;
+var crypto = globalThis.crypto;
 
 if (!crypto) {
   crypto = await import("node:crypto");

@@ -15,9 +15,8 @@ editor_context: EditorContext = EditorContext{},
 stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
-websocket_mask: WebSocketClientMask = WebSocketClientMask{},
 
-uuid_entropy_cache: ?*EntropyCache = null,
+entropy_cache: ?*EntropyCache = null,
 
 // TODO: make this per JSGlobalObject instead of global
 // This does not handle ShadowRealm correctly!
@@ -25,21 +24,21 @@ tail_cleanup_hook: ?*CleanupHook = null,
 cleanup_hook: ?*CleanupHook = null,
 
 pub fn nextUUID(this: *RareData) [16]u8 {
-    if (this.uuid_entropy_cache == null) {
-        this.uuid_entropy_cache = default_allocator.create(EntropyCache) catch unreachable;
-        this.uuid_entropy_cache.?.init();
+    if (this.entropy_cache == null) {
+        this.entropy_cache = default_allocator.create(EntropyCache) catch unreachable;
+        this.entropy_cache.?.init();
     }
 
-    return this.uuid_entropy_cache.?.get();
+    return this.entropy_cache.?.get();
 }
 
 pub fn entropySlice(this: *RareData, len: usize) []u8 {
-    if (this.uuid_entropy_cache == null) {
-        this.uuid_entropy_cache = default_allocator.create(EntropyCache) catch unreachable;
-        this.uuid_entropy_cache.?.init();
+    if (this.entropy_cache == null) {
+        this.entropy_cache = default_allocator.create(EntropyCache) catch unreachable;
+        this.entropy_cache.?.init();
     }
 
-    return this.uuid_entropy_cache.?.slice(len);
+    return this.entropy_cache.?.slice(len);
 }
 
 pub const EntropyCache = struct {

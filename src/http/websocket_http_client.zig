@@ -24,8 +24,7 @@ const Opcode = @import("./websocket.zig").Opcode;
 
 fn buildRequestBody(vm: *JSC.VirtualMachine, pathname: *const JSC.ZigString, host: *const JSC.ZigString, client_protocol: *const JSC.ZigString, client_protocol_hash: *u64) std.mem.Allocator.Error![]u8 {
     const allocator = vm.allocator;
-    var input_rand_buf: [16]u8 = undefined;
-    std.crypto.random.bytes(&input_rand_buf);
+    const input_rand_buf = vm.rareData().nextUUID();
     const temp_buf_size = comptime std.base64.standard.Encoder.calcSize(16);
     var encoded_buf: [temp_buf_size]u8 = undefined;
     const accept_key = std.base64.standard.Encoder.encode(&encoded_buf, &input_rand_buf);

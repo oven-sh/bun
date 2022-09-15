@@ -3,16 +3,17 @@ const std = @import("std");
 const crypto = std.crypto;
 const fmt = std.fmt;
 const testing = std.testing;
+const bun = @import("../global.zig");
 
 pub const Error = error{InvalidUUID};
 const UUID = @This();
 
-bytes: [16]u8,
+bytes: [16]u8 = undefined,
 
 pub fn init() UUID {
     var uuid = UUID{ .bytes = undefined };
 
-    crypto.random.bytes(&uuid.bytes);
+    bun.rand(&uuid.bytes);
     // Version 4
     uuid.bytes[6] = (uuid.bytes[6] & 0x0f) | 0x40;
     // Variant 1
@@ -67,22 +68,29 @@ pub fn format(
 ) !void {
     _ = options; // currently unused
 
-    if (layout.len != 0 and layout[0] != 's')
+    if (comptime layout.len != 0 and layout[0] != 's')
         @compileError("Unsupported format specifier for UUID type: '" ++ layout ++ "'.");
-
     var buf: [36]u8 = undefined;
+    self.print(&buf);
+
+    try fmt.format(writer, "{s}", .{buf});
+}
+
+pub fn print(
+    self: UUID,
+    buf: *[36]u8,
+) void {
     const hex = "0123456789abcdef";
+    const bytes = self.bytes;
 
     buf[8] = '-';
     buf[13] = '-';
     buf[18] = '-';
     buf[23] = '-';
     inline for (encoded_pos) |i, j| {
-        buf[i + 0] = hex[self.bytes[j] >> 4];
-        buf[i + 1] = hex[self.bytes[j] & 0x0f];
+        buf[comptime i + 0] = hex[bytes[j] >> 4];
+        buf[comptime i + 1] = hex[bytes[j] & 0x0f];
     }
-
-    try fmt.format(writer, "{s}", .{buf});
 }
 
 pub fn parse(buf: []const u8) Error!UUID {

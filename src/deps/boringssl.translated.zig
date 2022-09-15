@@ -18618,6 +18618,19 @@ pub const ssl_comp_st = struct_ssl_comp_st;
 pub const stack_st_SSL_COMP = struct_stack_st_SSL_COMP;
 pub const ssl_conf_ctx_st = struct_ssl_conf_ctx_st;
 
+pub extern fn RAND_bytes(buf: [*]u8, len: usize) c_int;
+
+/// RAND_enable_fork_unsafe_buffering enables efficient buffered reading of
+/// /dev/urandom. It adds an overhead of a few KB of memory per thread. It must
+/// be called before the first call to |RAND_bytes|.
+///
+/// |fd| must be -1. We no longer support setting the file descriptor with this
+/// function.
+///
+/// It has an unusual name because the buffer is unsafe across calls to |fork|.
+/// Hence, this function should never be called by libraries.
+pub extern fn RAND_enable_fork_unsafe_buffering(c_int) void;
+
 // Manual modification
 
 pub const struct_bio_st = extern struct {

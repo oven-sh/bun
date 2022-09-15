@@ -48,17 +48,33 @@ test("MessageEvent", () => {
 it("crypto.getRandomValues", () => {
   var foo = new Uint8Array(32);
 
-  // run it once
-  var array = crypto.getRandomValues(foo);
-  expect(array).toBe(foo);
-  expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
-    true
-  );
+  // run it once buffered and unbuffered
+  {
+    var array = crypto.getRandomValues(foo);
+    expect(array).toBe(foo);
+    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
+      true
+    );
+  }
 
   // run it again to check that the fast path works
   for (var i = 0; i < 9000; i++) {
     var array = crypto.getRandomValues(foo);
     expect(array).toBe(foo);
+  }
+
+  // run it on a large input
+  expect(
+    !!crypto.getRandomValues(new Uint8Array(8096)).find((a) => a > 0)
+  ).toBe(true);
+
+  {
+    // any additional input into getRandomValues() makes it unbuffered
+    var array = crypto.getRandomValues(foo, "unbuffered");
+    expect(array).toBe(foo);
+    expect(array.reduce((sum, a) => (sum += a === 0), 0) != foo.length).toBe(
+      true
+    );
   }
 });
 

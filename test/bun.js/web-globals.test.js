@@ -96,3 +96,12 @@ it("crypto.randomUUID", () => {
     expect(uuid2[23]).toBe("-");
   }
 });
+
+it("URL.prototype.origin", () => {
+  const url = new URL("https://html.spec.whatwg.org/");
+  const { origin, host, hostname } = url;
+
+  expect(hostname).toBe("html.spec.whatwg.org");
+  expect(host).toBe("html.spec.whatwg.org");
+  expect(origin).toBe("https://html.spec.whatwg.org");
+});

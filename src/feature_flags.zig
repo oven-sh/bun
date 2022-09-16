@@ -70,6 +70,7 @@ pub const verbose_analytics = false;
 
 pub const disable_compression_in_http_client = false;
 
+pub const enable_keepalive = true;
 // Not sure why...
 // But this is slower!
 // ~/Build/throw

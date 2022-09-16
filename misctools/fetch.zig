@@ -172,15 +172,11 @@ pub fn main() anyerror!void {
     var args = try Arguments.parse(default_allocator);
 
     var body_out_str = try MutableString.init(default_allocator, 1024);
-    var body_in_str = try MutableString.init(default_allocator, args.body.len);
-    body_in_str.appendAssumeCapacity(args.body);
     var channel = try default_allocator.create(HTTP.HTTPChannel);
     channel.* = HTTP.HTTPChannel.init();
 
     var response_body_string = try default_allocator.create(MutableString);
     response_body_string.* = body_out_str;
-    var request_body_string = try default_allocator.create(MutableString);
-    request_body_string.* = body_in_str;
 
     try channel.buffer.ensureTotalCapacity(1);
 
@@ -196,7 +192,7 @@ pub fn main() anyerror!void {
             args.headers,
             args.headers_buf,
             response_body_string,
-            request_body_string,
+            args.body,
 
             0,
         ),

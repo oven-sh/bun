@@ -515,90 +515,79 @@ pub const Fetch = struct {
     );
 
     pub const FetchTasklet = struct {
-        promise: *JSPromise = undefined,
-        http: HTTPClient.AsyncHTTP = undefined,
-        result: HTTPClient.HTTPClientResult = undefined,
-        status: Status = Status.pending,
+        http: ?*HTTPClient.AsyncHTTP = null,
+        result: HTTPClient.HTTPClientResult = .{},
         javascript_vm: *VirtualMachine = undefined,
         global_this: *JSGlobalObject = undefined,
-
-        empty_request_body: MutableString = undefined,
-
-        context: FetchTaskletContext = undefined,
+        request_body: Blob = undefined,
         response_buffer: MutableString = undefined,
-
-        blob_store: ?*Blob.Store = null,
-
-        const Pool = ObjectPool(FetchTasklet, init, true, 32);
-        const BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8);
-        pub const FetchTaskletContext = struct {
-            tasklet: *FetchTasklet,
-        };
+        request_headers: Headers = Headers{ .allocator = undefined },
+        ref: *JSC.napi.Ref = undefined,
+        concurrent_task: JSC.ConcurrentTask = .{},
 
         pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet {
             return FetchTasklet{};
         }
 
-        pub const Status = enum(u8) {
-            pending,
-            running,
-            done,
-        };
+        fn clearData(this: *FetchTasklet) void {
+            this.request_headers.entries.deinit(bun.default_allocator);
+            this.request_headers.buf.deinit(bun.default_allocator);
+            this.request_headers = Headers{ .allocator = undefined };
+            this.http.?.deinit();
+
+            this.result.deinitMetadata();
+            this.response_buffer.deinit();
+            this.request_body.detach();
+        }
+
+        pub fn deinit(this: *FetchTasklet) void {
+            if (this.http) |http| this.javascript_vm.allocator.destroy(http);
+            this.javascript_vm.allocator.destroy(this);
+        }
 
         pub fn onDone(this: *FetchTasklet) void {
             if (comptime JSC.is_bindgen)
                 unreachable;
 
             const globalThis = this.global_this;
-            const promise = this.promise;
-            const state = this.http.state.load(.Monotonic);
-            const result = switch (state) {
-                .success => this.onResolve(),
-                .fail => this.onReject(),
-                else => unreachable,
+
+            var ref = this.ref;
+            const promise_value = ref.get(globalThis);
+            defer ref.destroy(globalThis);
+
+            if (promise_value.isEmptyOrUndefinedOrNull()) {
+                this.clearData();
+                return;
+            }
+
+            var promise = promise_value.asPromise().?;
+
+            const success = this.result.isSuccess();
+            const result = switch (success) {
+                true => this.onResolve(),
+                false => this.onReject(),
             };
 
-            this.release();
-            const promise_value = promise.asValue(globalThis);
-            promise_value.unprotect();
+            this.clearData();
 
-            switch (state) {
-                .success => {
+            promise_value.ensureStillAlive();
+
+            switch (success) {
+                true => {
                     promise.resolve(globalThis, result);
                 },
-                .fail => {
+                false => {
                     promise.reject(globalThis, result);
                 },
-                else => unreachable,
             }
-        }
-
-        pub fn reset(_: *FetchTasklet) void {}
-
-        pub fn release(this: *FetchTasklet) void {
-            this.global_this = undefined;
-            this.javascript_vm = undefined;
-            this.promise = undefined;
-            this.status = Status.pending;
-            // var pooled = this.pooled_body;
-            // BodyPool.release(pooled);
-            // this.pooled_body = undefined;
-            this.http = undefined;
-
-            Pool.release(@fieldParentPtr(Pool.Node, "data", this));
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
-            if (this.blob_store) |store| {
-                this.blob_store = null;
-                store.deref();
-            }
-            defer this.result.deinitMetadata();
             const fetch_error = std.fmt.allocPrint(
                 default_allocator,
                 "fetch() failed {s}\nurl: \"{s}\"",
                 .{
-                    @errorName(this.http.err orelse error.HTTPFail),
+                    this.result.fail,
                     this.result.href,
                 },
             ) catch unreachable;
@@ -606,26 +595,27 @@ pub const Fetch = struct {
         }
 
         pub fn onResolve(this: *FetchTasklet) JSValue {
-            var allocator = default_allocator;
-            var http_response = this.http.response.?;
+            var allocator = this.global_this.bunVM().allocator;
+            const http_response = this.result.response;
             var response = allocator.create(Response) catch unreachable;
-            if (this.blob_store) |store| {
-                this.blob_store = null;
-                store.deref();
-            }
-            defer this.result.deinitMetadata();
+            const blob = Blob.init(this.response_buffer.toOwnedSliceLeaky(), allocator, this.global_this);
+            this.response_buffer = .{ .allocator = default_allocator, .list = .{
+                .items = &.{},
+                .capacity = 0,
+            } };
+
             response.* = Response{
                 .allocator = allocator,
                 .url = allocator.dupe(u8, this.result.href) catch unreachable,
                 .status_text = allocator.dupe(u8, http_response.status) catch unreachable,
-                .redirected = this.http.redirected,
+                .redirected = this.result.redirected,
                 .body = .{
                     .init = .{
                         .headers = FetchHeaders.createFromPicoHeaders(this.global_this, http_response.headers),
                         .status_code = @truncate(u16, http_response.status_code),
                     },
                     .value = .{
-                        .Blob = Blob.init(this.http.response_buffer.toOwnedSliceLeaky(), allocator, this.global_this),
+                        .Blob = blob,
                     },
                 },
             };
@@ -636,38 +626,50 @@ pub const Fetch = struct {
             allocator: std.mem.Allocator,
             method: Method,
             url: ZigURL,
-            headers: Headers.Entries,
-            headers_buf: string,
-            request_body: ?*MutableString,
+            headers: Headers,
+            request_body: Blob,
             timeout: usize,
-            request_body_store: ?*Blob.Store,
-        ) !*FetchTasklet.Pool.Node {
-            var linked_list = FetchTasklet.Pool.get(allocator);
-            linked_list.data.javascript_vm = VirtualMachine.vm;
-            linked_list.data.empty_request_body = MutableString.init(allocator, 0) catch unreachable;
-            // linked_list.data.pooled_body = BodyPool.get(allocator);
-            linked_list.data.blob_store = request_body_store;
-            linked_list.data.response_buffer = MutableString.initEmpty(allocator);
-            linked_list.data.http = HTTPClient.AsyncHTTP.init(
+            globalThis: *JSC.JSGlobalObject,
+            promise: JSValue,
+        ) !*FetchTasklet {
+            var jsc_vm = globalThis.bunVM();
+            var fetch_tasklet = try jsc_vm.allocator.create(FetchTasklet);
+            if (request_body.store) |store| {
+                store.ref();
+            }
+
+            fetch_tasklet.* = .{
+                .response_buffer = MutableString{
+                    .allocator = bun.default_allocator,
+                    .list = .{
+                        .items = &.{},
+                        .capacity = 0,
+                    },
+                },
+                .http = try jsc_vm.allocator.create(HTTPClient.AsyncHTTP),
+                .javascript_vm = jsc_vm,
+                .request_body = request_body,
+                .global_this = globalThis,
+                .request_headers = headers,
+                .ref = JSC.napi.Ref.create(globalThis, promise),
+            };
+            fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
                 allocator,
                 method,
                 url,
-                headers,
-                headers_buf,
-                &linked_list.data.response_buffer,
-                request_body orelse &linked_list.data.empty_request_body,
+                headers.entries,
+                headers.buf.items,
+                &fetch_tasklet.response_buffer,
+                request_body.sharedView(),
                 timeout,
-                undefined,
+                HTTPClient.HTTPClientResult.Callback.New(
+                    *FetchTasklet,
+                    FetchTasklet.callback,
+                ).init(
+                    fetch_tasklet,
+                ),
             );
-            linked_list.data.context = .{ .tasklet = &linked_list.data };
-            linked_list.data.http.completion_callback = HTTPClient.HTTPClientResult.Callback.New(
-                *FetchTasklet,
-                FetchTasklet.callback,
-            ).init(
-                &linked_list.data,
-            );
-
-            return linked_list;
+            return fetch_tasklet;
         }
 
         pub fn queue(
@@ -675,27 +677,36 @@ pub const Fetch = struct {
             global: *JSGlobalObject,
             method: Method,
             url: ZigURL,
-            headers: Headers.Entries,
-            headers_buf: string,
-            request_body: ?*MutableString,
+            headers: Headers,
+            request_body: Blob,
             timeout: usize,
-            request_body_store: ?*Blob.Store,
-        ) !*FetchTasklet.Pool.Node {
+            promise: JSValue,
+        ) !*FetchTasklet {
             try HTTPClient.HTTPThread.init();
-            var node = try get(allocator, method, url, headers, headers_buf, request_body, timeout, request_body_store);
+            var node = try get(
+                allocator,
+                method,
+                url,
+                headers,
+                request_body,
+                timeout,
+                global,
+                promise,
+            );
 
-            node.data.global_this = global;
             var batch = NetworkThread.Batch{};
-            node.data.http.schedule(allocator, &batch);
-            HTTPClient.http_thread.schedule(batch);
+            node.http.?.schedule(allocator, &batch);
             VirtualMachine.vm.active_tasks +|= 1;
+
+            HTTPClient.http_thread.schedule(batch);
+
             return node;
         }
 
         pub fn callback(task: *FetchTasklet, result: HTTPClient.HTTPClientResult) void {
             task.response_buffer = result.body.?.*;
             task.result = result;
-            task.javascript_vm.eventLoop().enqueueTaskConcurrent(Task.init(task));
+            task.javascript_vm.eventLoop().enqueueTaskConcurrent(task.concurrent_task.from(task));
         }
     };
 
@@ -715,12 +726,11 @@ pub const Fetch = struct {
         }
 
         var headers: ?Headers = null;
-        var body: MutableString = MutableString.initEmpty(bun.default_allocator);
         var method = Method.GET;
         var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
         var url: ZigURL = undefined;
         var first_arg = args.nextEat().?;
-        var blob_store: ?*Blob.Store = null;
+        var body: Blob = Blob.initEmpty(ctx);
         if (first_arg.isString()) {
             var url_zig_str = ZigString.init("");
             JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
@@ -737,7 +747,6 @@ pub const Fetch = struct {
                 url_str = getAllocator(ctx).dupe(u8, url_str) catch unreachable;
             }
 
-            NetworkThread.init() catch @panic("Failed to start network thread");
             url = ZigURL.parse(url_str);
 
             if (arguments.len >= 2 and arguments[1].?.value().isObject()) {
@@ -760,18 +769,7 @@ pub const Fetch = struct {
 
                 if (options.fastGet(ctx.ptr(), .body)) |body__| {
                     if (Blob.fromJS(ctx.ptr(), body__, true, false)) |new_blob| {
-                        if (new_blob.size > 0) {
-                            body = MutableString{
-                                .list = std.ArrayListUnmanaged(u8){
-                                    .items = bun.constStrToU8(new_blob.sharedView()),
-                                    .capacity = new_blob.size,
-                                },
-                                .allocator = bun.default_allocator,
-                            };
-                            blob_store = new_blob.store;
-                        }
-                        // transfer is unnecessary here because this is a new slice
-                        //new_blob.transfer();
+                        body = new_blob;
                     } else |_| {
                         return JSPromise.rejectedPromiseValue(globalThis, ZigString.init("fetch() received invalid body").toErrorInstance(globalThis)).asRef();
                     }
@@ -783,54 +781,28 @@ pub const Fetch = struct {
             if (request.headers) |head| {
                 headers = Headers.from(head, bun.default_allocator) catch unreachable;
             }
-            var blob = request.body.use();
-            // TODO: make RequestBody _NOT_ a MutableString
-            body = MutableString{
-                .list = std.ArrayListUnmanaged(u8){
-                    .items = bun.constStrToU8(blob.sharedView()),
-                    .capacity = bun.constStrToU8(blob.sharedView()).len,
-                },
-                .allocator = blob.allocator orelse bun.default_allocator,
-            };
-            blob_store = blob.store;
+            body = request.body.use();
         } else {
             const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
             return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
         }
 
-        var header_entries: Headers.Entries = .{};
-        var header_buf: string = "";
-
-        if (headers) |head| {
-            header_entries = head.entries;
-            header_buf = head.buf.items;
-        }
-
-        var request_body: ?*MutableString = null;
-        if (body.list.items.len > 0) {
-            var mutable = bun.default_allocator.create(MutableString) catch unreachable;
-            mutable.* = body;
-            request_body = mutable;
-        }
+        var deferred_promise = JSC.C.JSObjectMakeDeferredPromise(globalThis, null, null, null);
 
         // var resolve = FetchTasklet.FetchResolver.Class.make(ctx: js.JSContextRef, ptr: *ZigType)
-        var queued = FetchTasklet.queue(
+        _ = FetchTasklet.queue(
             default_allocator,
             globalThis,
             method,
             url,
-            header_entries,
-            header_buf,
-            request_body,
+            headers orelse Headers{
+                .allocator = bun.default_allocator,
+            },
+            body,
             std.time.ns_per_hour,
-            blob_store,
+            JSC.JSValue.fromRef(deferred_promise),
         ) catch unreachable;
-        const promise = JSC.JSPromise.create(ctx);
-        queued.data.promise = promise;
-        const promise_value = promise.asValue(ctx);
-        promise_value.protect();
-
-        return promise_value.asObjectRef();
+        return deferred_promise;
     }
 };
 
@@ -1991,7 +1963,7 @@ pub const Blob = struct {
                 }
             }
             pub fn run(this: *ReadFile, task: *ReadFileTask) void {
-                var frame = HTTPClient.getAllocator().create(@Frame(runAsync)) catch unreachable;
+                var frame = bun.default_allocator.create(@Frame(runAsync)) catch unreachable;
                 _ = @asyncCall(std.mem.asBytes(frame), undefined, runAsync, .{ this, task });
             }
 
@@ -2020,7 +1992,7 @@ pub const Blob = struct {
                 task.onFinish();
 
                 suspend {
-                    HTTPClient.getAllocator().destroy(@frame());
+                    bun.default_allocator.destroy(@frame());
                 }
             }
 
@@ -2236,7 +2208,7 @@ pub const Blob = struct {
                 cb(cb_ctx, .{ .result = @truncate(SizeType, wrote) });
             }
             pub fn run(this: *WriteFile, task: *WriteFileTask) void {
-                var frame = HTTPClient.getAllocator().create(@Frame(runAsync)) catch unreachable;
+                var frame = bun.default_allocator.create(@Frame(runAsync)) catch unreachable;
                 _ = @asyncCall(std.mem.asBytes(frame), undefined, runAsync, .{ this, task });
             }
 
@@ -2244,7 +2216,7 @@ pub const Blob = struct {
                 this._runAsync();
                 task.onFinish();
                 suspend {
-                    HTTPClient.getAllocator().destroy(@frame());
+                    bun.default_allocator.destroy(@frame());
                 }
             }
 

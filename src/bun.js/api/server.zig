@@ -1850,6 +1850,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         has_js_deinited: bool = false,
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
+        keeping_js_alive: bool = false,
 
         pub const Class = JSC.NewClass(
             ThisServer,
@@ -1917,15 +1918,17 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
-            if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited)
+            if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited) {
+                this.deref();
                 this.deinit();
+            }
         }
 
         pub fn stop(this: *ThisServer) void {
             if (this.listener) |listener| {
-                listener.close();
                 this.listener = null;
-                this.vm.disable_run_us_loop = false;
+                this.deref();
+                listener.close();
             }
 
             this.deinitIfWeCan();
@@ -2038,22 +2041,26 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             this.listener = socket;
             const needs_post_handler = this.vm.uws_event_loop == null;
             this.vm.uws_event_loop = uws.Loop.get();
-            this.listen_callback = JSC.AnyTask.New(ThisServer, run).init(this);
-            this.vm.eventLoop().enqueueTask(JSC.Task.init(&this.listen_callback));
+            this.ref();
+
             if (needs_post_handler) {
                 _ = this.vm.uws_event_loop.?.addPostHandler(*JSC.EventLoop, this.vm.eventLoop(), JSC.EventLoop.tick);
+                _ = this.vm.uws_event_loop.?.addPreHandler(*JSC.EventLoop, this.vm.eventLoop(), JSC.EventLoop.tick);
             }
         }
 
-        pub fn run(this: *ThisServer) void {
-            // this.app.addServerName(hostname_pattern: [*:0]const u8)
+        pub fn ref(this: *ThisServer) void {
+            if (this.keeping_js_alive) return;
 
-            // we do not increment the reference count here
-            // uWS manages running the loop, so it is unnecessary
-            // this.vm.us_loop_reference_count +|= 1;
-            this.vm.disable_run_us_loop = true;
+            this.vm.us_loop_reference_count +|= 1;
+            this.keeping_js_alive = true;
+        }
 
-            this.app.run();
+        pub fn deref(this: *ThisServer) void {
+            if (!this.keeping_js_alive) return;
+
+            this.vm.us_loop_reference_count -|= 1;
+            this.keeping_js_alive = false;
         }
 
         pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
@@ -2286,11 +2293,20 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 this.app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
 
-            this.app.listenWithConfig(*ThisServer, this, onListen, .{
-                .port = this.config.port,
-                .host = this.config.hostname,
-                .options = 0,
-            });
+            const hostname = bun.span(this.config.hostname);
+
+            if (!(hostname.len == 0 or strings.eqlComptime(hostname, "0.0.0.0"))) {
+                this.app.listenWithConfig(*ThisServer, this, onListen, .{
+                    .port = this.config.port,
+                    .options = 0,
+                });
+            } else {
+                this.app.listenWithConfig(*ThisServer, this, onListen, .{
+                    .port = this.config.port,
+                    .host = this.config.hostname,
+                    .options = 0,
+                });
+            }
         }
     };
 }

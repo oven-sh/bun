@@ -262,9 +262,56 @@ pub const SocketTLS = NewSocketHandler(true);
 
 pub const us_timer_t = opaque {};
 pub const us_socket_context_t = opaque {};
-pub const Loop = opaque {
+pub const Loop = extern struct {
+    internal_loop_data: InternalLoopData align(16),
+
+    /// Number of non-fallthrough polls in the loop
+    num_polls: c_int,
+
+    /// Number of ready polls this iteration
+    num_ready_polls: c_int,
+
+    /// Current index in list of ready polls
+    current_ready_poll: c_int,
+
+    /// Loop's own file descriptor
+    fd: c_int,
+
+    /// The list of ready polls
+    ready_polls: [1024]EventType,
+
+    const EventType = if (Environment.isLinux) std.os.linux.epoll_event else if (Environment.isMac) std.os.Kevent;
+
+    pub const InternalLoopData = extern struct {
+        pub const us_internal_async = opaque {};
+
+        sweep_timer: ?*us_timer_t,
+        wakeup_async: ?*us_internal_async,
+        last_write_failed: c_int,
+        head: ?*us_socket_context_t,
+        iterator: ?*us_socket_context_t,
+        recv_buf: [*]u8,
+        ssl_data: ?*anyopaque,
+        pre_cb: ?fn (?*Loop) callconv(.C) void,
+        post_cb: ?fn (?*Loop) callconv(.C) void,
+        closed_head: ?*Socket,
+        low_prio_head: ?*Socket,
+        low_prio_budget: c_int,
+        iteration_nr: c_longlong,
+    };
+
     pub fn get() ?*Loop {
         return uws_get_loop();
+    }
+
+    pub fn create(comptime Handler: anytype) *Loop {
+        return us_create_loop(
+            null,
+            Handler.wakeup,
+            if (@hasDecl(Handler, "pre")) Handler.pre else null,
+            if (@hasDecl(Handler, "post")) Handler.post else null,
+            0,
+        ).?;
     }
 
     pub fn wakeup(this: *Loop) void {
@@ -305,6 +352,15 @@ pub const Loop = opaque {
         };
     }
 
+    pub fn addPreHandler(this: *Loop, comptime UserType: type, ctx: UserType, comptime callback: fn (UserType) void) NewHandler(UserType, callback) {
+        const Handler = NewHandler(UserType, callback);
+
+        uws_loop_addPreHandler(this, ctx, Handler.callback);
+        return Handler{
+            .loop = this,
+        };
+    }
+
     pub fn run(this: *Loop) void {
         us_loop_run(this);
     }
@@ -312,7 +368,7 @@ pub const Loop = opaque {
     extern fn uws_loop_defer(loop: *Loop, ctx: *anyopaque, cb: fn (ctx: *anyopaque) callconv(.C) void) void;
 
     extern fn uws_get_loop() ?*Loop;
-    extern fn us_create_loop(hint: ?*anyopaque, wakeup_cb: ?fn (?*Loop) callconv(.C) void, pre_cb: ?fn (?*Loop) callconv(.C) void, post_cb: ?fn (?*Loop) callconv(.C) void, ext_size: c_uint) ?*Loop;
+    extern fn us_create_loop(hint: ?*anyopaque, wakeup_cb: ?fn (*Loop) callconv(.C) void, pre_cb: ?fn (*Loop) callconv(.C) void, post_cb: ?fn (*Loop) callconv(.C) void, ext_size: c_uint) ?*Loop;
     extern fn us_loop_free(loop: ?*Loop) void;
     extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
     extern fn us_loop_run(loop: ?*Loop) void;
@@ -322,6 +378,8 @@ pub const Loop = opaque {
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;
     extern fn uws_loop_addPostHandler(loop: *Loop, ctx: *anyopaque, cb: (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
     extern fn uws_loop_removePostHandler(loop: *Loop, ctx: *anyopaque, cb: (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+    extern fn uws_loop_addPreHandler(loop: *Loop, ctx: *anyopaque, cb: (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
+    extern fn uws_loop_removePreHandler(loop: *Loop, ctx: *anyopaque, cb: (fn (ctx: *anyopaque, loop: *Loop) callconv(.C) void)) void;
 };
 const uintmax_t = c_ulong;
 
@@ -372,9 +430,8 @@ pub const Poll = opaque {
         val: Data,
         fallthrough: bool,
         flags: Flags,
-        callback: CallbackType,
     ) ?*Poll {
-        var poll = us_create_callback(loop, @as(c_int, @boolToInt(fallthrough)), file, @sizeOf(Data));
+        var poll = us_create_poll(loop, @as(c_int, @boolToInt(fallthrough)), @sizeOf(Data));
         if (comptime Data != void) {
             poll.data(Data).* = val;
         }
@@ -386,8 +443,7 @@ pub const Poll = opaque {
         if (flags.write) {
             flags_int |= Flags.write_flag;
         }
-
-        us_callback_set(poll, flags_int, callback);
+        us_poll_init(poll, file, flags_int);
         return poll;
     }
 
@@ -403,10 +459,17 @@ pub const Poll = opaque {
         return @intCast(@import("std").os.fd_t, us_poll_fd(self));
     }
 
-    pub fn start(self: *Poll, poll_type: Flags) void {
-        // us_poll_start(self, loop: ?*Loop, events: c_int)
-        _ = self;
-        _ = poll_type;
+    pub fn start(self: *Poll, loop: *Loop, flags: Flags) void {
+        var flags_int: c_int = 0;
+        if (flags.read) {
+            flags_int |= Flags.read_flag;
+        }
+
+        if (flags.write) {
+            flags_int |= Flags.write_flag;
+        }
+
+        us_poll_start(self, loop, flags_int);
     }
 
     pub const Flags = struct {
@@ -424,9 +487,9 @@ pub const Poll = opaque {
     }
 
     // (void* userData, int fd, int events, int error, struct us_poll_t *poll)
-    pub const CallbackType = fn (?*anyopaque, c_int, c_int, c_int, *Poll) void;
-    extern fn us_create_callback(loop: ?*Loop, fallthrough: c_int, fd: c_int, ext_size: c_uint) *Poll;
-    extern fn us_callback_set(poll: *Poll, events: c_int, callback: CallbackType) *Poll;
+    pub const CallbackType = fn (?*anyopaque, c_int, c_int, c_int, *Poll) callconv(.C) void;
+    extern fn us_create_poll(loop: ?*Loop, fallthrough: c_int, ext_size: c_uint) *Poll;
+    extern fn us_poll_set(poll: *Poll, events: c_int, callback: CallbackType) *Poll;
     extern fn us_poll_free(p: ?*Poll, loop: ?*Loop) void;
     extern fn us_poll_init(p: ?*Poll, fd: c_int, poll_type: c_int) void;
     extern fn us_poll_start(p: ?*Poll, loop: ?*Loop, events: c_int) void;

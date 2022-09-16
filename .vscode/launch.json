@@ -29,7 +29,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run current file",
-      "program": "/build/bun/packages/debug-bun-linux-x64/bun-debug",
+      "program": "bun-debug",
       "args": ["${file}"],
       "cwd": "${file}/../../",
       "env": {

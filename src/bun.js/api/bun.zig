@@ -1101,6 +1101,9 @@ pub const Class = NewClass(
         .nanoseconds = .{
             .rfn = nanoseconds,
         },
+        .DO_NOT_USE_OR_YOU_WILL_BE_FIRED_mimalloc_dump = .{
+            .rfn = dump_mimalloc,
+        },
         .gzipSync = .{
             .rfn = JSC.wrapWithHasContainer(JSZlib, "gzipSync", false, false, true),
         },
@@ -1190,6 +1193,18 @@ pub const Class = NewClass(
         },
     },
 );
+
+fn dump_mimalloc(
+    _: void,
+    globalThis: JSC.C.JSContextRef,
+    _: JSC.C.JSObjectRef,
+    _: JSC.C.JSObjectRef,
+    _: []const JSC.C.JSValueRef,
+    _: JSC.C.ExceptionRef,
+) JSC.C.JSValueRef {
+    globalThis.bunVM().arena.dumpThreadStats();
+    return JSC.JSValue.jsUndefined().asObjectRef();
+}
 
 pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
@@ -2101,6 +2116,8 @@ pub const Timer = struct {
         return VirtualMachine.vm.timer.last_id;
     }
 
+    const Pool = bun.ObjectPool(Timeout, null, true, 1000);
+
     pub const Timeout = struct {
         id: i32 = 0,
         callback: JSValue,
@@ -2134,11 +2151,13 @@ pub const Timer = struct {
             if (comptime JSC.is_bindgen)
                 unreachable;
 
+            var vm = global.bunVM();
+
             if (!this.cancelled) {
                 if (this.repeat) {
                     this.io_task.?.deinit();
-                    var task = Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, global, this) catch unreachable;
-                    VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, this.id, this) catch unreachable;
+                    var task = Timeout.TimeoutTask.createOnJSThread(vm.allocator, global, this) catch unreachable;
+                    vm.timer.timeouts.put(vm.allocator, this.id, this) catch unreachable;
                     this.io_task = task;
                     task.schedule();
                 }
@@ -2148,12 +2167,12 @@ pub const Timer = struct {
                 if (this.repeat)
                     return;
 
-                VirtualMachine.vm.timer.active -|= 1;
-                VirtualMachine.vm.active_tasks -|= 1;
+                vm.timer.active -|= 1;
+                vm.active_tasks -|= 1;
             } else {
                 // the active tasks count is already cleared for canceled timeout,
                 // add one here to neutralize the `-|= 1` in event loop.
-                VirtualMachine.vm.active_tasks +|= 1;
+                vm.active_tasks +|= 1;
             }
 
             this.clear(global);
@@ -2168,8 +2187,9 @@ pub const Timer = struct {
             _ = VirtualMachine.vm.timer.timeouts.swapRemove(this.id);
             if (this.io_task) |task| {
                 task.deinit();
+                this.io_task = null;
             }
-            VirtualMachine.vm.allocator.destroy(this);
+            Pool.releaseValue(this);
         }
     };
 
@@ -2181,7 +2201,7 @@ pub const Timer = struct {
         repeat: bool,
     ) !void {
         if (comptime is_bindgen) unreachable;
-        var timeout = try VirtualMachine.vm.allocator.create(Timeout);
+        var timeout = Pool.first(globalThis.bunVM().allocator);
         js.JSValueProtect(globalThis.ref(), callback.asObjectRef());
         timeout.* = Timeout{ .id = id, .callback = callback, .interval = countdown.toInt32(), .repeat = repeat };
         var task = try Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, globalThis, timeout);

@@ -2770,7 +2770,6 @@ pub fn castObj(obj: js.JSObjectRef, comptime Type: type) *Type {
 const JSNode = @import("../js_ast.zig").Macro.JSNode;
 const LazyPropertiesObject = @import("../js_ast.zig").Macro.LazyPropertiesObject;
 const ModuleNamespace = @import("../js_ast.zig").Macro.ModuleNamespace;
-const FetchTaskletContext = Fetch.FetchTasklet.FetchTaskletContext;
 const Expect = Test.Expect;
 const DescribeScope = Test.DescribeScope;
 const TestScope = Test.TestScope;
@@ -2824,7 +2823,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     Expect,
     ExpectPrototype,
     FetchEvent,
-    FetchTaskletContext,
     HTMLRewriter,
     JSNode,
     LazyPropertiesObject,
@@ -3497,25 +3495,26 @@ pub fn wrapWithHasContainer(
             }
 
             if (comptime maybe_async) {
-                var vm = ctx.ptr().bunVM();
-                vm.tick();
+                if (result.asPromise() != null or result.asInternalPromise() != null) {
+                    var vm = ctx.ptr().bunVM();
+                    vm.tick();
+                    var promise = JSC.JSInternalPromise.resolvedPromise(ctx.ptr(), result);
 
-                var promise = JSC.JSInternalPromise.resolvedPromise(ctx.ptr(), result);
-
-                switch (promise.status(ctx.ptr().vm())) {
-                    JSC.JSPromise.Status.Pending => {
-                        while (promise.status(ctx.ptr().vm()) == .Pending) {
-                            vm.tick();
-                        }
-                        result = promise.result(ctx.ptr().vm());
-                    },
-                    JSC.JSPromise.Status.Rejected => {
-                        result = promise.result(ctx.ptr().vm());
-                        exception.* = result.asObjectRef();
-                    },
-                    JSC.JSPromise.Status.Fulfilled => {
-                        result = promise.result(ctx.ptr().vm());
-                    },
+                    switch (promise.status(ctx.ptr().vm())) {
+                        JSC.JSPromise.Status.Pending => {
+                            while (promise.status(ctx.ptr().vm()) == .Pending) {
+                                vm.tick();
+                            }
+                            result = promise.result(ctx.ptr().vm());
+                        },
+                        JSC.JSPromise.Status.Rejected => {
+                            result = promise.result(ctx.ptr().vm());
+                            exception.* = result.asObjectRef();
+                        },
+                        JSC.JSPromise.Status.Fulfilled => {
+                            result = promise.result(ctx.ptr().vm());
+                        },
+                    }
                 }
             }
 

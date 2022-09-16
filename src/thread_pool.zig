@@ -93,6 +93,8 @@ pub const Batch = struct {
         if (task.node.next) |node| {
             this.head = @fieldParentPtr(Task, "node", node);
         } else {
+            if (task != this.tail.?) unreachable;
+            this.tail = null;
             this.head = null;
         }
 

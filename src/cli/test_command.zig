@@ -36,6 +36,7 @@ var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
 var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
 const PathString = bun.PathString;
 const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
+const HTTPThread = @import("http").HTTPThread;
 
 const JSC = @import("javascript_core");
 const Jest = JSC.Jest;
@@ -296,6 +297,7 @@ pub const TestCommand = struct {
         };
         JSC.C.JSCInitialize();
         NetworkThread.init() catch {};
+        HTTPThread.init() catch {};
         var reporter = try ctx.allocator.create(CommandLineReporter);
         reporter.* = CommandLineReporter{
             .jest = TestRunner{
@@ -442,10 +444,6 @@ pub const TestCommand = struct {
         Output.prettyErrorln("<r>\n{s}:\n", .{resolution.path_pair.primary.name.filename});
         Output.flush();
         var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
-
-        while (promise.status(vm.global.vm()) == .Pending) {
-            vm.tick();
-        }
 
         switch (promise.status(vm.global.vm())) {
             .Rejected => {

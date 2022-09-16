@@ -2340,6 +2340,7 @@ pub const FileBlobLoader = struct {
         read_frame: anyframe = undefined,
         chunk_size: Blob.SizeType = 0,
         main_thread_task: JSC.AnyTask = .{ .callback = onJSThread, .ctx = null },
+        concurrent_task: JSC.ConcurrentTask = .{},
 
         pub fn taskCallback(task: *NetworkThread.Task) void {
             var this = @fieldParentPtr(FileBlobLoader, "concurrent", @fieldParentPtr(Concurrent, "task", task));
@@ -2475,7 +2476,7 @@ pub const FileBlobLoader = struct {
 
         pub fn scheduleMainThreadTask(this: *FileBlobLoader) void {
             this.concurrent.main_thread_task.ctx = this;
-            this.loop.enqueueTaskConcurrent(JSC.Task.init(&this.concurrent.main_thread_task));
+            this.loop.enqueueTaskConcurrent(this.concurrent.concurrent_task.from(&this.concurrent.main_thread_task));
         }
 
         fn runAsync(this: *FileBlobLoader) void {

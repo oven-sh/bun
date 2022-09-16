@@ -201,7 +201,6 @@ pub fn main() anyerror!void {
     if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests = args.concurrency;
     const Group = struct {
         response_body: MutableString = undefined,
-        request_body: MutableString = undefined,
         context: HTTP.HTTPChannelContext = undefined,
     };
     const Batch = @import("../src/thread_pool.zig").Batch;
@@ -214,8 +213,6 @@ pub fn main() anyerror!void {
             groups[i] = Group{};
             var response_body = &groups[i].response_body;
             response_body.* = try MutableString.init(default_allocator, 1024);
-            var request_body = &groups[i].request_body;
-            request_body.* = try MutableString.init(default_allocator, 0);
 
             var ctx = &groups[i].context;
             ctx.* = .{
@@ -226,8 +223,8 @@ pub fn main() anyerror!void {
                     args.url,
                     args.headers,
                     args.headers_buf,
-                    request_body,
                     response_body,
+                    "",
                     args.timeout,
                 ),
             };

@@ -134,7 +134,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             var vm = global.bunVM();
-            var loop = @ptrCast(*uws.Loop, loop_);
+            var loop = @ptrCast(*uws.Loop, @alignCast(@alignOf(uws.Loop), loop_));
             var ctx: *uws.us_socket_context_t = @ptrCast(*uws.us_socket_context_t, ctx_);
 
             if (vm.uws_event_loop) |other| {
@@ -762,7 +762,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             var vm = global.bunVM();
-            var loop = @ptrCast(*uws.Loop, loop_);
+            var loop = @ptrCast(*uws.Loop, @alignCast(@alignOf(uws.Loop), loop_));
+
             var ctx: *uws.us_socket_context_t = @ptrCast(*uws.us_socket_context_t, ctx_);
 
             if (vm.uws_event_loop) |other| {
@@ -1416,7 +1417,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             adopted.receive_buffer.ensureTotalCapacity(2048) catch return null;
             adopted.event_loop_ref = true;
             adopted.globalThis.bunVM().us_loop_reference_count +|= 1;
-            _ = globalThis.bunVM().eventLoop().ready_tasks_count.fetchAdd(1, .Monotonic);
+            globalThis.bunVM().active_tasks += 1;
+
             var buffered_slice: []u8 = buffered_data[0..buffered_data_len];
             if (buffered_slice.len > 0) {
                 const InitialDataHandler = struct {
@@ -1455,7 +1457,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.event_loop_ref) {
                 this.event_loop_ref = false;
                 this.globalThis.bunVM().us_loop_reference_count -|= 1;
-                _ = this.globalThis.bunVM().eventLoop().ready_tasks_count.fetchSub(1, .Monotonic);
+                this.globalThis.bunVM().active_tasks -|= 1;
             }
 
             this.outgoing_websocket = null;

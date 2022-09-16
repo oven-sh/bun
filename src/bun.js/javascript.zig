@@ -368,7 +368,6 @@ pub const VirtualMachine = struct {
     rare_data: ?*JSC.RareData = null,
     poller: JSC.Poller = JSC.Poller{},
     us_loop_reference_count: usize = 0,
-    disable_run_us_loop: bool = false,
     is_us_loop_entered: bool = false,
 
     pub fn io(this: *VirtualMachine) *IO {
@@ -423,7 +422,7 @@ pub const VirtualMachine = struct {
         this.eventLoop().enqueueTask(task);
     }
 
-    pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: Task) void {
+    pub inline fn enqueueTaskConcurrent(this: *VirtualMachine, task: JSC.ConcurrentTask) void {
         this.eventLoop().enqueueTaskConcurrent(task);
     }
 
@@ -451,7 +450,7 @@ pub const VirtualMachine = struct {
             this.macro_event_loop.tasks.ensureTotalCapacity(16) catch unreachable;
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
-            this.macro_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
+            this.macro_event_loop.concurrent_tasks = .{};
         }
 
         this.bundler.options.platform = .bun_macro;
@@ -555,8 +554,7 @@ pub const VirtualMachine = struct {
             default_allocator,
         );
         VirtualMachine.vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
-        VirtualMachine.vm.regular_event_loop.concurrent_tasks = EventLoop.Queue.init(default_allocator);
-        VirtualMachine.vm.regular_event_loop.concurrent_tasks.ensureUnusedCapacity(8) catch unreachable;
+        VirtualMachine.vm.regular_event_loop.concurrent_tasks = .{};
         VirtualMachine.vm.event_loop = &VirtualMachine.vm.regular_event_loop;
 
         vm.bundler.macro_context = null;
@@ -1435,6 +1433,7 @@ pub const VirtualMachine = struct {
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) !*JSInternalPromise {
         this.main = entry_path;
         try this.entry_point.generate(@TypeOf(this.bundler), &this.bundler, Fs.PathName.init(entry_path), main_file_name);
+        this.eventLoop().ensureWaker();
 
         var promise: *JSInternalPromise = undefined;
 
@@ -1455,7 +1454,15 @@ pub const VirtualMachine = struct {
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
         }
 
-        this.waitForPromise(promise);
+        while (promise.status(this.global.vm()) == .Pending) {
+            this.eventLoop().tick();
+            _ = this.eventLoop().waker.?.wait() catch 0;
+        }
+
+        if (this.us_loop_reference_count > 0) {
+            _ = this.global.vm().runGC(true);
+            this.eventLoop().runUSocketsLoop();
+        }
 
         return promise;
     }

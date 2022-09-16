@@ -141,22 +141,22 @@ describe("Bun.Transpiler", () => {
       x[x["y"] = 0] = "y";
     })(x || (x = {}));
   })(second = first.second || (first.second = {}));
-})(first || (first = {}))`
+})(first || (first = {}))`;
 
     it("exported inner namespace", () => {
       ts.expectPrinted_(input3, output3);
     });
 
-    const input4 = `export enum x { y }`
+    const input4 = `export enum x { y }`;
     const output4 = `export var x;
 (function(x) {
   x[x["y"] = 0] = "y";
-})(x || (x = {}))`
+})(x || (x = {}))`;
 
     it("exported enum", () => {
       ts.expectPrinted_(input4, output4);
     });
-  })
+  });
 
   describe("exports.replace", () => {
     const transpiler = new Bun.Transpiler({

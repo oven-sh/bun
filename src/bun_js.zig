@@ -31,6 +31,7 @@ const which = @import("which.zig").which;
 const VirtualMachine = @import("javascript_core").VirtualMachine;
 const JSC = @import("javascript_core");
 const AsyncHTTP = @import("http").AsyncHTTP;
+const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
 
@@ -39,6 +40,7 @@ pub const Run = struct {
     ctx: Command.Context,
     vm: *VirtualMachine,
     entry_path: string,
+    arena: Arena = undefined,
 
     pub fn boot(ctx: Command.Context, file: std.fs.File, entry_path: string) !void {
         if (comptime JSC.is_bindgen) unreachable;
@@ -46,13 +48,16 @@ pub const Run = struct {
 
         js_ast.Expr.Data.Store.create(default_allocator);
         js_ast.Stmt.Data.Store.create(default_allocator);
+        var arena = try Arena.init();
 
         var run = Run{
-            .vm = try VirtualMachine.init(ctx.allocator, ctx.args, null, ctx.log, null),
+            .vm = try VirtualMachine.init(arena.allocator(), ctx.args, null, ctx.log, null),
             .file = file,
+            .arena = arena,
             .ctx = ctx,
             .entry_path = entry_path,
         };
+        run.vm.arena = &run.arena;
 
         run.vm.argv = ctx.positionals;
 
@@ -131,19 +136,21 @@ pub const Run = struct {
         }
 
         this.vm.global.vm().releaseWeakRefs();
+        _ = this.vm.arena.gc(false);
         _ = this.vm.global.vm().runGC(false);
         this.vm.tick();
 
         {
             var any = false;
-            while (this.vm.*.event_loop.pending_tasks_count.loadUnchecked() > 0 or this.vm.active_tasks > 0) {
+            while (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0) {
                 this.vm.tick();
                 any = true;
                 if (this.vm.active_tasks > 0) {
-                    if (this.vm.event_loop.ready_tasks_count.load(.Monotonic) == 0) {
+                    if (this.vm.eventLoop().tickConcurrentWithCount() == 0) {
+                        _ = this.vm.arena.gc(false);
                         _ = this.vm.global.vm().runGC(false);
 
-                        if (this.vm.event_loop.ready_tasks_count.load(.Monotonic) == 0 and
+                        if (this.vm.eventLoop().tickConcurrentWithCount() == 0 and
                             this.vm.active_tasks > 0)
                         {
                             this.vm.event_loop.ensureWaker();

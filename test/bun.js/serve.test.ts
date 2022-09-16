@@ -158,7 +158,6 @@ describe("streaming", () => {
       });
 
       const response = await fetch(`http://localhost:${server.port}`);
-      console.log("here");
       expect(response.status).toBe(500);
     } catch (e) {
       if (!e || !(e instanceof TestPass)) {

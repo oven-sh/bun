@@ -317,7 +317,6 @@ const NetworkTask = struct {
             header_builder.content = GlobalStringBuilder{ .ptr = @intToPtr([*]u8, @ptrToInt(std.mem.span(default_headers_buf).ptr)), .len = default_headers_buf.len, .cap = default_headers_buf.len };
         }
 
-        this.request_buffer = try MutableString.init(allocator, 0);
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
         this.http = AsyncHTTP.init(
@@ -327,7 +326,7 @@ const NetworkTask = struct {
             header_builder.entries,
             header_builder.content.ptr.?[0..header_builder.content.len],
             &this.response_buffer,
-            &this.request_buffer,
+            "",
             0,
             this.getCompletionCallback(),
         );
@@ -376,7 +375,6 @@ const NetworkTask = struct {
             this.url_buf = tarball.url;
         }
 
-        this.request_buffer = try MutableString.init(allocator, 0);
         this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
 
@@ -410,7 +408,7 @@ const NetworkTask = struct {
             header_builder.entries,
             header_buf,
             &this.response_buffer,
-            &this.request_buffer,
+            "",
             0,
             this.getCompletionCallback(),
         );

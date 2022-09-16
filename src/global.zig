@@ -326,3 +326,5 @@ pub fn rand(bytes: []u8) void {
     const BoringSSL = @import("boringssl");
     _ = BoringSSL.RAND_bytes(bytes.ptr, bytes.len);
 }
+
+pub const ObjectPool = @import("./pool.zig").ObjectPool;

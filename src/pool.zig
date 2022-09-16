@@ -179,6 +179,10 @@ pub fn ObjectPool(
             return node;
         }
 
+        pub fn first(allocator: std.mem.Allocator) *Type {
+            return &get(allocator).data;
+        }
+
         pub fn get(allocator: std.mem.Allocator) *LinkedList.Node {
             if (data().loaded) {
                 if (data().list.popFirst()) |node| {
@@ -202,6 +206,10 @@ pub fn ObjectPool(
             };
 
             return new_node;
+        }
+
+        pub fn releaseValue(value: *Type) void {
+            @fieldParentPtr(LinkedList.Node, "data", value).release();
         }
 
         pub fn release(node: *LinkedList.Node) void {

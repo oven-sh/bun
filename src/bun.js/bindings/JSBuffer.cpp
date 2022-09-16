@@ -248,8 +248,8 @@ static EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject,
             result = Bun__encoding__constructFromLatin1(lexicalGlobalObject, view.characters8(), view.length(), static_cast<uint8_t>(encoding));
             break;
         }
-        case WebCore::BufferEncodingType::ascii:     // ascii is a noop for latin1
-        case WebCore::BufferEncodingType::latin1: {  // The native encoding is latin1, so we don't need to do any conversion.
+        case WebCore::BufferEncodingType::ascii: // ascii is a noop for latin1
+        case WebCore::BufferEncodingType::latin1: { // The native encoding is latin1, so we don't need to do any conversion.
             result = JSBuffer__bufferFromPointerAndLength(lexicalGlobalObject, view.characters8(), view.length());
             break;
         }
@@ -1216,7 +1216,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlo
     if (callFrame->argumentCount() > 2) {
         uint32_t arg_len = 0;
         arg_len = callFrame->argument(2).toUInt32(lexicalGlobalObject);
-        length = std::min(arg_len, length-offset);
+        length = std::min(arg_len, length - offset);
     }
 
     if (callFrame->argumentCount() > 2) {
@@ -1329,7 +1329,6 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBufferConstructor::construc
 
     JSC::JSObject* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
 
-    // TODO: avoid this copy
     MarkedArgumentBuffer args;
     for (size_t i = 0; i < argsCount; ++i)
         args.append(callFrame->uncheckedArgument(i));

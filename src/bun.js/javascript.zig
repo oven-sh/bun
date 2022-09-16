@@ -1454,15 +1454,7 @@ pub const VirtualMachine = struct {
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
         }
 
-        while (promise.status(this.global.vm()) == .Pending) {
-            this.eventLoop().tick();
-            _ = this.eventLoop().waker.?.wait() catch 0;
-        }
-
-        if (this.us_loop_reference_count > 0) {
-            _ = this.global.vm().runGC(true);
-            this.eventLoop().runUSocketsLoop();
-        }
+        this.waitForPromise(promise);
 
         return promise;
     }

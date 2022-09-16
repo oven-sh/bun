@@ -375,8 +375,12 @@ pub const EventLoop = struct {
                 while (promise.status(this.global.vm()) == .Pending) {
                     this.tick();
 
-                    if (this.virtual_machine.uws_event_loop != null) {
-                        this.runUSocketsLoop();
+                    if (promise.status(this.global.vm()) == .Pending) {
+                        if (this.virtual_machine.uws_event_loop != null) {
+                            this.runUSocketsLoop();
+                        } else if (this.waker) |*waker| {
+                            _ = waker.wait() catch 0;
+                        }
                     }
                 }
             },

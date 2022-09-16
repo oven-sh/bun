@@ -738,8 +738,9 @@ pub fn ParseJSONUTF8(
     log: *logger.Log,
     allocator: std.mem.Allocator,
 ) !Expr {
-    var parser = try JSONParser.init(allocator, source.*, log);
-    switch (source.contents.len) {
+    const len = source.contents.len;
+
+    switch (len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
             return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
@@ -756,12 +757,14 @@ pub fn ParseJSONUTF8(
         },
         else => {},
     }
+
+    var parser = try JSONParser.init(allocator, source.*, log);
+    std.debug.assert(parser.source().contents.len > 0);
 
     return try parser.parseExpr(false, true);
 }
 
 pub fn ParseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
-    var parser = try JSONParserForMacro.init(allocator, source.*, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -779,6 +782,8 @@ pub fn ParseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocat
         },
         else => {},
     }
+
+    var parser = try JSONParserForMacro.init(allocator, source.*, log);
 
     return try parser.parseExpr(false, false);
 }
@@ -795,7 +800,6 @@ pub const JSONParseResult = struct {
 };
 
 pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !JSONParseResult {
-    var parser = try JSONParser.init(allocator, source.*, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -814,6 +818,7 @@ pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allo
         else => {},
     }
 
+    var parser = try JSONParser.init(allocator, source.*, log);
     const result = try parser.parseExpr(false, true);
     return JSONParseResult{
         .tag = if (!LEXER_DEBUGGER_WORKAROUND and parser.lexer.is_ascii_only) JSONParseResult.Tag.ascii else JSONParseResult.Tag.expr,
@@ -824,7 +829,6 @@ pub fn ParseJSONForBundling(source: *const logger.Source, log: *logger.Log, allo
 // threadlocal var env_json_auto_quote_buffer: MutableString = undefined;
 // threadlocal var env_json_auto_quote_buffer_loaded: bool = false;
 pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
-    var parser = try DotEnvJSONParser.init(allocator, source.*, log);
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -842,6 +846,8 @@ pub fn ParseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
         },
         else => {},
     }
+
+    var parser = try DotEnvJSONParser.init(allocator, source.*, log);
 
     switch (source.contents[0]) {
         '{', '[', '0'...'9', '"', '\'' => {

@@ -1420,7 +1420,8 @@ pub const CacheLevel = struct {
     use_etag: bool,
     use_last_modified: bool,
 };
-
+const AsyncIO = @import("io");
+const Waker = AsyncIO.Waker;
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
@@ -1473,9 +1474,8 @@ pub const PackageManager = struct {
     global_link_dir: ?std.fs.Dir = null,
     global_dir: ?std.fs.Dir = null,
     global_link_dir_path: string = "",
-
-    sleepy: std.atomic.Atomic(u32) = std.atomic.Atomic(u32).init(0),
-    sleep_delay_counter: u32 = 0,
+    waiter: Waker = undefined,
+    wait_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
 
     const PreallocatedNetworkTasks = std.BoundedArray(NetworkTask, 1024);
     const NetworkTaskQueue = std.HashMapUnmanaged(u64, void, IdentityContext(u64), 80);
@@ -1490,11 +1490,13 @@ pub const PackageManager = struct {
     );
 
     pub fn wake(this: *PackageManager) void {
-        Futex.wake(&this.sleepy, 1);
+        _ = this.wait_count.fetchAdd(1, .Monotonic);
+        this.waiter.wake() catch {};
     }
 
     pub fn sleep(this: *PackageManager) void {
-        Futex.wait(&this.sleepy, 1, std.time.ns_per_ms * 16) catch {};
+        if (this.wait_count.swap(0, .Monotonic) > 0) return;
+        _ = this.waiter.wait() catch 0;
     }
 
     pub fn globalLinkDir(this: *PackageManager) !std.fs.Dir {
@@ -2506,10 +2508,8 @@ pub const PackageManager = struct {
     ) anyerror!void {
         var batch = ThreadPool.Batch{};
         var has_updated_this_run = false;
-        var maybe_sleep = true;
 
         while (manager.network_channel.tryReadItem() catch null) |task_| {
-            maybe_sleep = false;
             var task: *NetworkTask = task_;
             manager.pending_tasks -|= 1;
 
@@ -2724,7 +2724,6 @@ pub const PackageManager = struct {
         }
 
         while (manager.resolve_tasks.tryReadItem() catch null) |task_| {
-            maybe_sleep = false;
             manager.pending_tasks -= 1;
 
             var task: Task = task_;
@@ -2849,16 +2848,6 @@ pub const PackageManager = struct {
                 manager.downloads_node.?.activate();
                 manager.progress.maybeRefresh();
             }
-        }
-
-        manager.sleep_delay_counter = if (maybe_sleep)
-            manager.sleep_delay_counter + 1
-        else
-            0;
-
-        if (manager.sleep_delay_counter >= 5) {
-            manager.sleep_delay_counter = 0;
-            manager.sleep();
         }
     }
 
@@ -3726,6 +3715,7 @@ pub const PackageManager = struct {
             .resolve_tasks = TaskChannel.init(),
             .lockfile = undefined,
             .root_package_json_file = package_json_file,
+            .waiter = try Waker.init(ctx.allocator),
             // .progress
         };
         manager.lockfile = try ctx.allocator.create(Lockfile);
@@ -5273,7 +5263,7 @@ pub const PackageManager = struct {
                 if (!installer.options.do.install_packages) return error.InstallFailed;
             }
 
-            while (this.pending_tasks > 0 and installer.options.do.install_packages) {
+            while (this.pending_tasks > 0 and installer.options.do.install_packages) : (this.sleep()) {
                 try this.runTasks(
                     *PackageInstaller,
                     &installer,
@@ -5645,10 +5635,7 @@ pub const PackageManager = struct {
             }
 
             {
-                manager.sleepy.store(1, .Monotonic);
-                defer manager.sleepy.store(0, .Monotonic);
-
-                while (manager.pending_tasks > 0) {
+                while (manager.pending_tasks > 0) : (manager.sleep()) {
                     try manager.runTasks(void, void{}, null, log_level);
                 }
             }
@@ -5675,8 +5662,6 @@ pub const PackageManager = struct {
         if (manager.log.errors > 0) {
             Global.exit(1);
         }
-
-        // sleep on since we might not need it anymore
 
         const needs_clean_lockfile = had_any_diffs or needs_new_lockfile or manager.package_json_updates.len > 0;
         var did_meta_hash_change = needs_clean_lockfile;

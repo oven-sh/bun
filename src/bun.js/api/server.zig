@@ -389,7 +389,7 @@ pub const ServerConfig = struct {
             }
         } else {
             const hostname: string =
-                if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "localhost";
+                if (has_hostname and std.mem.span(args.hostname).len > 0) std.mem.span(args.hostname) else "0.0.0.0";
             const protocol: string = if (args.ssl_config != null) "https" else "http";
 
             args.base_uri = (if ((args.port == 80 and args.ssl_config == null) or (args.port == 443 and args.ssl_config != null))

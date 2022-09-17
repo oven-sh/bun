@@ -257,6 +257,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
         );
         Global.crash();
     };
+
     defer final_dir.close();
     // and get the fd path
     var final_path = std.os.getFdPath(
@@ -272,5 +273,18 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !string {
         );
         Global.crash();
     };
+
+    // create an index storing each version of a package installed
+    create_index: {
+        var index_dir = cache_dir.makeOpenPath(name, .{ .iterate = true }) catch break :create_index;
+        defer index_dir.close();
+        index_dir.symLink(
+            final_path,
+            // trim "name@" from the prefix
+            folder_name[name.len + 1 ..],
+            .{},
+        ) catch break :create_index;
+    }
+
     return try FileSystem.instance.dirname_store.append(@TypeOf(final_path), final_path);
 }

@@ -24,6 +24,8 @@
   color: 'c66037'
 - name: 'node.js'
   color: '0E8A16'
+- name: 'napi'
+  color: 'BE05D2'
 - name: 'esm<>cjs'
   color: '7dcde3'
 - name: 'performance'

@@ -4280,7 +4280,7 @@ pub const PackageManager = struct {
             // first one is always either:
             // add
             // remove
-            for (positionals) |positional| {
+            outer: for (positionals) |positional| {
                 var request = UpdateRequest{
                     .name = positional,
                 };
@@ -4325,6 +4325,11 @@ pub const PackageManager = struct {
                 request.name = std.mem.trim(u8, request.name, "\n\r\t");
                 if (request.name.len == 0) continue;
 
+                request.name_hash = String.Builder.stringHash(request.name);
+                for (update_requests.constSlice()) |*prev| {
+                    if (prev.name_hash == request.name_hash and request.name.len == prev.name.len) continue :outer;
+                }
+
                 request.version_buf = std.mem.trim(u8, request.version_buf, "\n\r\t");
 
                 // https://github.com/npm/npm-package-arg/blob/fbaf2fd0b72a0f38e7c24260fd4504f4724c9466/npa.js#L330
@@ -4354,7 +4359,7 @@ pub const PackageManager = struct {
                     const sliced = SlicedString.init(request.version_buf, request.version_buf);
                     request.version = Dependency.parse(allocator, request.version_buf, &sliced, log) orelse Dependency.Version{};
                 }
-                request.name_hash = String.Builder.stringHash(request.name);
+
                 update_requests.append(request) catch break;
             }
 

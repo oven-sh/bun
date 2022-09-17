@@ -71,7 +71,7 @@ pub const Lexer = struct {
                 '$' => {
                     i += 1;
                     var start: usize = i;
-                    
+
                     const with_curly_braces = (variable.value[i] == '{');
                     if (with_curly_braces) i += 1;
 
@@ -83,8 +83,8 @@ pub const Lexer = struct {
                             '}' => {
                                 if (with_curly_braces) {
                                     i += 1;
-                                    break;
                                 }
+                                break;
                             },
                             else => {
                                 break;
@@ -1151,6 +1151,33 @@ test "DotEnv Loader - basic" {
     try expectString(map.get("SPACE_BEFORE_EQUALS_SIGN").?, "yes");
     try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
     try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
+}
+
+test "DotEnv Loader - Nested values with curly braces" {
+    const VALID_ENV =
+        \\DB_USER=postgres
+        \\DB_PASS=xyz
+        \\DB_HOST=localhost
+        \\DB_PORT=5432
+        \\DB_NAME=db
+        \\
+        \\DB_USER2=${DB_USER}
+        \\
+        \\DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?pool_timeout=30&connection_limit=22"
+        \\
+    ;
+    const source = logger.Source.initPathString(".env", VALID_ENV);
+    var map = Map.init(default_allocator);
+    Parser.parse(
+        &source,
+        default_allocator,
+        &map,
+        true,
+        false,
+    );
+    try expectString(map.get("DB_USER").?, "postgres");
+    try expectString(map.get("DB_USER2").?, "postgres");
+    try expectString(map.get("DATABASE_URL").?, "postgresql://postgres:xyz@localhost:5432/db?pool_timeout=30&connection_limit=22");
 }
 
 test "DotEnv Process" {

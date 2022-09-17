@@ -74,8 +74,8 @@
 // #endif
 // #include "ClipboardEvent.h"
 // #include "JSClipboardEvent.h"
-// #include "CloseEvent.h"
-// #include "JSCloseEvent.h"
+#include "CloseEvent.h"
+#include "JSCloseEvent.h"
 // #include "CompositionEvent.h"
 // #include "JSCompositionEvent.h"
 // #include "CustomEvent.h"

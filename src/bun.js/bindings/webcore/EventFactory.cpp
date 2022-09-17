@@ -75,16 +75,17 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     case EventInterfaceType: {
         return createWrapper<Event>(globalObject, WTFMove(impl));
     }
-    //     case BeforeUnloadEventInterfaceType:
-    //         return createWrapper<BeforeUnloadEvent>(globalObject, WTFMove(impl));
-    // #if ENABLE(MEDIA_RECORDER)
-    //     case BlobEventInterfaceType:
-    //         return createWrapper<BlobEvent>(globalObject, WTFMove(impl));
-    // #endif
-    //     case ClipboardEventInterfaceType:
-    //         return createWrapper<ClipboardEvent>(globalObject, WTFMove(impl));
-    //     case CloseEventInterfaceType:
-    //         return createWrapper<CloseEvent>(globalObject, WTFMove(impl));
+        //     case BeforeUnloadEventInterfaceType:
+        //         return createWrapper<BeforeUnloadEvent>(globalObject, WTFMove(impl));
+        // #if ENABLE(MEDIA_RECORDER)
+        //     case BlobEventInterfaceType:
+        //         return createWrapper<BlobEvent>(globalObject, WTFMove(impl));
+        // #endif
+        //     case ClipboardEventInterfaceType:
+        //         return createWrapper<ClipboardEvent>(globalObject, WTFMove(impl));
+    case CloseEventInterfaceType: {
+        return createWrapper<CloseEvent>(globalObject, WTFMove(impl));
+    }
     //     case CompositionEventInterfaceType:
     //         return createWrapper<CompositionEvent>(globalObject, WTFMove(impl));
     //     case CustomEventInterfaceType:

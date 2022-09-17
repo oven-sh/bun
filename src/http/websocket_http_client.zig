@@ -186,12 +186,15 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var vm = global.bunVM();
             vm.us_loop_reference_count +|= 1;
             client.event_loop_ref = true;
+            const prev_start_server_on_next_tick = vm.eventLoop().start_server_on_next_tick;
+            vm.eventLoop().start_server_on_next_tick = true;
 
             if (Socket.connect(host_.slice(), port, @ptrCast(*uws.us_socket_context_t, socket_ctx), HTTPClient, client, "tcp")) |out| {
                 out.tcp.timeout(120);
                 return out;
             }
             vm.us_loop_reference_count -|= 1;
+            vm.eventLoop().start_server_on_next_tick = prev_start_server_on_next_tick;
 
             client.clearData();
 

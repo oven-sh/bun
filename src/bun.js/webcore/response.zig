@@ -444,10 +444,10 @@ pub const Fetch = struct {
 
     const JSType = js.JSType;
 
-    const fetch_error_no_args = "fetch() expects a string but received no arguments.";
-    const fetch_error_blank_url = "fetch() URL must not be a blank string.";
+    pub const fetch_error_no_args = "fetch() expects a string but received no arguments.";
+    pub const fetch_error_blank_url = "fetch() URL must not be a blank string.";
     const JSTypeErrorEnum = std.enums.EnumArray(JSType, string);
-    const fetch_type_error_names: JSTypeErrorEnum = brk: {
+    pub const fetch_type_error_names: JSTypeErrorEnum = brk: {
         var errors = JSTypeErrorEnum.initUndefined();
         errors.set(JSType.kJSTypeUndefined, "Undefined");
         errors.set(JSType.kJSTypeNull, "Null");
@@ -459,7 +459,7 @@ pub const Fetch = struct {
         break :brk errors;
     };
 
-    const fetch_type_error_string_values = .{
+    pub const fetch_type_error_string_values = .{
         std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeUndefined)}),
         std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeNull)}),
         std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeBoolean)}),
@@ -469,7 +469,7 @@ pub const Fetch = struct {
         std.fmt.comptimePrint("fetch() expects a string, but received {s}", .{fetch_type_error_names.get(JSType.kJSTypeSymbol)}),
     };
 
-    const fetch_type_error_strings: JSTypeErrorEnum = brk: {
+    pub const fetch_type_error_strings: JSTypeErrorEnum = brk: {
         var errors = JSTypeErrorEnum.initUndefined();
         errors.set(
             JSType.kJSTypeUndefined,
@@ -726,6 +726,8 @@ pub const Fetch = struct {
         var headers: ?Headers = null;
         var method = Method.GET;
         var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+        defer args.deinit();
+
         var url: ZigURL = undefined;
         var first_arg = args.nextEat().?;
         var body: Blob = Blob.initEmpty(ctx);

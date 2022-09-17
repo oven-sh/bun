@@ -1862,6 +1862,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .finalize = .{
                     .rfn = finalize,
                 },
+                .fetch = .{
+                    .rfn = onFetch,
+                },
             },
             .{
                 .port = .{
@@ -1878,6 +1881,123 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 },
             },
         );
+
+        pub fn onFetch(
+            this: *ThisServer,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
+            _: js.ExceptionRef,
+        ) js.JSObjectRef {
+            var globalThis = ctx.ptr();
+
+            if (arguments.len == 0) {
+                const fetch_error = WebCore.Fetch.fetch_error_no_args;
+                return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+            }
+
+            var headers: ?*JSC.FetchHeaders = null;
+            var method = HTTP.Method.GET;
+            var args = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+            defer args.deinit();
+
+            var url: URL = undefined;
+            var first_arg = args.nextEat().?;
+            var body: JSC.WebCore.Body.Value = .{ .Empty = .{} };
+            var existing_request: ?WebCore.Request = null;
+            // TODO: set Host header
+            // TODO: set User-Agent header
+            if (first_arg.isString()) {
+                var url_zig_str = ZigString.init("");
+                JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
+                var temp_url_str = url_zig_str.slice();
+
+                if (temp_url_str.len == 0) {
+                    const fetch_error = JSC.WebCore.Fetch.fetch_error_blank_url;
+                    return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+                }
+
+                url = URL.parse(temp_url_str);
+
+                if (url.hostname.len == 0) {
+                    url = URL.parse(
+                        strings.append(this.allocator, this.base_url_string_for_joining, url.pathname) catch unreachable,
+                    );
+                } else {
+                    temp_url_str = this.allocator.dupe(u8, temp_url_str) catch unreachable;
+                    url = URL.parse(temp_url_str);
+                }
+
+                if (arguments.len >= 2 and arguments[1].?.value().isObject()) {
+                    var opts = JSValue.fromRef(arguments[1]);
+                    if (opts.fastGet(ctx.ptr(), .method)) |method_| {
+                        var slice_ = method_.toSlice(ctx.ptr(), getAllocator(ctx));
+                        defer slice_.deinit();
+                        method = HTTP.Method.which(slice_.slice()) orelse method;
+                    }
+
+                    if (opts.fastGet(ctx.ptr(), .headers)) |headers_| {
+                        if (headers_.as(JSC.FetchHeaders)) |headers__| {
+                            headers = headers__;
+                        } else if (JSC.FetchHeaders.createFromJS(ctx.ptr(), headers_)) |headers__| {
+                            headers = headers__;
+                        }
+                    }
+
+                    if (opts.fastGet(ctx.ptr(), .body)) |body__| {
+                        if (Blob.fromJS(ctx.ptr(), body__, true, false)) |new_blob| {
+                            body = .{ .Blob = new_blob };
+                        } else |_| {
+                            return JSPromise.rejectedPromiseValue(globalThis, ZigString.init("fetch() received invalid body").toErrorInstance(globalThis)).asRef();
+                        }
+                    }
+                }
+            } else if (first_arg.as(Request)) |request_| {
+                existing_request = request_.*;
+            } else {
+                const fetch_error = WebCore.Fetch.fetch_type_error_strings.get(js.JSValueGetType(ctx, arguments[0]));
+                return JSPromise.rejectedPromiseValue(globalThis, ZigString.init(fetch_error).toErrorInstance(globalThis)).asRef();
+            }
+
+            if (existing_request == null) {
+                existing_request = Request{
+                    .url = ZigString.init(url.href),
+                    .headers = headers,
+                    .body = body,
+                    .method = method,
+                };
+            }
+
+            var request = ctx.bunVM().allocator.create(Request) catch unreachable;
+            request.* = existing_request.?;
+            request.url.mark();
+
+            var args_ = [_]JSC.C.JSValueRef{request.toJS(this.globalThis).asObjectRef()};
+            const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(
+                this.globalThis.ref(),
+                this.config.onRequest.asObjectRef(),
+                this.thisObject.asObjectRef(),
+                1,
+                &args_,
+            );
+
+            if (response_value.isAnyError(ctx)) {
+                return JSC.JSPromise.rejectedPromiseValue(ctx, response_value).asObjectRef();
+            }
+
+            if (response_value.isEmptyOrUndefinedOrNull()) {
+                return JSC.JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx)).asObjectRef();
+            }
+
+            // TODO: do this for promises too
+
+            if (response_value.as(JSC.WebCore.Response)) |resp| {
+                resp.url = this.allocator.dupe(u8, url.href) catch unreachable;
+            }
+
+            return JSC.JSPromise.resolvedPromiseValue(ctx, response_value).asObjectRef();
+        }
 
         pub fn stopFromJS(this: *ThisServer) JSC.JSValue {
             if (this.listener != null) {

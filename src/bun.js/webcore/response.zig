@@ -583,15 +583,13 @@ pub const Fetch = struct {
         }
 
         pub fn onReject(this: *FetchTasklet) JSValue {
-            const fetch_error = std.fmt.allocPrint(
-                default_allocator,
-                "fetch() failed {s}\nurl: \"{s}\"",
-                .{
-                    this.result.fail,
-                    this.result.href,
-                },
-            ) catch unreachable;
-            return ZigString.init(fetch_error).toErrorInstance(this.global_this);
+            const fetch_error = JSC.SystemError{
+                .code = ZigString.init(@errorName(this.result.fail)),
+                .message = ZigString.init("fetch() failed"),
+                .path = ZigString.init(this.http.?.url.href),
+            };
+
+            return fetch_error.toErrorInstance(this.global_this);
         }
 
         pub fn onResolve(this: *FetchTasklet) JSValue {

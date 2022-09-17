@@ -1638,6 +1638,7 @@ pub fn handleResponseBodyChunk(
     decoder.consume_trailer = 1;
 
     var bytes_decoded = incoming_data.len;
+    // phr_decode_chunked mutates in-place
     const pret = picohttp.phr_decode_chunked(
         decoder,
         buffer.list.items.ptr + (buffer.list.items.len - incoming_data.len),

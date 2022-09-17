@@ -2053,6 +2053,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (this.keeping_js_alive) return;
 
             this.vm.us_loop_reference_count +|= 1;
+            this.vm.eventLoop().start_server_on_next_tick = true;
             this.keeping_js_alive = true;
         }
 
@@ -2060,6 +2061,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (!this.keeping_js_alive) return;
 
             this.vm.us_loop_reference_count -|= 1;
+            this.vm.eventLoop().start_server_on_next_tick = false;
             this.keeping_js_alive = false;
         }
 

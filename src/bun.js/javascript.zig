@@ -1456,6 +1456,10 @@ pub const VirtualMachine = struct {
 
         this.waitForPromise(promise);
 
+        if (this.eventLoop().start_server_on_next_tick) {
+            this.enterUWSLoop();
+        }
+
         return promise;
     }
 

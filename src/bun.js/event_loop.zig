@@ -209,6 +209,7 @@ pub const EventLoop = struct {
     global: *JSGlobalObject = undefined,
     virtual_machine: *VirtualMachine = undefined,
     waker: ?AsyncIO.Waker = null,
+    start_server_on_next_tick: bool = false,
     defer_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 
@@ -353,16 +354,17 @@ pub const EventLoop = struct {
         ctx.global.vm().releaseWeakRefs();
         ctx.global.vm().drainMicrotasks();
 
-        if (ctx.us_loop_reference_count > 0 and !ctx.is_us_loop_entered) {
+        if (ctx.us_loop_reference_count > 0 and !ctx.is_us_loop_entered and (ctx.uws_event_loop.?.num_polls > 0 or this.start_server_on_next_tick)) {
             if (this.tickConcurrentWithCount() > 0) {
                 this.tick();
-            } else if (ctx.uws_event_loop.?.num_polls > 0) {
+            } else {
                 if ((@intCast(c_ulonglong, ctx.uws_event_loop.?.internal_loop_data.iteration_nr) % 1_000) == 1) {
                     _ = ctx.global.vm().runGC(true);
                 }
             }
 
             ctx.is_us_loop_entered = true;
+            this.start_server_on_next_tick = false;
             ctx.enterUWSLoop();
             ctx.is_us_loop_entered = false;
         }

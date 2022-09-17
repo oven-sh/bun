@@ -1990,7 +1990,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 return JSC.JSPromise.rejectedPromiseValue(ctx, ZigString.init("fetch() returned an empty value").toErrorInstance(ctx)).asObjectRef();
             }
 
-            // TODO: do this for promises too
+            if (response_value.asPromise() != null) {
+                return response_value.asObjectRef();
+            }
 
             if (response_value.as(JSC.WebCore.Response)) |resp| {
                 resp.url = this.allocator.dupe(u8, url.href) catch unreachable;

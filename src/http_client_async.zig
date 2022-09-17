@@ -351,7 +351,7 @@ pub const HTTPThread = struct {
         };
 
         var thread = try std.Thread.spawn(.{
-            .stack_size = 16 * 1024 * 1024,
+            .stack_size = 4 * 1024 * 1024,
         }, onStart, .{});
         thread.detach();
     }
@@ -451,23 +451,6 @@ pub const HTTPThread = struct {
 };
 
 const log = Output.scoped(.fetch, false);
-
-const AnySocket = union {
-    https: NewHTTPContext(true).HTTPSocket,
-    http: NewHTTPContext(false).HTTPSocket,
-    none: void,
-
-    pub inline fn field(self: @This(), comptime is_ssl: bool) *uws.Socket {
-        return switch (is_ssl) {
-            true => self.https.socket,
-            false => self.http.socket,
-        };
-    }
-
-    pub inline fn client(self: *@This()) *HTTPClient {
-        return @fieldParentPtr(HTTPClient, "socket", self);
-    }
-};
 
 pub fn onOpen(
     client: *HTTPClient,
@@ -590,7 +573,6 @@ pub const InternalState = struct {
     body_out_str: ?*MutableString = null,
     compressed_body: ?*MutableString = null,
     body_size: usize = 0,
-    chunked_offset: usize = 0,
     request_body: []const u8 = "",
     request_sent_len: usize = 0,
     fail: anyerror = error.NoError,
@@ -1280,9 +1262,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 if (available.len == 0) {
                     this.state.request_message.?.release();
                     this.state.request_message = null;
-                    this.fail(error.ResponseHeadersTooLarge);
-                    socket.shutdown();
-                    socket.close(0, null);
+                    this.closeAndFail(error.ResponseHeaderTooLarge, is_ssl, socket);
                     return;
                 }
 
@@ -1325,7 +1305,6 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                     },
                     else => {
                         this.closeAndFail(err, is_ssl, socket);
-                        return;
                     },
                 }
                 return;
@@ -1652,23 +1631,19 @@ pub fn handleResponseBodyChunk(
     var decoder = &this.state.chunked_decoder;
     var buffer_ = this.state.getBodyBuffer();
     var buffer = buffer_.*;
-    this.state.chunked_offset += incoming_data.len;
     try buffer.appendSlice(incoming_data);
 
     // set consume_trailer to 1 to discard the trailing header
     // using content-encoding per chunk is not supported
     decoder.consume_trailer = 1;
 
-    // these variable names are terrible
-    // it's copypasta from https://github.com/h2o/picohttpparser#phr_decode_chunked
-    // (but ported from C -> zig)
+    var bytes_decoded = incoming_data.len;
     const pret = picohttp.phr_decode_chunked(
         decoder,
-        buffer.list.items.ptr,
-
-        // this represents the position that we are currently at in the buffer
-        &this.state.chunked_offset,
+        buffer.list.items.ptr + (buffer.list.items.len - incoming_data.len),
+        &bytes_decoded,
     );
+    buffer.list.items.len -|= incoming_data.len - bytes_decoded;
 
     switch (pret) {
         // Invalid HTTP response body
@@ -1688,7 +1663,6 @@ pub fn handleResponseBodyChunk(
             } else {
                 this.state.body_out_str.?.* = buffer;
             }
-
             return false;
         },
         // Done
@@ -1706,6 +1680,8 @@ pub fn handleResponseBodyChunk(
             return true;
         },
     }
+
+    unreachable;
 }
 
 pub fn handleResponseMetadata(

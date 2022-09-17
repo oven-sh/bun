@@ -3631,8 +3631,10 @@ curl -o zig.tar.gz -sL https://github.com/oven-sh/zig/releases/download/jul1/zig
 
 # This will extract to $HOME/.bun-tools/zig
 tar -xvf zig.tar.gz -C $HOME/.bun-tools/
+rm zig.tar.gz
 
 # Make sure it gets trusted
+# If you get an error 'No such xattr: com.apple.quarantine', that means it's already trusted and you can continue
 xattr -d com.apple.quarantine $HOME/.bun-tools/zig/zig
 ```
 
@@ -3671,8 +3673,8 @@ In `bun`:
 
 ```bash
 # If you omit --depth=1, `git submodule update` will take 17.5 minutes on 1gbps internet, mostly due to WebKit.
-git submodule update --init --recursive --progress --depth=1
-make vendor identifier-cache jsc dev
+git submodule update --init --recursive --progress --depth=1 --checkout
+make vendor identifier-cache bindings jsc dev
 ```
 
 #### Verify it worked (macOS)

@@ -70,10 +70,10 @@ pub const Lexer = struct {
             switch (variable.value[i]) {
                 '$' => {
                     i += 1;
-                    var start: usize = i;
+                    const start = i;
 
-                    const with_curly_braces = (variable.value[i] == '{');
-                    if (with_curly_braces) i += 1;
+                    const curly_braces_offset: usize = if (variable.value[i] == '{') 1 else 0;
+                    i += curly_braces_offset;
 
                     while (i < variable.value.len) {
                         switch (variable.value[i]) {
@@ -81,9 +81,7 @@ pub const Lexer = struct {
                                 i += 1;
                             },
                             '}' => {
-                                if (with_curly_braces) {
-                                    i += 1;
-                                }
+                                i += curly_braces_offset;
                                 break;
                             },
                             else => {
@@ -94,12 +92,7 @@ pub const Lexer = struct {
 
                     try writer.writeAll(variable.value[last_flush .. start - 1]);
                     last_flush = i;
-                    var end: usize = i;
-                    if (with_curly_braces) {
-                        start += 1;
-                        end -= 1;
-                    }
-                    const name = variable.value[start..end];
+                    const name = variable.value[start + curly_braces_offset .. i - curly_braces_offset];
 
                     if (@call(.{ .modifier = .always_inline }, getter, .{ ctx, name })) |new_value| {
                         if (new_value.len > 0) {

@@ -72,7 +72,7 @@ pub const Lexer = struct {
                     i += 1;
                     const start = i;
 
-                    const curly_braces_offset: usize = if (variable.value[i] == '{') 1 else 0;
+                    const curly_braces_offset = @as(usize, @boolToInt(variable.value[i] == '{'));
                     i += curly_braces_offset;
 
                     while (i < variable.value.len) {

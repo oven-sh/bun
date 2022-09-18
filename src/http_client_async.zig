@@ -116,7 +116,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 if (this.pending_sockets.get()) |pending| {
                     socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
                     socket.flush();
-                    socket.timeout(60);
+                    socket.timeout(300);
 
                     pending.http_socket = socket;
                     @memcpy(&pending.hostname_buf, hostname.ptr, hostname.len);
@@ -306,11 +306,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
             client.connected_url.hostname = hostname;
 
             if (comptime FeatureFlags.enable_keepalive) {
-                if (this.existingSocket(hostname, port)) |sock| {
-                    sock.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
-                    client.allow_retry = true;
-                    client.onOpen(comptime ssl, sock);
-                    return sock;
+                if (!client.disable_keepalive) {
+                    if (this.existingSocket(hostname, port)) |sock| {
+                        sock.ext(**anyopaque).?.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                        client.allow_retry = true;
+                        client.onOpen(comptime ssl, sock);
+                        return sock;
+                    }
                 }
             }
 
@@ -701,6 +703,10 @@ redirect: ?*URLBufferPool.Node = null,
 timeout: usize = 0,
 progress_node: ?*std.Progress.Node = null,
 received_keep_alive: bool = false,
+
+disable_timeout: bool = false,
+disable_keepalive: bool = false,
+
 state: InternalState = .{},
 
 completion_callback: HTTPClientResult.Callback = undefined,

@@ -26,7 +26,7 @@ pub const MutableString = struct {
     pub fn deinit(str: *MutableString) void {
         if (str.list.capacity > 0) {
             str.list.expandToCapacity();
-            str.list.deinit(str.allocator);
+            str.list.clearAndFree(str.allocator);
         }
     }
 

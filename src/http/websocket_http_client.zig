@@ -135,7 +135,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn register(global: *JSC.JSGlobalObject, loop_: *anyopaque, ctx_: *anyopaque) callconv(.C) void {
             var vm = global.bunVM();
             var loop = @ptrCast(*uws.Loop, @alignCast(@alignOf(uws.Loop), loop_));
-            var ctx: *uws.us_socket_context_t = @ptrCast(*uws.us_socket_context_t, ctx_);
+            var ctx: *uws.SocketContext = @ptrCast(*uws.SocketContext, ctx_);
 
             if (vm.uws_event_loop) |other| {
                 std.debug.assert(other == loop);
@@ -189,7 +189,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             const prev_start_server_on_next_tick = vm.eventLoop().start_server_on_next_tick;
             vm.eventLoop().start_server_on_next_tick = true;
 
-            if (Socket.connect(host_.slice(), port, @ptrCast(*uws.us_socket_context_t, socket_ctx), HTTPClient, client, "tcp")) |out| {
+            if (Socket.connect(host_.slice(), port, @ptrCast(*uws.SocketContext, socket_ctx), HTTPClient, client, "tcp")) |out| {
                 out.tcp.timeout(120);
                 return out;
             }
@@ -767,7 +767,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             var vm = global.bunVM();
             var loop = @ptrCast(*uws.Loop, @alignCast(@alignOf(uws.Loop), loop_));
 
-            var ctx: *uws.us_socket_context_t = @ptrCast(*uws.us_socket_context_t, ctx_);
+            var ctx: *uws.SocketContext = @ptrCast(*uws.SocketContext, ctx_);
 
             if (vm.uws_event_loop) |other| {
                 std.debug.assert(other == loop);
@@ -1402,7 +1402,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             buffered_data_len: usize,
         ) callconv(.C) ?*anyopaque {
             var tcp = @ptrCast(*uws.Socket, input_socket);
-            var ctx = @ptrCast(*uws.us_socket_context_t, socket_ctx);
+            var ctx = @ptrCast(*uws.SocketContext, socket_ctx);
             var adopted = Socket.adopt(
                 tcp,
                 ctx,

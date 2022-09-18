@@ -18861,12 +18861,16 @@ pub const SSL_CTX = opaque {
     pub fn init() ?*SSL_CTX {
         var ctx = SSL_CTX_new(TLS_with_buffers_method()) orelse return null;
         ctx.setCustomVerify(noop_custom_verify);
+        ctx.setup();
+        return ctx;
+    }
+
+    pub fn setup(ctx: *SSL_CTX) void {
         if (auto_crypto_buffer_pool == null) auto_crypto_buffer_pool = CRYPTO_BUFFER_POOL_new();
         SSL_CTX_set0_buffer_pool(ctx, auto_crypto_buffer_pool);
         // _ = SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
         _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
         SSL_CTX_set_quiet_shutdown(ctx, 1);
-        return ctx;
     }
 
     pub inline fn setCustomVerify(this: *SSL_CTX, cb: ?VerifyCallback) void {
@@ -18880,7 +18884,7 @@ fn noop_custom_verify(_: *SSL, _: [*c]u8) callconv(.C) VerifyResult {
     return VerifyResult.ok;
 }
 
-var auto_crypto_buffer_pool: ?*CRYPTO_BUFFER_POOL = null;
+threadlocal var auto_crypto_buffer_pool: ?*CRYPTO_BUFFER_POOL = null;
 
 pub const BIOMethod = struct {
     pub const create = fn (*BIO) callconv(.C) c_int;

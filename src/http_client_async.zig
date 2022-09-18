@@ -19,7 +19,7 @@ const Zlib = @import("./zlib.zig");
 const StringBuilder = @import("./string_builder.zig");
 const AsyncIO = @import("io");
 const ThreadPool = @import("thread_pool");
-const boring = @import("boringssl");
+const BoringSSL = @import("boringssl");
 pub const NetworkThread = @import("./network_thread.zig");
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const SOCK = os.SOCK;
@@ -56,7 +56,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
         };
 
         pending_sockets: HiveArray(PooledSocket, pool_size) = HiveArray(PooledSocket, pool_size).init(),
-        us_socket_context: *uws.us_socket_context_t,
+        us_socket_context: *uws.SocketContext,
 
         const Context = @This();
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
@@ -78,10 +78,21 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
         const MAX_KEEPALIVE_HOSTNAME = 128;
 
+        pub fn sslCtx(this: *@This()) *BoringSSL.SSL_CTX {
+            if (comptime !ssl) {
+                unreachable;
+            }
+
+            return @ptrCast(*BoringSSL.SSL_CTX, this.us_socket_context.getNativeHandle(true));
+        }
+
         pub fn init(this: *@This()) !void {
             var opts: uws.us_socket_context_options_t = undefined;
             @memset(@ptrCast([*]u8, &opts), 0, @sizeOf(uws.us_socket_context_options_t));
             this.us_socket_context = uws.us_create_socket_context(ssl_int, http_thread.loop, @sizeOf(usize), opts).?;
+            if (comptime ssl) {
+                this.sslCtx().setup();
+            }
 
             HTTPSocket.configure(
                 this.us_socket_context,
@@ -457,6 +468,10 @@ pub fn onOpen(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    if (comptime Environment.allow_assert) {
+        std.debug.assert(is_ssl == client.url.isHTTPS());
+    }
+
     log("Connected {s} \n", .{client.url.href});
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);

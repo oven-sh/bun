@@ -1214,7 +1214,9 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             std.debug.assert(list.items.len == writer.context.items.len);
             if (this.state.request_body.len > 0 and list.capacity - list.items.len > 0) {
                 var remain = list.items.ptr[list.items.len..list.capacity];
-                @memcpy(remain.ptr, this.state.request_body.ptr, @minimum(remain.len, this.state.request_body.len));
+                const wrote = @minimum(remain.len, this.state.request_body.len);
+                @memcpy(remain.ptr, this.state.request_body.ptr, wrote);
+                list.items.len += wrote;
             }
 
             const to_send = list.items[this.state.request_sent_len..];

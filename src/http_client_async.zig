@@ -485,13 +485,29 @@ pub fn onClose(
     _ = socket;
     log("Closed  {s}\n", .{client.url.href});
 
+    const in_progress = client.state.stage != .done and client.state.stage != .fail;
+
+    // if the peer closed after a full chunk, treat this
+    // as if the transfer had complete, browsers appear to ignore
+    // a missing 0\r\n chunk
+    if (in_progress and client.state.transfer_encoding == .chunked) {
+        if (picohttp.phr_decode_chunked_is_in_data(&client.state.chunked_decoder) == 0) {
+            if (client.state.compressed_body orelse client.state.body_out_str) |body| {
+                if (body.list.items.len > 0) {
+                    client.done(comptime is_ssl, if (is_ssl) &http_thread.https_context else &http_thread.http_context, socket);
+                    return;
+                }
+            }
+        }
+    }
+
     if (client.allow_retry) {
         client.allow_retry = false;
         client.start(client.state.request_body, client.state.body_out_str.?);
         return;
     }
 
-    if (client.state.stage != .done and client.state.stage != .fail)
+    if (in_progress)
         client.fail(error.ConnectionClosed);
 }
 pub fn onTimeout(

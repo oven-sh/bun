@@ -1192,7 +1192,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             defer if (list.capacity > stack_fallback.buffer.len) list.deinit();
             var writer = &list.writer();
 
-            socket.timeout(60);
+            this.setTimeout(socket, 60);
 
             const request = this.buildRequest(this.state.request_body.len);
             writeRequest(
@@ -1251,7 +1251,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             }
         },
         .body => {
-            socket.timeout(60);
+            this.setTimeout(socket, 60);
 
             const to_send = this.state.request_body;
             const amount = socket.write(to_send, true);
@@ -1332,7 +1332,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                             this.state.request_message.?.sent = @truncate(u32, amount_read);
                         }
 
-                        socket.timeout(60);
+                        this.setTimeout(socket, 60);
                     },
                     else => {
                         this.closeAndFail(err, is_ssl, socket);
@@ -1422,6 +1422,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                     }
                 }
             } else if (this.state.response_stage == .body_chunk) {
+                this.setTimeout(socket, 500);
                 {
                     const is_done = this.handleResponseBodyChunk(pending_buffers[0]) catch |err| {
                         this.closeAndFail(err, is_ssl, socket);
@@ -1446,12 +1447,12 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                     }
                 }
 
-                socket.timeout(60);
+                this.setTimeout(socket, 60);
             }
         },
 
         .body => {
-            socket.timeout(60);
+            this.setTimeout(socket, 60);
 
             const is_done = this.handleResponseBody(incoming_data) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
@@ -1465,7 +1466,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
         },
 
         .body_chunk => {
-            socket.timeout(60);
+            this.setTimeout(socket, 500);
 
             const is_done = this.handleResponseBodyChunk(incoming_data) catch |err| {
                 this.closeAndFail(err, is_ssl, socket);
@@ -1500,6 +1501,15 @@ fn fail(this: *HTTPClient, err: anyerror) void {
     callback.run(result);
 }
 
+pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
+    if (this.disable_timeout) {
+        socket.timeout(0);
+        return;
+    }
+
+    socket.timeout(amount);
+}
+
 pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     var out_str = this.state.body_out_str.?;
     var body = out_str.*;
@@ -1512,7 +1522,7 @@ pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ss
 
     socket.ext(**anyopaque).?.* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
 
-    if (this.state.allow_keepalive and !socket.isClosed() and FeatureFlags.enable_keepalive) {
+    if (this.state.allow_keepalive and !this.disable_keepalive and !socket.isClosed() and FeatureFlags.enable_keepalive) {
         ctx.releaseSocket(
             socket,
             this.connected_url.hostname,

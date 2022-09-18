@@ -622,17 +622,13 @@ pub const Fetch = struct {
 
         pub fn get(
             allocator: std.mem.Allocator,
-            method: Method,
-            url: ZigURL,
-            headers: Headers,
-            request_body: Blob,
-            timeout: usize,
             globalThis: *JSC.JSGlobalObject,
             promise: JSValue,
+            fetch_options: FetchOptions,
         ) !*FetchTasklet {
             var jsc_vm = globalThis.bunVM();
             var fetch_tasklet = try jsc_vm.allocator.create(FetchTasklet);
-            if (request_body.store) |store| {
+            if (fetch_options.body.store) |store| {
                 store.ref();
             }
 
@@ -646,20 +642,20 @@ pub const Fetch = struct {
                 },
                 .http = try jsc_vm.allocator.create(HTTPClient.AsyncHTTP),
                 .javascript_vm = jsc_vm,
-                .request_body = request_body,
+                .request_body = fetch_options.body,
                 .global_this = globalThis,
-                .request_headers = headers,
+                .request_headers = fetch_options.headers,
                 .ref = JSC.napi.Ref.create(globalThis, promise),
             };
             fetch_tasklet.http.?.* = HTTPClient.AsyncHTTP.init(
                 allocator,
-                method,
-                url,
-                headers.entries,
-                headers.buf.items,
+                fetch_options.method,
+                fetch_options.url,
+                fetch_options.headers.entries,
+                fetch_options.headers.buf.items,
                 &fetch_tasklet.response_buffer,
-                request_body.sharedView(),
-                timeout,
+                fetch_options.body.sharedView(),
+                fetch_options.timeout,
                 HTTPClient.HTTPClientResult.Callback.New(
                     *FetchTasklet,
                     FetchTasklet.callback,
@@ -667,29 +663,33 @@ pub const Fetch = struct {
                     fetch_tasklet,
                 ),
             );
+            fetch_tasklet.http.?.client.disable_timeout = fetch_options.disable_timeout;
+            fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
             return fetch_tasklet;
         }
+
+        const FetchOptions = struct {
+            method: Method,
+            headers: Headers,
+            body: Blob,
+            timeout: usize,
+            disable_timeout: bool,
+            disable_keepalive: bool,
+            url: ZigURL,
+        };
 
         pub fn queue(
             allocator: std.mem.Allocator,
             global: *JSGlobalObject,
-            method: Method,
-            url: ZigURL,
-            headers: Headers,
-            request_body: Blob,
-            timeout: usize,
+            fetch_options: FetchOptions,
             promise: JSValue,
         ) !*FetchTasklet {
             try HTTPClient.HTTPThread.init();
             var node = try get(
                 allocator,
-                method,
-                url,
-                headers,
-                request_body,
-                timeout,
                 global,
                 promise,
+                fetch_options,
             );
 
             var batch = NetworkThread.Batch{};
@@ -731,6 +731,8 @@ pub const Fetch = struct {
         var url: ZigURL = undefined;
         var first_arg = args.nextEat().?;
         var body: Blob = Blob.initEmpty(ctx);
+        var disable_timeout = false;
+        var disable_keepalive = false;
         if (first_arg.isString()) {
             var url_zig_str = ZigString.init("");
             JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
@@ -774,6 +776,22 @@ pub const Fetch = struct {
                         return JSPromise.rejectedPromiseValue(globalThis, ZigString.init("fetch() received invalid body").toErrorInstance(globalThis)).asRef();
                     }
                 }
+
+                if (options.get(ctx, "timeout")) |timeout_value| {
+                    if (timeout_value.isBoolean()) {
+                        disable_timeout = !timeout_value.asBoolean();
+                    } else if (timeout_value.isNumber()) {
+                        disable_timeout = timeout_value.to(i32) == 0;
+                    }
+                }
+
+                if (options.get(ctx, "keepalive")) |keepalive_value| {
+                    if (keepalive_value.isBoolean()) {
+                        disable_keepalive = !keepalive_value.asBoolean();
+                    } else if (keepalive_value.isNumber()) {
+                        disable_keepalive = keepalive_value.to(i32) == 0;
+                    }
+                }
             }
         } else if (first_arg.as(Request)) |request| {
             url = ZigURL.parse(request.url.dupe(getAllocator(ctx)) catch unreachable);
@@ -793,13 +811,17 @@ pub const Fetch = struct {
         _ = FetchTasklet.queue(
             default_allocator,
             globalThis,
-            method,
-            url,
-            headers orelse Headers{
-                .allocator = bun.default_allocator,
+            .{
+                .method = method,
+                .url = url,
+                .headers = headers orelse Headers{
+                    .allocator = bun.default_allocator,
+                },
+                .body = body,
+                .timeout = std.time.ns_per_hour,
+                .disable_keepalive = disable_keepalive,
+                .disable_timeout = disable_timeout,
             },
-            body,
-            std.time.ns_per_hour,
             JSC.JSValue.fromRef(deferred_promise),
         ) catch unreachable;
         return deferred_promise;

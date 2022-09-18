@@ -238,7 +238,7 @@ pub fn init() !void {
         @compileLog("TODO: Waker");
     }
 
-    global.thread = try std.Thread.spawn(.{ .stack_size = 64 * 1024 * 1024 }, onStartIOThread, .{
+    global.thread = try std.Thread.spawn(.{ .stack_size = 2 * 1024 * 1024 }, onStartIOThread, .{
         global.waker,
     });
     global.thread.detach();

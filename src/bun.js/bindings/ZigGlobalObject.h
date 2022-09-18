@@ -353,7 +353,11 @@ public:
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
 
     // When a napi module initializes on dlopen, we need to know what the value is
+    // This value is not observed by GC. It should be extremely ephemeral.
     JSValue pendingNapiModule = JSValue {};
+    // We need to know if the napi module registered itself or we registered it.
+    // To do that, we count the number of times we register a module.
+    int napiModuleRegisterCallCount = 0;
 
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 

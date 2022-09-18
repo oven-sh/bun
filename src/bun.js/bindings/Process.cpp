@@ -114,6 +114,7 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
     (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject_);
+    auto callCountAtStart = globalObject->napiModuleRegisterCallCount;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSC::VM& vm = globalObject->vm();
 
@@ -144,15 +145,19 @@ static JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    if (JSValue pendingModule = globalObject->pendingNapiModule) {
+    if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
+        JSValue pendingModule = globalObject->pendingNapiModule;
         globalObject->pendingNapiModule = JSValue {};
-        if (pendingModule.isCell() && pendingModule.getObject()->isErrorInstance()) {
-            JSC::throwException(globalObject, scope, pendingModule);
-            return JSC::JSValue::encode(JSC::JSValue {});
+        globalObject->napiModuleRegisterCallCount = 0;
+
+        if (pendingModule) {
+            if (pendingModule.isCell() && pendingModule.getObject()->isErrorInstance()) {
+                JSC::throwException(globalObject, scope, pendingModule);
+                return JSC::JSValue::encode(JSC::JSValue {});
+            }
+            return JSC::JSValue::encode(pendingModule);
         }
-        return JSC::JSValue::encode(pendingModule);
     }
-    globalObject->pendingNapiModule = JSValue {};
 
     JSC::EncodedJSValue (*napi_register_module_v1)(JSC::JSGlobalObject * globalObject,
         JSC::EncodedJSValue exports);

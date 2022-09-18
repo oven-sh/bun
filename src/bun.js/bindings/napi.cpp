@@ -478,6 +478,7 @@ extern "C" void napi_module_register(napi_module* mod)
 {
     auto* globalObject = Bun__getDefaultGlobal();
     JSC::VM& vm = globalObject->vm();
+    globalObject->napiModuleRegisterCallCount++;
     JSC::JSObject* object = globalObject->pendingNapiModule.getObject();
     if (!object) {
         object = JSC::constructEmptyObject(globalObject);
@@ -789,6 +790,7 @@ extern "C" napi_status napi_get_reference_value(napi_env env, napi_ref ref,
 {
     NapiRef* napiRef = toJS(ref);
     *result = toNapi(napiRef->value());
+
     return napi_ok;
 }
 

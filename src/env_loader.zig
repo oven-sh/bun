@@ -72,10 +72,17 @@ pub const Lexer = struct {
                     i += 1;
                     const start = i;
 
+                    const curly_braces_offset: usize = if (variable.value[i] == '{') 1 else 0;
+                    i += curly_braces_offset;
+
                     while (i < variable.value.len) {
                         switch (variable.value[i]) {
                             'a'...'z', 'A'...'Z', '0'...'9', '-', '_' => {
                                 i += 1;
+                            },
+                            '}' => {
+                                i += curly_braces_offset;
+                                break;
                             },
                             else => {
                                 break;
@@ -85,7 +92,7 @@ pub const Lexer = struct {
 
                     try writer.writeAll(variable.value[last_flush .. start - 1]);
                     last_flush = i;
-                    const name = variable.value[start..i];
+                    const name = variable.value[start + curly_braces_offset .. i - curly_braces_offset];
 
                     if (@call(.{ .modifier = .always_inline }, getter, .{ ctx, name })) |new_value| {
                         if (new_value.len > 0) {
@@ -1089,9 +1096,16 @@ test "DotEnv Loader - basic" {
         \\
         \\NESTED_VALUE='$API_KEY'
         \\
+        \\NESTED_VALUE_WITH_CURLY_BRACES='${API_KEY}'
+        \\NESTED_VALUE_WITHOUT_OPENING_CURLY_BRACE='$API_KEY}'
+        \\
         \\RECURSIVE_NESTED_VALUE=$NESTED_VALUE:$API_KEY
         \\
+        \\RECURSIVE_NESTED_VALUE_WITH_CURLY_BRACES=${NESTED_VALUE}:${API_KEY}
+        \\
         \\NESTED_VALUES_RESPECT_ESCAPING='\$API_KEY'
+        \\
+        \\NESTED_VALUES_WITH_CURLY_BRACES_RESPECT_ESCAPING='\${API_KEY}'
         \\
         \\EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING=''
         \\
@@ -1108,9 +1122,13 @@ test "DotEnv Loader - basic" {
         false,
     );
     try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "\\$API_KEY");
+    try expectString(map.get("NESTED_VALUES_WITH_CURLY_BRACES_RESPECT_ESCAPING").?, "\\${API_KEY}");
 
     try expectString(map.get("NESTED_VALUE").?, "verysecure");
+    try expectString(map.get("NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure");
+    try expectString(map.get("NESTED_VALUE_WITHOUT_OPENING_CURLY_BRACE").?, "verysecure}");
     try expectString(map.get("RECURSIVE_NESTED_VALUE").?, "verysecure:verysecure");
+    try expectString(map.get("RECURSIVE_NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure:verysecure");
 
     try expectString(map.get("API_KEY").?, "verysecure");
     try expectString(map.get("process.env.WAT").?, "ABCDEFGHIJKLMNOPQRSTUVWXYZZ10239457123");
@@ -1126,6 +1144,33 @@ test "DotEnv Loader - basic" {
     try expectString(map.get("SPACE_BEFORE_EQUALS_SIGN").?, "yes");
     try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
     try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
+}
+
+test "DotEnv Loader - Nested values with curly braces" {
+    const VALID_ENV =
+        \\DB_USER=postgres
+        \\DB_PASS=xyz
+        \\DB_HOST=localhost
+        \\DB_PORT=5432
+        \\DB_NAME=db
+        \\
+        \\DB_USER2=${DB_USER}
+        \\
+        \\DATABASE_URL="postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?pool_timeout=30&connection_limit=22"
+        \\
+    ;
+    const source = logger.Source.initPathString(".env", VALID_ENV);
+    var map = Map.init(default_allocator);
+    Parser.parse(
+        &source,
+        default_allocator,
+        &map,
+        true,
+        false,
+    );
+    try expectString(map.get("DB_USER").?, "postgres");
+    try expectString(map.get("DB_USER2").?, "postgres");
+    try expectString(map.get("DATABASE_URL").?, "postgresql://postgres:xyz@localhost:5432/db?pool_timeout=30&connection_limit=22");
 }
 
 test "DotEnv Process" {

@@ -189,6 +189,7 @@ extern "C" void JSCInitialize()
         JSC::Options::useJIT() = true;
         JSC::Options::useBBQJIT() = true;
         JSC::Options::useJITCage() = false;
+        JSC::Options::useShadowRealm() = true;
         JSC::Options::ensureOptionsAreCoherent();
     }
 }

@@ -1707,30 +1707,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.doRender();
         }
 
-        pub fn resolveRequestBody(this: *RequestContext) void {
-            if (this.aborted) {
-                this.finalizeForAbort();
-                return;
-            }
-            const request = JSC.JSValue.fromRef(this.request_js_object);
-            request.ensureStillAlive();
-            if (request.as(Request)) |req| {
-                var bytes = this.request_body_buf.toOwnedSlice(this.allocator);
-                var old = req.body;
-                req.body = .{
-                    .Blob = if (bytes.len > 0)
-                        Blob.init(bytes, this.allocator, this.server.globalThis)
-                    else
-                        Blob.initEmpty(this.server.globalThis),
-                };
-                if (old == .Locked)
-                    old.resolve(&req.body, this.server.globalThis);
-                request.unprotect();
-                return;
-            }
-        }
-
-        pub fn onBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
+        pub fn onBufferedBodyChunk(this: *RequestContext, resp: *App.Response, chunk: []const u8, last: bool) void {
             std.debug.assert(this.resp == resp);
 
             if (this.aborted) return;
@@ -1738,9 +1715,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
             if (last) {
                 const request = JSC.JSValue.fromRef(this.request_js_object);
-                if (request.as(Request) != null) {
+                if (request.as(Request)) |req| {
                     request.ensureStillAlive();
-                    uws.Loop.get().?.nextTick(*RequestContext, this, resolveRequestBody);
+                    var bytes = this.request_body_buf.toOwnedSlice(this.allocator);
+                    var old = req.body;
+                    req.body = .{
+                        .Blob = if (bytes.len > 0)
+                            Blob.init(bytes, this.allocator, this.server.globalThis)
+                        else
+                            Blob.initEmpty(this.server.globalThis),
+                    };
+                    if (old == .Locked)
+                        old.resolve(&req.body, this.server.globalThis);
+                    request.unprotect();
                 } else {
                     this.request_body_buf.clearAndFree(this.allocator);
                 }
@@ -1795,7 +1782,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             request.protect();
             this.setAbortHandler();
-            this.resp.onData(*RequestContext, onBodyChunk, this);
+            this.resp.onData(*RequestContext, onBufferedBodyChunk, this);
         }
 
         pub fn onPullCallback(this: *anyopaque) void {
@@ -2370,7 +2357,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                             this.finalize();
                             return;
                         };
-                        resp.onData(*RequestContext, RequestContext.onBodyChunk, ctx);
+                        resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);
                     }
                 }
 

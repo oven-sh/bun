@@ -1215,6 +1215,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             if (this.state.request_body.len > 0 and list.capacity - list.items.len > 0) {
                 var remain = list.items.ptr[list.items.len..list.capacity];
                 const wrote = @minimum(remain.len, this.state.request_body.len);
+                std.debug.assert(wrote > 0);
                 @memcpy(remain.ptr, this.state.request_body.ptr, wrote);
                 list.items.len += wrote;
             }
@@ -1254,6 +1255,11 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
             if (has_sent_headers) {
                 this.state.request_stage = .body;
                 std.debug.assert(this.state.request_body.len > 0);
+
+                // we sent everything, but there's some body leftover
+                if (amount == @intCast(c_int, to_send.len)) {
+                    this.onWritable(false, is_ssl, socket);
+                }
             } else {
                 this.state.request_stage = .headers;
             }

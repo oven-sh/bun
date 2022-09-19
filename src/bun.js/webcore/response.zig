@@ -4085,8 +4085,14 @@ pub const Body = struct {
                             promise.asPromise().?.resolve(global, blob.getTextTransfer(global.ref()));
                         },
                         .getJSON => {
-                            promise.asPromise().?.resolve(global, blob.toJSON(global, .share));
+                            const json_value = blob.toJSON(global, .share);
                             blob.detach();
+
+                            if (json_value.isAnyError(global)) {
+                                promise.asPromise().?.reject(global, json_value);
+                            } else {
+                                promise.asPromise().?.resolve(global, json_value);
+                            }
                         },
                         .getArrayBuffer => {
                             promise.asPromise().?.resolve(global, blob.getArrayBufferTransfer(global));

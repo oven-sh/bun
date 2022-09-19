@@ -1,0 +1,4 @@
+name = "bun-install"
+main = "index.js"
+route = "bun.sh/install"
+compatibility_date = "2022-09-19"

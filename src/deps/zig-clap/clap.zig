@@ -265,6 +265,10 @@ pub fn Args(comptime Id: type, comptime params: []const Param(Id)) type {
             return a.clap.positionals();
         }
 
+        pub fn remaining(a: @This()) []const []const u8 {
+            return a.clap.remaining();
+        }
+
         pub fn hasFlag(comptime name: []const u8) bool {
             return ComptimeClap(Id, params).hasFlag(name);
         }
@@ -280,6 +284,7 @@ pub const ParseOptions = struct {
     ///       is fine, as it wraps it in an arena)
     allocator: mem.Allocator = heap.page_allocator,
     diagnostic: ?*Diagnostic = null,
+    stop_after_positional_at: usize = 0,
 };
 
 /// Same as `parseEx` but uses the `args.OsIterator` by default.
@@ -288,7 +293,7 @@ pub fn parse(
     comptime params: []const Param(Id),
     opt: ParseOptions,
 ) !Args(Id, params) {
-    var iter = try args.OsIterator.init(opt.allocator);
+    var iter = args.OsIterator.init(opt.allocator);
     var res = Args(Id, params){
         .arena = iter.arena,
         .exe_arg = iter.exe_arg,
@@ -300,6 +305,7 @@ pub fn parse(
     res.clap = try parseEx(Id, params, &iter, .{
         .allocator = res.arena.allocator(),
         .diagnostic = opt.diagnostic,
+        .stop_after_positional_at = opt.stop_after_positional_at,
     });
     return res;
 }

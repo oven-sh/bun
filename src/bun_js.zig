@@ -57,9 +57,8 @@ pub const Run = struct {
             .ctx = ctx,
             .entry_path = entry_path,
         };
+        run.vm.argv = ctx.passthrough;
         run.vm.arena = &run.arena;
-
-        run.vm.argv = ctx.positionals;
 
         if (ctx.debug.macros) |macros| {
             run.vm.bundler.options.macro_remap = macros;

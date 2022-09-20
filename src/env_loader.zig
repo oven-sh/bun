@@ -955,6 +955,7 @@ pub const Parser = struct {
         var lexer = Lexer.init(source);
         var fbs = std.io.fixedBufferStream(&temporary_nested_value_buffer);
         var writer = fbs.writer();
+        const start_count = map.map.count();
 
         while (lexer.next(is_process)) |variable| {
             if (variable.has_nested_value) {
@@ -967,7 +968,13 @@ pub const Parser = struct {
                         map.put(variable.key, allocator.dupe(u8, new_value) catch unreachable) catch unreachable;
                     } else {
                         var putter = map.map.getOrPut(variable.key) catch unreachable;
-                        if (!putter.found_existing) {
+                        // Allow keys defined later in the same file to override keys defined earlier
+                        // https://github.com/oven-sh/bun/issues/1262
+                        if (!putter.found_existing or putter.index >= start_count) {
+                            if (putter.found_existing and putter.value_ptr.len > 0) {
+                                allocator.free(putter.value_ptr.*);
+                            }
+
                             putter.value_ptr.* = allocator.dupe(u8, new_value) catch unreachable;
                         }
                     }
@@ -976,7 +983,16 @@ pub const Parser = struct {
                 if (comptime override) {
                     map.put(variable.key, variable.value) catch unreachable;
                 } else {
-                    map.putDefault(variable.key, variable.value) catch unreachable;
+                    // Allow keys defined later in the same file to override keys defined earlier
+                    // https://github.com/oven-sh/bun/issues/1262
+                    var putter = map.map.getOrPut(variable.key) catch unreachable;
+                    if (!putter.found_existing or putter.index >= start_count) {
+                        if (putter.found_existing and putter.value_ptr.len > 0) {
+                            allocator.free(putter.value_ptr.*);
+                        }
+
+                        putter.value_ptr.* = allocator.dupe(u8, variable.value) catch unreachable;
+                    }
                 }
             }
         }
@@ -1111,39 +1127,46 @@ test "DotEnv Loader - basic" {
         \\
         \\EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING=""
         \\
+        \\VALUE_WITH_MULTIPLE_VALUES_SET_IN_SAME_FILE=''
+        \\
+        \\VALUE_WITH_MULTIPLE_VALUES_SET_IN_SAME_FILE='good'
+        \\
     ;
     const source = logger.Source.initPathString(".env", VALID_ENV);
     var map = Map.init(default_allocator);
-    Parser.parse(
-        &source,
-        default_allocator,
-        &map,
-        true,
-        false,
-    );
-    try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "\\$API_KEY");
-    try expectString(map.get("NESTED_VALUES_WITH_CURLY_BRACES_RESPECT_ESCAPING").?, "\\${API_KEY}");
+    inline for (.{ true, false }) |override| {
+        Parser.parse(
+            &source,
+            default_allocator,
+            &map,
+            override,
+            false,
+        );
+        try expectString(map.get("NESTED_VALUES_RESPECT_ESCAPING").?, "\\$API_KEY");
+        try expectString(map.get("NESTED_VALUES_WITH_CURLY_BRACES_RESPECT_ESCAPING").?, "\\${API_KEY}");
 
-    try expectString(map.get("NESTED_VALUE").?, "verysecure");
-    try expectString(map.get("NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure");
-    try expectString(map.get("NESTED_VALUE_WITHOUT_OPENING_CURLY_BRACE").?, "verysecure}");
-    try expectString(map.get("RECURSIVE_NESTED_VALUE").?, "verysecure:verysecure");
-    try expectString(map.get("RECURSIVE_NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure:verysecure");
+        try expectString(map.get("NESTED_VALUE").?, "verysecure");
+        try expectString(map.get("NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure");
+        try expectString(map.get("NESTED_VALUE_WITHOUT_OPENING_CURLY_BRACE").?, "verysecure}");
+        try expectString(map.get("RECURSIVE_NESTED_VALUE").?, "verysecure:verysecure");
+        try expectString(map.get("RECURSIVE_NESTED_VALUE_WITH_CURLY_BRACES").?, "verysecure:verysecure");
 
-    try expectString(map.get("API_KEY").?, "verysecure");
-    try expectString(map.get("process.env.WAT").?, "ABCDEFGHIJKLMNOPQRSTUVWXYZZ10239457123");
-    try expectString(map.get("DOUBLE-QUOTED_SHOULD_PRESERVE_NEWLINES").?, "\nya\n");
-    try expectString(map.get("SINGLE_QUOTED_SHOULDNT_PRESERVE_NEWLINES").?, "yo");
-    try expectString(map.get("SINGLE_QUOTED_DOESNT_PRESERVES_QUOTES").?, "yo");
-    try expectString(map.get("UNQUOTED_SHOULDNT_PRESERVE_NEWLINES_AND_TRIMS_TRAILING_SPACE").?, "yo");
-    try expect(map.get("LINES_WITHOUT_EQUAL_ARE_IGNORED") == null);
-    try expectString(map.get("LEADING_SPACE_IS_TRIMMED").?, "yes");
-    try expect(map.get("NO_VALUE_IS_EMPTY_STRING").?.len == 0);
-    try expectString(map.get("IGNORING_DOESNT_BREAK_OTHER_LINES").?, "yes");
-    try expectString(map.get("LEADING_SPACE_IN_UNQUOTED_VALUE_IS_TRIMMED").?, "yes");
-    try expectString(map.get("SPACE_BEFORE_EQUALS_SIGN").?, "yes");
-    try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
-    try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
+        try expectString(map.get("API_KEY").?, "verysecure");
+        try expectString(map.get("process.env.WAT").?, "ABCDEFGHIJKLMNOPQRSTUVWXYZZ10239457123");
+        try expectString(map.get("DOUBLE-QUOTED_SHOULD_PRESERVE_NEWLINES").?, "\nya\n");
+        try expectString(map.get("SINGLE_QUOTED_SHOULDNT_PRESERVE_NEWLINES").?, "yo");
+        try expectString(map.get("SINGLE_QUOTED_DOESNT_PRESERVES_QUOTES").?, "yo");
+        try expectString(map.get("UNQUOTED_SHOULDNT_PRESERVE_NEWLINES_AND_TRIMS_TRAILING_SPACE").?, "yo");
+        try expect(map.get("LINES_WITHOUT_EQUAL_ARE_IGNORED") == null);
+        try expectString(map.get("LEADING_SPACE_IS_TRIMMED").?, "yes");
+        try expect(map.get("NO_VALUE_IS_EMPTY_STRING").?.len == 0);
+        try expectString(map.get("IGNORING_DOESNT_BREAK_OTHER_LINES").?, "yes");
+        try expectString(map.get("LEADING_SPACE_IN_UNQUOTED_VALUE_IS_TRIMMED").?, "yes");
+        try expectString(map.get("SPACE_BEFORE_EQUALS_SIGN").?, "yes");
+        try expectString(map.get("EMPTY_SINGLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
+        try expectString(map.get("EMPTY_DOUBLE_QUOTED_VALUE_IS_EMPTY_STRING").?, "");
+        try expectString(map.get("VALUE_WITH_MULTIPLE_VALUES_SET_IN_SAME_FILE").?, "good");
+    }
 }
 
 test "DotEnv Loader - Nested values with curly braces" {

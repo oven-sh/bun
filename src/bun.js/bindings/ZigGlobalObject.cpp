@@ -163,6 +163,13 @@ using JSBuffer = WebCore::JSBuffer;
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#else
+// for sysconf
+#include <unistd.h>
+#endif
+
 // #include <iostream>
 static bool has_loaded_jsc = false;
 
@@ -1867,6 +1874,31 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
+    m_navigatorObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            int cpuCount = 0;
+#ifdef __APPLE__
+            size_t count_len = sizeof(cpuCount);
+            sysctlbyname("hw.logicalcpu", &cpuCount, &count_len, NULL, 0);
+#else
+            // TODO: windows
+            cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+
+            auto str = WTF::String::fromUTF8(Bun__userAgent);
+            JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);
+            JSC::Identifier hardwareConcurrencyIdentifier = JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s);
+
+            JSC::JSObject* obj = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 3);
+            obj->putDirect(init.vm, userAgentIdentifier, JSC::jsString(init.vm, str));
+            obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
+                jsNontrivialString(init.vm, "Navigator"_s), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+
+            obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));
+            init.set(
+                obj);
+        });
+
     this->m_pendingVirtualModuleResultStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
@@ -2081,6 +2113,18 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     return JSC::JSValue::encode(result);
 }
 
+JSC::JSObject* GlobalObject::navigatorObject()
+{
+    return this->m_navigatorObject.get(this);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    return JSC::JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->navigatorObject());
+}
+
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {
     m_builtinInternalFunctions.initialize(*this);
@@ -2227,6 +2271,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         JSC::PropertyAttribute::DontDelete | 0);
 
     putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamPrototypeMap_getter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "navigator"_s), JSC::CustomGetterSetter::create(vm, functionLazyNavigatorGetter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     putDirect(vm, builtinNames.requireMapPrivateName(), this->requireMap(),
@@ -2533,6 +2580,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_processEnvObject.visit(visitor);
     thisObject->m_processObject.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
+    thisObject->m_navigatorObject.visit(visitor);
 
     visitor.append(thisObject->m_JSBufferSetterValue);
     visitor.append(thisObject->m_JSTextEncoderSetterValue);

@@ -206,6 +206,8 @@ enum SyntheticModuleType : uint64_t {
     Module = 1028,
 };
 
+extern "C" const char* Bun__userAgent;
+
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);

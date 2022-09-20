@@ -105,3 +105,11 @@ it("URL.prototype.origin", () => {
   expect(host).toBe("html.spec.whatwg.org");
   expect(origin).toBe("https://html.spec.whatwg.org");
 });
+
+test("navigator", () => {
+  expect(globalThis.navigator !== undefined).toBe(true);
+  const { version } = process;
+  const userAgent = `Bun/${version.substring(1)}`;
+  expect(navigator.hardwareConcurrency > 0).toBe(true);
+  expect(navigator.userAgent).toBe(userAgent);
+});

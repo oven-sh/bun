@@ -158,3 +158,11 @@ pub const BunInfo = struct {
         return try JSON.toAST(allocator, BunInfo, info);
     }
 };
+
+pub const user_agent = "Bun/" ++ Global.package_json_version;
+
+pub export const Bun__userAgent: [*:0]const u8 = Global.user_agent;
+
+comptime {
+    _ = Bun__userAgent;
+}

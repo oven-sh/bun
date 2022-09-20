@@ -350,7 +350,22 @@ pub const VirtualMachine = struct {
     has_any_macro_remappings: bool = false,
     is_from_devserver: bool = false,
     has_enabled_macro_mode: bool = false,
+
+    /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
+    ///     "bun run foo --bar"
+    ///          ["--bar"]
+    ///     "bun run foo baz --bar"
+    ///          ["baz", "--bar"]
+    ///     "bun run foo
+    ///          []
+    ///     "bun foo --bar"
+    ///          ["--bar"]
+    ///     "bun foo baz --bar"
+    ///          ["baz", "--bar"]
+    ///     "bun foo
+    ///          []
     argv: []const []const u8 = &[_][]const u8{"bun"},
+
     global_api_constructors: [GlobalConstructors.len]JSC.JSValue = undefined,
 
     origin_timer: std.time.Timer = undefined,

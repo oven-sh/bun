@@ -96,7 +96,7 @@ const linux = std.os.linux;
 
 pub const ServerConfig = struct {
     port: u16 = 0,
-    hostname: [*:0]const u8 = "0.0.0.0",
+    hostname: [*:0]const u8 = "localhost",
 
     // TODO: use webkit URL parser instead of bun's
     base_url: URL = URL{},
@@ -2405,19 +2405,19 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             const hostname = bun.span(this.config.hostname);
+            // When "localhost" is specified, we omit the hostname entirely
+            // Otherwise, "curl http://localhost:3000" doesn't actually work due to IPV6 vs IPV4 issues
+            // This prints a spurious log si_destination_compare on macOS but only when debugger is connected
+            const host: [*:0]const u8 = if (hostname.len == 0 or (!ssl_enabled and strings.eqlComptime(hostname, "localhost")))
+                ""
+            else
+                this.config.hostname;
 
-            if (!(hostname.len == 0 or strings.eqlComptime(hostname, "0.0.0.0"))) {
-                this.app.listenWithConfig(*ThisServer, this, onListen, .{
-                    .port = this.config.port,
-                    .options = 0,
-                });
-            } else {
-                this.app.listenWithConfig(*ThisServer, this, onListen, .{
-                    .port = this.config.port,
-                    .host = this.config.hostname,
-                    .options = 0,
-                });
-            }
+            this.app.listenWithConfig(*ThisServer, this, onListen, .{
+                .port = this.config.port,
+                .host = host,
+                .options = 0,
+            });
         }
     };
 }

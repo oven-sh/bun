@@ -2767,11 +2767,8 @@ pub const FFI = struct {
     fn getCPtr(value: JSValue) ?usize {
         // pointer to C function
         if (value.isNumber()) {
-            const addr = @bitCast(u64, value.asNumber());
-            if (addr > 0) {
-                return addr;
-            }
-            // pointer to C function as a BigInt
+            const addr = value.asPtrAddress();
+            if (addr > 0) return addr;
         } else if (value.isBigInt()) {
             const addr = @bitCast(u64, value.toUInt64NoTruncate());
             if (addr > 0) {

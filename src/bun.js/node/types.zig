@@ -1801,34 +1801,29 @@ pub const Process = struct {
         );
         var allocator = stack_fallback_allocator.get();
 
-        // If it was launched with bun run or bun test, skip it
-        const skip: usize = @as(usize, @boolToInt(
-            vm.argv.len > 1 and (strings.eqlComptime(vm.argv[0], "run") or strings.eqlComptime(vm.argv[0], "wiptest")),
-        ));
-
         var args = allocator.alloc(
             JSC.ZigString,
-            vm.argv.len + 1,
+            // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
+            // argv also omits the script name
+            vm.argv.len + 2,
         ) catch unreachable;
         var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
         args_list.items.len = 0;
+        args_list.appendAssumeCapacity(
+            JSC.ZigString.init(
+                // cheap way to get the first argument
+                bun.span(std.process.args().next().?),
+            ),
+        );
+        args_list.appendAssumeCapacity(JSC.ZigString.init(vm.main).withEncoding());
+
         defer allocator.free(args);
         {
-            var args_iterator = std.process.args();
-
-            if (args_iterator.next()) |arg0| {
+            for (vm.argv) |arg0| {
                 var argv0 = JSC.ZigString.init(std.mem.span(arg0));
                 argv0.setOutputEncoding();
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
                 args_list.appendAssumeCapacity(argv0);
-            }
-        }
-
-        if (vm.argv.len > skip) {
-            for (vm.argv[skip..]) |arg| {
-                var str = JSC.ZigString.init(arg);
-                str.setOutputEncoding();
-                args_list.appendAssumeCapacity(str);
             }
         }
 

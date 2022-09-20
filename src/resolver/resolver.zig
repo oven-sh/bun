@@ -1229,7 +1229,7 @@ pub const Resolver = struct {
 
         if (import_path[0] == '#' and !forbid_imports) {
             if (esm_ != null) {
-                if (dir_info.package_json) |package_json| {
+                if (dir_info.enclosing_package_json) |package_json| {
                     load_from_imports_map: {
                         const imports_map = package_json.imports orelse break :load_from_imports_map;
 
@@ -1259,7 +1259,7 @@ pub const Resolver = struct {
                                 true,
                             );
 
-                        return r.handleESMResolution(esm_resolution, dir_info.abs_path, kind, package_json);
+                        return r.handleESMResolution(esm_resolution, package_json.source.path.name.dir, kind, package_json);
                     }
                 }
             }
@@ -1305,9 +1305,7 @@ pub const Resolver = struct {
                                 // directory path accidentally being interpreted as URL escapes.
                                 const esm_resolution = esmodule.resolve("/", esm.subpath, exports_map.root);
 
-                                if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json)) |res| {
-                                    return res;
-                                }
+                                return r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json);
                             }
                         }
                     }

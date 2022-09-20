@@ -51,7 +51,7 @@ pub const Lexer = struct {
     pub inline fn step(this: *Lexer) void {
         const ended = !this.iter.next(&this.cursor);
         if (ended) this.cursor.c = -1;
-        this.current = this.cursor.i;
+        this.current = this.cursor.i + @boolToInt(ended);
     }
 
     pub fn eatNestedValue(
@@ -544,30 +544,6 @@ pub const Loader = struct {
                             };
                             var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
-                            if (e_strings[0].eqlComptime("undefined")) {
-                                expr_data = .{ .e_undefined = .{} };
-                            }
-
-                            if (e_strings[0].eqlComptime("null")) {
-                                expr_data = .{ .e_null = .{} };
-                            }
-
-                            if (e_strings[0].eqlComptime("false")) {
-                                expr_data = .{ .e_boolean = .{ .value = false } };
-                            }
-
-                            if (e_strings[0].eqlComptime("true")) {
-                                expr_data = .{ .e_boolean = .{ .value = true } };
-                            }
-
-                            if (e_strings[0].eqlComptime("0")) {
-                                expr_data = .{ .e_number = .{ .value = 0.0 } };
-                            }
-
-                            if (e_strings[0].eqlComptime("1")) {
-                                expr_data = .{ .e_number = .{ .value = 1.0 } };
-                            }
-
                             _ = try to_string.getOrPutValue(
                                 key_str,
                                 .{
@@ -591,30 +567,6 @@ pub const Loader = struct {
                                 };
 
                                 var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
-
-                                if (e_strings[0].eqlComptime("undefined")) {
-                                    expr_data = .{ .e_undefined = .{} };
-                                }
-
-                                if (e_strings[0].eqlComptime("null")) {
-                                    expr_data = .{ .e_null = .{} };
-                                }
-
-                                if (e_strings[0].eqlComptime("false")) {
-                                    expr_data = .{ .e_boolean = .{ .value = false } };
-                                }
-
-                                if (e_strings[0].eqlComptime("true")) {
-                                    expr_data = .{ .e_boolean = .{ .value = true } };
-                                }
-
-                                if (e_strings[0].eqlComptime("0")) {
-                                    expr_data = .{ .e_number = .{ .value = 0.0 } };
-                                }
-
-                                if (e_strings[0].eqlComptime("1")) {
-                                    expr_data = .{ .e_number = .{ .value = 1.0 } };
-                                }
 
                                 _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
@@ -642,30 +594,6 @@ pub const Loader = struct {
 
                         var expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
-                        if (e_strings[0].eqlComptime("undefined")) {
-                            expr_data = .{ .e_undefined = .{} };
-                        }
-
-                        if (e_strings[0].eqlComptime("null")) {
-                            expr_data = .{ .e_null = .{} };
-                        }
-
-                        if (e_strings[0].eqlComptime("false")) {
-                            expr_data = .{ .e_boolean = .{ .value = false } };
-                        }
-
-                        if (e_strings[0].eqlComptime("true")) {
-                            expr_data = .{ .e_boolean = .{ .value = true } };
-                        }
-
-                        if (e_strings[0].eqlComptime("0")) {
-                            expr_data = .{ .e_number = .{ .value = 0.0 } };
-                        }
-
-                        if (e_strings[0].eqlComptime("1")) {
-                            expr_data = .{ .e_number = .{ .value = 1.0 } };
-                        }
-
                         _ = try to_string.getOrPutValue(
                             key,
                             .{
@@ -684,89 +612,6 @@ pub const Loader = struct {
             var value = framework_defaults.values[i];
 
             if (!to_string.contains(key) and !to_json.contains(key)) {
-                // is this an escaped string?
-                // if so, we start with the quotes instead of the escape
-                if (value.len > 2 and
-                    value[0] == '\\' and
-                    (value[1] == '"' or value[1] == '\'') and
-                    value[value.len - 1] == '\\' and
-                    (value[value.len - 2] == '"' or
-                    value[value.len - 2] == '\''))
-                {
-                    value = value[1 .. value.len - 1];
-                }
-
-                if (strings.eqlComptime(value, "undefined")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .value = .{ .e_undefined = .{} },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "null")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_null = .{} },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "false")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_boolean = .{ .value = false } },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "true")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_boolean = .{ .value = true } },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "0")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_number = .{ .value = 0.0 } },
-                        },
-                    );
-                    continue;
-                }
-
-                if (strings.eqlComptime(value, "1")) {
-                    _ = try to_string.getOrPutValue(
-                        key,
-                        .{
-                            .can_be_removed_if_unused = true,
-                            .call_can_be_unwrapped_if_unused = true,
-                            .value = .{ .e_number = .{ .value = 1.0 } },
-                        },
-                    );
-                    continue;
-                }
-
                 _ = try to_json.getOrPutValue(key, value);
             }
         }

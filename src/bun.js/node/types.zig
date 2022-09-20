@@ -1809,19 +1809,23 @@ pub const Process = struct {
         ) catch unreachable;
         var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
         args_list.items.len = 0;
-        args_list.appendAssumeCapacity(
-            JSC.ZigString.init(
+        if (std.process.args().next()) |arg0| {
+            std.debug.assert(arg0.len > 0);
+
+            args_list.appendAssumeCapacity(
+                JSC.ZigString.init(
                 // cheap way to get the first argument
-                bun.span(std.process.args().next().?),
-            ),
-        );
-        args_list.appendAssumeCapacity(JSC.ZigString.init(vm.main).withEncoding());
+                arg0).withEncoding(),
+            );
+        }
+
+        if (vm.main.len > 0)
+            args_list.appendAssumeCapacity(JSC.ZigString.init(vm.main).withEncoding());
 
         defer allocator.free(args);
         {
             for (vm.argv) |arg0| {
-                var argv0 = JSC.ZigString.init(std.mem.span(arg0));
-                argv0.setOutputEncoding();
+                const argv0 = JSC.ZigString.init(std.mem.span(arg0)).withEncoding();
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
                 args_list.appendAssumeCapacity(argv0);
             }

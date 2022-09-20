@@ -39,7 +39,7 @@ describe("streaming", () => {
           },
         });
 
-        const response = await fetch(`http://localhost:${server.port}`);
+        const response = await fetch(`http://127.0.0.1:${server.port}`);
         if (response.status > 0) {
           expect(response.status).toBe(500);
           expect(await response.text()).toBe("fail");
@@ -77,7 +77,7 @@ describe("streaming", () => {
           },
         });
 
-        const response = await fetch(`http://localhost:${server.port}`);
+        const response = await fetch(`http://127.0.0.1:${server.port}`);
         // connection terminated
         if (response.status > 0) {
           expect(response.status).toBe(200);
@@ -110,7 +110,7 @@ describe("streaming", () => {
       },
     });
 
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     const text = await response.text();
     expect(text.length).toBe(textToExpect.length);
     expect(text).toBe(textToExpect);
@@ -134,7 +134,7 @@ describe("streaming", () => {
         );
       },
     });
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
     server.stop();
   });
@@ -157,7 +157,7 @@ describe("streaming", () => {
         },
       });
 
-      const response = await fetch(`http://localhost:${server.port}`);
+      const response = await fetch(`http://127.0.0.1:${server.port}`);
       expect(response.status).toBe(500);
     } catch (e) {
       if (!e || !(e instanceof TestPass)) {
@@ -191,7 +191,7 @@ describe("streaming", () => {
         },
       });
 
-      const response = await fetch(`http://localhost:${server.port}`);
+      const response = await fetch(`http://127.0.0.1:${server.port}`);
       expect(response.status).toBe(500);
       expect(await response.text()).toBe("Fail");
       expect(pass).toBe(true);
@@ -222,7 +222,7 @@ describe("streaming", () => {
         );
       },
     });
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
     server.stop();
   });
@@ -244,7 +244,7 @@ describe("streaming", () => {
         );
       },
     });
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     const text = await response.text();
     expect(text).toBe(textToExpect);
     server.stop();
@@ -270,7 +270,7 @@ describe("streaming", () => {
         );
       },
     });
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
     server.stop();
   });
@@ -295,7 +295,7 @@ describe("streaming", () => {
         );
       },
     });
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
     server.stop();
   });
@@ -324,7 +324,7 @@ describe("streaming", () => {
         );
       },
     });
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
     server.stop();
   });
@@ -337,7 +337,7 @@ it("should work for a hello world", async () => {
       return new Response(`Hello, world!`);
     },
   });
-  const response = await fetch(`http://localhost:${server.port}`);
+  const response = await fetch(`http://127.0.0.1:${server.port}`);
   expect(await response.text()).toBe("Hello, world!");
   server.stop();
 });
@@ -352,7 +352,7 @@ it("should work for a blob", async () => {
       return new Response(new Blob([textToExpect]));
     },
   });
-  const response = await fetch(`http://localhost:${server.port}`);
+  const response = await fetch(`http://127.0.0.1:${server.port}`);
   expect(await response.text()).toBe(textToExpect);
   server.stop();
 });
@@ -367,7 +367,7 @@ it("should work for a blob stream", async () => {
       return new Response(new Blob([textToExpect]).stream());
     },
   });
-  const response = await fetch(`http://localhost:${server.port}`);
+  const response = await fetch(`http://127.0.0.1:${server.port}`);
   expect(await response.text()).toBe(textToExpect);
   server.stop();
 });
@@ -382,7 +382,7 @@ it("should work for a file", async () => {
       return new Response(file(fixture));
     },
   });
-  const response = await fetch(`http://localhost:${server.port}`);
+  const response = await fetch(`http://127.0.0.1:${server.port}`);
   expect(await response.text()).toBe(textToExpect);
   server.stop();
 });
@@ -397,7 +397,7 @@ it("should work for a file stream", async () => {
       return new Response(file(fixture).stream());
     },
   });
-  const response = await fetch(`http://localhost:${server.port}`);
+  const response = await fetch(`http://127.0.0.1:${server.port}`);
   expect(await response.text()).toBe(textToExpect);
   server.stop();
 });
@@ -416,7 +416,7 @@ it("fetch should work with headers", async () => {
       });
     },
   });
-  const response = await fetch(`http://localhost:${server.port}`, {
+  const response = await fetch(`http://127.0.0.1:${server.port}`, {
     headers: {
       "X-Foo": "bar",
     },
@@ -444,7 +444,7 @@ it(`should work for a file ${count} times serial`, async () => {
   // it's hard to say if this only happens here due to some weird stuff with the test runner
   // or if it's "real" issue
   for (let i = 0; i < count; i++) {
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
   }
 
@@ -467,7 +467,7 @@ it(`should work for text ${count} times serial`, async () => {
   // it's hard to say if this only happens here due to some weird stuff with the test runner
   // or if it's "real" issue
   for (let i = 0; i < count; i++) {
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
   }
 
@@ -488,7 +488,7 @@ it(`should work for ArrayBuffer ${count} times serial`, async () => {
   // it's hard to say if this only happens here due to some weird stuff with the test runner
   // or if it's "real" issue
   for (let i = 0; i < count; i++) {
-    const response = await fetch(`http://localhost:${server.port}`);
+    const response = await fetch(`http://127.0.0.1:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
   }
 

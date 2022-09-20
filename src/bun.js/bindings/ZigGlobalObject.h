@@ -330,6 +330,8 @@ public:
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
 
+    JSObject* navigatorObject();
+
     void trackFFIFunction(JSC::JSFunction* function)
     {
         this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
@@ -381,6 +383,8 @@ private:
     LazyClassStructure m_JSBufferListClassStructure;
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_JSReadableStateClassStructure;
+
+    LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
 
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;

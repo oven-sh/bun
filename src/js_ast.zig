@@ -8083,7 +8083,7 @@ pub const Macro = struct {
 
             // Give it >= 256 KB stack space
             // Cast to usize to ensure we get an 8 byte aligned pointer
-            const PooledFrame = ObjectPool([@maximum(@sizeOf(@Frame(Run.runAsync)), 256_000) / @sizeOf(usize)]usize, null, true, 1);
+            const PooledFrame = ObjectPool([@maximum(@sizeOf(@Frame(Run.runAsync)), 1024 * 1024 * 2) / @sizeOf(usize)]usize, null, true, 1);
             var pooled_frame = PooledFrame.get(default_allocator);
             defer pooled_frame.release();
 

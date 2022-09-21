@@ -1809,12 +1809,14 @@ pub const Process = struct {
         ) catch unreachable;
         var args_list = std.ArrayListUnmanaged(JSC.ZigString){ .items = args, .capacity = args.len };
         args_list.items.len = 0;
+
+        // get the bun executable
+        // without paying the cost of a syscall to resolve the full path
         if (std.process.args().next()) |arg0| {
             std.debug.assert(arg0.len > 0);
 
             args_list.appendAssumeCapacity(
                 JSC.ZigString.init(
-                    // cheap way to get the first argument
                     bun.span(arg0),
                 ).withEncoding(),
             );

@@ -1814,8 +1814,9 @@ pub const Process = struct {
 
             args_list.appendAssumeCapacity(
                 JSC.ZigString.init(
-                // cheap way to get the first argument
-                arg0).withEncoding(),
+                    // cheap way to get the first argument
+                    bun.span(arg0),
+                ).withEncoding(),
             );
         }
 
@@ -1825,7 +1826,7 @@ pub const Process = struct {
         defer allocator.free(args);
         {
             for (vm.argv) |arg0| {
-                const argv0 = JSC.ZigString.init(std.mem.span(arg0)).withEncoding();
+                const argv0 = JSC.ZigString.init(arg0).withEncoding();
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
                 args_list.appendAssumeCapacity(argv0);
             }

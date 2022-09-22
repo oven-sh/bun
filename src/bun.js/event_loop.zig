@@ -414,12 +414,12 @@ pub const EventLoop = struct {
         if (this.virtual_machine.uws_event_loop == null) {
             var actual = uws.Loop.get().?;
             this.virtual_machine.uws_event_loop = actual;
-            _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.tick);
+            _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
             _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
         }
     }
 
-    pub fn onDefer(this: *EventLoop) void {
+    pub fn afterUSocketsTick(this: *EventLoop) void {
         this.defer_count.store(0, .Monotonic);
         this.tick();
     }
@@ -432,7 +432,7 @@ pub const EventLoop = struct {
         if (this.virtual_machine.uws_event_loop) |loop| {
             const deferCount = this.defer_count.fetchAdd(1, .Monotonic);
             if (deferCount == 0) {
-                loop.nextTick(*EventLoop, this, onDefer);
+                loop.wakeup();
             }
         }
     }

@@ -317,6 +317,55 @@ describe("Bun.Transpiler", () => {
 
   `;
 
+  it("jsxFactory (two level)", () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      allowBunRuntime: false,
+      tsconfig: JSON.stringify({
+        compilerOptions: {
+          jsxFragmentFactory: "foo.frag",
+          jsx: "react",
+          jsxFactory: "foo.factory",
+        },
+      }),
+    });
+
+    const element = bun.transformSync(`
+export default <div>hi</div>
+    `);
+
+    expect(element.includes("var jsxEl = foo.factory;")).toBe(true);
+
+    const fragment = bun.transformSync(`
+export default <>hi</>
+    `);
+    expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
+  });
+
+  it("jsxFactory (one level)", () => {
+    var bun = new Bun.Transpiler({
+      loader: "jsx",
+      allowBunRuntime: false,
+      tsconfig: JSON.stringify({
+        compilerOptions: {
+          jsxFragmentFactory: "foo.frag",
+          jsx: "react",
+          jsxFactory: "h",
+        },
+      }),
+    });
+
+    const element = bun.transformSync(`
+export default <div>hi</div>
+    `);
+    expect(element.includes("var jsxEl = h;")).toBe(true);
+
+    const fragment = bun.transformSync(`
+export default <>hi</>
+    `);
+    expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
+  });
+
   it("JSX", () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

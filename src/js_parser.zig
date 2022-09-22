@@ -2789,14 +2789,10 @@ pub const Parser = struct {
                                         },
                                         loc,
                                     ),
-                                    .value = p.e(
-                                        E.Dot{
-                                            .target = dot_call_target,
-                                            .name = p.options.jsx.factory[p.options.jsx.factory.len - 1],
-                                            .name_loc = loc,
-                                            .can_be_removed_if_unused = true,
-                                        },
+                                    .value = p.memberExpression(
                                         loc,
+                                        dot_call_target,
+                                        if (p.options.jsx.factory.len > 1) p.options.jsx.factory[1..] else p.options.jsx.factory,
                                     ),
                                 };
                                 decl_i += 1;
@@ -2812,14 +2808,10 @@ pub const Parser = struct {
                                         },
                                         loc,
                                     ),
-                                    .value = p.e(
-                                        E.Dot{
-                                            .target = dot_call_target,
-                                            .name = p.options.jsx.fragment[p.options.jsx.fragment.len - 1],
-                                            .name_loc = loc,
-                                            .can_be_removed_if_unused = true,
-                                        },
+                                    .value = p.memberExpression(
                                         loc,
+                                        dot_call_target,
+                                        if (p.options.jsx.fragment.len > 1) p.options.jsx.fragment[1..] else p.options.jsx.fragment,
                                     ),
                                 };
                                 decl_i += 1;
@@ -2949,6 +2941,49 @@ pub const Parser = struct {
                         before.append(js_ast.Part{
                             .stmts = part_stmts,
                             .declared_symbols = declared_symbols,
+                            .tag = .jsx_import,
+                        }) catch unreachable;
+                    }
+                } else {
+                    const jsx_fragment_symbol: Symbol = p.symbols.items[p.jsx_fragment.ref.innerIndex()];
+                    const jsx_factory_symbol: Symbol = p.symbols.items[p.jsx_factory.ref.innerIndex()];
+
+                    // inject
+                    //   var jsxFrag =
+                    if (jsx_fragment_symbol.use_count_estimate + jsx_factory_symbol.use_count_estimate > 0) {
+                        const total = @as(usize, @boolToInt(jsx_fragment_symbol.use_count_estimate > 0)) + @as(usize, @boolToInt(jsx_factory_symbol.use_count_estimate > 0));
+                        var declared_symbols = try std.ArrayList(js_ast.DeclaredSymbol).initCapacity(p.allocator, total);
+                        var decls = try std.ArrayList(G.Decl).initCapacity(p.allocator, total);
+                        var part_stmts = try p.allocator.alloc(Stmt, 1);
+
+                        if (jsx_fragment_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_fragment.ref, .is_top_level = true });
+                        if (jsx_factory_symbol.use_count_estimate > 0) declared_symbols.appendAssumeCapacity(.{ .ref = p.jsx_factory.ref, .is_top_level = true });
+
+                        if (jsx_fragment_symbol.use_count_estimate > 0)
+                            decls.appendAssumeCapacity(G.Decl{
+                                .binding = p.b(
+                                    B.Identifier{
+                                        .ref = p.jsx_fragment.ref,
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                                .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.fragment),
+                            });
+
+                        if (jsx_factory_symbol.use_count_estimate > 0)
+                            decls.appendAssumeCapacity(G.Decl{
+                                .binding = p.b(
+                                    B.Identifier{
+                                        .ref = p.jsx_factory.ref,
+                                    },
+                                    logger.Loc.Empty,
+                                ),
+                                .value = try p.jsxStringsToMemberExpression(logger.Loc.Empty, p.options.jsx.factory),
+                            });
+                        part_stmts[0] = p.s(S.Local{ .kind = .k_var, .decls = decls.items }, logger.Loc.Empty);
+                        before.append(js_ast.Part{
+                            .stmts = part_stmts,
+                            .declared_symbols = declared_symbols.items,
                             .tag = .jsx_import,
                         }) catch unreachable;
                     }
@@ -11978,13 +12013,64 @@ fn NewParser_(
         // esbuild's version of this function is much more complicated.
         // I'm not sure why defines is strictly relevant for this case
         // do people do <API_URL>?
-        fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
+        fn jsxRefToMemberExpression(p: *P, loc: logger.Loc, ref: Ref) Expr {
             p.recordUsage(ref);
             return p.e(E.Identifier{
                 .ref = ref,
                 .can_be_removed_if_unused = true,
                 .call_can_be_unwrapped_if_unused = true,
             }, loc);
+        }
+
+        fn jsxStringsToMemberExpression(p: *P, loc: logger.Loc, parts: []const []const u8) !Expr {
+            const result = try p.findSymbol(loc, parts[0]);
+
+            var value = p.handleIdentifier(
+                loc,
+                E.Identifier{
+                    .ref = result.ref,
+                    .must_keep_due_to_with_stmt = result.is_inside_with_scope,
+                    .can_be_removed_if_unused = true,
+                },
+                parts[0],
+                .{
+                    .was_originally_identifier = true,
+                },
+            );
+            if (parts.len > 1) {
+                return p.memberExpression(loc, value, parts[1..]);
+            }
+
+            return value;
+        }
+
+        fn memberExpression(p: *P, loc: logger.Loc, initial_value: Expr, parts: []const []const u8) Expr {
+            var value = initial_value;
+
+            for (parts) |part| {
+                if (p.maybeRewritePropertyAccess(
+                    loc,
+                    value,
+                    part,
+                    loc,
+                    false,
+                )) |rewrote| {
+                    value = rewrote;
+                } else {
+                    value = p.e(
+                        E.Dot{
+                            .target = value,
+                            .name = part,
+                            .name_loc = loc,
+
+                            .can_be_removed_if_unused = true,
+                        },
+                        loc,
+                    );
+                }
+            }
+
+            return value;
         }
 
         // Note: The caller has already parsed the "import" keyword
@@ -13535,7 +13621,7 @@ fn NewParser_(
                                 if (e_.tag) |_tag| {
                                     break :tagger p.visitExpr(_tag);
                                 } else {
-                                    break :tagger p.jsxStringsToMemberExpression(expr.loc, p.jsx_fragment.ref);
+                                    break :tagger p.jsxRefToMemberExpression(expr.loc, p.jsx_fragment.ref);
                                 }
                             };
 
@@ -13612,7 +13698,7 @@ fn NewParser_(
 
                                     // Call createElement()
                                     return p.e(E.Call{
-                                        .target = p.jsxStringsToMemberExpression(expr.loc, p.jsx_factory.ref),
+                                        .target = p.jsxRefToMemberExpression(expr.loc, p.jsx_factory.ref),
                                         .args = ExprNodeList.init(args[0..i]),
                                         // Enable tree shaking
                                         .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
@@ -13884,7 +13970,7 @@ fn NewParser_(
                                         }
 
                                         return p.e(E.Call{
-                                            .target = p.jsxStringsToMemberExpressionAutomatic(expr.loc, is_static_jsx),
+                                            .target = p.jsxRefToMemberExpressionAutomatic(expr.loc, is_static_jsx),
                                             .args = ExprNodeList.init(args),
                                             // Enable tree shaking
                                             .can_be_unwrapped_if_unused = !p.options.ignore_dce_annotations,
@@ -15688,8 +15774,8 @@ fn NewParser_(
             }
         }
 
-        fn jsxStringsToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
-            return p.jsxStringsToMemberExpression(loc, if (is_static and !p.options.jsx.development)
+        fn jsxRefToMemberExpressionAutomatic(p: *P, loc: logger.Loc, is_static: bool) Expr {
+            return p.jsxRefToMemberExpression(loc, if (is_static and !p.options.jsx.development)
                 p.jsxs_runtime.ref
             else
                 p.jsx_runtime.ref);

@@ -153,7 +153,7 @@ pub const Run = struct {
                             this.vm.active_tasks > 0)
                         {
                             this.vm.event_loop.ensureWaker();
-                            _ = this.vm.event_loop.waker.?.wait() catch 0;
+                            _ = this.vm.uws_event_loop.?.run();
                         }
                     }
                 }

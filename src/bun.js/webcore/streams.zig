@@ -2328,9 +2328,13 @@ pub const FileBlobLoader = struct {
         };
     }
 
-    pub fn watch(this: *FileReader) void {
-        _ = JSC.VirtualMachine.vm.poller.watch(this.fd, .read, this, callback);
+    pub fn watch(this: *FileReader) ?JSC.Node.Syscall.Error {
+        switch (JSC.VirtualMachine.vm.poller.watch(this.fd, .read, FileBlobLoader, this)) {
+            .err => |err| return err,
+            else => {},
+        }
         this.scheduled_count += 1;
+        return null;
     }
 
     const Concurrent = struct {
@@ -2658,7 +2662,8 @@ pub const FileBlobLoader = struct {
         // this handles:
         // - empty file
         // - stream closed for some reason
-        if ((result == 0 and remaining == 0)) {
+        // - FIFO returned EOF
+        if ((result == 0 and (remaining == 0 or std.os.S.ISFIFO(this.mode)))) {
             this.finalize();
             return .{ .done = {} };
         }
@@ -2692,7 +2697,11 @@ pub const FileBlobLoader = struct {
                         this.protected_view = view;
                         this.protected_view.protect();
                         this.buf = read_buf;
-                        this.watch();
+                        if (this.watch()) |watch_fail| {
+                            this.finalize();
+                            return .{ .err = watch_fail };
+                        }
+
                         return .{
                             .pending = &this.pending,
                         };
@@ -2713,8 +2722,8 @@ pub const FileBlobLoader = struct {
         }
     }
 
-    pub fn callback(task: ?*anyopaque, sizeOrOffset: i64, _: u16) void {
-        var this: *FileReader = bun.cast(*FileReader, task.?);
+    /// Called from Poller
+    pub fn onPoll(this: *FileBlobLoader, sizeOrOffset: i64, _: u16) void {
         std.debug.assert(this.started);
         this.scheduled_count -= 1;
         const protected_view = this.protected_view;

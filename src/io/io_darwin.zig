@@ -545,7 +545,10 @@ pub const Waker = struct {
     ) bool;
 
     pub fn init(allocator: std.mem.Allocator) !Waker {
-        const kq = try os.kqueue();
+        return initWithFileDescriptor(allocator, try std.os.kqueue());
+    }
+
+    pub fn initWithFileDescriptor(allocator: std.mem.Allocator, kq: i32) !Waker {
         assert(kq > -1);
         var machport_buf = try allocator.alloc(u8, 1024);
         const machport = io_darwin_create_machport(

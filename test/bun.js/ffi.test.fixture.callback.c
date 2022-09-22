@@ -147,21 +147,37 @@ static bool JSVALUE_IS_NUMBER(EncodedJSValue val) {
 }
 
 
+// JSValue numbers-as-pointers are represented as a 52-bit integer
+// Previously, the pointer was stored at the end of the 64-bit value
+// Now, they're stored at the beginning of the 64-bit value
+// This behavior change enables the JIT to handle it better
+// It also is better readability when console.log(myPtr)
 static void* JSVALUE_TO_PTR(EncodedJSValue val) {
-  // must be a double
   if (val.asInt64 == TagValueNull)
     return 0;
-  return (void*)(val.asInt64 - DoubleEncodeOffset);
+  val.asInt64 -= DoubleEncodeOffset;
+  size_t ptr = (size_t)val.asDouble;
+  return (void*)ptr;
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   EncodedJSValue val;
-  if (ptr == 0) {
-    val.asInt64 = TagValueNull;
-    return val;
+  if (ptr == 0)
+  {
+      val.asInt64 = TagValueNull;
+      return val;
   }
-  val.asInt64 = (int64_t)ptr + DoubleEncodeOffset;
+
+  val.asDouble = (double)(size_t)ptr;
+  val.asInt64 += DoubleEncodeOffset;
   return val;
+}
+
+static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
+   EncodedJSValue res;
+   res.asDouble = val;
+   res.asInt64 += DoubleEncodeOffset;
+   return res;
 }
 
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
@@ -175,12 +191,7 @@ static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
 }
 
 
-static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
-   EncodedJSValue res;
-   res.asDouble = val;
-   res.asInt64 += DoubleEncodeOffset;
-   return res;
-}
+
 
 static EncodedJSValue FLOAT_TO_JSVALUE(float val) {
   return DOUBLE_TO_JSVALUE((double)val);

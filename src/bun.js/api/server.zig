@@ -2148,14 +2148,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
 
             this.listener = socket;
-            const needs_post_handler = this.vm.uws_event_loop == null;
             this.vm.uws_event_loop = uws.Loop.get();
             this.ref();
-
-            if (needs_post_handler) {
-                _ = this.vm.uws_event_loop.?.addPostHandler(*JSC.EventLoop, this.vm.eventLoop(), JSC.EventLoop.tick);
-                _ = this.vm.uws_event_loop.?.addPreHandler(*JSC.EventLoop, this.vm.eventLoop(), JSC.EventLoop.tick);
-            }
         }
 
         pub fn ref(this: *ThisServer) void {

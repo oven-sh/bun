@@ -279,7 +279,10 @@ pub const Loop = extern struct {
     current_ready_poll: c_int,
 
     /// Loop's own file descriptor
-    fd: c_int,
+    fd: i32,
+
+    /// Number of polls owned by Bun
+    active: u32 = 0,
 
     /// The list of ready polls
     ready_polls: [1024]EventType,
@@ -323,7 +326,7 @@ pub const Loop = extern struct {
     }
 
     pub fn tick(this: *Loop) void {
-        us_loop_tick(this);
+        us_loop_run_bun_tick(this);
     }
 
     pub fn nextTick(this: *Loop, comptime UserType: type, user_data: UserType, comptime deferCallback: fn (ctx: UserType) void) void {
@@ -376,7 +379,7 @@ pub const Loop = extern struct {
     extern fn us_loop_free(loop: ?*Loop) void;
     extern fn us_loop_ext(loop: ?*Loop) ?*anyopaque;
     extern fn us_loop_run(loop: ?*Loop) void;
-    extern fn us_loop_tick(loop: ?*Loop) void;
+    extern fn us_loop_run_bun_tick(loop: ?*Loop) void;
     extern fn us_wakeup_loop(loop: ?*Loop) void;
     extern fn us_loop_integrate(loop: ?*Loop) void;
     extern fn us_loop_iteration_number(loop: ?*Loop) c_longlong;

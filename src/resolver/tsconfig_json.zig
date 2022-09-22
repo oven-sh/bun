@@ -21,6 +21,12 @@ const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMa
 // Array iteration is faster and deterministically ordered in that case.
 const PathsMap = std.StringArrayHashMap([]string);
 
+fn FlagSet(comptime Type: type) type {
+    return std.EnumSet(std.meta.FieldEnum(Type));
+}
+
+const JSXFieldSet = FlagSet(options.JSX.Pragma);
+
 pub const TSConfigJSON = struct {
     abs_path: string,
 
@@ -44,9 +50,7 @@ pub const TSConfigJSON = struct {
     paths: PathsMap,
 
     jsx: options.JSX.Pragma = options.JSX.Pragma{},
-    has_jsxFactory: bool = false,
-    has_jsxFragmentFactory: bool = false,
-    has_jsxImportSource: bool = false,
+    jsx_flags: JSXFieldSet = JSXFieldSet{},
 
     use_define_for_class_fields: ?bool = null,
 
@@ -72,17 +76,24 @@ pub const TSConfigJSON = struct {
     pub fn mergeJSX(this: *const TSConfigJSON, current: options.JSX.Pragma) options.JSX.Pragma {
         var out = current;
 
-        if (this.has_jsxFactory) {
+        if (this.jsx_flags.contains(.factory)) {
             out.factory = this.jsx.factory;
         }
 
-        if (this.has_jsxFragmentFactory) {
+        if (this.jsx_flags.contains(.fragment)) {
             out.fragment = this.jsx.fragment;
         }
 
-        if (this.has_jsxImportSource) {
+        if (this.jsx_flags.contains(.import_source)) {
             out.import_source = this.jsx.import_source;
+        }
+
+        if (this.jsx_flags.contains(.runtime)) {
             out.runtime = this.jsx.runtime;
+        }
+
+        if (this.jsx_flags.contains(.development)) {
+            out.development = this.jsx.development;
         }
 
         return out;
@@ -131,7 +142,7 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("jsxFactory")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
                     result.jsx.factory = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
-                    result.has_jsxFactory = true;
+                    result.jsx_flags.insert(.factory);
                 }
             }
 
@@ -139,7 +150,22 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("jsxFragmentFactory")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
                     result.jsx.fragment = try parseMemberExpressionForJSX(log, &source, jsx_prop.loc, str, allocator);
-                    result.has_jsxFragmentFactory = true;
+                    result.jsx_flags.insert(.fragment);
+                }
+            }
+
+            if (compiler_opts.expr.asProperty("jsx")) |jsx_prop| {
+                if (jsx_prop.expr.asString(allocator)) |str| {
+                    // we don't support "preserve" yet
+                    if (options.JSX.RuntimeMap.get(str)) |runtime| {
+                        result.jsx.runtime = runtime;
+                        if (runtime == .automatic) {
+                            result.jsx.development = strings.eqlComptime(str, "react-jsxDEV");
+                            result.jsx_flags.insert(.development);
+                        }
+
+                        result.jsx_flags.insert(.runtime);
+                    }
                 }
             }
 
@@ -149,6 +175,7 @@ pub const TSConfigJSON = struct {
                     if (str.len >= "solid-js".len and strings.eqlComptime(str[0.."solid-js".len], "solid-js")) {
                         result.jsx.import_source = str;
                         result.jsx.runtime = .solid;
+                        result.jsx_flags.insert(.runtime);
                     } else {
                         if (is_jsx_development) {
                             result.jsx.import_source = std.fmt.allocPrint(allocator, "{s}/jsx-dev-runtime", .{str}) catch unreachable;
@@ -158,7 +185,7 @@ pub const TSConfigJSON = struct {
                     }
 
                     result.jsx.package_name = options.JSX.Pragma.parsePackageName(str);
-                    result.has_jsxImportSource = true;
+                    result.jsx_flags.insert(.import_source);
                 }
             }
 
@@ -317,36 +344,39 @@ pub const TSConfigJSON = struct {
         if (text.len == 0) {
             return &([_]string{});
         }
-        const parts_count = std.mem.count(u8, text, ".");
+        // foo.bar == 2
+        // foo.bar. == 2
+        // foo == 1
+        // foo.bar.baz == 3
+        // foo.bar.baz.bun == 4
+        const parts_count = std.mem.count(u8, text, ".") + @as(usize, @boolToInt(text[text.len - 1] != '.'));
+        var parts = std.ArrayList(string).initCapacity(allocator, parts_count) catch unreachable;
 
-        if (parts_count == 0) {
+        if (parts_count == 1) {
             if (!js_lexer.isIdentifier(text)) {
                 const warn = source.rangeOfString(loc);
                 log.addRangeWarningFmt(source, warn, allocator, "Invalid JSX member expression: \"{s}\"", .{text}) catch {};
+                parts.deinit();
                 return &([_]string{});
             }
 
-            var members = allocator.alloc(string, 1) catch unreachable;
-
-            members[0] = text;
-            return members;
+            parts.appendAssumeCapacity(text);
+            return parts.items;
         }
 
-        const parts = allocator.alloc(string, parts_count) catch unreachable;
         var iter = std.mem.tokenize(u8, text, ".");
-        var i: usize = 0;
 
         while (iter.next()) |part| {
             if (!js_lexer.isIdentifier(part)) {
                 const warn = source.rangeOfString(loc);
                 log.addRangeWarningFmt(source, warn, allocator, "Invalid JSX member expression: \"{s}\"", .{part}) catch {};
+                parts.deinit();
                 return &([_]string{});
             }
-            parts[i] = part;
-            i += 1;
+            parts.appendAssumeCapacity(part);
         }
 
-        return parts;
+        return parts.items;
     }
 
     pub fn isSlash(c: u8) bool {

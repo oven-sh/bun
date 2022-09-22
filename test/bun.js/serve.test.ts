@@ -64,6 +64,8 @@ describe("streaming", () => {
           development: false,
           error(e) {
             pass = false;
+            server?.stop();
+            server = null;
             return new Response("fail", { status: 500 });
           },
 
@@ -453,10 +455,6 @@ it(`should work for a file ${count} times serial`, async () => {
     },
   });
 
-  // this gets stuck if run about 200 times awaiting all the promises
-  // when the promises are run altogether, instead of one at a time
-  // it's hard to say if this only happens here due to some weird stuff with the test runner
-  // or if it's "real" issue
   for (let i = 0; i < count; i++) {
     const response = await fetch(`http://${server.hostname}:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
@@ -465,28 +463,6 @@ it(`should work for a file ${count} times serial`, async () => {
   server.stop();
 });
 
-var count = 50;
-it(`should work for text ${count} times serial`, async () => {
-  const textToExpect = "hello";
-  var ran = 0;
-  const server = serve({
-    port: port++,
-    fetch(req) {
-      return new Response(textToExpect);
-    },
-  });
-
-  // this gets stuck if run about 200 times awaiting all the promises
-  // when the promises are run altogether, instead of one at a time
-  // it's hard to say if this only happens here due to some weird stuff with the test runner
-  // or if it's "real" issue
-  for (let i = 0; i < count; i++) {
-    const response = await fetch(`http://${server.hostname}:${server.port}`);
-    expect(await response.text()).toBe(textToExpect);
-  }
-
-  server.stop();
-});
 it(`should work for ArrayBuffer ${count} times serial`, async () => {
   const textToExpect = "hello";
   var ran = 0;
@@ -497,14 +473,67 @@ it(`should work for ArrayBuffer ${count} times serial`, async () => {
     },
   });
 
-  // this gets stuck if run about 200 times awaiting all the promises
-  // when the promises are run altogether, instead of one at a time
-  // it's hard to say if this only happens here due to some weird stuff with the test runner
-  // or if it's "real" issue
   for (let i = 0; i < count; i++) {
     const response = await fetch(`http://${server.hostname}:${server.port}`);
     expect(await response.text()).toBe(textToExpect);
   }
 
   server.stop();
+});
+
+describe("parallell", () => {
+  it(`should work for text ${count} times in batches of 5`, async () => {
+    const textToExpect = "hello";
+    var ran = 0;
+    const server = serve({
+      port: port++,
+      fetch(req) {
+        return new Response(textToExpect);
+      },
+    });
+
+    for (let i = 0; i < count; ) {
+      let responses = await Promise.all([
+        fetch(`http://${server.hostname}:${server.port}`),
+        fetch(`http://${server.hostname}:${server.port}`),
+        fetch(`http://${server.hostname}:${server.port}`),
+        fetch(`http://${server.hostname}:${server.port}`),
+        fetch(`http://${server.hostname}:${server.port}`),
+      ]);
+
+      for (let response of responses) {
+        expect(await response.text()).toBe(textToExpect);
+      }
+      i += responses.length;
+    }
+
+    server.stop();
+  });
+  it(`should work for Uint8Array ${count} times in batches of 5`, async () => {
+    const textToExpect = "hello";
+    var ran = 0;
+    const server = serve({
+      port: port++,
+      fetch(req) {
+        return new Response(new TextEncoder().encode(textToExpect));
+      },
+    });
+
+    for (let i = 0; i < count; ) {
+      let responses = await Promise.all([
+        fetch(`http://${server.hostname}:${server.port}`),
+        fetch(`http://${server.hostname}:${server.port}`),
+        fetch(`http://${server.hostname}:${server.port}`),
+        fetch(`http://${server.hostname}:${server.port}`),
+        fetch(`http://${server.hostname}:${server.port}`),
+      ]);
+
+      for (let response of responses) {
+        expect(await response.text()).toBe(textToExpect);
+      }
+      i += responses.length;
+    }
+
+    server.stop();
+  });
 });

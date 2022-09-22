@@ -514,6 +514,8 @@ pub const Poller = struct {
 
             this.loop.?.num_polls += 1;
             this.loop.?.active += 1;
+
+            return JSC.Maybe(void).success;
         } else if (comptime Environment.isMac) {
             var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
             changelist[0] = switch (flag) {

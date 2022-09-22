@@ -988,7 +988,7 @@ pub const Waker = struct {
     fd: os.fd_t,
 
     pub fn init(allocator: std.mem.Allocator) !Waker {
-        return try initWithFileDescriptor(allocator, try std.os.eventfd(0, 0));
+        return initWithFileDescriptor(allocator, @intCast(os.fd_t, try std.os.eventfd(0, 0)));
     }
 
     pub fn initWithFileDescriptor(_: std.mem.Allocator, fd: os.fd_t) Waker {

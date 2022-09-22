@@ -81,9 +81,13 @@ pub fn ComptimeClap(
                             "TODO: implement stop_after_positional_at on windows",
                         );
 
-                        const remaining_ = std.os.argv[@minimum(std.os.argv.len, stream.iter.args.inner.index)..];
-                        try passthrough_positionals.ensureTotalCapacityPrecise(remaining_.len);
+                        var remaining_ = std.os.argv[@minimum(std.os.argv.len, stream.iter.args.inner.index)..];
+                        const first: []const u8 = if (remaining_.len > 0) bun.span(remaining_[0]) else "";
+                        if (first.len > 0 and std.mem.eql(u8, first, "--")) {
+                            remaining_ = remaining_[1..];
+                        }
 
+                        try passthrough_positionals.ensureTotalCapacityPrecise(remaining_.len);
                         for (remaining_) |arg_| {
                             // use bun.span due to the optimization for long strings
                             passthrough_positionals.appendAssumeCapacity(bun.span(arg_));

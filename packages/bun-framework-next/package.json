@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "12.2.4",
+  "version": "12.2.5",
   "main": "empty.js",
   "repository": "https://github.com/oven-sh/bun",
   "module": "empty.js",

@@ -188,6 +188,15 @@ pub const ZigString = extern struct {
         len: u32,
         allocated: bool = false,
 
+        pub fn fromUTF8(input: []const u8) Slice {
+            return .{
+                .ptr = input.ptr,
+                .len = @truncate(u32, input.len),
+                .allocated = false,
+                .allocator = bun.default_allocator,
+            };
+        }
+
         pub const empty = Slice{ .allocator = bun.default_allocator, .ptr = undefined, .len = 0, .allocated = false };
 
         pub fn clone(this: Slice, allocator: std.mem.Allocator) !Slice {

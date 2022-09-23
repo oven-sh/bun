@@ -282,8 +282,8 @@ pub fn getStdin(
         blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
 
         return ctx.ptr().putCachedObject(
-            &ZigString.init("BunSTDIN"),
-            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+            ZigString.static("BunSTDIN"),
+            blob.toJS(ctx),
         ).asObjectRef();
     }
 
@@ -305,8 +305,8 @@ pub fn getStderr(
         blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
 
         return ctx.ptr().putCachedObject(
-            &ZigString.init("BunSTDERR"),
-            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+            ZigString.static("BunSTDERR"),
+            blob.toJS(ctx),
         ).asObjectRef();
     }
 
@@ -329,7 +329,7 @@ pub fn getStdout(
 
         return ctx.ptr().putCachedObject(
             &ZigString.init("BunSTDOUT"),
-            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+            blob.toJS(ctx),
         ).asObjectRef();
     }
 

@@ -9,4 +9,5 @@ std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA256Constructor;std:
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA512_256Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoder;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequest;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequestConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResponse;
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResponseConstructor;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResponseConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlob;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBlobConstructor;

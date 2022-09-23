@@ -929,6 +929,95 @@ pub const JSResponse = struct {
         }
     }
 };
+pub const JSBlob = struct {
+    const Blob = Classes.Blob;
+    const GetterType = fn (*Blob, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Blob, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Blob, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Blob {
+        JSC.markBinding();
+        return Blob__fromJS(value);
+    }
+
+    /// Get the Blob constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        return Blob__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Blob
+    pub fn toJS(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        if (comptime Environment.allow_assert) {
+            const value__ = Blob__create(globalObject, this);
+            std.debug.assert(value__.as(Blob).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Blob__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Blob.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Blob) bool {
+        JSC.markBinding();
+        return Blob__dangerouslySetPtr(value, ptr);
+    }
+
+    extern fn Blob__fromJS(JSC.JSValue) ?*Blob;
+    extern fn Blob__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Blob__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Blob) JSC.JSValue;
+
+    extern fn Blob__dangerouslySetPtr(JSC.JSValue, ?*Blob) bool;
+
+    comptime {
+        if (@TypeOf(Blob.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Blob)) {
+            @compileLog("Blob.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Blob.finalize) != (fn (*Blob) callconv(.C) void)) {
+            @compileLog("Blob.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Blob.getArrayBuffer) != CallbackType)
+            @compileLog("Expected Blob.getArrayBuffer to be a callback");
+        if (@TypeOf(Blob.getJSON) != CallbackType)
+            @compileLog("Expected Blob.getJSON to be a callback");
+        if (@TypeOf(Blob.getSize) != GetterType)
+            @compileLog("Expected Blob.getSize to be a getter");
+
+        if (@TypeOf(Blob.getSlice) != CallbackType)
+            @compileLog("Expected Blob.getSlice to be a callback");
+        if (@TypeOf(Blob.getStream) != CallbackType)
+            @compileLog("Expected Blob.getStream to be a callback");
+        if (@TypeOf(Blob.getText) != CallbackType)
+            @compileLog("Expected Blob.getText to be a callback");
+        if (@TypeOf(Blob.getType) != GetterType)
+            @compileLog("Expected Blob.getType to be a getter");
+
+        if (@TypeOf(Blob.setType) != SetterType)
+            @compileLog("Expected Blob.setType to be a setter");
+        if (@TypeOf(Blob.getWriter) != CallbackType)
+            @compileLog("Expected Blob.getWriter to be a callback");
+        if (!JSC.is_bindgen) {
+            @export(Blob.constructor, .{ .name = "BlobClass__construct" });
+            @export(Blob.finalize, .{ .name = "BlobClass__finalize" });
+            @export(Blob.getArrayBuffer, .{ .name = "BlobPrototype__getArrayBuffer" });
+            @export(Blob.getJSON, .{ .name = "BlobPrototype__getJSON" });
+            @export(Blob.getSize, .{ .name = "BlobPrototype__getSize" });
+            @export(Blob.getSlice, .{ .name = "BlobPrototype__getSlice" });
+            @export(Blob.getStream, .{ .name = "BlobPrototype__getStream" });
+            @export(Blob.getText, .{ .name = "BlobPrototype__getText" });
+            @export(Blob.getType, .{ .name = "BlobPrototype__getType" });
+            @export(Blob.getWriter, .{ .name = "BlobPrototype__getWriter" });
+            @export(Blob.setType, .{ .name = "BlobPrototype__setType" });
+        }
+    }
+};
 
 comptime {
     _ = JSSHA1;
@@ -942,4 +1031,5 @@ comptime {
     _ = JSTextDecoder;
     _ = JSRequest;
     _ = JSResponse;
+    _ = JSBlob;
 }

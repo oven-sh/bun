@@ -9,4 +9,5 @@ std::unique_ptr<IsoSubspace> m_subspaceForSHA256Constructor;std::unique_ptr<IsoS
 std::unique_ptr<IsoSubspace> m_subspaceForSHA512_256Constructor;std::unique_ptr<IsoSubspace> m_subspaceForTextDecoder;
 std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderConstructor;std::unique_ptr<IsoSubspace> m_subspaceForRequest;
 std::unique_ptr<IsoSubspace> m_subspaceForRequestConstructor;std::unique_ptr<IsoSubspace> m_subspaceForResponse;
-std::unique_ptr<IsoSubspace> m_subspaceForResponseConstructor;
+std::unique_ptr<IsoSubspace> m_subspaceForResponseConstructor;std::unique_ptr<IsoSubspace> m_subspaceForBlob;
+std::unique_ptr<IsoSubspace> m_subspaceForBlobConstructor;

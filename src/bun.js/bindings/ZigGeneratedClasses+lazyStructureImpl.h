@@ -65,6 +65,12 @@ void GlobalObject::initGeneratedLazyClasses() {
                  init.setStructure(WebCore::JSResponse::createStructure(init.vm, init.global, init.prototype));
                  init.setConstructor(WebCore::JSResponseConstructor::create(init.vm, init.global, WebCore::JSResponseConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSResponsePrototype*>(init.prototype)));
               });
+    m_JSBlob.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSBlob::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSBlob::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSBlobConstructor::create(init.vm, init.global, WebCore::JSBlobConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSBlobPrototype*>(init.prototype)));
+              });
 }
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
@@ -80,4 +86,5 @@ void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& 
       thisObject->m_JSTextDecoder.visit(visitor);  visitor.append(thisObject->m_JSTextDecoderSetterValue);
       thisObject->m_JSRequest.visit(visitor);  visitor.append(thisObject->m_JSRequestSetterValue);
       thisObject->m_JSResponse.visit(visitor);  visitor.append(thisObject->m_JSResponseSetterValue);
+      thisObject->m_JSBlob.visit(visitor);  visitor.append(thisObject->m_JSBlobSetterValue);
 }

@@ -401,9 +401,13 @@ void ${name}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, ${
 
 const ClassInfo ${name}::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${name}) };
 
-
-extern "C" EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
-  return JSValue::encode(globalObject->${className(typeName)}Constructor());
+${
+  !obj.noConstructor
+    ? `
+  extern "C" EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
+    return JSValue::encode(globalObject->${className(typeName)}Constructor());
+  }`
+    : ""
 }
 
       
@@ -451,18 +455,16 @@ function renderDecls(symbolName, typeName, proto) {
       "setter" in proto[name] ||
       ("accessor" in proto[name] && proto[name].setter)
     ) {
-      rows
-        .push(
-          `extern "C" bool ${symbolName(
-            typeName,
-            proto[name].setter || proto[name].accessor.setter
-          )}(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, EncoedJSValue value);`,
-          `
+      rows.push(
+        `extern "C" bool ${symbolName(
+          typeName,
+          proto[name].setter || proto[name].accessor.setter
+        )}(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue value);`,
+        `
       JSC_DECLARE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap);
-      `,
-          "\n"
-        )
-        .trim();
+      `.trim(),
+        "\n"
+      );
     }
 
     if ("fn" in proto[name]) {
@@ -620,7 +622,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
           name
         )}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
 {
-    auto& vm = lexicalGlobalObject>
+    auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = jsCast<${className(
           typeName
@@ -628,7 +630,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
     auto result = ${symbolName(
       typeName,
-      roto[name].setter || proto[name].accessor.setter
+      proto[name].setter || proto[name].accessor.setter
     )}(thisObject->wrapped(), lexicalGlobalObject, encodedValue);
 
     RELEASE_AND_RETURN(throwScope, result);
@@ -871,7 +873,7 @@ function generateHeader(typeName, obj) {
   return (
     generateClassHeader(typeName, obj).trim() +
     "\n" +
-    generateConstructorHeader(typeName).trim() +
+    (!obj.noConstructor ? generateConstructorHeader(typeName).trim() : "") +
     "\n"
   );
 }
@@ -880,7 +882,7 @@ function generateImpl(typeName, obj) {
   const proto = obj.proto;
   return [
     Object.keys(proto).length > 0 && generatePrototype(typeName, obj).trim(),
-    generateConstructorImpl(typeName, obj).trim(),
+    !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
     Object.keys(proto).length > 0 && generateClassImpl(typeName, obj).trim(),
   ]
     .filter(Boolean)
@@ -889,7 +891,13 @@ function generateImpl(typeName, obj) {
 
 function generateZig(
   typeName,
-  { klass = {}, proto = {}, construct, finalize } = {} as ClassDefinition
+  {
+    klass = {},
+    proto = {},
+    construct,
+    finalize,
+    noConstructor,
+  } = {} as ClassDefinition
 ) {
   const exports: [string, string][] = [];
 
@@ -1009,13 +1017,18 @@ pub const ${className(typeName)} = struct {
         return ${symbolName(typeName, "fromJS")}(value);
     }
 
+    ${
+      !noConstructor
+        ? `
     /// Get the ${typeName} constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding();
         return ${symbolName(typeName, "getConstructor")}(globalObject);
     }
-
+  `
+        : ""
+    }
     /// Create a new instance of ${typeName}
     pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         JSC.markBinding();
@@ -1090,6 +1103,32 @@ function generateLazyClassStructureHeader(
   bool has${className(typeName)}SetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_${className(typeName)}SetterValue;
     `.trim();
+}
+
+function generateLazyStructureHeader(typeName, { klass = {}, proto = {} }) {
+  return `
+        JSC::Structure* ${className(
+          typeName
+        )}Structure() { return m_${className(typeName)}.get(this); }
+  JSC::LazyProperty<Zig::GlobalObject, Structure> m_${className(typeName)};
+  bool has${className(typeName)}SetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_${className(typeName)}SetterValue;
+    `.trim();
+}
+
+function generateLazyStructureImpl(typeName, { klass = {}, proto = {} }) {
+  return `
+          m_${className(typeName)}.initLater(
+            [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+                 auto *prototype = WebCore::${className(
+                   typeName
+                 )}::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner));
+                 init.set(WebCore::${className(
+                   typeName
+                 )}::createStructure(init.vm, init.owner, prototype));
+              });
+  
+      `.trim();
 }
 
 function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {} }) {
@@ -1273,7 +1312,13 @@ await writeAndUnlink(`${import.meta.dir}/../bindings/ZigGeneratedClasses.cpp`, [
 ]);
 await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureHeader.h`,
-  classes.map((a) => generateLazyClassStructureHeader(a.name, a)).join("\n")
+  classes
+    .map((a) =>
+      !a.noConstructor
+        ? generateLazyClassStructureHeader(a.name, a)
+        : generateLazyStructureHeader(a.name, a)
+    )
+    .join("\n")
 );
 
 await writeAndUnlink(
@@ -1281,9 +1326,11 @@ await writeAndUnlink(
   classes.map((a) =>
     [
       `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(a.name)};`,
-      `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(
-        a.name
-      )}Constructor;`,
+      !a.noConstructor
+        ? `std::unique_ptr<GCClient::IsoSubspace> ${clientSubspaceFor(
+            a.name
+          )}Constructor;`
+        : "",
     ].join("\n")
   )
 );
@@ -1293,7 +1340,9 @@ await writeAndUnlink(
   classes.map((a) =>
     [
       `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)};`,
-      `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)}Constructor;`,
+      !a.noConstructor
+        ? `std::unique_ptr<IsoSubspace> ${subspaceFor(a.name)}Constructor;`
+        : ``,
     ].join("\n")
   )
 );
@@ -1301,7 +1350,11 @@ await writeAndUnlink(
 await writeAndUnlink(
   `${import.meta.dir}/../bindings/ZigGeneratedClasses+lazyStructureImpl.h`,
   initLazyClasses(
-    classes.map((a) => generateLazyClassStructureImpl(a.name, a))
+    classes.map((a) =>
+      !a.noConstructor
+        ? generateLazyClassStructureImpl(a.name, a)
+        : generateLazyStructureImpl(a.name, a)
+    )
   ) +
     "\n" +
     visitLazyClasses(classes)

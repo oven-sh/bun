@@ -64,3 +64,9 @@ JSC::Structure* JSResponseStructure() { return m_JSResponse.getInitializedOnMain
   JSC::LazyClassStructure m_JSResponse;
   bool hasJSResponseSetterValue { false };
   mutable JSC::WriteBarrier<JSC::Unknown> m_JSResponseSetterValue;
+JSC::Structure* JSBlobStructure() { return m_JSBlob.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSBlobConstructor() { return m_JSBlob.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSBlobPrototype() { return m_JSBlob.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSBlob;
+  bool hasJSBlobSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSBlobSetterValue;

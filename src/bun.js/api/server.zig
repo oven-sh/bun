@@ -1933,7 +1933,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     }
 
                     if (opts.fastGet(ctx.ptr(), .body)) |body__| {
-                        if (Blob.fromJS(ctx.ptr(), body__, true, false)) |new_blob| {
+                        if (Blob.get(ctx.ptr(), body__, true, false)) |new_blob| {
                             body = .{ .Blob = new_blob };
                         } else |_| {
                             return JSPromise.rejectedPromiseValue(globalThis, ZigString.init("fetch() received invalid body").toErrorInstance(globalThis)).asRef();

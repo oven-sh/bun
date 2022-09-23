@@ -88,7 +88,6 @@ const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 pub const GlobalConstructors = [_]type{
-    WebCore.Blob.Constructor,
     JSC.Cloudflare.HTMLRewriter.Constructor,
 };
 

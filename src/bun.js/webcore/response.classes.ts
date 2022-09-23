@@ -104,4 +104,32 @@ export default [
       },
     },
   }),
+  define({
+    name: "Blob",
+    construct: true,
+    finalize: true,
+    JSType: "0b11101110",
+    klass: {},
+    proto: {
+      text: { fn: "getText" },
+      json: { fn: "getJSON" },
+      arrayBuffer: { fn: "getArrayBuffer" },
+      slice: { fn: "getSlice", length: 2 },
+      stream: { fn: "getStream", length: 1 },
+
+      type: {
+        getter: "getType",
+        setter: "setType",
+      },
+
+      size: {
+        getter: "getSize",
+      },
+
+      writer: {
+        fn: "getWriter",
+        length: 1,
+      },
+    },
+  }),
 ];

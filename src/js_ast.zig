@@ -7840,6 +7840,9 @@ pub const Macro = struct {
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
                                     mime_type = HTTP.MimeType.init(resp.mimeType());
                                     blob_ = resp.body.use();
+                                } else if (value.as(JSC.WebCore.Blob)) |resp| {
+                                    blob_ = resp.*;
+                                    blob_.?.allocator = null;
                                 }
                             } else {
                                 var private_data = JSCBase.JSPrivateDataPtr.from(JSC.C.JSObjectGetPrivate(value.asObjectRef()).?);
@@ -7856,11 +7859,7 @@ pub const Macro = struct {
                                         this.macro.vm.runErrorHandler(value, null);
                                         return error.MacroFailed;
                                     },
-                                    .Blob => {
-                                        var blob = private_data.as(JSC.WebCore.Blob);
-                                        blob_ = blob.*;
-                                        blob.* = JSC.WebCore.Blob.initEmpty(blob.globalThis);
-                                    },
+
                                     else => {},
                                 }
                             }

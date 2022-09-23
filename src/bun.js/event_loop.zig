@@ -475,12 +475,13 @@ pub const Poller = struct {
     const linux = std.os.linux;
 
     const FileBlobLoader = JSC.WebCore.FileBlobLoader;
-
+    const FileSink = JSC.WebCore.FileSink;
     /// epoll only allows one pointer
     /// We unfortunately need two pointers: one for a function call and one for the context
     /// We use a tagged pointer union and then call the function with the context pointer
     pub const Pollable = TaggedPointerUnion(.{
         FileBlobLoader,
+        FileSink,
         AsyncIO.Waker,
     });
     const Kevent = std.os.Kevent;
@@ -599,8 +600,6 @@ pub const Poller = struct {
     pub const Flag = enum { read, write };
 
     comptime {
-        if (!JSC.is_bindgen) {
-            @export(onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
-        }
+        @export(onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });
     }
 };

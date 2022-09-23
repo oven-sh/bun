@@ -19,6 +19,7 @@ export interface ClassDefinition {
   klass: Record<string, Field>;
   proto: Record<string, Field>;
   JSType?: string;
+  noConstructor?: boolean;
 }
 
 export function define(

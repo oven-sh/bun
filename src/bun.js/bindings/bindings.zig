@@ -140,6 +140,10 @@ pub const ZigString = extern struct {
         else
             try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
 
+        if (list.capacity > list.items.len) {
+            list.items.ptr[list.items.len] = 0;
+        }
+
         return list.items;
     }
 
@@ -219,6 +223,24 @@ pub const ZigString = extern struct {
 
         pub fn sliceZ(this: Slice) [:0]const u8 {
             return std.meta.assumeSentinel(this.ptr[0..this.len], 0);
+        }
+
+        pub fn toSliceZ(this: Slice, buf: []u8) [:0]const u8 {
+            if (this.len == 0) {
+                return "";
+            }
+
+            if (this.ptr[this.len] == 0) {
+                return this.sliceZ();
+            }
+
+            if (this.len >= buf.len) {
+                return "";
+            }
+
+            std.mem.copy(u8, buf[0..this.len], this.slice());
+            buf[this.len] = 0;
+            return std.meta.assumeSentinel(buf[0..this.len], 0);
         }
 
         pub fn mut(this: Slice) []u8 {
@@ -1788,6 +1810,10 @@ pub const JSGlobalObject = extern struct {
     pub const include = "JavaScriptCore/JSGlobalObject.h";
     pub const name = "JSC::JSGlobalObject";
     pub const namespace = "JSC";
+
+    pub fn allocator(this: *JSGlobalObject) std.mem.Allocator {
+        return this.bunVM().allocator;
+    }
 
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,

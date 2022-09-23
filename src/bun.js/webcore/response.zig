@@ -770,7 +770,7 @@ pub const Fetch = struct {
                 }
 
                 if (options.fastGet(ctx.ptr(), .body)) |body__| {
-                    if (Blob.fromJS(ctx.ptr(), body__, true, false)) |new_blob| {
+                    if (Blob.get(ctx.ptr(), body__, true, false)) |new_blob| {
                         body = new_blob;
                     } else |_| {
                         return JSPromise.rejectedPromiseValue(globalThis, ZigString.init("fetch() received invalid body").toErrorInstance(globalThis)).asRef();
@@ -905,6 +905,8 @@ const PathOrBlob = union(enum) {
 };
 
 pub const Blob = struct {
+    pub usingnamespace JSC.Codegen.JSBlob;
+
     size: SizeType = 0,
     offset: SizeType = 0,
     /// When set, the blob will be freed on finalization callbacks
@@ -1169,13 +1171,16 @@ pub const Blob = struct {
             clone.allocator = bun.default_allocator;
             var cloned = bun.default_allocator.create(Blob) catch unreachable;
             cloned.* = clone;
-            return JSPromise.resolvedPromiseValue(ctx.ptr(), JSC.JSValue.fromRef(Blob.Class.make(ctx, cloned))).asObjectRef();
+            return JSPromise.resolvedPromiseValue(ctx.ptr(), cloned.toJS(ctx)).asObjectRef();
         } else if (destination_type == .bytes and source_type == .file) {
+            var fake_call_frame: [8]JSC.JSValue = undefined;
+            @memset(@ptrCast([*]u8, &fake_call_frame), 0, @sizeOf(@TypeOf(fake_call_frame)));
+            const blob_value =
+                source_blob.getSlice(ctx, @ptrCast(*JSC.CallFrame, &fake_call_frame));
+
             return JSPromise.resolvedPromiseValue(
                 ctx.ptr(),
-                JSC.JSValue.fromRef(
-                    source_blob.getSlice(ctx, undefined, undefined, &.{}, null),
-                ),
+                blob_value,
             ).asObjectRef();
         }
 
@@ -1320,7 +1325,7 @@ pub const Blob = struct {
                 }
             }
 
-            break :brk Blob.fromJS(
+            break :brk Blob.get(
                 ctx.ptr(),
                 data,
                 false,
@@ -1534,7 +1539,7 @@ pub const Blob = struct {
         var ptr = bun.default_allocator.create(Blob) catch unreachable;
         ptr.* = blob;
         ptr.allocator = bun.default_allocator;
-        return Blob.Class.make(ctx, ptr);
+        return ptr.toJS(ctx).asObjectRef();
     }
 
     pub fn findOrCreateFileFromPath(path_: JSC.Node.PathOrFileDescriptor, globalThis: *JSGlobalObject) Blob {
@@ -2831,62 +2836,27 @@ pub const Blob = struct {
         }
     };
 
-    pub const Constructor = JSC.NewConstructor(
-        Blob,
-        .{
-            .constructor = .{ .rfn = constructor },
-        },
-        .{},
-    );
-
-    pub const Class = NewClass(
-        Blob,
-        .{ .name = "Blob" },
-        .{ .finalize = finalize, .text = .{
-            .rfn = getText_c,
-        }, .json = .{
-            .rfn = getJSON_c,
-        }, .arrayBuffer = .{
-            .rfn = getArrayBuffer_c,
-        }, .slice = .{
-            .rfn = getSlice,
-        }, .stream = .{
-            .rfn = getStream,
-        } },
-        .{
-            .@"type" = .{
-                .get = getType,
-                .set = setType,
-            },
-            .@"size" = .{
-                .get = getSize,
-                .ro = true,
-            },
-        },
-    );
-
     pub fn getStream(
         this: *Blob,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        arguments: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) JSC.C.JSValueRef {
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
         var recommended_chunk_size: SizeType = 0;
+        var arguments_ = callframe.arguments(2);
+        var arguments = arguments_.ptr[0..arguments_.len];
         if (arguments.len > 0) {
-            if (!JSValue.c(arguments[0]).isNumber() and !JSValue.c(arguments[0]).isUndefinedOrNull()) {
-                JSC.throwInvalidArguments("chunkSize must be a number", .{}, ctx, exception);
-                return null;
+            if (!arguments[0].isNumber() and !arguments[0].isUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("chunkSize must be a number", .{});
+                return JSValue.jsUndefined();
             }
 
-            recommended_chunk_size = @intCast(SizeType, @maximum(0, @truncate(i52, JSValue.c(arguments[0]).toInt64())));
+            recommended_chunk_size = @intCast(SizeType, @maximum(0, @truncate(i52, arguments[0].toInt64())));
         }
         return JSC.WebCore.ReadableStream.fromBlob(
-            ctx.ptr(),
+            globalThis,
             this,
             recommended_chunk_size,
-        ).asObjectRef();
+        );
     }
 
     fn promisified(
@@ -2909,7 +2879,8 @@ pub const Blob = struct {
     pub fn getText(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
-    ) JSC.JSValue {
+        _: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
         return promisified(this.toString(globalThis, .clone), globalThis);
     }
 
@@ -2990,6 +2961,66 @@ pub const Blob = struct {
         return promisified(this.toArrayBuffer(ctx.ptr(), .clone), ctx.ptr()).asObjectRef();
     }
 
+    pub fn getWriter(
+        this: *Blob,
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        var arguments_ = callframe.arguments(1);
+        var arguments = arguments_.ptr[0..arguments_.len];
+
+        var store = this.store orelse {
+            globalThis.throwInvalidArguments("Blob is detached", .{});
+            return JSValue.jsUndefined();
+        };
+
+        if (store.data != .file) {
+            globalThis.throwInvalidArguments("Blob is read-only", .{});
+            return JSValue.jsUndefined();
+        }
+
+        var sink = JSC.WebCore.FileSink.init(globalThis.allocator(), null) catch |err| {
+            globalThis.throwInvalidArguments("Failed to create FileSink: {s}", .{@errorName(err)});
+            return JSValue.jsUndefined();
+        };
+
+        var input_path: JSC.WebCore.PathOrFileDescriptor = undefined;
+        if (store.data.file.pathlike == .fd) {
+            input_path = .{ .fd = store.data.file.pathlike.fd };
+        } else {
+            input_path = .{
+                .path = ZigString.Slice{
+                    .ptr = store.data.file.pathlike.path.slice().ptr,
+                    .len = @truncate(u32, store.data.file.pathlike.path.slice().len),
+                    .allocated = false,
+                    .allocator = bun.default_allocator,
+                },
+            };
+        }
+
+        var stream_start: JSC.WebCore.StreamStart = .{
+            .FileSink = .{
+                .input_path = input_path,
+            },
+        };
+
+        if (arguments.len > 0) {
+            stream_start = JSC.WebCore.StreamStart.fromJSWithTag(globalThis, arguments[0], .FileSink);
+            stream_start.FileSink.input_path = input_path;
+        }
+
+        switch (sink.start(stream_start)) {
+            .err => |err| {
+                globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
+                sink.finalize();
+                return JSC.JSValue.jsUndefined();
+            },
+            else => {},
+        }
+
+        return sink.toJS(globalThis);
+    }
+
     /// https://w3c.github.io/FileAPI/#slice-method-algo
     /// The slice() method returns a new Blob object with bytes ranging from the
     /// optional start parameter up to but not including the optional end
@@ -2997,22 +3028,30 @@ pub const Blob = struct {
     /// contentType parameter. It must act as follows:
     pub fn getSlice(
         this: *Blob,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSObjectRef,
-        args: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) JSC.C.JSObjectRef {
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        var allocator = globalThis.allocator();
+        var arguments_ = callframe.arguments(2);
+        var args = arguments_.ptr[0..arguments_.len];
+
         if (this.size == 0) {
-            return constructor(ctx, null, &[_]js.JSValueRef{}, exception);
+            const empty = Blob.initEmpty(globalThis);
+            var ptr = allocator.create(Blob) catch {
+                return JSC.JSValue.jsUndefined();
+            };
+            ptr.* = empty;
+            ptr.allocator = allocator;
+            return ptr.toJS(globalThis);
         }
+
         // If the optional start parameter is not used as a parameter when making this call, let relativeStart be 0.
         var relativeStart: i64 = 0;
 
         // If the optional end parameter is not used as a parameter when making this call, let relativeEnd be size.
         var relativeEnd: i64 = @intCast(i64, this.size);
 
-        var args_iter = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), args);
+        var args_iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args);
         if (args_iter.nextEat()) |start_| {
             const start = start_.toInt64();
             if (start < 0) {
@@ -3039,11 +3078,11 @@ pub const Blob = struct {
         var content_type: string = "";
         if (args_iter.nextEat()) |content_type_| {
             if (content_type_.isString()) {
-                var zig_str = content_type_.getZigString(ctx.ptr());
+                var zig_str = content_type_.getZigString(globalThis);
                 var slicer = zig_str.toSlice(bun.default_allocator);
                 defer slicer.deinit();
                 var slice = slicer.slice();
-                var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
+                var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
                 content_type = strings.copyLowercase(slice, content_type_buf);
             }
         }
@@ -3058,31 +3097,25 @@ pub const Blob = struct {
         blob.content_type = content_type;
         blob.content_type_allocated = content_type.len > 0;
 
-        var blob_ = getAllocator(ctx).create(Blob) catch unreachable;
+        var blob_ = allocator.create(Blob) catch unreachable;
         blob_.* = blob;
-        blob_.allocator = getAllocator(ctx);
-        return Blob.Class.make(ctx, blob_);
+        blob_.allocator = allocator;
+        return blob_.toJS(globalThis);
     }
 
     pub fn getType(
         this: *Blob,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
-        return ZigString.init(this.content_type).toValue(ctx.ptr()).asObjectRef();
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return ZigString.init(this.content_type).toValue(globalThis);
     }
 
     pub fn setType(
         this: *Blob,
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        value: js.JSValueRef,
-        _: js.ExceptionRef,
-    ) bool {
-        var zig_str = JSValue.fromRef(value).getZigString(ctx.ptr());
+        globalThis: *JSC.JSGlobalObject,
+        value: JSC.JSValue,
+    ) callconv(.C) bool {
+        var zig_str = value.getZigString(globalThis);
         if (zig_str.is16Bit())
             return false;
 
@@ -3093,7 +3126,7 @@ pub const Blob = struct {
         const prev_content_type = this.content_type;
         {
             defer if (this.content_type_allocated) bun.default_allocator.free(prev_content_type);
-            var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
+            var content_type_buf = globalThis.allocator().alloc(u8, slice.len) catch unreachable;
             this.content_type = strings.copyLowercase(slice, content_type_buf);
         }
 
@@ -3101,25 +3134,19 @@ pub const Blob = struct {
         return true;
     }
 
-    pub fn getSize(
-        this: *Blob,
-        _: js.JSContextRef,
-        _: js.JSObjectRef,
-        _: js.JSStringRef,
-        _: js.ExceptionRef,
-    ) js.JSValueRef {
+    pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
         if (this.size == Blob.max_size) {
             this.resolveSize();
             if (this.size == Blob.max_size and this.store != null) {
-                return JSValue.jsNumberFromChar(0).asRef();
+                return JSValue.jsNumberFromChar(0);
             }
         }
 
         if (this.size < std.math.maxInt(i32)) {
-            return JSValue.jsNumber(this.size).asRef();
+            return JSValue.jsNumber(this.size);
         }
 
-        return JSC.JSValue.jsNumberFromUint64(this.size).asRef();
+        return JSC.JSValue.jsNumberFromUint64(this.size);
     }
 
     pub fn resolveSize(this: *Blob) void {
@@ -3138,40 +3165,42 @@ pub const Blob = struct {
     }
 
     pub fn constructor(
-        ctx: js.JSContextRef,
-        _: js.JSObjectRef,
-        args: []const js.JSValueRef,
-        exception: js.ExceptionRef,
-    ) js.JSObjectRef {
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) ?*Blob {
+        var allocator = globalThis.allocator();
         var blob: Blob = undefined;
+        var arguments = callframe.arguments(2);
+        var args = arguments.ptr[0..arguments.len];
+
         switch (args.len) {
             0 => {
                 var empty: []u8 = &[_]u8{};
-                blob = Blob.init(empty, getAllocator(ctx), ctx.ptr());
+                blob = Blob.init(empty, allocator, globalThis);
             },
             else => {
-                blob = fromJS(ctx.ptr(), JSValue.fromRef(args[0]), false, true) catch |err| {
+                blob = get(globalThis, args[0], false, true) catch |err| {
                     if (err == error.InvalidArguments) {
-                        JSC.JSError(getAllocator(ctx), "new Blob() expects an Array", .{}, ctx, exception);
+                        globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
                         return null;
                     }
-                    JSC.JSError(getAllocator(ctx), "out of memory :(", .{}, ctx, exception);
+                    globalThis.throw("out of memory", .{});
                     return null;
                 };
 
                 if (args.len > 1) {
-                    var options = JSValue.fromRef(args[1]);
+                    var options = args[0];
                     if (options.isCell()) {
                         // type, the ASCII-encoded string in lower case
                         // representing the media type of the Blob.
                         // Normative conditions for this member are provided
                         // in the § 3.1 Constructors.
-                        if (options.get(ctx.ptr(), "type")) |content_type| {
+                        if (options.get(globalThis, "type")) |content_type| {
                             if (content_type.isString()) {
-                                var content_type_str = content_type.getZigString(ctx.ptr());
+                                var content_type_str = content_type.getZigString(globalThis);
                                 if (!content_type_str.is16Bit()) {
                                     var slice = content_type_str.trimmedSlice();
-                                    var content_type_buf = getAllocator(ctx).alloc(u8, slice.len) catch unreachable;
+                                    var content_type_buf = allocator.alloc(u8, slice.len) catch unreachable;
                                     blob.content_type = strings.copyLowercase(slice, content_type_buf);
                                     blob.content_type_allocated = true;
                                 }
@@ -3186,13 +3215,13 @@ pub const Blob = struct {
             },
         }
 
-        var blob_ = getAllocator(ctx).create(Blob) catch unreachable;
+        var blob_ = allocator.create(Blob) catch unreachable;
         blob_.* = blob;
-        blob_.allocator = getAllocator(ctx);
-        return Blob.Class.make(ctx, blob_);
+        blob_.allocator = allocator;
+        return blob_;
     }
 
-    pub fn finalize(this: *Blob) void {
+    pub fn finalize(this: *Blob) callconv(.C) void {
         this.deinit();
     }
 
@@ -3566,7 +3595,7 @@ pub const Blob = struct {
         return toArrayBufferWithBytes(this, global, bun.constStrToU8(view_), lifetime);
     }
 
-    pub inline fn fromJS(
+    pub inline fn get(
         global: *JSGlobalObject,
         arg: JSValue,
         comptime move: bool,
@@ -3676,28 +3705,20 @@ pub const Blob = struct {
                     return Blob.init(buf, bun.default_allocator, global);
                 },
 
-                else => |tag| {
-                    if (tag != .DOMWrapper) {
-                        if (JSC.C.JSObjectGetPrivate(top_value.asObjectRef())) |priv| {
-                            var data = JSC.JSPrivateDataPtr.from(priv);
-                            switch (data.tag()) {
-                                .Blob => {
-                                    var blob: *Blob = data.as(Blob);
-                                    if (comptime move) {
-                                        var _blob = blob.*;
-                                        _blob.allocator = null;
-                                        blob.transfer();
-                                        return _blob;
-                                    } else {
-                                        return blob.dupe();
-                                    }
-                                },
-
-                                else => return Blob.initEmpty(global),
-                            }
+                .DOMWrapper => {
+                    if (top_value.as(Blob)) |blob| {
+                        if (comptime move) {
+                            var _blob = blob.*;
+                            _blob.allocator = null;
+                            blob.transfer();
+                            return _blob;
+                        } else {
+                            return blob.dupe();
                         }
                     }
                 },
+
+                else => {},
             }
         }
 
@@ -3778,20 +3799,15 @@ pub const Blob = struct {
                                     could_have_non_ascii = true;
                                     break;
                                 },
-                                else => {
-                                    if (JSC.C.JSObjectGetPrivate(item.asObjectRef())) |priv| {
-                                        var data = JSC.JSPrivateDataPtr.from(priv);
-                                        switch (data.tag()) {
-                                            .Blob => {
-                                                var blob: *Blob = data.as(Blob);
-                                                could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
-                                                joiner.append(blob.sharedView(), 0, null);
-                                                continue;
-                                            },
-                                            else => {},
-                                        }
+
+                                .DOMWrapper => {
+                                    if (item.as(Blob)) |blob| {
+                                        could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
+                                        joiner.append(blob.sharedView(), 0, null);
+                                        continue;
                                     }
                                 },
+                                else => {},
                             }
                         }
 
@@ -3799,7 +3815,12 @@ pub const Blob = struct {
                     }
                 },
 
-                .DOMWrapper => {},
+                .DOMWrapper => {
+                    if (current.as(Blob)) |blob| {
+                        could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
+                        joiner.append(blob.sharedView(), 0, null);
+                    }
+                },
 
                 JSC.JSValue.JSType.ArrayBuffer,
                 JSC.JSValue.JSType.Int8Array,
@@ -3821,28 +3842,13 @@ pub const Blob = struct {
                 },
 
                 else => {
-                    outer: {
-                        if (JSC.C.JSObjectGetPrivate(current.asObjectRef())) |priv| {
-                            var data = JSC.JSPrivateDataPtr.from(priv);
-                            switch (data.tag()) {
-                                .Blob => {
-                                    var blob: *Blob = data.as(Blob);
-                                    could_have_non_ascii = could_have_non_ascii or !(blob.is_all_ascii orelse false);
-                                    joiner.append(blob.sharedView(), 0, null);
-                                    break :outer;
-                                },
-                                else => {},
-                            }
-                        }
-
-                        var sliced = current.toSlice(global, bun.default_allocator);
-                        could_have_non_ascii = could_have_non_ascii or sliced.allocated;
-                        joiner.append(
-                            sliced.slice(),
-                            0,
-                            if (sliced.allocated) sliced.allocator else null,
-                        );
-                    }
+                    var sliced = current.toSlice(global, bun.default_allocator);
+                    could_have_non_ascii = could_have_non_ascii or sliced.allocated;
+                    joiner.append(
+                        sliced.slice(),
+                        0,
+                        if (sliced.allocated) sliced.allocator else null,
+                    );
                 },
             }
             current = stack.popOrNull() orelse break;
@@ -4101,13 +4107,13 @@ pub const Body = struct {
                             var ptr = bun.default_allocator.create(Blob) catch unreachable;
                             ptr.* = blob;
                             ptr.allocator = bun.default_allocator;
-                            promise.asPromise().?.resolve(global, JSC.JSValue.fromRef(Blob.Class.make(global.ref(), ptr)));
+                            promise.asPromise().?.resolve(global, ptr.toJS(global));
                         },
                         else => {
                             var ptr = bun.default_allocator.create(Blob) catch unreachable;
                             ptr.* = blob;
                             ptr.allocator = bun.default_allocator;
-                            promise.asInternalPromise().?.resolve(global, JSC.JSValue.fromRef(Blob.Class.make(global.ref(), ptr)));
+                            promise.asInternalPromise().?.resolve(global, ptr.toJS(global));
                         },
                     }
                     JSC.C.JSValueUnprotect(global.ref(), promise.asObjectRef());
@@ -4300,7 +4306,7 @@ pub const Body = struct {
         }
 
         body.value = .{
-            .Blob = Blob.fromJS(globalThis, value, true, false) catch |err| {
+            .Blob = Blob.get(globalThis, value, true, false) catch |err| {
                 if (err == error.InvalidArguments) {
                     globalThis.throwInvalidArguments("Expected an Array", .{});
                     return null;
@@ -4511,7 +4517,7 @@ pub const Request = struct {
                     }
 
                     if (urlOrObject.fastGet(globalThis, .body)) |body_| {
-                        if (Blob.fromJS(globalThis, body_, true, false)) |blob| {
+                        if (Blob.get(globalThis, body_, true, false)) |blob| {
                             if (blob.size > 0) {
                                 request.body = Body.Value{ .Blob = blob };
                             }
@@ -4536,7 +4542,7 @@ pub const Request = struct {
                 }
 
                 if (arguments[1].fastGet(globalThis, .body)) |body_| {
-                    if (Blob.fromJS(globalThis, body_, true, false)) |blob| {
+                    if (Blob.get(globalThis, body_, true, false)) |blob| {
                         if (blob.size > 0) {
                             request.body = Body.Value{ .Blob = blob };
                         }
@@ -4693,7 +4699,7 @@ fn BlobInterface(comptime Type: type) type {
             var ptr = getAllocator(ctx).create(Blob) catch unreachable;
             ptr.* = blob;
             blob.allocator = getAllocator(ctx);
-            return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), JSValue.fromRef(Blob.Class.make(ctx, ptr))).asObjectRef();
+            return JSC.JSPromise.resolvedPromiseValue(ctx.ptr(), ptr.toJS(ctx)).asObjectRef();
         }
 
         // pub fn getBody(
@@ -4775,7 +4781,7 @@ fn NewBlobInterface(comptime Type: type) type {
             var ptr = getAllocator(globalObject).create(Blob) catch unreachable;
             ptr.* = blob;
             blob.allocator = getAllocator(globalObject);
-            return JSC.JSPromise.resolvedPromiseValue(globalObject, JSValue.fromRef(Blob.Class.make(globalObject, ptr)));
+            return JSC.JSPromise.resolvedPromiseValue(globalObject, ptr.toJS(globalObject));
         }
 
         // pub fn getBody(

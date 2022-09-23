@@ -3549,10 +3549,7 @@ pub const Blob = struct {
     pub fn toArrayBufferWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime) JSValue {
         switch (comptime lifetime) {
             .clone => {
-                var clone = bun.default_allocator.alloc(u8, buf.len) catch unreachable;
-                @memcpy(clone.ptr, buf.ptr, buf.len);
-
-                return JSC.ArrayBuffer.fromBytes(clone, .ArrayBuffer).toJS(global.ref(), null);
+                return JSC.ArrayBuffer.create(global, buf, .ArrayBuffer);
             },
             .share => {
                 this.store.?.ref();

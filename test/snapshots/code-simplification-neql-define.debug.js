@@ -11,7 +11,7 @@ export var $f332019d = $$m({
     var RelayQueryResponseCache = function() {
       var foo = function RelayQueryResponseCache(_ref) {
         var size = _ref.size, ttl = _ref.ttl;
-        !(size > 0) && invariant(false, "RelayQueryResponseCache: Expected the max cache size to be > 0, got " + "`%s`.", size);
+        !(size > 0) && invariant(false, "RelayQueryResponseCache: Expected the max cache size to be > 0, got `%s`.", size);
         !(ttl > 0) && invariant(false, "RelayQueryResponseCache: Expected the max ttl to be > 0, got `%s`.", ttl);
       };
       foo({ size: 100, ttl: 3600 });

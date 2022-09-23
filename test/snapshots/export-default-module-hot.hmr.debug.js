@@ -2,15 +2,13 @@ import {
 __HMRClient as Bun
 } from "http://localhost:8080/bun:wrap";
 Bun.activate(true);
-
 import {
 __FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(2909748314, "export-default-module-hot.js", FastRefresh), exports = hmr.exports;
-
+var hmr = new FastHMR(2073254346, "export-default-module-hot.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var export_default_module_hot_default = typeof module !== "undefined" && module.id;
   function test() {

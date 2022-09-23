@@ -1024,9 +1024,7 @@ pub const FileSink = struct {
         while (remain.len > 0) {
             const res = JSC.Node.Syscall.write(fd, remain);
             if (res == .err) {
-                const retry = comptime if (Environment.isLinux)
-                    std.os.E.WOULDBLOCK
-                else
+                const retry =
                     std.os.E.AGAIN;
 
                 switch (res.err.getErrno()) {
@@ -2801,10 +2799,7 @@ pub const FileBlobLoader = struct {
                     const to_read = @minimum(@as(usize, this.concurrent.chunk_size), remaining.len);
                     switch (Syscall.read(this.fd, remaining[0..to_read])) {
                         .err => |err| {
-                            const retry = comptime if (Environment.isLinux)
-                                std.os.E.WOULDBLOCK
-                            else
-                                std.os.E.AGAIN;
+                            const retry = std.os.E.AGAIN;
 
                             switch (err.getErrno()) {
                                 retry => break,

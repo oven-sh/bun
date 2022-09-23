@@ -76,6 +76,7 @@ const Transpiler = @import("./transpiler.zig");
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
+const Which = @import("../../which.zig");
 
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
@@ -127,6 +128,80 @@ pub fn getCSSImports() []ZigString {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
+}
+
+pub fn which(
+    // this
+    _: void,
+    globalThis: js.JSContextRef,
+    // function
+    _: js.JSObjectRef,
+    // thisObject
+    _: js.JSObjectRef,
+    arguments_: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var arguments = JSC.Node.ArgumentsSlice.from(globalThis.bunVM(), arguments_);
+    defer arguments.deinit();
+    const path_arg = arguments.nextEat() orelse {
+        JSC.throwInvalidArguments("which: expected 1 argument, got 0", .{}, globalThis, exception);
+        return JSC.JSValue.jsUndefined().asObjectRef();
+    };
+
+    var path_str: ZigString.Slice = ZigString.Slice.empty;
+    var bin_str: ZigString.Slice = ZigString.Slice.empty;
+    var cwd_str: ZigString.Slice = ZigString.Slice.empty;
+    defer {
+        path_str.deinit();
+        bin_str.deinit();
+        cwd_str.deinit();
+    }
+
+    if (path_arg.isEmptyOrUndefinedOrNull()) {
+        return JSC.JSValue.jsNull().asObjectRef();
+    }
+
+    bin_str = path_arg.toSlice(globalThis, globalThis.bunVM().allocator);
+
+    if (bin_str.len >= bun.MAX_PATH_BYTES) {
+        JSC.throwInvalidArguments("bin path is too long", .{}, globalThis, exception);
+        return JSC.JSValue.jsUndefined().asObjectRef();
+    }
+
+    if (bin_str.len == 0) {
+        return JSC.JSValue.jsNull().asObjectRef();
+    }
+
+    path_str = ZigString.Slice.fromUTF8(
+        globalThis.bunVM().bundler.env.map.get("PATH") orelse "",
+    );
+    cwd_str = ZigString.Slice.fromUTF8(
+        globalThis.bunVM().bundler.fs.top_level_dir,
+    );
+
+    if (arguments.nextEat()) |arg| {
+        if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
+            if (arg.get(globalThis, "PATH")) |str_| {
+                path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+            }
+
+            if (arg.get(globalThis, "cwd")) |str_| {
+                cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+            }
+        }
+    }
+
+    if (Which.which(
+        &path_buf,
+        path_str.slice(),
+        cwd_str.slice(),
+        bin_str.slice(),
+    )) |bin_path| {
+        return ZigString.init(bin_path).withEncoding().toValueGC(globalThis).asObjectRef();
+    }
+
+    return JSC.JSValue.jsNull().asObjectRef();
 }
 
 pub fn inspect(
@@ -1115,6 +1190,10 @@ pub const Class = NewClass(
         },
         .inflateSync = .{
             .rfn = JSC.wrapWithHasContainer(JSZlib, "inflateSync", false, false, true),
+        },
+
+        .which = .{
+            .rfn = which,
         },
     },
     .{

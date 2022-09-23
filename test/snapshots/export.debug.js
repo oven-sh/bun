@@ -1,6 +1,5 @@
 import what from "http://localhost:8080/_auth.js";
 export { default as auth } from "http://localhost:8080/_auth.js";
-
 export { default as login } from "http://localhost:8080/_login.js";
 export * from "http://localhost:8080/_bacon.js";
 export let yoyoyo = "yoyoyo";
@@ -18,7 +17,6 @@ export {  } from "http://localhost:8080/_bacon.js";
 import * as where from "http://localhost:8080/_auth.js";
 
 export { where };
-
 export { bar as booop };
 export function test() {
   hey();

@@ -1,14 +1,12 @@
 import {
 __require as require
 } from "http://localhost:8080/bun:wrap";
-import * as $2f488e5b from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
-var JSX = require($2f488e5b);
+import * as $a77976b9 from "http://localhost:8080/node_modules/react/jsx-dev-runtime.js";
+var JSX = require($a77976b9);
 var jsx = require(JSX).jsxDEV;
-
-import * as $1f6f0e67 from "http://localhost:8080/node_modules/react-dom/server.browser.js";
-var ReactDOM = require($1f6f0e67);
+import * as $66da6d1a from "http://localhost:8080/node_modules/react-dom/server.browser.js";
+var ReactDOM = require($66da6d1a);
 const ReturnDescriptionAsString = ({ description }) => description;
-
 export function test() {
   const _bun = ReactDOM.renderToString(jsx(ReturnDescriptionAsString, {
     description: `line1

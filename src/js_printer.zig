@@ -1141,54 +1141,51 @@ pub fn NewPrinter(
             ) catch unreachable;
         }
 
-        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
+        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8, raw: bool) void {
             var i: usize = 0;
             const n: usize = text.len;
 
             // e(text.len) catch unreachable;
 
-            outer: while (i < n) {
+            while (i < n) {
                 const CodeUnitType = u32;
 
                 const c: CodeUnitType = text[i];
                 i += 1;
 
-                // TODO: here
                 switch (c) {
-
                     // Special-case the null character since it may mess with code written in C
                     // that treats null characters as the end of the string.
                     0x00 => {
-                        // We don't want "\x001" to be written as "\01"
-                        if (i < n and text[i] >= '0' and text[i] <= '9') {
-                            e.print("\\x00");
-                        } else {
-                            e.print("\\0");
-                        }
+                        // If a number is next, it can be mistaken for an octal literal and error.
+                        // e.g. "\01" will be taken as an octal literal. Use "\x001" instead.
+                        const null_char = if (i < n and '0' <= text[i] and text[i] <= '9')
+                            (if (raw) "${\"\\x00\"}" else "\\x00")
+                        else
+                            (if (raw) "${\"\\0\"}" else "\\0");
+
+                        e.print(null_char);
                     },
 
                     // Special-case the bell character since it may cause dumping this file to
                     // the terminal to make a sound, which is undesirable. Note that we can't
                     // use an octal literal to print this shorter since octal literals are not
                     // allowed in strict mode (or in template strings).
-                    0x07 => {
-                        e.print("\\x07");
-                    },
                     0x08 => {
                         if (quote == '`')
                             e.print(0x08)
                         else
-                            e.print("\\f");
+                            e.print("\\b");
                     },
                     0x0C => {
                         if (quote == '`')
-                            e.print(0x000C)
+                            e.print(0x0C)
                         else
                             e.print("\\f");
                     },
                     '\t' => {
                         if (quote == '`')
-                            e.print("\t")
+                            e.print('\t')
                         else
                             e.print("\\t");
                     },
@@ -1201,7 +1198,7 @@ pub fn NewPrinter(
                     },
                     // we never print \r un-escaped
                     std.ascii.control_code.CR => {
-                        e.print("\\r");
+                        e.print(if (raw) "${\"\\r\"}" else "\\r");
                     },
                     // \v
                     std.ascii.control_code.VT => {
@@ -1211,161 +1208,139 @@ pub fn NewPrinter(
                             e.print("\\v");
                         }
                     },
-                    // "\\"
+
                     '\\' => {
-                        e.print("\\\\");
+                        e.print(if (raw) "\\" else "\\\\");
                     },
 
-                    '\'' => {
-                        if (quote == '\'') {
+                    '\'', '"', '`' => {
+                        if (quote == c) {
                             e.print('\\');
                         }
-                        e.print("'");
+                        e.print(&[1]u8{@intCast(u8, c)});
                     },
 
-                    '"' => {
-                        if (quote == '"') {
-                            e.print('\\');
-                        }
-
-                        e.print("\"");
-                    },
-                    '`' => {
-                        if (quote == '`') {
-                            e.print('\\');
-                        }
-
-                        e.print("`");
-                    },
                     '$' => {
-                        if (quote == '`' and i < n and text[i] == '{') {
+                        if (!raw and quote == '`' and i < n and text[i] == '{') {
                             e.print('\\');
                         }
 
                         e.print('$');
                     },
-                    0x2028 => {
-                        e.print("\\u2028");
-                    },
-                    0x2029 => {
-                        e.print("\\u2029");
-                    },
-                    0xFEFF => {
-                        e.print("\\uFEFF");
-                    },
 
                     else => {
-                        switch (c) {
-                            first_ascii...last_ascii => {
-                                e.print(@intCast(u8, c));
+                        if (first_ascii <= c and c <= last_ascii) {
+                            e.print(@intCast(u8, c));
 
-                                // Fast path for printing long UTF-16 template literals
-                                // this only applies to template literal strings
-                                // but we print a template literal if there is a \n or a \r
-                                // which is often if the string is long and UTF-16
-                                if (comptime quote == '`') {
-                                    const remain = text[i..];
-                                    if (remain.len > 1 and remain[0] < last_ascii and remain[0] > first_ascii and
-                                        remain[0] != '$' and
-                                        remain[0] != '\\' and
-                                        remain[0] != '`')
-                                    {
-                                        if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count_| {
-                                            if (count_ == 0)
-                                                unreachable; // conditional above checks this
+                            // Fast path for printing long UTF-16 template literals
+                            // this only applies to template literal strings
+                            // but we print a template literal if there is a \n or a \r
+                            // which is often if the string is long and UTF-16
+                            if (comptime quote == '`') {
+                                const remain = text[i..];
+                                if (remain.len > 0 and first_ascii <= remain[0] and remain[0] <= last_ascii and
+                                    remain[0] != '$' and
+                                    remain[0] != '\\' and
+                                    remain[0] != '`')
+                                {
+                                    if (strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain)) |count_| {
+                                        assert(count_ != 0); // conditional above checks this
 
-                                            const len = count_ - 1;
-                                            i += len;
-                                            var ptr = e.writer.reserve(len) catch unreachable;
-                                            var to_copy = ptr[0..len];
+                                        const len = count_ - 1;
+                                        i += len;
+                                        var ptr = e.writer.reserve(len) catch unreachable;
+                                        var to_copy = ptr[0..len];
 
-                                            strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
-                                            e.writer.advance(len);
-                                            continue :outer;
-                                        } else {
-                                            const count = @truncate(u32, remain.len);
-                                            var ptr = e.writer.reserve(count) catch unreachable;
-                                            var to_copy = ptr[0..count];
-                                            strings.copyU16IntoU8(to_copy, []const u16, remain);
-                                            e.writer.advance(count);
-                                            i += count;
-                                        }
-                                    }
-                                }
-                            },
-                            first_high_surrogate...last_high_surrogate => {
-
-                                // Is there a next character?
-
-                                if (i < n) {
-                                    const c2: CodeUnitType = text[i];
-
-                                    if (c2 >= first_high_surrogate and c2 <= last_low_surrogate) {
-                                        i += 1;
-
-                                        // Escape this character if UTF-8 isn't allowed
-                                        if (ascii_only_always_on_unless_minifying) {
-                                            var ptr = e.writer.reserve(12) catch unreachable;
-                                            ptr[0..12].* = [_]u8{
-                                                '\\', 'u', hex_chars[c >> 12],  hex_chars[(c >> 8) & 15],  hex_chars[(c >> 4) & 15],  hex_chars[c & 15],
-                                                '\\', 'u', hex_chars[c2 >> 12], hex_chars[(c2 >> 8) & 15], hex_chars[(c2 >> 4) & 15], hex_chars[c2 & 15],
-                                            };
-                                            e.writer.advance(12);
-
-                                            continue;
-                                            // Otherwise, encode to UTF-8
-                                        }
-
-                                        const r: CodeUnitType = 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
-
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, r));
-                                        continue;
-                                    }
-                                }
-
-                                // Write an unpaired high surrogate
-                                var ptr = e.writer.reserve(6) catch unreachable;
-                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.writer.advance(6);
-                            },
-                            // Is this an unpaired low surrogate or four-digit hex escape?
-                            first_low_surrogate...last_low_surrogate => {
-                                // Write an unpaired high surrogate
-                                var ptr = e.writer.reserve(6) catch unreachable;
-                                ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                e.writer.advance(6);
-                            },
-                            else => {
-                                if (ascii_only_always_on_unless_minifying) {
-                                    if (c > 0xFF) {
-                                        var ptr = e.writer.reserve(6) catch unreachable;
-                                        // Write an unpaired high surrogate
-                                        ptr[0..6].* = [_]u8{ '\\', 'u', hex_chars[c >> 12], hex_chars[(c >> 8) & 15], hex_chars[(c >> 4) & 15], hex_chars[c & 15] };
-                                        e.writer.advance(6);
+                                        strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
+                                        e.writer.advance(len);
                                     } else {
-                                        // Can this be a two-digit hex escape?
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
-                                        e.writer.advance(4);
+                                        const count = @truncate(u32, remain.len);
+                                        var ptr = e.writer.reserve(count) catch unreachable;
+                                        var to_copy = ptr[0..count];
+                                        strings.copyU16IntoU8(to_copy, []const u16, remain);
+                                        e.writer.advance(count);
+                                        i += count;
                                     }
-                                } else {
-                                    // chars < 255 as two digit hex escape
-                                    if (c < 0xFF) {
-                                        var ptr = e.writer.reserve(4) catch unreachable;
-                                        ptr[0..4].* = [_]u8{ '\\', 'x', hex_chars[c >> 4], hex_chars[c & 15] };
-                                        e.writer.advance(4);
-                                        continue;
-                                    }
-
-                                    var ptr = e.writer.reserve(4) catch return;
-                                    e.writer.advance(strings.encodeWTF8RuneT(ptr[0..4], CodeUnitType, c));
                                 }
-                            },
+                            }
+                            continue;
+                        }
+                        const c2: CodeUnitType = if (i < n) text[i] else 0;
+                        const is_paired_surrogate = first_high_surrogate <= c and c <= last_high_surrogate and
+                            first_low_surrogate <= c2 and c2 <= last_low_surrogate;
+
+                        i += @boolToInt(is_paired_surrogate);
+
+                        const cp: CodeUnitType = if (!is_paired_surrogate) c else 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
+                        assert(cp <= 0x10FFFF); // I wonder if this helps the optimizer?
+
+                        if (!ascii_only_always_on_unless_minifying) {
+                            e.writeWTF8Rune(cp);
+                            continue;
+                        }
+
+                        // the number of characters we need is the number of non-leading zeroes div 4, rounded up
+                        var cp_hex_width = @intCast(u3, (@typeInfo(CodeUnitType).Int.bits - @clz(u32, cp) + 3) / 4);
+                        assert(cp_hex_width != 0 and cp_hex_width <= 6);
+
+                        // if cp_hex_width is 1 or 3, we add 0 as padding, as in \x0F or \u0FFF
+                        cp_hex_width += @boolToInt(cp_hex_width == 1 or cp_hex_width == 3);
+
+                        var ptr = ptr: {
+                            const escaped_char_size: CodeUnitType = cp_hex_width +
+                                @as(CodeUnitType, if (raw) "${``}".len else 0) +
+                                @as(CodeUnitType, "\\x".len | "\\u".len) +
+                                @as(CodeUnitType, if (is_paired_surrogate) "{}".len else 0);
+
+                            const reserved = e.writer.reserve(escaped_char_size) catch unreachable;
+                            e.writer.advance(escaped_char_size);
+                            break :ptr reserved[0..escaped_char_size];
+                        };
+
+                        if (raw) {
+                            ptr[0..3].* = [_]u8{ '$', '{', '`' };
+                            ptr = ptr[3..];
+                        }
+
+                        ptr[0..2].* = [_]u8{ '\\', if (cp > 0xFF) 'u' else 'x' };
+                        ptr = ptr[2..];
+
+                        if (is_paired_surrogate) {
+                            ptr[0] = '{';
+                            ptr = ptr[1..];
+                        }
+
+                        // for cp=0x12345, we are iterating over 1, 2, 3, 4, then 5
+                        // (every 4 bits turns into 1 char)
+                        while (true) {
+                            cp_hex_width -= 1;
+                            const x = @intCast(u4, (cp >> (@as(u5, cp_hex_width) * 4)) & 0b1111);
+                            ptr[0] = @as(u8, x) + @as(u8, switch (x) {
+                                0...9 => '0',
+                                10...15 => 'A' - 10,
+                            });
+                            ptr = ptr[1..];
+                            if (cp_hex_width == 0) break;
+                        }
+
+                        if (is_paired_surrogate) {
+                            ptr[0] = '}';
+                            ptr = ptr[1..];
+                        }
+
+                        if (raw) {
+                            ptr[0..2].* = [_]u8{ '`', '}' };
                         }
                     },
                 }
             }
+        }
+
+        pub fn writeWTF8Rune(p: *Printer, c: u32) void {
+            const rune_length = strings.wtf8RuneLength(c);
+            var buf_ptr = p.writer.reserve(rune_length) catch unreachable;
+            strings.encodeWTF8RuneT(buf_ptr[0..rune_length], c, rune_length);
+            p.writer.advance(rune_length);
         }
 
         pub fn isUnboundEvalIdentifier(p: *Printer, value: Expr) bool {
@@ -2023,14 +1998,14 @@ pub fn NewPrinter(
                     // If this was originally a template literal, print it as one as long as we're not minifying
                     if (e.prefer_template) {
                         p.print("`");
-                        p.printStringContent(e, '`');
+                        p.printStringContent(e, '`', false);
                         p.print("`");
                         return;
                     }
 
                     const c = p.bestQuoteCharForEString(e, true);
                     p.print(c);
-                    p.printStringContent(e, c);
+                    p.printStringContent(e, c, false);
                     p.print(c);
                 },
                 .e_template => |e| {
@@ -2049,7 +2024,7 @@ pub fn NewPrinter(
                     if (e.head.isPresent()) {
                         e.head.resovleRopeIfNeeded(p.options.allocator);
 
-                        p.printStringContent(&e.head, '`');
+                        p.printStringContent(&e.head, '`', e.is_raw_template_call);
                     }
 
                     for (e.parts) |*part| {
@@ -2058,7 +2033,7 @@ pub fn NewPrinter(
                         p.print("}");
                         if (part.tail.isPresent()) {
                             part.tail.resovleRopeIfNeeded(p.options.allocator);
-                            p.printStringContent(&part.tail, '`');
+                            p.printStringContent(&part.tail, '`', e.is_raw_template_call);
                         }
                     }
                     p.print("`");
@@ -2389,10 +2364,11 @@ pub fn NewPrinter(
         }
 
         // This assumes the string has already been quoted.
-        pub fn printStringContent(p: *Printer, str: *const E.String, c: u8) void {
+        pub fn printStringContent(p: *Printer, str: *const E.String, c: u8, is_raw_template_call: bool) void {
             if (!str.isUTF8()) {
                 // its already quoted for us!
-                p.printQuotedUTF16(str.slice16(), c);
+
+                p.printQuotedUTF16(str.slice16(), c, is_raw_template_call);
             } else {
                 p.printUTF8StringEscapedQuotes(str.data, c);
             }
@@ -2671,7 +2647,7 @@ pub fn NewPrinter(
                     } else {
                         const c = p.bestQuoteCharForString(key.slice16(), false);
                         p.print(c);
-                        p.printQuotedUTF16(key.slice16(), c);
+                        p.printQuotedUTF16(key.slice16(), c, false);
                         p.print(c);
                     }
                 },
@@ -3980,7 +3956,7 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print(c);
-                    p.printQuotedUTF16(s.value, c);
+                    p.printQuotedUTF16(s.value, c, false);
                     p.print(c);
                     p.printSemicolonAfterStatement();
                 },
@@ -4530,17 +4506,13 @@ pub fn NewPrinter(
                         },
                         else => {
                             p.print("\\u");
-                            var buf_ptr = p.writer.reserve(4) catch unreachable;
-                            p.writer.advance(strings.encodeWTF8RuneT(buf_ptr[0..4], CodeUnitType, c));
+                            p.writeWTF8Rune(c);
                         },
                     }
                     continue;
                 }
 
-                {
-                    var buf_ptr = p.writer.reserve(4) catch unreachable;
-                    p.writer.advance(strings.encodeWTF8RuneT(buf_ptr[0..4], CodeUnitType, c));
-                }
+                p.writeWTF8Rune(c);
             }
         }
 

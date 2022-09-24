@@ -1067,8 +1067,8 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         const replacement = utf16Codepoint(Type, utf16_remaining);
         utf16_remaining = utf16_remaining[replacement.len..];
 
-        const count: usize = replacement.utf8Width();
-        try list.ensureTotalCapacityPrecise(i + count + list.items.len + @floatToInt(usize, (@intToFloat(f64, @truncate(u52, utf16_remaining.len)) * 1.2)));
+        const width: u3 = replacement.utf8Width();
+        try list.ensureTotalCapacityPrecise(i + width + list.items.len + @floatToInt(usize, (@intToFloat(f64, @truncate(u52, utf16_remaining.len)) * 1.2)));
         list.items.len += i;
 
         copyU16IntoU8(
@@ -1077,12 +1077,12 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
             to_copy,
         );
 
-        list.items.len += count;
+        list.items.len += width;
 
-        _ = encodeWTF8RuneT(
-            list.items.ptr[list.items.len - count .. list.items.len - count + 4][0..4],
-            u32,
-            @as(u32, replacement.code_point),
+        encodeWTF8RuneT(
+            list.items.ptr[list.items.len - width .. list.items.len - width + 4][0..4],
+            replacement.code_point,
+            width,
         );
     }
 
@@ -1235,13 +1235,8 @@ pub const UTF16Replacement = struct {
     code_point: u32 = unicode_replacement,
     len: u3 = 0,
 
-    pub inline fn utf8Width(replacement: UTF16Replacement) usize {
-        return switch (replacement.code_point) {
-            0...0x7F => 1,
-            (0x7F + 1)...0x7FF => 2,
-            (0x7FF + 1)...0xFFFF => 3,
-            else => 4,
-        };
+    pub inline fn utf8Width(replacement: UTF16Replacement) u3 {
+        return strings.wtf8RuneLength(replacement.code_point);
     }
 };
 
@@ -2286,14 +2281,14 @@ pub fn copyUTF16IntoUTF8(buf: []u8, comptime Type: type, utf16: Type) EncodeInto
 
         const replacement = utf16Codepoint(Type, utf16_remaining);
 
-        const width: usize = replacement.utf8Width();
+        const width: u3 = replacement.utf8Width();
         if (width > remaining.len) {
             ended_on_non_ascii = width > 1;
             break;
         }
 
         utf16_remaining = utf16_remaining[replacement.len..];
-        _ = encodeWTF8RuneT(remaining.ptr[0..4], u32, @as(u32, replacement.code_point));
+        encodeWTF8RuneT(remaining.ptr[0..4], replacement.code_point, width);
         remaining = remaining[width..];
     }
 
@@ -2389,43 +2384,52 @@ pub fn utf16EqlString(text: []const u16, str: string) bool {
 // This is a clone of golang's "utf8.EncodeRune" that has been modified to encode using
 // WTF-8 instead. See https://simonsapin.github.io/wtf-8/ for more info.
 pub fn encodeWTF8Rune(p: *[4]u8, r: i32) u3 {
-    return @call(
+    const x = @intCast(u32, r);
+    const rune_length = wtf8RuneLength(x);
+    @call(
         .{
             .modifier = .always_inline,
         },
         encodeWTF8RuneT,
         .{
-            p,
-            u32,
-            @intCast(u32, r),
+            p[0..rune_length],
+            x,
+            rune_length,
         },
     );
+    return rune_length;
 }
 
-pub fn encodeWTF8RuneT(p: *[4]u8, comptime R: type, r: R) u3 {
-    switch (r) {
-        0...0x7F => {
+pub inline fn wtf8RuneLength(codepoint: u32) u3 {
+    return switch (codepoint) {
+        0...0x7F => 1,
+        (0x7F + 1)...0x7FF => 2,
+        (0x7FF + 1)...0xFFFF => 3,
+        else => 4,
+    };
+}
+
+pub fn encodeWTF8RuneT(p: []u8, r: u32, rune_length: u3) void {
+    switch (rune_length) {
+        1 => {
             p[0] = @intCast(u8, r);
-            return 1;
         },
-        (0x7F + 1)...0x7FF => {
+        2 => {
             p[0] = @truncate(u8, 0xC0 | ((r >> 6)));
             p[1] = @truncate(u8, 0x80 | (r & 0x3F));
-            return 2;
         },
-        (0x7FF + 1)...0xFFFF => {
+        3 => {
             p[0] = @truncate(u8, 0xE0 | ((r >> 12)));
             p[1] = @truncate(u8, 0x80 | ((r >> 6) & 0x3F));
             p[2] = @truncate(u8, 0x80 | (r & 0x3F));
-            return 3;
         },
-        else => {
+        4 => {
             p[0] = @truncate(u8, 0xF0 | ((r >> 18)));
             p[1] = @truncate(u8, 0x80 | ((r >> 12) & 0x3F));
             p[2] = @truncate(u8, 0x80 | ((r >> 6) & 0x3F));
             p[3] = @truncate(u8, 0x80 | (r & 0x3F));
-            return 4;
         },
+        else => unreachable,
     }
 }
 

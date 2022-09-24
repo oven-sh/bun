@@ -10431,11 +10431,17 @@ fn NewParser_(
             var oldAllowIn = p.allow_in;
             p.allow_in = true;
 
+            const was_potential_call = p.lexer.is_potential_call;
+            p.lexer.is_potential_call = false;
+
             parseTemplatePart: while (true) {
                 try p.lexer.next();
                 const value = try p.parseExpr(.lowest);
                 const tail_loc = p.lexer.loc();
+
+                p.lexer.is_potential_call = was_potential_call;
                 try p.lexer.rescanCloseBraceAsTemplateToken();
+                p.lexer.is_potential_call = false;
 
                 var tail = p.lexer.toEString();
 
@@ -10454,7 +10460,7 @@ fn NewParser_(
             }
 
             p.allow_in = oldAllowIn;
-
+            p.lexer.is_potential_call = was_potential_call;
             return parts.toOwnedSlice();
         }
 
@@ -10470,13 +10476,13 @@ fn NewParser_(
         }
 
         pub fn parseCallArgs(p: *P) anyerror!ExprListLoc {
+            try p.lexer.next(); // the current token is .t_open_paren, so skip it
             // Allow "in" inside call arguments
             const old_allow_in = p.allow_in;
             p.allow_in = true;
             defer p.allow_in = old_allow_in;
 
             var args = ListManaged(Expr).init(p.allocator);
-            try p.lexer.expect(.t_open_paren);
 
             while (p.lexer.token != .t_close_paren) {
                 const loc = p.lexer.loc();
@@ -10573,6 +10579,7 @@ fn NewParser_(
 
                             const name = p.lexer.identifier;
                             const name_loc = p.lexer.loc();
+                            p.lexer.is_potential_call = true; // this is set to false in p.lexer.next
                             try p.lexer.next();
 
                             left = p.e(E.Dot{ .target = left, .name = name, .name_loc = name_loc, .optional_chain = old_optional_chain }, left.loc);
@@ -10700,6 +10707,7 @@ fn NewParser_(
                         left = p.e(E.Template{
                             .tag = left,
                             .head = head,
+                            .is_raw_template_call = p.lexer.is_potential_call,
                         }, left.loc);
                     },
                     .t_template_head => {
@@ -10710,7 +10718,7 @@ fn NewParser_(
                         const head = p.lexer.toEString();
                         const partsGroup = try p.parseTemplateParts(true);
                         const tag = left;
-                        left = p.e(E.Template{ .tag = tag, .head = head, .parts = partsGroup }, left.loc);
+                        left = p.e(E.Template{ .tag = tag, .head = head, .parts = partsGroup, .is_raw_template_call = p.lexer.is_potential_call }, left.loc);
                     },
                     .t_open_bracket => {
                         // When parsing a decorator, ignore EIndex expressions since they may be
@@ -11507,10 +11515,25 @@ fn NewParser_(
 
                     return Expr.initIdentifier(ref, loc);
                 },
-                .t_string_literal, .t_no_substitution_template_literal => {
+                .t_string_literal => {
                     return try p.parseStringLiteral();
                 },
+
+                .t_no_substitution_template_literal => {
+                    const was_potential_call = p.lexer.is_potential_call;
+                    if (was_potential_call) {
+                        std.log.err("Turns out your template literal is callable? Crashing bun.", .{});
+                        unreachable;
+                    }
+
+                    const expr = try p.parseStringLiteral();
+                    return expr;
+                },
                 .t_template_head => {
+                    const was_potential_call = p.lexer.is_potential_call;
+                    if (was_potential_call)
+                        std.log.debug("[0] We found one!", .{});
+
                     const head = p.lexer.toEString();
 
                     const parts = try p.parseTemplateParts(false);
@@ -11521,6 +11544,7 @@ fn NewParser_(
                     return p.e(E.Template{
                         .head = head,
                         .parts = parts,
+                        .is_raw_template_call = was_potential_call,
                     }, loc);
                 },
                 .t_numeric_literal => {

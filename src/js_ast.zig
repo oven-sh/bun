@@ -1834,6 +1834,7 @@ pub const E = struct {
         tag: ?ExprNodeIndex = null,
         head: E.String,
         parts: []TemplatePart = &([_]TemplatePart{}),
+        is_raw_template_call: bool,
     };
 
     pub const RegExp = struct {

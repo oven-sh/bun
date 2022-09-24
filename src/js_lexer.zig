@@ -29,7 +29,11 @@ pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
 pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifier;
 pub const ChildlessJSXTags = tables.ChildlessJSXTags;
-
+fn _disabledAssert(_: bool) void {
+    if (!Environment.allow_assert) @compileLog("assert is missing an if (Environment.allow_assert)");
+    unreachable;
+}
+const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
 fn notimpl() noreturn {
     Global.panic("not implemented yet!", .{});
 }
@@ -123,6 +127,7 @@ fn NewLexer_(
         preserve_all_comments_before: bool = false,
         is_legacy_octal_literal: bool = false,
         is_log_disabled: bool = false,
+        is_potential_call: bool = false,
         comments_to_preserve_before: std.ArrayList(js_ast.G.Comment),
         all_original_comments: ?[]js_ast.G.Comment = null,
         code_point: CodePoint = -1,
@@ -280,7 +285,7 @@ fn NewLexer_(
                         // include a <CR> or <CR><LF> sequence.
 
                         // Convert '\r\n' into '\n'
-                        iter.i += @as(u32, @boolToInt(iter.i < text.len and text[iter.i] == '\n'));
+                        iter.i += @as(u32, @boolToInt(iter.i + 1 < text.len and text[iter.i + 1] == '\n'));
 
                         // Convert '\r' into '\n'
                         buf.append('\n') catch unreachable;
@@ -547,7 +552,7 @@ fn NewLexer_(
                                 }
 
                                 // Ignore line continuations. A line continuation is not an escaped newline.
-                                if (iter.i < text.len and text[iter.i + 1] == '\n') {
+                                if (iter.i + 1 < text.len and text[iter.i + 1] == '\n') {
                                     // Make sure Windows CRLF counts as a single newline
                                     iter.i += 1;
                                 }
@@ -759,6 +764,112 @@ fn NewLexer_(
             // //     // Fast path
 
             // // }
+        }
+
+        /// Parses a backtick without post-processing escape sequences. Used for calls of the form: foo`\x10`, especially String.raw`\?`. The only
+        pub fn parseBacktickLiteralRaw(lexer: *LexerType) !void {
+            if (lexer.rescan_close_brace_as_template_token) {
+                lexer.token = T.t_template_tail;
+            } else {
+                lexer.token = T.t_no_substitution_template_literal;
+            }
+
+            lexer.step(); // skip over ` mark
+            var needs_slow_path = false;
+            var utf16_size_difference: u32 = 0;
+
+            while (true) {
+                switch (lexer.code_point) {
+                    '\\' => {
+                        lexer.step(); // skip the next
+                    },
+
+                    // This indicates the end of the file
+                    -1 => {
+                        try lexer.addDefaultError("Unterminated string literal");
+                        break;
+                    },
+
+                    '\r' => {
+                        // Template literals require newline normalization
+                        needs_slow_path = true;
+                        lexer.step();
+                        utf16_size_difference += @boolToInt(lexer.code_point == '\n');
+                        continue;
+                    },
+
+                    '$' => {
+                        lexer.step();
+                        if (lexer.code_point != '{') continue;
+
+                        if (lexer.rescan_close_brace_as_template_token) {
+                            lexer.token = T.t_template_middle;
+                        } else {
+                            lexer.token = T.t_template_head;
+                        }
+                        break;
+                    },
+
+                    // exit condition
+                    '`' => break,
+
+                    else => {
+                        if (lexer.code_point >= 0x80) {
+                            needs_slow_path = true;
+                            var utf8_char_width = @intCast(u3, lexer.current - lexer.end);
+                            var utf16_char_width: u32 = if (lexer.code_point > 0xFFFF) 2 else 1;
+                            std.debug.assert(utf8_char_width > utf16_char_width);
+                            utf16_size_difference += utf8_char_width - utf16_char_width;
+                        }
+                    },
+                }
+
+                lexer.step();
+            }
+
+            const string_literal_slice_end = lexer.end - @boolToInt(lexer.code_point == '{');
+            std.debug.assert(string_literal_slice_end <= lexer.source.contents.len);
+            lexer.string_literal_slice = lexer.source.contents[lexer.start + 1 .. string_literal_slice_end];
+
+            const utf16_length = lexer.string_literal_slice.len - utf16_size_difference;
+            lexer.string_literal_is_ascii = !needs_slow_path;
+            lexer.string_literal_buffer.clearRetainingCapacity();
+            if (needs_slow_path) {
+                lexer.string_literal_buffer.ensureTotalCapacity(utf16_length) catch unreachable;
+                try lexer.decodeEscapeSequencesRaw(lexer.string_literal_slice, &lexer.string_literal_buffer);
+                lexer.string_literal = lexer.string_literal_buffer.items;
+            }
+            lexer.step();
+        }
+
+        fn decodeEscapeSequencesRaw(_: *LexerType, text: string, buf: *std.ArrayList(u16)) !void {
+            const iterator = strings.CodepointIterator{ .bytes = text, .i = 0 };
+            var iter = strings.CodepointIterator.Cursor{};
+            while (iterator.next(&iter)) {
+                if (iter.c == '\r') {
+                    // From the specification:
+                    //
+                    // 11.8.6.1 Static Semantics: TV and TRV
+                    //
+                    // TV excludes the code units of LineContinuation while TRV includes
+                    // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
+                    // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
+                    // include a <CR> or <CR><LF> sequence.
+
+                    // Convert '\r' into '\n'
+                    iter.c = '\n';
+                    // Convert '\r\n' into '\n'
+                    iter.i += @boolToInt(iter.i + 1 < text.len and text[iter.i + 1] == '\n');
+                }
+
+                if (iter.c <= 0xFFFF) {
+                    buf.appendAssumeCapacity(@intCast(u16, iter.c));
+                } else {
+                    iter.c -= 0x10000;
+                    buf.appendAssumeCapacity(@intCast(u16, 0xD800 + ((iter.c >> 10) & 0x3FF)));
+                    buf.appendAssumeCapacity(@intCast(u16, 0xDC00 + (iter.c & 0x3FF)));
+                }
+            }
         }
 
         inline fn nextCodepointSlice(it: *LexerType) []const u8 {
@@ -1068,6 +1179,8 @@ fn NewLexer_(
 
         pub fn next(lexer: *LexerType) !void {
             lexer.has_newline_before = lexer.end == 0;
+            const was_potential_call = lexer.is_potential_call;
+            lexer.is_potential_call = false;
 
             while (true) {
                 lexer.start = lexer.end;
@@ -1124,11 +1237,13 @@ fn NewLexer_(
                     },
                     '\r', '\n', 0x2028, 0x2029 => {
                         lexer.step();
+                        lexer.is_potential_call = was_potential_call;
                         lexer.has_newline_before = true;
                         continue;
                     },
                     '\t', ' ' => {
                         lexer.step();
+                        lexer.is_potential_call = was_potential_call;
                         continue;
                     },
                     '(' => {
@@ -1650,7 +1765,12 @@ fn NewLexer_(
                         try lexer.parseStringLiteral('"');
                     },
                     '`' => {
-                        try lexer.parseStringLiteral('`');
+                        if (was_potential_call) {
+                            lexer.is_potential_call = true;
+                            try lexer.parseBacktickLiteralRaw();
+                        } else {
+                            try lexer.parseStringLiteral('`');
+                        }
                     },
 
                     '_', '$', 'a'...'z', 'A'...'Z' => {

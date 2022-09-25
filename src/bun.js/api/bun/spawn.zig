@@ -4,14 +4,19 @@ const string = bun.string;
 const std = @import("std");
 
 fn _getSystem() type {
-    if (comptime bun.Environment.isLinux) {
-        return struct {
-            pub usingnamespace std.os.system;
-            pub usingnamespace bun.C.linux;
-        };
-    }
+    // this is a workaround for a Zig stage1 bug
+    // the "usingnamespace" is evaluating in dead branches
+    return brk: {
+        if (comptime bun.Environment.isLinux) {
+            const Type = bun.C.linux;
+            break :brk struct {
+                pub usingnamespace std.os.system;
+                pub usingnamespace Type;
+            };
+        }
 
-    return std.os.system;
+        break :brk std.os.system;
+    };
 }
 
 const system = _getSystem();

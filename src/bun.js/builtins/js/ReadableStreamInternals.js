@@ -1855,7 +1855,6 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
     handleResult = function handleResult(result, controller, view) {
       "use strict";
 
-      console.log("handleResult", result, controller, view);
       
       if (result && @isPromise(result)) {
         return result.then(
@@ -1867,10 +1866,8 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
         );
       } else if (result !== false) {
         if (view && view.byteLength === result) {
-          console.log("view", result, controller.byobRequest);
           controller.byobRequest.respondWithNewView(view);
         } else {
-          console.log("result", result, controller.byobRequest);
           controller.byobRequest.respond(result);
         }
       }

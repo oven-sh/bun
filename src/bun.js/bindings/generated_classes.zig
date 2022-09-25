@@ -7,6 +7,99 @@ pub const StaticGetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) 
 pub const StaticSetterType = fn (*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(.C) bool;
 pub const StaticCallbackType = fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
 
+pub const JSSubprocess = struct {
+    const Subprocess = Classes.Subprocess;
+    const GetterType = fn (*Subprocess, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const SetterType = fn (*Subprocess, *JSC.JSGlobalObject, JSC.JSValue) callconv(.C) bool;
+    const CallbackType = fn (*Subprocess, *JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+
+    /// Return the pointer to the wrapped object.
+    /// If the object does not match the type, return null.
+    pub fn fromJS(value: JSC.JSValue) ?*Subprocess {
+        JSC.markBinding();
+        return Subprocess__fromJS(value);
+    }
+
+    /// Get the Subprocess constructor value.
+    /// This loads lazily from the global object.
+    pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        return Subprocess__getConstructor(globalObject);
+    }
+
+    /// Create a new instance of Subprocess
+    pub fn toJS(this: *Subprocess, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        JSC.markBinding();
+        if (comptime Environment.allow_assert) {
+            const value__ = Subprocess__create(globalObject, this);
+            std.debug.assert(value__.as(Subprocess).? == this); // If this fails, likely a C ABI issue.
+            return value__;
+        } else {
+            return Subprocess__create(globalObject, this);
+        }
+    }
+
+    /// Modify the internal ptr to point to a new instance of Subprocess.
+    pub fn dangerouslySetPtr(value: JSC.JSValue, ptr: ?*Subprocess) bool {
+        JSC.markBinding();
+        return Subprocess__dangerouslySetPtr(value, ptr);
+    }
+
+    extern fn Subprocess__fromJS(JSC.JSValue) ?*Subprocess;
+    extern fn Subprocess__getConstructor(*JSC.JSGlobalObject) JSC.JSValue;
+
+    extern fn Subprocess__create(globalObject: *JSC.JSGlobalObject, ptr: ?*Subprocess) JSC.JSValue;
+
+    extern fn Subprocess__dangerouslySetPtr(JSC.JSValue, ?*Subprocess) bool;
+
+    comptime {
+        if (@TypeOf(Subprocess.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Subprocess)) {
+            @compileLog("Subprocess.constructor is not a constructor");
+        }
+
+        if (@TypeOf(Subprocess.finalize) != (fn (*Subprocess) callconv(.C) void)) {
+            @compileLog("Subprocess.finalize is not a finalizer");
+        }
+
+        if (@TypeOf(Subprocess.getExitStatus) != GetterType)
+            @compileLog("Expected Subprocess.getExitStatus to be a getter");
+
+        if (@TypeOf(Subprocess.kill) != CallbackType)
+            @compileLog("Expected Subprocess.kill to be a callback");
+        if (@TypeOf(Subprocess.getKilled) != GetterType)
+            @compileLog("Expected Subprocess.getKilled to be a getter");
+
+        if (@TypeOf(Subprocess.getPid) != GetterType)
+            @compileLog("Expected Subprocess.getPid to be a getter");
+
+        if (@TypeOf(Subprocess.doRef) != CallbackType)
+            @compileLog("Expected Subprocess.doRef to be a callback");
+        if (@TypeOf(Subprocess.getStderr) != GetterType)
+            @compileLog("Expected Subprocess.getStderr to be a getter");
+
+        if (@TypeOf(Subprocess.getStdin) != GetterType)
+            @compileLog("Expected Subprocess.getStdin to be a getter");
+
+        if (@TypeOf(Subprocess.getStdout) != GetterType)
+            @compileLog("Expected Subprocess.getStdout to be a getter");
+
+        if (@TypeOf(Subprocess.doUnref) != CallbackType)
+            @compileLog("Expected Subprocess.doUnref to be a callback");
+        if (!JSC.is_bindgen) {
+            @export(Subprocess.constructor, .{ .name = "SubprocessClass__construct" });
+            @export(Subprocess.doRef, .{ .name = "SubprocessPrototype__doRef" });
+            @export(Subprocess.doUnref, .{ .name = "SubprocessPrototype__doUnref" });
+            @export(Subprocess.finalize, .{ .name = "SubprocessClass__finalize" });
+            @export(Subprocess.getExitStatus, .{ .name = "SubprocessPrototype__getExitStatus" });
+            @export(Subprocess.getKilled, .{ .name = "SubprocessPrototype__getKilled" });
+            @export(Subprocess.getPid, .{ .name = "SubprocessPrototype__getPid" });
+            @export(Subprocess.getStderr, .{ .name = "SubprocessPrototype__getStderr" });
+            @export(Subprocess.getStdin, .{ .name = "SubprocessPrototype__getStdin" });
+            @export(Subprocess.getStdout, .{ .name = "SubprocessPrototype__getStdout" });
+            @export(Subprocess.kill, .{ .name = "SubprocessPrototype__kill" });
+        }
+    }
+};
 pub const JSSHA1 = struct {
     const SHA1 = Classes.SHA1;
     const GetterType = fn (*SHA1, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
@@ -1020,6 +1113,7 @@ pub const JSBlob = struct {
 };
 
 comptime {
+    _ = JSSubprocess;
     _ = JSSHA1;
     _ = JSMD5;
     _ = JSMD4;

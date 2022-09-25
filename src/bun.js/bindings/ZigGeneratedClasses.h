@@ -15,6 +15,133 @@ namespace WebCore {
 using namespace Zig;
 using namespace JSC;
 
+class JSSubprocess final : public JSC::JSDestructibleObject {
+    public:
+        using Base = JSC::JSDestructibleObject;
+        static JSSubprocess* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    
+        DECLARE_EXPORT_INFO;
+        template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                return nullptr;
+            return WebCore::subspaceForImpl<JSSubprocess, WebCore::UseCustomHeapCellType::No>(
+                vm,
+                [](auto& spaces) { return spaces.m_clientSubspaceForSubprocess.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubprocess = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForSubprocess.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForSubprocess = WTFMove(space); });
+        }
+    
+        static void destroy(JSC::JSCell*);
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
+        }
+    
+        static JSObject* createPrototype(VM& vm, JSDOMGlobalObject* globalObject);
+    
+        ~JSSubprocess();
+    
+        void* wrapped() const { return m_ctx; }
+    
+        void detach()
+        {
+            m_ctx = nullptr;
+        }
+    
+        static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+        static ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSSubprocess, m_ctx); }
+    
+        void* m_ctx { nullptr };
+
+            
+        JSSubprocess(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
+            : Base(vm, structure)
+        {
+            m_ctx = sinkPtr;
+        }
+    
+        void finishCreation(JSC::VM&);
+
+        DECLARE_VISIT_CHILDREN;
+
+        mutable JSC::WriteBarrier<JSC::Unknown> m_exitStatus;
+mutable JSC::WriteBarrier<JSC::Unknown> m_stderr;
+mutable JSC::WriteBarrier<JSC::Unknown> m_stdin;
+mutable JSC::WriteBarrier<JSC::Unknown> m_stdout;
+    };
+class JSSubprocessPrototype final : public JSC::JSNonFinalObject {
+    public:
+        using Base = JSC::JSNonFinalObject;
+    
+        static JSSubprocessPrototype* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
+        {
+            JSSubprocessPrototype* ptr = new (NotNull, JSC::allocateCell<JSSubprocessPrototype>(vm)) JSSubprocessPrototype(vm, globalObject, structure);
+            ptr->finishCreation(vm, globalObject);
+            return ptr;
+        }
+    
+        DECLARE_INFO;
+        template<typename CellType, JSC::SubspaceAccess>
+        static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            return &vm.plainObjectSpace();
+        }
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        }
+    
+    private:
+        JSSubprocessPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+            : Base(vm, structure)
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
+    };
+    
+  class JSSubprocessConstructor final : public JSC::InternalFunction {
+    public:
+        using Base = JSC::InternalFunction;
+        static JSSubprocessConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSSubprocessPrototype* prototype);
+    
+        static constexpr unsigned StructureFlags = Base::StructureFlags;
+        static constexpr bool needsDestruction = false;
+    
+        static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+        {
+            return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
+        }
+
+        template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+        {
+            if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                return nullptr;
+            return WebCore::subspaceForImpl<JSSubprocessConstructor, WebCore::UseCustomHeapCellType::No>(
+                vm,
+                [](auto& spaces) { return spaces.m_clientSubspaceForSubprocessConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForSubprocessConstructor = WTFMove(space); },
+                [](auto& spaces) { return spaces.m_subspaceForSubprocessConstructor.get(); },
+                [](auto& spaces, auto&& space) { spaces.m_subspaceForSubprocessConstructor = WTFMove(space); });
+        }
+    
+
+        void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSSubprocessPrototype* prototype);
+    
+        // Must be defined for each specialization class.
+        static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
+        DECLARE_EXPORT_INFO;
+    private:
+        JSSubprocessConstructor(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)
+            : Base(vm, structure, nativeFunction, nativeFunction)
+    
+        {
+        }
+    
+        void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSubprocessPrototype* prototype);
+    };
 class JSSHA1 final : public JSC::JSDestructibleObject {
     public:
         using Base = JSC::JSDestructibleObject;

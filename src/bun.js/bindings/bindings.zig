@@ -1896,6 +1896,27 @@ pub const JSGlobalObject = extern struct {
         }
     }
 
+    pub fn throwError(
+        this: *JSGlobalObject,
+        err: anyerror,
+        comptime fmt: string,
+    ) void {
+        var str = ZigString.init(std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch return);
+        str.markUTF8();
+        var err_value = str.toErrorInstance(this);
+        this.vm().throwError(this, err_value);
+        this.bunVM().allocator.free(ZigString.untagged(str.ptr)[0..str.len]);
+    }
+
+    pub fn handleError(
+        this: *JSGlobalObject,
+        err: anyerror,
+        comptime fmt: string,
+    ) JSValue {
+        this.throwError(err, fmt);
+        return JSValue.jsUndefined();
+    }
+
     // pub fn createError(globalObject: *JSGlobalObject, error_type: ErrorType, message: *String) *JSObject {
     //     return cppFn("createError", .{ globalObject, error_type, message });
     // }

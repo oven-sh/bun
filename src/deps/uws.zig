@@ -287,7 +287,7 @@ pub const Loop = extern struct {
     /// The list of ready polls
     ready_polls: [1024]EventType,
 
-    const EventType = if (Environment.isLinux) std.os.linux.epoll_event else if (Environment.isMac) std.os.Kevent;
+    const EventType = if (Environment.isLinux) std.os.linux.epoll_event else if (Environment.isMac) std.os.system.kevent64_s;
 
     pub const InternalLoopData = extern struct {
         pub const us_internal_async = opaque {};

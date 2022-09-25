@@ -212,6 +212,8 @@ pub const EventLoop = struct {
     waker: ?AsyncIO.Waker = null,
     start_server_on_next_tick: bool = false,
     defer_count: std.atomic.Atomic(usize) = std.atomic.Atomic(usize).init(0),
+    pending_processes_to_exit: std.AutoArrayHashMap(*JSC.Subprocess, void) = undefined,
+
     pub const Queue = std.fifo.LinearFifo(Task, .Dynamic);
 
     pub fn tickWithCount(this: *EventLoop) u32 {
@@ -421,6 +423,14 @@ pub const EventLoop = struct {
 
     pub fn afterUSocketsTick(this: *EventLoop) void {
         this.defer_count.store(0, .Monotonic);
+        const processes = this.pending_processes_to_exit.keys();
+        if (processes.len > 0) {
+            for (processes) |process| {
+                process.onExitNotification();
+            }
+            this.pending_processes_to_exit.clearRetainingCapacity();
+        }
+
         this.tick();
     }
 
@@ -443,7 +453,7 @@ pub const Poller = struct {
     /// 0 == unset
     loop: ?*uws.Loop = null,
 
-    pub fn dispatchKQueueEvent(loop: *uws.Loop, kqueue_event: *const std.os.Kevent) void {
+    pub fn dispatchKQueueEvent(loop: *uws.Loop, kqueue_event: *const std.os.system.kevent64_s) void {
         if (comptime !Environment.isMac) {
             unreachable;
         }
@@ -455,7 +465,21 @@ pub const Poller = struct {
                 loop.active -= 1;
                 loader.onPoll(@bitCast(i64, kqueue_event.data), kqueue_event.flags);
             },
-            else => unreachable,
+            @field(Pollable.Tag, "Subprocess") => {
+                var loader = ptr.as(JSC.Subprocess);
+
+                loop.num_polls -= 1;
+
+                // kqueue sends the same notification multiple times in the same tick potentially
+                // so we have to dedupe it
+                _ = loader.globalThis.bunVM().eventLoop().pending_processes_to_exit.getOrPut(loader) catch unreachable;
+            },
+            else => |tag| {
+                bun.Output.panic(
+                    "Internal error\nUnknown pollable tag: {d}\n",
+                    .{@enumToInt(tag)},
+                );
+            },
         }
     }
 
@@ -476,13 +500,15 @@ pub const Poller = struct {
 
     const FileBlobLoader = JSC.WebCore.FileBlobLoader;
     const FileSink = JSC.WebCore.FileSink;
+    const Subprocess = JSC.Subprocess;
+
     /// epoll only allows one pointer
     /// We unfortunately need two pointers: one for a function call and one for the context
     /// We use a tagged pointer union and then call the function with the context pointer
     pub const Pollable = TaggedPointerUnion(.{
         FileBlobLoader,
         FileSink,
-        AsyncIO.Waker,
+        Subprocess,
     });
     const Kevent = std.os.Kevent;
     const kevent = std.c.kevent;
@@ -538,6 +564,15 @@ pub const Poller = struct {
                     .flags = std.c.EV_ADD | std.c.EV_ENABLE | std.c.EV_ONESHOT,
                     .ext = .{ 0, 0 },
                 },
+                .process => .{
+                    .ident = @intCast(u64, fd),
+                    .filter = std.os.system.EVFILT_PROC,
+                    .data = 0,
+                    .fflags = std.c.NOTE_EXIT,
+                    .udata = @ptrToInt(Pollable.init(ctx).ptr()),
+                    .flags = std.c.EV_ADD | std.c.EV_ENABLE | std.c.EV_ONESHOT,
+                    .ext = .{ 0, 0 },
+                },
             };
 
             // output events only include change errors
@@ -567,6 +602,7 @@ pub const Poller = struct {
             }
 
             const errno = std.c.getErrno(rc);
+
             if (errno == .SUCCESS) {
                 this.loop.?.num_polls += 1;
                 this.loop.?.active += 1;
@@ -597,7 +633,11 @@ pub const Poller = struct {
             dispatchEpollEvent(loop, &loop.ready_polls[@intCast(usize, loop.current_ready_poll)]);
     }
 
-    pub const Flag = enum { read, write };
+    pub const Flag = enum {
+        read,
+        write,
+        process,
+    };
 
     comptime {
         @export(onTick, .{ .name = "Bun__internal_dispatch_ready_poll" });

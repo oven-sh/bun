@@ -53,6 +53,10 @@ pub const ReadableStream = struct {
     value: JSValue,
     ptr: Source,
 
+    pub fn toJS(this: *const ReadableStream) JSValue {
+        return this.value;
+    }
+
     pub fn done(this: *const ReadableStream) void {
         this.value.unprotect();
     }
@@ -254,7 +258,7 @@ pub const StreamStart = union(Tag) {
         input_path: PathOrFileDescriptor,
         truncate: bool = true,
         close: bool = false,
-        mode: JSC.Node.Mode = 0,
+        mode: JSC.Node.Mode = 0o664,
     },
     HTTPSResponseSink: void,
     HTTPResponseSink: void,
@@ -462,6 +466,7 @@ pub const StreamResult = union(Tag) {
 
         pub fn toPromised(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Writable.Pending) void {
             var frame = bun.default_allocator.create(@Frame(Writable.toPromisedWrap)) catch unreachable;
+            pending.state = .pending;
             frame.* = async Writable.toPromisedWrap(globalThis, promise, pending);
             pending.frame = frame;
         }
@@ -564,6 +569,7 @@ pub const StreamResult = union(Tag) {
 
     pub fn toPromised(globalThis: *JSGlobalObject, promise: *JSPromise, pending: *Pending) void {
         var frame = bun.default_allocator.create(@Frame(toPromisedWrap)) catch unreachable;
+        pending.state = .pending;
         frame.* = async toPromisedWrap(globalThis, promise, pending);
         pending.frame = frame;
     }
@@ -933,6 +939,9 @@ pub const FileSink = struct {
     head: usize = 0,
     requested_end: bool = false,
 
+    prevent_process_exit: bool = false,
+    reachable_from_js: bool = true,
+
     pub fn prepare(this: *FileSink, input_path: PathOrFileDescriptor, mode: JSC.Node.Mode) JSC.Node.Maybe(void) {
         var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
         const auto_close = this.auto_close;
@@ -1083,7 +1092,7 @@ pub const FileSink = struct {
             this.opened_fd = std.math.maxInt(JSC.Node.FileDescriptor);
         }
 
-        if (this.buffer.len > 0) {
+        if (this.buffer.cap > 0) {
             this.buffer.listManaged(this.allocator).deinit();
             this.buffer = bun.ByteList.init("");
             this.done = true;
@@ -1093,8 +1102,10 @@ pub const FileSink = struct {
 
     pub fn finalize(this: *FileSink) void {
         this.cleanup();
+        this.reachable_from_js = false;
 
-        this.allocator.destroy(this);
+        if (!this.prevent_process_exit)
+            this.allocator.destroy(this);
     }
 
     pub fn init(allocator: std.mem.Allocator, next: ?Sink) !*FileSink {
@@ -2878,8 +2889,8 @@ pub const FileBlobLoader = struct {
                 return;
             }
 
-            this.pending.result = this.handleReadChunk(@as(usize, this.concurrent.read));
-            resume this.pending.frame;
+            this.pending.result = this.handleReadChunk(@as(usize, this.concurrent.read), protected_view);
+            this.pending.run();
             this.scheduled_count -= 1;
             if (this.pending.result.isDone()) {
                 this.finalize();
@@ -3058,7 +3069,7 @@ pub const FileBlobLoader = struct {
         }
     }
 
-    fn handleReadChunk(this: *FileBlobLoader, result: usize) StreamResult {
+    fn handleReadChunk(this: *FileBlobLoader, result: usize, view: JSC.JSValue) StreamResult {
         std.debug.assert(this.started);
 
         this.total_read += @intCast(Blob.SizeType, result);
@@ -3079,10 +3090,10 @@ pub const FileBlobLoader = struct {
         const has_more = remaining > 0;
 
         if (!has_more) {
-            return .{ .into_array_and_done = .{ .len = @truncate(Blob.SizeType, result) } };
+            return .{ .into_array_and_done = .{ .len = @truncate(Blob.SizeType, result), .value = view } };
         }
 
-        return .{ .into_array = .{ .len = @truncate(Blob.SizeType, result) } };
+        return .{ .into_array = .{ .len = @truncate(Blob.SizeType, result), .value = view } };
     }
 
     pub fn read(
@@ -3125,7 +3136,7 @@ pub const FileBlobLoader = struct {
                 return .{ .err = sys };
             },
             .result => |result| {
-                return this.handleReadChunk(result);
+                return this.handleReadChunk(result, view);
             },
         }
     }
@@ -3136,6 +3147,7 @@ pub const FileBlobLoader = struct {
         this.scheduled_count -= 1;
         const protected_view = this.protected_view;
         defer protected_view.unprotect();
+
         this.protected_view = JSValue.zero;
 
         var available_to_read: usize = std.math.maxInt(usize);
@@ -3169,7 +3181,7 @@ pub const FileBlobLoader = struct {
             this.buf.len = @minimum(this.buf.len, available_to_read);
         }
 
-        this.pending.result = this.read(this.buf, this.protected_view);
+        this.pending.result = this.read(this.buf, protected_view);
         this.pending.run();
     }
 

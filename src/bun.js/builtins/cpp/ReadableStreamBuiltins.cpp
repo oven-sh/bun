@@ -214,7 +214,7 @@ const char* const s_readableStreamReadableStreamToBlobCode =
 const JSC::ConstructAbility s_readableStreamConsumeReadableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamConsumeReadableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamConsumeReadableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Private;
-const int s_readableStreamConsumeReadableStreamCodeLength = 3718;
+const int s_readableStreamConsumeReadableStreamCodeLength = 3736;
 static const JSC::Intrinsic s_readableStreamConsumeReadableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamConsumeReadableStreamCode =
     "(function (nativePtr, nativeType, inputStream) {\n" \
@@ -309,6 +309,8 @@ const char* const s_readableStreamConsumeReadableStreamCode =
     "                }  else {\n" \
     "                    return -1;\n" \
     "                }\n" \
+    "\n" \
+    "                \n" \
     "            }\n" \
     "\n" \
     "            readMany() {\n" \

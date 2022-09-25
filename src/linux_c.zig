@@ -375,3 +375,60 @@ pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
 
     return name_buffer[0..result.len];
 }
+
+// Taken from spawn.h header
+pub const POSIX_SPAWN = struct {
+    pub const RESETIDS = 0x01;
+    pub const SETPGROUP = 0x02;
+    pub const SETSIGDEF = 0x04;
+    pub const SETSIGMASK = 0x08;
+    pub const SETSCHEDPARAM = 0x10;
+    pub const SETSCHEDULER = 0x20;
+    pub const USEVFORK = 0x40;
+    pub const SETSID = 0x80;
+};
+
+pub const posix_spawnattr_t = *opaque {};
+pub const posix_spawn_file_actions_t = *opaque {};
+pub extern "c" fn posix_spawnattr_init(attr: *posix_spawnattr_t) c_int;
+pub extern "c" fn posix_spawnattr_destroy(attr: *posix_spawnattr_t) void;
+pub extern "c" fn posix_spawnattr_setflags(attr: *posix_spawnattr_t, flags: c_short) c_int;
+pub extern "c" fn posix_spawnattr_getflags(attr: *const posix_spawnattr_t, flags: *c_short) c_int;
+pub extern "c" fn posix_spawn_file_actions_init(actions: *posix_spawn_file_actions_t) c_int;
+pub extern "c" fn posix_spawn_file_actions_destroy(actions: *posix_spawn_file_actions_t) void;
+pub extern "c" fn posix_spawn_file_actions_addclose(actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+pub extern "c" fn posix_spawn_file_actions_addopen(
+    actions: *posix_spawn_file_actions_t,
+    filedes: fd_t,
+    path: [*:0]const u8,
+    oflag: c_int,
+    mode: mode_t,
+) c_int;
+pub extern "c" fn posix_spawn_file_actions_adddup2(
+    actions: *posix_spawn_file_actions_t,
+    filedes: fd_t,
+    newfiledes: fd_t,
+) c_int;
+pub extern "c" fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+
+// not available in linux
+// pub extern "c" fn posix_spawn_file_actions_addinherit_np(actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+
+pub extern "c" fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
+
+pub extern "c" fn posix_spawn(
+    pid: *pid_t,
+    path: [*:0]const u8,
+    actions: ?*const posix_spawn_file_actions_t,
+    attr: ?*const posix_spawnattr_t,
+    argv: [*:null]?[*:0]const u8,
+    env: [*:null]?[*:0]const u8,
+) c_int;
+pub extern "c" fn posix_spawnp(
+    pid: *pid_t,
+    path: [*:0]const u8,
+    actions: ?*const posix_spawn_file_actions_t,
+    attr: ?*const posix_spawnattr_t,
+    argv: [*:null]?[*:0]const u8,
+    env: [*:null]?[*:0]const u8,
+) c_int;

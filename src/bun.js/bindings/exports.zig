@@ -944,7 +944,7 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
-        var console = JS.VirtualMachine.vm.console;
+        var console = global.bunVM().console;
 
         if (message_type == .Clear) {
             Output.resetTerminal();
@@ -985,7 +985,10 @@ pub const ZigConsoleClient = struct {
                 true,
                 true,
             )
-        else if (message_type != .Trace)
+        else if (message_type == .Log) {
+            _ = console.writer.write("\n") catch 0;
+            console.writer.flush() catch {};
+        } else if (message_type != .Trace)
             writer.writeAll("undefined\n") catch unreachable;
 
         if (message_type == .Trace) {

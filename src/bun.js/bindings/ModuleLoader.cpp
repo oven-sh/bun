@@ -33,6 +33,7 @@
 #include "../modules/StringDecoderModule.h"
 #include "../modules/ObjectModule.h"
 #include "../modules/NodeModuleModule.h"
+#include "../modules/TTYModule.h"
 
 namespace Bun {
 using namespace Zig;
@@ -391,6 +392,13 @@ static JSValue fetchSourceCode(
         case SyntheticModuleType::Buffer: {
             auto source = JSC::SourceCode(
                 JSC::SyntheticSourceProvider::create(generateBufferSourceCode,
+                    JSC::SourceOrigin(), WTFMove(moduleKey)));
+
+            return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
+        }
+        case SyntheticModuleType::TTY: {
+            auto source = JSC::SourceCode(
+                JSC::SyntheticSourceProvider::create(generateTTYSourceCode,
                     JSC::SourceOrigin(), WTFMove(moduleKey)));
 
             return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));

@@ -3921,7 +3921,7 @@ pub const Subprocess = struct {
                 break :brk @intCast(std.os.fd_t, pid);
             }
 
-            const kernel = @import("analytics").GenerateHeader.GeneratePlatform.kernelVersion();
+            const kernel = @import("../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
 
             // pidfd_nonblock only supported in 5.10+
             const flags: u32 = if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
@@ -3935,7 +3935,7 @@ pub const Subprocess = struct {
             );
 
             switch (std.os.linux.getErrno(fd)) {
-                .SUCCESS => break :brk fd,
+                .SUCCESS => break :brk @intCast(std.os.fd_t, fd),
                 else => |err| {
                     globalThis.throwValue(JSC.Node.Syscall.Error.fromCode(err, .open).toJSC(globalThis));
                     var status: u32 = 0;

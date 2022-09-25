@@ -2,7 +2,20 @@ const JSC = @import("javascript_core");
 const bun = @import("../../../global.zig");
 const string = bun.string;
 const std = @import("std");
-const system = std.os.system;
+
+fn _getSystem() type {
+    if (comptime bun.Environment.isLinux) {
+        return struct {
+            pub usingnamespace std.os.system;
+            pub usingnamespace bun.C.linux;
+        };
+    }
+
+    return std.os.system;
+}
+
+const system = _getSystem();
+
 const Maybe = JSC.Node.Maybe;
 
 const fd_t = std.os.fd_t;
@@ -33,7 +46,13 @@ pub const PosixSpawn = struct {
         }
 
         pub fn deinit(self: *Attr) void {
-            system.posix_spawnattr_destroy(&self.attr);
+            if (comptime bun.Environment.isMac) {
+                // https://github.com/ziglang/zig/issues/12964
+                system.posix_spawnattr_destroy(&self.attr);
+            } else {
+                _ = system.posix_spawnattr_destroy(&self.attr);
+            }
+
             self.* = undefined;
         }
 
@@ -69,7 +88,13 @@ pub const PosixSpawn = struct {
         }
 
         pub fn deinit(self: *Actions) void {
-            system.posix_spawn_file_actions_destroy(&self.actions);
+            if (comptime bun.Environment.isMac) {
+                // https://github.com/ziglang/zig/issues/12964
+                system.posix_spawn_file_actions_destroy(&self.actions);
+            } else {
+                _ = system.posix_spawn_file_actions_destroy(&self.actions);
+            }
+
             self.* = undefined;
         }
 

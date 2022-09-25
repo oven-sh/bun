@@ -491,6 +491,15 @@ pub const Poller = struct {
                 loop.active -= 1;
                 loader.onPoll(0, 0);
             },
+            @field(Pollable.Tag, "Subprocess") => {
+                var loader = ptr.as(JSC.Subprocess);
+
+                loop.num_polls -= 1;
+
+                // kqueue sends the same notification multiple times in the same tick potentially
+                // so we have to dedupe it
+                _ = loader.globalThis.bunVM().eventLoop().pending_processes_to_exit.getOrPut(loader) catch unreachable;
+            },
             else => unreachable,
         }
     }
@@ -522,7 +531,7 @@ pub const Poller = struct {
 
         if (comptime Environment.isLinux) {
             const flags: u32 = switch (flag) {
-                .read => linux.EPOLL.IN | linux.EPOLL.HUP | linux.EPOLL.ONESHOT,
+                .process, .read => linux.EPOLL.IN | linux.EPOLL.HUP | linux.EPOLL.ONESHOT,
                 .write => linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR | linux.EPOLL.ONESHOT,
             };
 

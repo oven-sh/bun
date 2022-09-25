@@ -236,20 +236,21 @@ pub const PosixSpawn = struct {
     /// or `posix_spawnp` syscalls.
     /// See also `std.os.waitpid` for an alternative if your child process was spawned via `fork` and
     /// `execve` method.
-    pub fn waitpid(pid: pid_t, flags: u32) !WaitPidResult {
+    pub fn waitpid(pid: pid_t, flags: u32) Maybe(WaitPidResult) {
         const Status = c_int;
         var status: Status = undefined;
         while (true) {
             const rc = system.waitpid(pid, &status, @intCast(c_int, flags));
             switch (errno(rc)) {
-                .SUCCESS => return WaitPidResult{
-                    .pid = @intCast(pid_t, rc),
-                    .status = @bitCast(u32, status),
+                .SUCCESS => return Maybe(WaitPidResult){
+                    .result = .{
+                        .pid = @intCast(pid_t, rc),
+                        .status = @bitCast(u32, status),
+                    },
                 },
                 .INTR => continue,
-                .CHILD => return error.ChildExecFailed,
-                .INVAL => unreachable, // Invalid flags.
-                else => unreachable,
+
+                else => return JSC.Maybe(WaitPidResult).errnoSys(rc, .waitpid).?,
             }
         }
     }

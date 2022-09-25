@@ -3375,6 +3375,10 @@ pub const Subprocess = struct {
     pub usingnamespace JSC.Codegen.JSSubprocess;
 
     pid: std.os.pid_t,
+    // on macOS, this is nothing
+    // on linux, it's a pidfd
+    pidfd: std.os.fd_t = std.math.maxInt(std.os.fd_t),
+
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,
@@ -3386,10 +3390,12 @@ pub const Subprocess = struct {
     this_jsvalue: JSValue = JSValue.zero,
 
     exit_code: ?u8 = null,
+    waitpid_err: ?JSC.Node.Syscall.Error = null,
 
     has_waitpid_task: bool = false,
     notification_task: JSC.AnyTask = undefined,
     waitpid_task: JSC.AnyTask = undefined,
+
     wait_task: JSC.ConcurrentTask = .{},
 
     finalized: bool = false,
@@ -3497,9 +3503,25 @@ pub const Subprocess = struct {
             return JSValue.jsUndefined();
         }
 
-        const err = std.c.kill(this.pid, sig);
-        if (err != 0) {
-            return JSC.Node.Syscall.Error.fromCode(std.c.getErrno(err), .kill).toJSC(globalThis);
+        if (comptime Environment.isLinux) {
+            // should this be handled differently?
+            // this effectively shouldn't happen
+            if (this.pidfd == std.math.maxInt(std.os.fd_t)) {
+                return JSValue.jsUndefined();
+            }
+
+            // first appeared in Linux 5.1
+            const rc = std.os.linux.pidfd_send_signal(this.pidfd, @intCast(u8, sig), null, 0);
+
+            if (rc != 0) {
+                globalThis.throwValue(JSC.Node.Syscall.Error.fromCode(std.os.linux.getErrno(rc), .kill).toJSC(globalThis));
+                return JSValue.jsUndefined();
+            }
+        } else {
+            const err = std.c.kill(this.pid, sig);
+            if (err != 0) {
+                return JSC.Node.Syscall.Error.fromCode(std.c.getErrno(err), .kill).toJSC(globalThis);
+            }
         }
 
         return JSValue.jsUndefined();
@@ -3517,8 +3539,14 @@ pub const Subprocess = struct {
     }
 
     pub fn closePorts(this: *Subprocess) void {
+        if (comptime Environment.isLinux) {
+            if (this.pidfd != std.math.maxInt(std.os.fd_t)) {
+                _ = std.os.close(this.pidfd);
+                this.pidfd = std.math.maxInt(std.os.fd_t);
+            }
+        }
+
         if (this.stdout == .pipe) {
-            this.stdout.pipe.isLocked()
             this.stdout.pipe.cancel(this.globalThis);
         }
 
@@ -3801,9 +3829,15 @@ pub const Subprocess = struct {
 
         defer attr.deinit();
         var actions = PosixSpawn.Actions.init() catch |err| return globalThis.handleError(err, "in posix_spawn");
-        attr.set(
-            os.darwin.POSIX_SPAWN_CLOEXEC_DEFAULT | os.darwin.POSIX_SPAWN_SETSIGDEF | os.darwin.POSIX_SPAWN_SETSIGMASK,
-        ) catch |err| return globalThis.handleError(err, "in posix_spawn");
+        if (comptime Environment.isMac) {
+            attr.set(
+                os.darwin.POSIX_SPAWN_CLOEXEC_DEFAULT | os.darwin.POSIX_SPAWN_SETSIGDEF | os.darwin.POSIX_SPAWN_SETSIGMASK,
+            ) catch |err| return globalThis.handleError(err, "in posix_spawn");
+        } else if (comptime Environment.isLinux) {
+            attr.set(
+                bun.C.linux.POSIX_SPAWN.SETSIGDEF | bun.C.linux.POSIX_SPAWN.SETSIGMASK,
+            ) catch |err| return globalThis.handleError(err, "in posix_spawn");
+        }
         defer actions.deinit();
 
         if (env_array.items.len == 0) {
@@ -3882,6 +3916,36 @@ pub const Subprocess = struct {
             .result => |pid_| pid_,
         };
 
+        const pidfd: std.os.fd_t = brk: {
+            if (Environment.isMac) {
+                break :brk @intCast(std.os.fd_t, pid);
+            }
+
+            const kernel = @import("analytics").GenerateHeader.GeneratePlatform.kernelVersion();
+
+            // pidfd_nonblock only supported in 5.10+
+            const flags: u32 = if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
+                std.os.O.NONBLOCK
+            else
+                0;
+
+            const fd = std.os.linux.pidfd_open(
+                pid,
+                flags,
+            );
+
+            switch (std.os.linux.getErrno(fd)) {
+                .SUCCESS => break :brk fd,
+                else => |err| {
+                    globalThis.throwValue(JSC.Node.Syscall.Error.fromCode(err, .open).toJSC(globalThis));
+                    var status: u32 = 0;
+                    // ensure we don't leak the child process on error
+                    _ = std.os.linux.waitpid(pid, &status, 0);
+                    return JSValue.jsUndefined();
+                },
+            }
+        };
+
         var subprocess = globalThis.allocator().create(Subprocess) catch {
             globalThis.throw("out of memory", .{});
             return JSValue.jsUndefined();
@@ -3890,6 +3954,7 @@ pub const Subprocess = struct {
         subprocess.* = Subprocess{
             .globalThis = globalThis,
             .pid = pid,
+            .pidfd = pidfd,
             .stdin = Writable.init(std.meta.activeTag(stdio[std.os.STDIN_FILENO]), stdin_pipe[1], globalThis) catch {
                 globalThis.throw("out of memory", .{});
                 return JSValue.jsUndefined();
@@ -3902,7 +3967,7 @@ pub const Subprocess = struct {
         subprocess.this_jsvalue.ensureStillAlive();
 
         switch (globalThis.bunVM().poller.watch(
-            @intCast(JSC.Node.FileDescriptor, pid),
+            @intCast(JSC.Node.FileDescriptor, pidfd),
             .process,
             Subprocess,
             subprocess,
@@ -3937,13 +4002,17 @@ pub const Subprocess = struct {
 
         this.has_waitpid_task = true;
         const pid = this.pid;
-        const status = PosixSpawn.waitpid(pid, 0) catch |err| {
-            Output.debug("waitpid({d}) failed: {s}", .{ pid, @errorName(err) });
-            return;
-        };
+        switch (PosixSpawn.waitpid(pid, 0)) {
+            .err => |err| {
+                this.waitpid_err = err;
+            },
+            .result => |status| {
+                this.exit_code = @truncate(u8, status.status);
+            },
+        }
 
-        this.exit_code = @truncate(u8, status.status);
         this.waitpid_task = JSC.AnyTask.New(Subprocess, onExit).init(this);
+        this.has_waitpid_task = true;
         vm.eventLoop().enqueueTask(JSC.Task.init(&this.waitpid_task));
     }
 
@@ -3955,7 +4024,16 @@ pub const Subprocess = struct {
         if (this.exit_promise != .zero) {
             var promise = this.exit_promise;
             this.exit_promise = .zero;
-            promise.asPromise().?.resolve(this.globalThis, JSValue.jsNumber(this.exit_code.?));
+            if (this.exit_code) |code| {
+                promise.asPromise().?.resolve(this.globalThis, JSValue.jsNumber(code));
+            } else if (this.waitpid_err) |err| {
+                this.waitpid_err = null;
+                promise.asPromise().?.reject(this.globalThis, err.toJSC(this.globalThis));
+            } else {
+                // crash in debug mode
+                if (comptime Environment.allow_assert)
+                    unreachable;
+            }
         }
 
         this.unref();
@@ -4010,7 +4088,11 @@ pub const Subprocess = struct {
                     try actions.open(std_fileno, pathlike.slice(), flag | std.os.O.CREAT, 0o664);
                 },
                 .inherit => {
-                    try actions.inherit(std_fileno);
+                    if (comptime Environment.isMac) {
+                        try actions.inherit(std_fileno);
+                    } else {
+                        try actions.dup2(std_fileno, std_fileno);
+                    }
                 },
                 .ignore => {
                     const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);

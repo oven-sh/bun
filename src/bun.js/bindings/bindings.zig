@@ -1896,6 +1896,13 @@ pub const JSGlobalObject = extern struct {
         }
     }
 
+    pub fn throwValue(
+        this: *JSGlobalObject,
+        value: JSC.JSValue,
+    ) void {
+        this.vm().throwError(this, value);
+    }
+
     pub fn throwError(
         this: *JSGlobalObject,
         err: anyerror,

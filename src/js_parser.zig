@@ -10558,6 +10558,7 @@ fn NewParser_(
 
                             const name = p.lexer.identifier;
                             const name_loc = p.lexer.loc();
+                            p.lexer.is_potential_call = true; // this is set to false in p.lexer.next
                             try p.lexer.next();
                             const ref = p.storeNameInRef(name) catch unreachable;
                             left = p.e(E.Index{
@@ -10703,11 +10704,12 @@ fn NewParser_(
                         }
                         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
                         const head = p.lexer.toEString();
+                        const was_potential_call = p.lexer.is_potential_call;
                         try p.lexer.next();
                         left = p.e(E.Template{
                             .tag = left,
                             .head = head,
-                            .is_raw_template_call = p.lexer.is_potential_call,
+                            .is_raw_template_call = was_potential_call,
                         }, left.loc);
                     },
                     .t_template_head => {
@@ -11530,8 +11532,7 @@ fn NewParser_(
                     return expr;
                 },
                 .t_template_head => {
-                    const was_potential_call = p.lexer.is_potential_call;
-                    if (was_potential_call)
+                    if (p.lexer.is_potential_call)
                         std.log.debug("[0] We found one!", .{});
 
                     const head = p.lexer.toEString();
@@ -11544,7 +11545,7 @@ fn NewParser_(
                     return p.e(E.Template{
                         .head = head,
                         .parts = parts,
-                        .is_raw_template_call = was_potential_call,
+                        .is_raw_template_call = p.lexer.is_potential_call,
                     }, loc);
                 },
                 .t_numeric_literal => {

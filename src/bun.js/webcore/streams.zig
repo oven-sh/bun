@@ -1135,13 +1135,20 @@ pub const FileSink = struct {
         this.scheduled_count += 1;
     }
 
+    pub fn unwatch(this: *FileSink) void {
+        std.debug.assert(this.scheduled_count > 0);
+        std.debug.assert(this.opened_fd != std.math.maxInt(JSC.Node.FileDescriptor));
+        _ = JSC.VirtualMachine.vm.poller.unwatch(this.opened_fd, .write, FileSink, this);
+        this.scheduled_count -= 1;
+    }
+
     pub fn toJS(this: *FileSink, globalThis: *JSGlobalObject) JSValue {
         return JSSink.createObject(globalThis, this);
     }
 
     pub fn onPoll(this: *FileSink, _: i64, _: u16) void {
         this.scheduled_count -= 1;
-        this.flush();
+        _ = this.flush();
     }
 
     pub fn write(this: *@This(), data: StreamResult) StreamResult.Writable {
@@ -3185,10 +3192,31 @@ pub const FileBlobLoader = struct {
         this.pending.run();
     }
 
+    pub fn unwatch(this: *FileBlobLoader) void {
+        std.debug.assert(this.scheduled_count > 0);
+        std.debug.assert(this.fd != std.math.maxInt(JSC.Node.FileDescriptor));
+        _ = JSC.VirtualMachine.vm.poller.unwatch(this.fd, .read, FileBlobLoader, this);
+        this.scheduled_count -= 1;
+    }
+
     pub fn finalize(this: *FileBlobLoader) void {
         if (this.finalized)
             return;
         this.finalized = true;
+
+        if (this.scheduled_count > 0) {
+            this.unwatch();
+        }
+
+        this.pending.result = .{ .done = {} };
+        this.pending.run();
+
+        if (this.protected_view != .zero) {
+            this.protected_view.unprotect();
+            this.protected_view = .zero;
+
+            this.buf = &.{};
+        }
 
         this.maybeAutoClose();
 

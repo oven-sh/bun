@@ -1004,6 +1004,26 @@ pub const Map = struct {
 
     map: HashTable,
 
+    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]u8 {
+        var env_map = &this.map;
+
+        const envp_count = env_map.count();
+        const envp_buf = try arena.allocSentinel(?[*:0]u8, envp_count, null);
+        {
+            var it = env_map.iterator();
+            var i: usize = 0;
+            while (it.next()) |pair| : (i += 1) {
+                const env_buf = try arena.allocSentinel(u8, pair.key_ptr.len + pair.value_ptr.len + 1, 0);
+                std.mem.copy(u8, env_buf, pair.key_ptr.*);
+                env_buf[pair.key_ptr.len] = '=';
+                std.mem.copy(u8, env_buf[pair.key_ptr.len + 1 ..], pair.value_ptr.*);
+                envp_buf[i] = env_buf.ptr;
+            }
+            std.debug.assert(i == envp_count);
+        }
+        return envp_buf;
+    }
+
     pub fn cloneToEnvMap(this: *Map, allocator: std.mem.Allocator) !std.process.EnvMap {
         var env_map = std.process.EnvMap.init(allocator);
 

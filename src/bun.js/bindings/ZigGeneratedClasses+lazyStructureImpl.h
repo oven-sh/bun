@@ -1,4 +1,10 @@
 void GlobalObject::initGeneratedLazyClasses() {
+    m_JSSubprocess.initLater(
+              [](LazyClassStructure::Initializer& init) {
+                 init.setPrototype(WebCore::JSSubprocess::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setStructure(WebCore::JSSubprocess::createStructure(init.vm, init.global, init.prototype));
+                 init.setConstructor(WebCore::JSSubprocessConstructor::create(init.vm, init.global, WebCore::JSSubprocessConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<WebCore::JSSubprocessPrototype*>(init.prototype)));
+              });
     m_JSSHA1.initLater(
               [](LazyClassStructure::Initializer& init) {
                  init.setPrototype(WebCore::JSSHA1::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
@@ -75,6 +81,7 @@ void GlobalObject::initGeneratedLazyClasses() {
 template<typename Visitor>
 void GlobalObject::visitGeneratedLazyClasses(GlobalObject *thisObject, Visitor& visitor)
 {
+      thisObject->m_JSSubprocess.visit(visitor);  visitor.append(thisObject->m_JSSubprocessSetterValue);
       thisObject->m_JSSHA1.visit(visitor);  visitor.append(thisObject->m_JSSHA1SetterValue);
       thisObject->m_JSMD5.visit(visitor);  visitor.append(thisObject->m_JSMD5SetterValue);
       thisObject->m_JSMD4.visit(visitor);  visitor.append(thisObject->m_JSMD4SetterValue);

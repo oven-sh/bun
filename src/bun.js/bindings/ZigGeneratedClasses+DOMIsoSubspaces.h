@@ -1,4 +1,5 @@
-std::unique_ptr<IsoSubspace> m_subspaceForSHA1;
+std::unique_ptr<IsoSubspace> m_subspaceForSubprocess;
+std::unique_ptr<IsoSubspace> m_subspaceForSubprocessConstructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA1;
 std::unique_ptr<IsoSubspace> m_subspaceForSHA1Constructor;std::unique_ptr<IsoSubspace> m_subspaceForMD5;
 std::unique_ptr<IsoSubspace> m_subspaceForMD5Constructor;std::unique_ptr<IsoSubspace> m_subspaceForMD4;
 std::unique_ptr<IsoSubspace> m_subspaceForMD4Constructor;std::unique_ptr<IsoSubspace> m_subspaceForSHA224;

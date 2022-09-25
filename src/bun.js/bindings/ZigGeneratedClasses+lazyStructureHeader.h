@@ -1,3 +1,9 @@
+JSC::Structure* JSSubprocessStructure() { return m_JSSubprocess.getInitializedOnMainThread(this); }
+        JSC::JSObject* JSSubprocessConstructor() { return m_JSSubprocess.constructorInitializedOnMainThread(this); }
+        JSC::JSValue JSSubprocessPrototype() { return m_JSSubprocess.prototypeInitializedOnMainThread(this); }
+  JSC::LazyClassStructure m_JSSubprocess;
+  bool hasJSSubprocessSetterValue { false };
+  mutable JSC::WriteBarrier<JSC::Unknown> m_JSSubprocessSetterValue;
 JSC::Structure* JSSHA1Structure() { return m_JSSHA1.getInitializedOnMainThread(this); }
         JSC::JSObject* JSSHA1Constructor() { return m_JSSHA1.constructorInitializedOnMainThread(this); }
         JSC::JSValue JSSHA1Prototype() { return m_JSSHA1.prototypeInitializedOnMainThread(this); }

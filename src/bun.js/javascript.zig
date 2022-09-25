@@ -567,6 +567,7 @@ pub const VirtualMachine = struct {
         VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        VirtualMachine.vm.regular_event_loop.pending_processes_to_exit = std.AutoArrayHashMap(*JSC.Subprocess, void).init(allocator);
         VirtualMachine.vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         VirtualMachine.vm.regular_event_loop.concurrent_tasks = .{};
         VirtualMachine.vm.event_loop = &VirtualMachine.vm.regular_event_loop;

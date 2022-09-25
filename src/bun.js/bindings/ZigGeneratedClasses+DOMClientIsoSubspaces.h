@@ -1,4 +1,5 @@
-std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA1;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSubprocess;
+std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSubprocessConstructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA1;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA1Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD5;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD5Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD4;
 std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMD4Constructor;std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForSHA224;

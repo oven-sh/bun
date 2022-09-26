@@ -3729,7 +3729,7 @@ pub const CallFrame = opaque {
         var buf: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
         const len = self.argumentsCount();
         var ptr = self.argumentsPtr();
-        switch (len) {
+        switch (@minimum(len, max)) {
             0 => {
                 return .{ .ptr = buf, .len = 0 };
             },

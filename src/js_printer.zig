@@ -1994,7 +1994,6 @@ pub fn NewPrinter(
                     p.print("`");
                     if (e.head.isPresent()) {
                         e.head.resovleRopeIfNeeded(p.options.allocator);
-
                         p.printStringContent(&e.head, '`', e.is_raw_template_call);
                     }
 

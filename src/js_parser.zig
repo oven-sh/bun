@@ -11418,6 +11418,7 @@ fn NewParser_(
                     const name_range = p.lexer.range();
                     const raw = p.lexer.raw();
 
+                    p.lexer.is_potential_call = true; // this is set to false in p.lexer.next()
                     try p.lexer.next();
 
                     // Handle async and await expressions

@@ -7,6 +7,9 @@ const CodePoint = @import("string_types.zig").CodePoint;
 const bun = @import("global.zig");
 pub const joiner = @import("./string_joiner.zig");
 const assert = std.debug.assert;
+const js_printer = @import("js_printer.zig");
+const first_ascii = js_printer.first_ascii;
+const last_ascii = js_printer.last_ascii;
 
 pub const Encoding = enum {
     ascii,
@@ -3115,14 +3118,16 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
     return null;
 }
 
-/// Fast path for printing template literal strings
-/// Returns 0 as the non-value.
+/// Fast path for printing template literal strings. Skips the first character.
+/// Returns a value greater than 0.
 pub fn @"nextUTF16NonASCIIOr$`\\"(
     comptime Slice: type,
     slice: Slice,
+    quote: u8,
     comptime raw: bool,
+    comptime is_quote_backtick: bool,
 ) u32 {
-    var remaining = slice;
+    var remaining = slice[1..];
 
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_u16_vector_size) {
@@ -3132,12 +3137,17 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
                 @bitCast(AsciiVectorU16U1, (vec < min_u16_ascii)) |
                 @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '\\'))));
 
-            if (comptime raw) {
-                cmp &= @bitCast(AsciiVectorU16U1, (vec != @splat(ascii_u16_vector_size, @as(u16, '\n')))) |
+            if (comptime !raw) {
+                cmp |= @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, quote))));
+
+                if (is_quote_backtick) {
+                    cmp |= @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '$'))));
+                }
+            }
+
+            if (is_quote_backtick) {
+                cmp &= @bitCast(AsciiVectorU16U1, (vec != @splat(ascii_u16_vector_size, @as(u16, '\n')))) &
                     @bitCast(AsciiVectorU16U1, (vec != @splat(ascii_u16_vector_size, @as(u16, '\t'))));
-            } else {
-                cmp |= @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '$')))) |
-                    @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '`'))));
             }
 
             const bitmask = @ptrCast(*const u8, &cmp).*;
@@ -3152,26 +3162,19 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
     }
 
     for (remaining) |char, i| {
-        if (comptime raw) {
-            switch (char) {
-                '\\', 0...0x20 - 1, 128...std.math.maxInt(u16) => {
-                    return @intCast(u32, i + (slice.len - remaining.len));
-                },
+        switch (char) {
+            '\\', 0...'\t' - 1, '\n' + 1...first_ascii - 1, last_ascii + 1...std.math.maxInt(u16) => {
+                return @intCast(u32, i + (slice.len - remaining.len));
+            },
 
-                else => {},
-            }
-        } else {
-            switch (char) {
-                '$', '`', '\\', 0...0x20 - 1, 128...std.math.maxInt(u16) => {
+            else => {
+                if (!raw and ((is_quote_backtick and char == '$' and i + 1 < remaining.len and remaining[i + 1] == '{') or char == quote or (!is_quote_backtick and (char == '\n' or char == '\t'))))
                     return @intCast(u32, i + (slice.len - remaining.len));
-                },
-
-                else => {},
-            }
+            },
         }
     }
 
-    return 0;
+    return 1;
 }
 
 test "indexOfNotChar" {

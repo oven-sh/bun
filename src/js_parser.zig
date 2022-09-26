@@ -9405,6 +9405,7 @@ fn NewParser_(
             try p.lexer.expect(.t_open_brace);
             var opts = ParseStatementOptions{};
             const stmts = try p.parseStmtsUpTo(.t_close_brace, &opts);
+            p.lexer.is_potential_template_literal_call = true; // function(){}``
             try p.lexer.next();
 
             p.allow_in = oldAllowIn;
@@ -10431,17 +10432,17 @@ fn NewParser_(
             var oldAllowIn = p.allow_in;
             p.allow_in = true;
 
-            const was_potential_call = p.lexer.is_potential_call;
-            p.lexer.is_potential_call = false;
+            const was_potential_template_literal_call = p.lexer.is_potential_template_literal_call;
+            p.lexer.is_potential_template_literal_call = false;
 
             parseTemplatePart: while (true) {
                 try p.lexer.next();
                 const value = try p.parseExpr(.lowest);
                 const tail_loc = p.lexer.loc();
 
-                p.lexer.is_potential_call = was_potential_call;
+                p.lexer.is_potential_template_literal_call = was_potential_template_literal_call;
                 try p.lexer.rescanCloseBraceAsTemplateToken();
-                p.lexer.is_potential_call = false;
+                p.lexer.is_potential_template_literal_call = false;
 
                 var tail = p.lexer.toEString();
 
@@ -10452,7 +10453,9 @@ fn NewParser_(
                 }) catch unreachable;
 
                 if (p.lexer.token == .t_template_tail) {
+                    p.lexer.is_potential_template_literal_call = was_potential_template_literal_call;
                     try p.lexer.next();
+                    p.lexer.is_potential_template_literal_call = false;
                     break :parseTemplatePart;
                 }
                 if (comptime Environment.allow_assert)
@@ -10460,7 +10463,7 @@ fn NewParser_(
             }
 
             p.allow_in = oldAllowIn;
-            p.lexer.is_potential_call = was_potential_call;
+            p.lexer.is_potential_template_literal_call = was_potential_template_literal_call;
             return parts.toOwnedSlice();
         }
 
@@ -10476,6 +10479,7 @@ fn NewParser_(
         }
 
         pub fn parseCallArgs(p: *P) anyerror!ExprListLoc {
+            p.lexer.is_potential_template_literal_call = false;
             try p.lexer.next(); // the current token is .t_open_paren, so skip it
             // Allow "in" inside call arguments
             const old_allow_in = p.allow_in;
@@ -10502,6 +10506,7 @@ fn NewParser_(
                 try p.lexer.next();
             }
             const close_paren_loc = p.lexer.loc();
+            p.lexer.is_potential_template_literal_call = true;
             try p.lexer.expect(.t_close_paren);
             return ExprListLoc{ .list = ExprNodeList.fromList(args), .loc = close_paren_loc };
         }
@@ -10558,7 +10563,7 @@ fn NewParser_(
 
                             const name = p.lexer.identifier;
                             const name_loc = p.lexer.loc();
-                            p.lexer.is_potential_call = true; // this is set to false in p.lexer.next
+                            p.lexer.is_potential_template_literal_call = true; // this is set to false in p.lexer.next
                             try p.lexer.next();
                             const ref = p.storeNameInRef(name) catch unreachable;
                             left = p.e(E.Index{
@@ -10580,7 +10585,7 @@ fn NewParser_(
 
                             const name = p.lexer.identifier;
                             const name_loc = p.lexer.loc();
-                            p.lexer.is_potential_call = true; // this is set to false in p.lexer.next
+                            p.lexer.is_potential_template_literal_call = true; // this is set to false in p.lexer.next
                             try p.lexer.next();
 
                             left = p.e(E.Dot{ .target = left, .name = name, .name_loc = name_loc, .optional_chain = old_optional_chain }, left.loc);
@@ -10704,12 +10709,12 @@ fn NewParser_(
                         }
                         // p.markSyntaxFeature(compat.TemplateLiteral, p.lexer.Range());
                         const head = p.lexer.toEString();
-                        const was_potential_call = p.lexer.is_potential_call;
+                        const was_potential_template_literal_call = p.lexer.is_potential_template_literal_call;
                         try p.lexer.next();
                         left = p.e(E.Template{
                             .tag = left,
                             .head = head,
-                            .is_raw_template_call = was_potential_call,
+                            .is_raw_template_call = was_potential_template_literal_call,
                         }, left.loc);
                     },
                     .t_template_head => {
@@ -10720,7 +10725,7 @@ fn NewParser_(
                         const head = p.lexer.toEString();
                         const partsGroup = try p.parseTemplateParts(true);
                         const tag = left;
-                        left = p.e(E.Template{ .tag = tag, .head = head, .parts = partsGroup, .is_raw_template_call = p.lexer.is_potential_call }, left.loc);
+                        left = p.e(E.Template{ .tag = tag, .head = head, .parts = partsGroup, .is_raw_template_call = p.lexer.is_potential_template_literal_call }, left.loc);
                     },
                     .t_open_bracket => {
                         // When parsing a decorator, ignore EIndex expressions since they may be
@@ -10759,7 +10764,10 @@ fn NewParser_(
                             return left;
                         }
 
+                        p.lexer.is_potential_template_literal_call = false;
                         const list_loc = try p.parseCallArgs();
+                        p.lexer.is_potential_template_literal_call = true;
+
                         left = p.e(
                             E.Call{
                                 .target = left,
@@ -11419,7 +11427,10 @@ fn NewParser_(
                     const raw = p.lexer.raw();
 
                     const async_await_or_yield = AsyncPrefixExpression.find(name);
-                    p.lexer.is_potential_call = async_await_or_yield == .none; // this is set to false in p.lexer.next()
+                    p.lexer.is_potential_template_literal_call = switch (async_await_or_yield) {
+                        .none, .is_async => true,
+                        else => false,
+                    }; // this is set to false in p.lexer.next()
                     try p.lexer.next();
 
                     // Handle async and await expressions
@@ -18042,6 +18053,7 @@ fn NewParser_(
             var items = items_list.items;
 
             // The parenthetical construct must end with a close parenthesis
+            p.lexer.is_potential_template_literal_call = true;
             try p.lexer.expect(.t_close_paren);
 
             // Restore "in" operator status before we parse the arrow function body
@@ -18134,6 +18146,7 @@ fn NewParser_(
             if (opts.is_async) {
                 p.logExprErrors(&errors);
                 const async_expr = p.e(E.Identifier{ .ref = try p.storeNameInRef("async") }, loc);
+                p.lexer.is_potential_template_literal_call = true;
                 return p.e(E.Call{ .target = async_expr, .args = ExprNodeList.init(items) }, loc);
             }
 
@@ -18147,6 +18160,7 @@ fn NewParser_(
 
                 var value = Expr.joinAllWithComma(items, p.allocator);
                 p.markExprAsParenthesized(&value);
+                p.lexer.is_potential_template_literal_call = true;
                 return value;
             }
 

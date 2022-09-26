@@ -45,8 +45,8 @@ const locModuleScope = logger.Loc.Empty;
 const Ast = js_ast.Ast;
 
 const hex_chars = "0123456789ABCDEF";
-const first_ascii = 0x20;
-const last_ascii = 0x7E;
+pub const first_ascii = 0x20;
+pub const last_ascii = 0x7E;
 const first_high_surrogate = 0xD800;
 const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
@@ -612,7 +612,7 @@ pub fn NewPrinter(
                 comptime_int, u16, u8 => {
                     p.writer.print(StringType, str);
                 },
-                [6]u8 => {
+                [2]u8, [6]u8 => {
                     const span = std.mem.span(&str);
                     p.writer.print(@TypeOf(span), span);
                 },
@@ -1141,7 +1141,7 @@ pub fn NewPrinter(
             ) catch unreachable;
         }
 
-        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8, comptime raw: bool) void {
+        pub fn _printQuotedUTF16(e: *Printer, text: []const u16, quote: u8, comptime raw: bool, comptime is_quote_backtick: bool) void {
             const CodeUnitType = u32;
             var i: u32 = 0;
             const n: u32 = @intCast(u32, text.len);
@@ -1153,39 +1153,30 @@ pub fn NewPrinter(
                 const c2: CodeUnitType = if (i < n) text[i] else 0;
 
                 if (((raw or quote == '`') and (c == '\t' or c == '\n') or
-                    (first_ascii <= c and c <= last_ascii and (raw or c != '\\') and
+                    (first_ascii <= c and c <= last_ascii and (raw or (c != '\\' and c != quote)) and
                     (raw or quote != '`' or c != '$' or c2 != '{'))))
                 {
                     if (raw and is_interpolater_open and c == '\\') {
                         e.print("`}");
                         is_interpolater_open = false;
                     }
-                    // raw and c == '\\' => true
-                    e.print(@intCast(u8, c));
 
-                    if (raw or quote == '`') {
-                        // Fast path for printing long UTF-16 template literals
-                        // this only applies to template literal strings
-                        // but we print a template literal if there is a \n or a \r
-                        // which is often if the string is long and UTF-16
-                        const remain = text[i..];
-                        if (remain.len > 0 and first_ascii <= c2 and c2 <= last_ascii and c2 != '\\' and (raw or (c2 != '$' and c2 != '`'))) {
-                            const len: u32 = len: {
-                                const len = strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, remain, raw);
-                                if (len != 0) {
-                                    break :len len - 1;
-                                } else {
-                                    break :len @intCast(u32, remain.len);
-                                }
-                            };
-
-                            var ptr = e.writer.reserve(len) catch unreachable;
-                            var to_copy = ptr[0..len];
-                            strings.copyU16IntoU8(to_copy, []const u16, remain[0..len]);
-                            e.writer.advance(len);
-                            i += len;
-                        }
+                    if (!raw and quote != '`') {
+                        e.print(@intCast(u8, c));
+                        continue;
                     }
+
+                    // Fast path for printing long UTF-16 template literals
+                    // this only applies to template literal strings
+                    // but we print a template literal if there is a \n or a \r
+                    // which is often if the string is long and UTF-16
+                    const len = strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, text[i - 1 ..], quote, raw, is_quote_backtick);
+                    assert(len != 0);
+                    var ptr = e.writer.reserve(len) catch unreachable;
+                    var to_copy = ptr[0..len];
+                    strings.copyU16IntoU8(to_copy, []const u16, text[i - 1 .. i - 1 + len]);
+                    e.writer.advance(len);
+                    i += len - 1;
                 } else {
                     // combine c and c2 into a single u32 codepoint
                     var cp: CodeUnitType = cp: {
@@ -2333,6 +2324,15 @@ pub fn NewPrinter(
             p.print(")");
         }
 
+        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8, comptime raw: bool) void {
+            if (raw) {
+                e._printQuotedUTF16(text, quote, true, true);
+            } else if (quote == '`') {
+                e._printQuotedUTF16(text, quote, false, true);
+            } else {
+                e._printQuotedUTF16(text, quote, false, false);
+            }
+        }
         // This assumes the string has already been quoted.
         pub fn printStringContent(p: *Printer, str: *const E.String, c: u8, is_raw_template_call: bool) void {
             if (!str.isUTF8()) {
@@ -2350,44 +2350,37 @@ pub fn NewPrinter(
         // Add one outer branch so the inner loop does fewer branches
         pub fn printUTF8StringEscapedQuotes(p: *Printer, str: string, c: u8) void {
             switch (c) {
-                '`' => _printUTF8StringEscapedQuotes(p, str, '`'),
-                '"' => _printUTF8StringEscapedQuotes(p, str, '"'),
-                '\'' => _printUTF8StringEscapedQuotes(p, str, '\''),
+                '`' => _printUTF8StringEscapedQuotes(p, str, '`', true),
+                '"', '\'' => _printUTF8StringEscapedQuotes(p, str, c, false),
                 else => unreachable,
             }
         }
 
-        pub fn _printUTF8StringEscapedQuotes(p: *Printer, str: string, comptime c: u8) void {
+        pub fn _printUTF8StringEscapedQuotes(p: *Printer, str: string, c: u8, comptime is_c_backtick: bool) void {
             var utf8 = str;
             var i: usize = 0;
             // Walk the string searching for quote characters
             // Escape any we find
             // Skip over already-escaped strings
             while (i < utf8.len) : (i += 1) {
-                switch (utf8[i]) {
-                    '\\' => {
-                        i += 1;
-                    },
+                if (utf8[i] == '\\') {
+                    i += 1;
+                } else if (utf8[i] == '$') {
                     // We must escape here for JSX string literals that contain unescaped newlines
                     // Those will get transformed into a template string
                     // which can potentially have unescaped $
-                    '$' => {
-                        if (c == '`' and i + 1 < utf8.len and utf8[i + 1] == '{') {
-                            p.print(utf8[0..i]);
-                            p.print("\\$");
-
-                            utf8 = utf8[i + 1 ..];
-                            i = 0;
-                        }
-                    },
-                    c => {
+                    if (is_c_backtick and i + 1 < utf8.len and utf8[i + 1] == '{') {
                         p.print(utf8[0..i]);
-                        p.print("\\" ++ &[_]u8{c});
+                        p.print("\\$");
+
                         utf8 = utf8[i + 1 ..];
                         i = 0;
-                    },
-
-                    else => {},
+                    }
+                } else if (utf8[i] == c) {
+                    p.print(utf8[0..i]);
+                    p.print(([_]u8{ '\\', c }));
+                    utf8 = utf8[i + 1 ..];
+                    i = 0;
                 }
             }
             if (utf8.len > 0) {

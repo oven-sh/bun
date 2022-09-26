@@ -127,7 +127,7 @@ fn NewLexer_(
         preserve_all_comments_before: bool = false,
         is_legacy_octal_literal: bool = false,
         is_log_disabled: bool = false,
-        is_potential_call: bool = false,
+        is_potential_template_literal_call: bool = false,
         comments_to_preserve_before: std.ArrayList(js_ast.G.Comment),
         all_original_comments: ?[]js_ast.G.Comment = null,
         code_point: CodePoint = -1,
@@ -406,13 +406,11 @@ fn NewLexer_(
                             'x' => {
                                 var value: CodePoint = 0;
                                 var c3: CodePoint = 0;
-                                var width3: u3 = 0;
 
                                 var i: u2 = 0;
                                 while (i < 2) : (i += 1) {
                                     if (!iterator.next(&iter)) return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in hex literal escape sequence");
                                     c3 = iter.c;
-                                    width3 = iter.width;
                                     switch (c3) {
                                         '0'...'9' => {
                                             value = value * 16 | (c3 - '0');
@@ -434,13 +432,11 @@ fn NewLexer_(
                             'u' => {
                                 var value: CodePoint = 0; // actually only goes up to 0xFFFFFF
 
-                                _ = iterator.next(&iter) or return lexer.syntaxError();
+                                _ = iterator.next(&iter) or return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode literal");
                                 var c3 = iter.c;
-                                var width3 = iter.width;
 
                                 // variable-length
                                 if (c3 == '{') {
-                                    escape_start -= 1;
                                     if (comptime is_json) {
                                         lexer.end = start + iter.i - width2;
                                         return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected variable-length unicode escape sequence in JSON");
@@ -448,11 +444,9 @@ fn NewLexer_(
 
                                     if (!iterator.next(&iter)) return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode literal");
                                     c3 = iter.c;
-                                    width3 = iter.width;
 
                                     if (c3 == '}') {
-                                        lexer.end = (iter.i + start) - 1; // width3=1
-                                        return lexer.syntaxError();
+                                        return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Empty unicode literal");
                                     }
 
                                     var j: u3 = 0;
@@ -477,7 +471,6 @@ fn NewLexer_(
 
                                         if (!iterator.next(&iter)) return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode literal");
                                         c3 = iter.c;
-                                        width3 = iter.width;
                                     }
 
                                     if (c3 != '}' or value > 0x10FFFF) {
@@ -495,6 +488,8 @@ fn NewLexer_(
                                             if (!iterator.next(&iter)) {
                                                 return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode escape sequence");
                                             }
+
+                                            c3 = iter.c;
                                         }
                                     }
 
@@ -522,7 +517,6 @@ fn NewLexer_(
                                         if (j < 3) {
                                             _ = iterator.next(&iter) or return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode escape sequence");
                                             c3 = iter.c;
-                                            width3 = iter.width;
                                         }
                                     }
                                 }
@@ -1167,8 +1161,8 @@ fn NewLexer_(
             lexer.has_newline_before = lexer.end == 0;
 
             while (true) {
-                const was_potential_call = lexer.is_potential_call;
-                lexer.is_potential_call = false;
+                const was_potential_template_literal_call = lexer.is_potential_template_literal_call;
+                lexer.is_potential_template_literal_call = false;
 
                 lexer.start = lexer.end;
                 lexer.token = T.t_end_of_file;
@@ -1224,13 +1218,13 @@ fn NewLexer_(
                     },
                     '\r', '\n', 0x2028, 0x2029 => {
                         lexer.step();
-                        lexer.is_potential_call = was_potential_call;
+                        lexer.is_potential_template_literal_call = was_potential_template_literal_call;
                         lexer.has_newline_before = true;
                         continue;
                     },
                     '\t', ' ' => {
                         lexer.step();
-                        lexer.is_potential_call = was_potential_call;
+                        lexer.is_potential_template_literal_call = was_potential_template_literal_call;
                         continue;
                     },
                     '(' => {
@@ -1752,8 +1746,8 @@ fn NewLexer_(
                         try lexer.parseStringLiteral('"');
                     },
                     '`' => {
-                        if (was_potential_call) {
-                            lexer.is_potential_call = true;
+                        if (was_potential_template_literal_call) {
+                            lexer.is_potential_template_literal_call = true;
                             try lexer.parseBacktickLiteralRaw();
                         } else {
                             try lexer.parseStringLiteral('`');

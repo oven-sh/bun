@@ -295,7 +295,8 @@ fn NewLexer_(
                         // include a <CR> or <CR><LF> sequence.
 
                         // Convert '\r\n' into '\n'
-                        iter.i += @as(u32, @boolToInt(iter.i + 1 < text.len and text[iter.i + 1] == '\n'));
+                        if (iter.i + 1 < text.len and text[iter.i + 1] == '\n')
+                            iter.i += 1;
 
                         // Convert '\r' into '\n'
                         buf.append('\n') catch unreachable;

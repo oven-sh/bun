@@ -11418,11 +11418,12 @@ fn NewParser_(
                     const name_range = p.lexer.range();
                     const raw = p.lexer.raw();
 
-                    p.lexer.is_potential_call = true; // this is set to false in p.lexer.next()
+                    const async_await_or_yield = AsyncPrefixExpression.find(name);
+                    p.lexer.is_potential_call = async_await_or_yield == .none; // this is set to false in p.lexer.next()
                     try p.lexer.next();
 
                     // Handle async and await expressions
-                    switch (AsyncPrefixExpression.find(name)) {
+                    switch (async_await_or_yield) {
                         .is_async => {
                             if ((raw.ptr == name.ptr and raw.len == name.len) or AsyncPrefixExpression.find(raw) == .is_async) {
                                 return try p.parseAsyncPrefixExpr(name_range, level);
@@ -11518,24 +11519,10 @@ fn NewParser_(
 
                     return Expr.initIdentifier(ref, loc);
                 },
-                .t_string_literal => {
+                .t_string_literal, .t_no_substitution_template_literal => {
                     return try p.parseStringLiteral();
                 },
-
-                .t_no_substitution_template_literal => {
-                    const was_potential_call = p.lexer.is_potential_call;
-                    if (was_potential_call) {
-                        std.log.err("Turns out your template literal is callable? Crashing bun.", .{});
-                        unreachable;
-                    }
-
-                    const expr = try p.parseStringLiteral();
-                    return expr;
-                },
                 .t_template_head => {
-                    if (p.lexer.is_potential_call)
-                        std.log.debug("[0] We found one!", .{});
-
                     const head = p.lexer.toEString();
 
                     const parts = try p.parseTemplateParts(false);
@@ -11546,7 +11533,7 @@ fn NewParser_(
                     return p.e(E.Template{
                         .head = head,
                         .parts = parts,
-                        .is_raw_template_call = p.lexer.is_potential_call,
+                        .is_raw_template_call = false,
                     }, loc);
                 },
                 .t_numeric_literal => {

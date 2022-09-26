@@ -2433,20 +2433,20 @@ pub fn encodeWTF8RuneT(p: []u8, r: u32, rune_length: u3) void {
     }
 }
 
-pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
-    return switch (first_byte) {
-        0 => 0,
-        1...0x80 - 1 => 1,
-        else => if ((first_byte & 0xE0) == 0xC0)
-            @as(u3, 2)
-        else if ((first_byte & 0xF0) == 0xE0)
-            @as(u3, 3)
-        else if ((first_byte & 0xF8) == 0xF0)
-            @as(u3, 4)
-        else
-            @as(u3, 1),
-    };
-}
+// pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
+//     return switch (first_byte) {
+//         0 => 0,
+//         1...0x80 - 1 => 1,
+//         else => if ((first_byte & 0xE0) == 0xC0)
+//             @as(u3, 2)
+//         else if ((first_byte & 0xF0) == 0xE0)
+//             @as(u3, 3)
+//         else if ((first_byte & 0xF8) == 0xF0)
+//             @as(u3, 4)
+//         else
+//             @as(u3, 1),
+//     };
+// }
 
 /// 0 == invalid
 pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
@@ -3116,21 +3116,29 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
 }
 
 /// Fast path for printing template literal strings
+/// Returns 0 as the non-value.
 pub fn @"nextUTF16NonASCIIOr$`\\"(
     comptime Slice: type,
     slice: Slice,
-) ?u32 {
+    comptime raw: bool,
+) u32 {
     var remaining = slice;
 
     if (comptime Environment.enableSIMD) {
         while (remaining.len >= ascii_u16_vector_size) {
             const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
 
-            const cmp = @bitCast(AsciiVectorU16U1, (vec > max_u16_ascii)) |
+            var cmp = @bitCast(AsciiVectorU16U1, (vec > max_u16_ascii)) |
                 @bitCast(AsciiVectorU16U1, (vec < min_u16_ascii)) |
-                @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '$')))) |
-                @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '`')))) |
                 @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '\\'))));
+
+            if (comptime raw) {
+                cmp &= @bitCast(AsciiVectorU16U1, (vec != @splat(ascii_u16_vector_size, @as(u16, '\n')))) |
+                    @bitCast(AsciiVectorU16U1, (vec != @splat(ascii_u16_vector_size, @as(u16, '\t'))));
+            } else {
+                cmp |= @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '$')))) |
+                    @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '`'))));
+            }
 
             const bitmask = @ptrCast(*const u8, &cmp).*;
             const first = @ctz(u8, bitmask);
@@ -3144,16 +3152,26 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
     }
 
     for (remaining) |char, i| {
-        switch (char) {
-            '$', '`', '\\', 0...0x20 - 1, 128...std.math.maxInt(u16) => {
-                return @truncate(u32, i + (slice.len - remaining.len));
-            },
+        if (comptime raw) {
+            switch (char) {
+                '\\', 0...0x20 - 1, 128...std.math.maxInt(u16) => {
+                    return @intCast(u32, i + (slice.len - remaining.len));
+                },
 
-            else => {},
+                else => {},
+            }
+        } else {
+            switch (char) {
+                '$', '`', '\\', 0...0x20 - 1, 128...std.math.maxInt(u16) => {
+                    return @intCast(u32, i + (slice.len - remaining.len));
+                },
+
+                else => {},
+            }
         }
     }
 
-    return null;
+    return 0;
 }
 
 test "indexOfNotChar" {
@@ -3458,13 +3476,13 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
                 return false;
             }
 
-            const cp_len = wtf8ByteSequenceLength(it.bytes[pos]);
+            const cp_len = wtf8ByteSequenceLengthWithInvalid(it.bytes[pos]);
             const error_char = comptime std.math.minInt(CodePointType);
 
             const codepoint = @as(
                 CodePointType,
                 switch (cp_len) {
-                    0 => return false,
+                    0 => unreachable,
                     1 => it.bytes[pos],
                     else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
                 },

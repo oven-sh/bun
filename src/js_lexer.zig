@@ -296,7 +296,6 @@ fn NewLexer_(
                         _ = iterator.next(&iter) or return;
 
                         const c2 = iter.c;
-
                         const width2 = iter.width;
                         switch (c2) {
                             // https://mathiasbynens.be/notes/javascript-escapes#single
@@ -407,50 +406,32 @@ fn NewLexer_(
                                 var c3: CodePoint = 0;
                                 var width3: u3 = 0;
 
-                                _ = iterator.next(&iter) or return lexer.syntaxError();
-                                c3 = iter.c;
-                                width3 = iter.width;
-                                switch (c3) {
-                                    '0'...'9' => {
-                                        value = value * 16 | (c3 - '0');
-                                    },
-                                    'a'...'f' => {
-                                        value = value * 16 | (c3 + 10 - 'a');
-                                    },
-                                    'A'...'F' => {
-                                        value = value * 16 | (c3 + 10 - 'A');
-                                    },
-                                    else => {
-                                        lexer.end = start + iter.i - width3;
-                                        return lexer.syntaxError();
-                                    },
-                                }
-
-                                _ = iterator.next(&iter) or return lexer.syntaxError();
-                                c3 = iter.c;
-                                width3 = iter.width;
-                                switch (c3) {
-                                    '0'...'9' => {
-                                        value = value * 16 | (c3 - '0');
-                                    },
-                                    'a'...'f' => {
-                                        value = value * 16 | (c3 + 10 - 'a');
-                                    },
-                                    'A'...'F' => {
-                                        value = value * 16 | (c3 + 10 - 'A');
-                                    },
-                                    else => {
-                                        lexer.end = start + iter.i - width3;
-                                        return lexer.syntaxError();
-                                    },
+                                var i: u2 = 0;
+                                while (i < 2) : (i += 1) {
+                                    if (!iterator.next(&iter)) return lexer.syntaxError();
+                                    c3 = iter.c;
+                                    width3 = iter.width;
+                                    switch (c3) {
+                                        '0'...'9' => {
+                                            value = value * 16 | (c3 - '0');
+                                        },
+                                        'a'...'f' => {
+                                            value = value * 16 | (c3 - ('a' - 10));
+                                        },
+                                        'A'...'F' => {
+                                            value = value * 16 | (c3 - ('A' - 10));
+                                        },
+                                        else => {
+                                            lexer.end = start + iter.i - width3;
+                                            return lexer.syntaxError();
+                                        },
+                                    }
                                 }
 
                                 iter.c = value;
                             },
                             'u' => {
-                                // We're going to make this an i64 so we don't risk integer overflows
-                                // when people do weird things
-                                var value: i64 = 0;
+                                var value: CodePoint = 0; // actually only goes up to 0xFFFFFF
 
                                 _ = iterator.next(&iter) or return lexer.syntaxError();
                                 var c3 = iter.c;
@@ -463,45 +444,61 @@ fn NewLexer_(
                                         try lexer.syntaxError();
                                     }
 
-                                    const hex_start = (iter.i + start) - width - width2 - width3;
-                                    var is_first = true;
-                                    var is_out_of_range = false;
-                                    variableLength: while (true) {
-                                        _ = iterator.next(&iter) or break :variableLength;
-                                        c3 = iter.c;
+                                    const hex_start = (iter.i + start) - width - width2 - 1; // width3=1
 
+                                    if (!iterator.next(&iter)) return lexer.syntaxError();
+                                    c3 = iter.c;
+                                    width3 = iter.width;
+
+                                    if (c3 == '}') {
+                                        lexer.end = (iter.i + start) - 1; // width3=1
+                                        return lexer.syntaxError();
+                                    }
+
+                                    var j: u3 = 0;
+                                    while (j < 6) : (j += 1) {
                                         switch (c3) {
                                             '0'...'9' => {
                                                 value = value * 16 | (c3 - '0');
                                             },
                                             'a'...'f' => {
-                                                value = value * 16 | (c3 + 10 - 'a');
+                                                value = value * 16 | (c3 - ('a' - 10));
                                             },
                                             'A'...'F' => {
-                                                value = value * 16 | (c3 + 10 - 'A');
+                                                value = value * 16 | (c3 - ('A' - 10));
                                             },
                                             '}' => {
-                                                if (is_first) {
-                                                    lexer.end = (start + iter.i) -| width3;
-                                                    return lexer.syntaxError();
-                                                }
-                                                break :variableLength;
+                                                break;
                                             },
                                             else => {
-                                                lexer.end = (start + iter.i) -| width3;
+                                                lexer.end = (start + iter.i) - width3;
                                                 return lexer.syntaxError();
                                             },
                                         }
 
-                                        // '\U0010FFFF
-                                        // copied from golang utf8.MaxRune
-                                        if (value > 1114111) {
-                                            is_out_of_range = true;
-                                        }
-                                        is_first = false;
+                                        if (!iterator.next(&iter)) return lexer.syntaxError();
+                                        c3 = iter.c;
+                                        width3 = iter.width;
                                     }
 
-                                    if (is_out_of_range) {
+                                    if (c3 != '}' or value > 0x10FFFF) {
+                                        while (true) {
+                                            switch (c3) {
+                                                '0'...'9', 'a'...'f', 'A'...'F' => {},
+                                                '}' => {
+                                                    break;
+                                                },
+                                                else => {
+                                                    lexer.end = (start + iter.i) - width3;
+                                                    return lexer.syntaxError();
+                                                },
+                                            }
+
+                                            if (!iterator.next(&iter)) break;
+                                            c3 = iter.c;
+                                            width3 = iter.width;
+                                        }
+
                                         try lexer.addRangeError(
                                             .{ .loc = .{ .start = @intCast(i32, start + hex_start) }, .len = @intCast(i32, ((iter.i + start) - hex_start)) },
                                             "Unicode escape sequence is out of range",
@@ -516,17 +513,17 @@ fn NewLexer_(
                                 } else {
                                     // Fixed-length
                                     // comptime var j: usize = 0;
-                                    var j: usize = 0;
+                                    var j: u3 = 0;
                                     while (j < 4) : (j += 1) {
                                         switch (c3) {
                                             '0'...'9' => {
                                                 value = value * 16 | (c3 - '0');
                                             },
                                             'a'...'f' => {
-                                                value = value * 16 | (c3 + 10 - 'a');
+                                                value = value * 16 | (c3 - ('a' - 10));
                                             },
                                             'A'...'F' => {
-                                                value = value * 16 | (c3 + 10 - 'A');
+                                                value = value * 16 | (c3 - ('A' - 10));
                                             },
                                             else => {
                                                 lexer.end = start + iter.i - width3;
@@ -543,7 +540,7 @@ fn NewLexer_(
                                     }
                                 }
 
-                                iter.c = @truncate(CodePoint, value);
+                                iter.c = value;
                             },
                             '\r' => {
                                 if (comptime is_json) {
@@ -818,7 +815,7 @@ fn NewLexer_(
                             needs_slow_path = true;
                             var utf8_char_width = @intCast(u3, lexer.current - lexer.end);
                             var utf16_char_width: u32 = if (lexer.code_point > 0xFFFF) 2 else 1;
-                            std.debug.assert(utf8_char_width > utf16_char_width);
+                            std.debug.assert(utf8_char_width >= utf16_char_width);
                             utf16_size_difference += utf8_char_width - utf16_char_width;
                         }
                     },
@@ -873,12 +870,12 @@ fn NewLexer_(
         }
 
         inline fn nextCodepointSlice(it: *LexerType) []const u8 {
-            const cp_len = strings.wtf8ByteSequenceLength(it.source.contents.ptr[it.current]);
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
             return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
         }
 
         inline fn nextCodepoint(it: *LexerType) CodePoint {
-            const cp_len = strings.wtf8ByteSequenceLength(it.source.contents.ptr[it.current]);
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
             const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
 
             const code_point = switch (slice.len) {
@@ -1179,10 +1176,11 @@ fn NewLexer_(
 
         pub fn next(lexer: *LexerType) !void {
             lexer.has_newline_before = lexer.end == 0;
-            const was_potential_call = lexer.is_potential_call;
-            lexer.is_potential_call = false;
 
             while (true) {
+                const was_potential_call = lexer.is_potential_call;
+                lexer.is_potential_call = false;
+
                 lexer.start = lexer.end;
                 lexer.token = T.t_end_of_file;
 

@@ -92,7 +92,7 @@ pub const Location = struct {
     namespace: string = "file",
     line: i32 = 1, // 1-based
     column: i32 = 0, // 0-based, in bytes
-    length: usize = 0, // in bytes
+    length: i32 = 0, // in bytes
     line_text: ?string = null,
     suggestion: ?string = null,
     offset: usize = 0,
@@ -190,7 +190,7 @@ pub const Location = struct {
                 .namespace = source.path.namespace,
                 .line = usize2Loc(data.line_count).start,
                 .column = usize2Loc(data.column_count).start,
-                .length = full_line.len,
+                .length = r.len,
                 .line_text = full_line,
                 .offset = @intCast(usize, std.math.max(r.loc.start, 0)),
             };
@@ -292,37 +292,44 @@ pub const Data = struct {
                             try to.writeAll(color_name);
                         }
 
-                        const rest_of_line = line_text[location_in_line_text..];
-
-                        if (rest_of_line.len > 0) {
-                            var end_of_segment: usize = 1;
-                            var iter = strings.CodepointIterator.initOffset(rest_of_line, 1);
-                            // extremely naive: we should really use IsIdentifierContinue || isIdentifierStart here
-
-                            // highlight until we reach the next matching
-                            switch (line_text[location_in_line_text]) {
-                                '\'' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('\'');
-                                },
-                                '"' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('"');
-                                },
-                                '<' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('>');
-                                },
-                                '`' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('`');
-                                },
-                                else => {},
-                            }
-                            try to.writeAll(rest_of_line[0..end_of_segment]);
+                        if (location.length > 0 and location_in_line_text + @intCast(u31, location.length) < line_text.len) {
+                            try to.writeAll(line_text[location_in_line_text .. location_in_line_text + @intCast(u31, location.length)]);
                             if (is_colored) {
                                 try to.writeAll("\x1b[0m");
                             }
+                            try to.writeAll(line_text[location_in_line_text + @intCast(u31, location.length) ..]);
+                        } else {
+                            const rest_of_line = line_text[location_in_line_text..];
+                            if (rest_of_line.len > 0) {
+                                var end_of_segment: usize = 1;
+                                var iter = strings.CodepointIterator.initOffset(rest_of_line, 1);
+                                // extremely naive: we should really use IsIdentifierContinue || isIdentifierStart here
 
-                            try to.writeAll(rest_of_line[end_of_segment..]);
-                        } else if (is_colored) {
-                            try to.writeAll("\x1b[0m");
+                                // highlight until we reach the next matching
+                                switch (line_text[location_in_line_text]) {
+                                    '\'' => {
+                                        end_of_segment = iter.scanUntilQuotedValueOrEOF('\'');
+                                    },
+                                    '"' => {
+                                        end_of_segment = iter.scanUntilQuotedValueOrEOF('"');
+                                    },
+                                    '<' => {
+                                        end_of_segment = iter.scanUntilQuotedValueOrEOF('>');
+                                    },
+                                    '`' => {
+                                        end_of_segment = iter.scanUntilQuotedValueOrEOF('`');
+                                    },
+                                    else => {},
+                                }
+                                try to.writeAll(rest_of_line[0..end_of_segment]);
+                                if (is_colored) {
+                                    try to.writeAll("\x1b[0m");
+                                }
+
+                                try to.writeAll(rest_of_line[end_of_segment..]);
+                            } else if (is_colored) {
+                                try to.writeAll("\x1b[0m");
+                            }
                         }
                     } else {
                         try to.writeAll(line_text);
@@ -340,7 +347,7 @@ pub const Data = struct {
                             try to.writeAll(comptime Output.color_map.get("b").?);
                         }
 
-                        try to.writeByte('^');
+                        try to.writeByteNTimes('^', @intCast(usize, @maximum(1, location.length)));
 
                         if (is_colored) {
                             try to.writeAll("\x1b[0m\n");

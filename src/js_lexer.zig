@@ -264,6 +264,17 @@ fn NewLexer_(
 
         pub fn deinit(_: *LexerType) void {}
 
+        fn addRangedSyntaxError(lexer: *LexerType, start: usize, end: usize, comptime format: []const u8) !void {
+            @setCold(true);
+            lexer.addRangeError(
+                .{ .loc = .{ .start = @intCast(i32, start) }, .len = @intCast(i32, end - start) },
+                format,
+                .{},
+                true,
+            ) catch unreachable;
+            return Error.SyntaxError;
+        }
+
         fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
             var buf = buf_.*;
             defer buf_.* = buf;
@@ -272,7 +283,6 @@ fn NewLexer_(
             const iterator = strings.CodepointIterator{ .bytes = text, .i = 0 };
             var iter = strings.CodepointIterator.Cursor{};
             while (iterator.next(&iter)) {
-                const width = iter.width;
                 switch (iter.c) {
                     '\r' => {
                         // From the specification:
@@ -297,6 +307,8 @@ fn NewLexer_(
 
                         const c2 = iter.c;
                         const width2 = iter.width;
+                        var escape_start = iter.i + start;
+
                         switch (c2) {
                             // https://mathiasbynens.be/notes/javascript-escapes#single
                             'b' => {
@@ -332,39 +344,33 @@ fn NewLexer_(
 
                             // legacy octal literals
                             '0'...'7' => {
-                                const octal_start = (iter.i + width2) - 2;
                                 if (comptime is_json) {
-                                    lexer.end = start + iter.i - width2;
-                                    try lexer.syntaxError();
+                                    lexer.end = start + iter.i + 1;
+                                    return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected octal literal in JSON");
                                 }
 
                                 // 1-3 digit octal
                                 var is_bad = false;
-                                var value: i64 = c2 - '0';
+                                var value: i32 = c2 - '0';
                                 var restore = iter;
 
-                                _ = iterator.next(&iter) or {
-                                    if (value == 0) {
-                                        try buf.append(0);
-                                        return;
-                                    }
-
-                                    try lexer.syntaxError();
-                                    return;
+                                _ = iterator.next(&iter) or { // is it even possible for us to encounter EOF?
+                                    if (value == 0) return buf.append(0);
+                                    return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in octal literal escape sequence");
                                 };
 
                                 const c3: CodePoint = iter.c;
 
                                 switch (c3) {
                                     '0'...'7' => {
-                                        value = value * 8 + c3 - '0';
+                                        value = value * 8 + (c3 - '0');
                                         restore = iter;
-                                        _ = iterator.next(&iter) or return lexer.syntaxError();
+                                        _ = iterator.next(&iter) or return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in octal literal escape sequence");
 
                                         const c4 = iter.c;
                                         switch (c4) {
                                             '0'...'7' => {
-                                                const temp = value * 8 + c4 - '0';
+                                                const temp = value * 8 + (c4 - '0');
                                                 if (temp < 256) {
                                                     value = temp;
                                                 } else {
@@ -387,18 +393,13 @@ fn NewLexer_(
                                     },
                                 }
 
-                                iter.c = @intCast(i32, value);
+                                iter.c = value;
                                 if (is_bad) {
-                                    lexer.addRangeError(
-                                        logger.Range{ .loc = .{ .start = @intCast(i32, octal_start) }, .len = @intCast(i32, iter.i - octal_start) },
-                                        "Invalid legacy octal literal",
-                                        .{},
-                                        false,
-                                    ) catch unreachable;
+                                    return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid legacy octal literal");
                                 }
                             },
                             '8', '9' => {
-                                iter.c = c2;
+                                return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid legacy octal literal");
                             },
                             // 2-digit hexadecimal
                             'x' => {
@@ -408,7 +409,7 @@ fn NewLexer_(
 
                                 var i: u2 = 0;
                                 while (i < 2) : (i += 1) {
-                                    if (!iterator.next(&iter)) return lexer.syntaxError();
+                                    if (!iterator.next(&iter)) return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in hex literal escape sequence");
                                     c3 = iter.c;
                                     width3 = iter.width;
                                     switch (c3) {
@@ -422,8 +423,7 @@ fn NewLexer_(
                                             value = value * 16 | (c3 - ('A' - 10));
                                         },
                                         else => {
-                                            lexer.end = start + iter.i - width3;
-                                            return lexer.syntaxError();
+                                            return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid hex literal");
                                         },
                                     }
                                 }
@@ -439,14 +439,13 @@ fn NewLexer_(
 
                                 // variable-length
                                 if (c3 == '{') {
+                                    escape_start -= 1;
                                     if (comptime is_json) {
                                         lexer.end = start + iter.i - width2;
-                                        try lexer.syntaxError();
+                                        return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected variable-length unicode escape sequence in JSON");
                                     }
 
-                                    const hex_start = (iter.i + start) - width - width2 - 1; // width3=1
-
-                                    if (!iterator.next(&iter)) return lexer.syntaxError();
+                                    if (!iterator.next(&iter)) return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode literal");
                                     c3 = iter.c;
                                     width3 = iter.width;
 
@@ -471,12 +470,11 @@ fn NewLexer_(
                                                 break;
                                             },
                                             else => {
-                                                lexer.end = (start + iter.i) - width3;
-                                                return lexer.syntaxError();
+                                                return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected character in unicode literal");
                                             },
                                         }
 
-                                        if (!iterator.next(&iter)) return lexer.syntaxError();
+                                        if (!iterator.next(&iter)) return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode literal");
                                         c3 = iter.c;
                                         width3 = iter.width;
                                     }
@@ -486,27 +484,17 @@ fn NewLexer_(
                                             switch (c3) {
                                                 '0'...'9', 'a'...'f', 'A'...'F' => {},
                                                 '}' => {
-                                                    break;
+                                                    return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unicode escape sequence is out of range");
                                                 },
                                                 else => {
-                                                    lexer.end = (start + iter.i) - width3;
-                                                    return lexer.syntaxError();
+                                                    return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid character in unicode escape sequence");
                                                 },
                                             }
 
-                                            if (!iterator.next(&iter)) break;
-                                            c3 = iter.c;
-                                            width3 = iter.width;
+                                            if (!iterator.next(&iter)) {
+                                                return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode escape sequence");
+                                            }
                                         }
-
-                                        try lexer.addRangeError(
-                                            .{ .loc = .{ .start = @intCast(i32, start + hex_start) }, .len = @intCast(i32, ((iter.i + start) - hex_start)) },
-                                            "Unicode escape sequence is out of range",
-                                            .{},
-                                            true,
-                                        );
-
-                                        return;
                                     }
 
                                     // fixed-length
@@ -526,15 +514,13 @@ fn NewLexer_(
                                                 value = value * 16 | (c3 - ('A' - 10));
                                             },
                                             else => {
-                                                lexer.end = start + iter.i - width3;
-                                                return lexer.syntaxError();
+                                                return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid character in unicode escape sequence");
                                             },
                                         }
 
                                         if (j < 3) {
-                                            _ = iterator.next(&iter) or return lexer.syntaxError();
+                                            _ = iterator.next(&iter) or return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode escape sequence");
                                             c3 = iter.c;
-
                                             width3 = iter.width;
                                         }
                                     }
@@ -548,11 +534,11 @@ fn NewLexer_(
                                     try lexer.syntaxError();
                                 }
 
-                                // Ignore line continuations. A line continuation is not an escaped newline.
                                 if (iter.i + 1 < text.len and text[iter.i + 1] == '\n') {
                                     // Make sure Windows CRLF counts as a single newline
                                     iter.i += 1;
                                 }
+                                // Ignore line continuations. A line continuation is not an escaped newline.
                                 continue;
                             },
                             '\n', 0x2028, 0x2029 => {
@@ -607,12 +593,14 @@ fn NewLexer_(
                         lexer.step();
 
                         // Handle Windows CRLF
-                        if (lexer.code_point == 'r' and comptime !is_json) {
+                        if (lexer.code_point == '\r') {
+                            needs_slow_path = true;
                             lexer.step();
                             if (lexer.code_point == '\n') {
                                 lexer.step();
                             }
-                            continue :stringLiteral;
+                            if (comptime !is_json) continue :stringLiteral;
+                            try lexer.addDefaultError("Unexpected carriage return character in JSON");
                         }
 
                         if (comptime is_json and json_options.ignore_trailing_escape_sequences) {
@@ -1974,8 +1962,10 @@ fn NewLexer_(
         pub fn toEString(lexer: *LexerType) js_ast.E.String {
             if (lexer.string_literal_is_ascii) {
                 return js_ast.E.String.init(lexer.string_literal_slice);
-            } else {
+            } else if (lexer.string_literal.len > 0) {
                 return js_ast.E.String.init(lexer.allocator.dupe(u16, lexer.string_literal) catch unreachable);
+            } else {
+                return js_ast.E.String{};
             }
         }
 

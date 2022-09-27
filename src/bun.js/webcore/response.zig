@@ -770,10 +770,14 @@ pub const Fetch = struct {
                 }
 
                 if (options.fastGet(ctx.ptr(), .body)) |body__| {
-                    if (Blob.get(ctx.ptr(), body__, true, false)) |new_blob| {
-                        body = new_blob;
-                    } else |_| {
-                        return JSPromise.rejectedPromiseValue(globalThis, ZigString.init("fetch() received invalid body").toErrorInstance(globalThis)).asRef();
+                    if (Body.Value.fromJS(ctx.ptr(), body__)) |body_value| {
+                        // TODO: buffer ReadableStream?
+                        if (body_value == .Blob) {
+                            body = body_value.Blob;
+                        }
+                    } else {
+                        // an error was thrown
+                        return JSC.JSValue.jsUndefined().asObjectRef();
                     }
                 }
 
@@ -4052,6 +4056,42 @@ pub const Body = struct {
 
         pub const empty = Value{ .Empty = .{} };
 
+        pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?Value {
+            if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {
+                switch (readable.ptr) {
+                    .Blob => |blob| {
+                        var result: Value = .{
+                            .Blob = Blob.initWithStore(blob.store, globalThis),
+                        };
+                        blob.store.ref();
+
+                        readable.done();
+
+                        if (!blob.done) {
+                            blob.done = true;
+                            blob.deinit();
+                        }
+                        return result;
+                    },
+                    else => {},
+                }
+
+                return Body.Value.fromReadableStream(readable, globalThis);
+            }
+
+            return Body.Value{
+                .Blob = Blob.get(globalThis, value, true, false) catch |err| {
+                    if (err == error.InvalidArguments) {
+                        globalThis.throwInvalidArguments("Expected an Array", .{});
+                        return null;
+                    }
+
+                    globalThis.throwInvalidArguments("Invalid Body object", .{});
+                    return null;
+                },
+            };
+        }
+
         pub fn fromReadableStream(readable: JSC.WebCore.ReadableStream, globalThis: *JSGlobalObject) Value {
             if (readable.isLocked(globalThis)) {
                 return .{ .Error = ZigString.init("Cannot use a locked ReadableStream").toErrorInstance(globalThis) };
@@ -4279,42 +4319,9 @@ pub const Body = struct {
             } else |_| {}
         }
 
-        if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {
-            switch (readable.ptr) {
-                .Blob => |blob| {
-                    body.value = .{
-                        .Blob = Blob.initWithStore(blob.store, globalThis),
-                    };
-                    blob.store.ref();
-
-                    readable.done();
-
-                    if (!blob.done) {
-                        blob.done = true;
-                        blob.deinit();
-                    }
-                    return body;
-                },
-                else => {},
-            }
-
-            body.value = Body.Value.fromReadableStream(readable, globalThis);
-            return body;
-        }
-
-        body.value = .{
-            .Blob = Blob.get(globalThis, value, true, false) catch |err| {
-                if (err == error.InvalidArguments) {
-                    globalThis.throwInvalidArguments("Expected an Array", .{});
-                    return null;
-                }
-
-                globalThis.throwInvalidArguments("Invalid Body object", .{});
-                return null;
-            },
-        };
-
-        std.debug.assert(body.value.Blob.allocator == null); // owned by Body
+        body.value = Value.fromJS(globalThis, value) orelse return null;
+        if (body.value == .Blob)
+            std.debug.assert(body.value.Blob.allocator == null); // owned by Body
 
         return body;
     }
@@ -4601,7 +4608,7 @@ pub const Request = struct {
     }
 
     pub fn cloneInto(
-        this: *const Request,
+        this: *Request,
         req: *Request,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
@@ -4611,14 +4618,28 @@ pub const Request = struct {
             .url = ZigString.init(allocator.dupe(u8, this.url.slice()) catch unreachable),
             .method = this.method,
         };
+
+        if (this.url.is16Bit()) {
+            req.url.markUTF16();
+        }
+
+        if (this.url.isGloballyAllocated()) {
+            req.url.mark();
+        }
+
+        if (this.url.isUTF8()) {
+            req.url.markUTF8();
+        }
+
         if (this.headers) |head| {
             req.headers = head.cloneThis();
         } else if (this.uws_request) |uws_req| {
             req.headers = FetchHeaders.createFromUWS(globalThis, uws_req);
+            this.headers = req.headers.?.cloneThis().?;
         }
     }
 
-    pub fn clone(this: *const Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
+    pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
         var req = allocator.create(Request) catch unreachable;
         this.cloneInto(req, allocator, globalThis);
         return req;

@@ -8716,10 +8716,10 @@ fn NewParser_(
                         try p.skipTypeScriptType(.lowest);
                     }
 
-                    // If we end with a .t_close_paren, that's a bug. It means we aren't following the last parenthese
-
-                    if (comptime Environment.allow_assert)
-                        assert(p.lexer.token != .t_close_paren);
+                    if (p.lexer.token == .t_close_paren) {
+                        p.log.addRangeError(p.source, p.lexer.range(), "Unexpected \")\"") catch unreachable;
+                        return error.SyntaxError;
+                    }
                 }
 
                 if (p.lexer.token == .t_equals) {

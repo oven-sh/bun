@@ -10749,7 +10749,7 @@ fn NewParser_(
                         const index = try p.parseExpr(.lowest);
 
                         p.allow_in = old_allow_in;
-
+                        p.lexer.is_potential_template_literal_call = true;
                         try p.lexer.expect(.t_close_bracket);
 
                         left = p.e(E.Index{

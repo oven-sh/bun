@@ -1855,6 +1855,7 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
     handleResult = function handleResult(result, controller, view) {
       "use strict";
 
+      
       if (result && @isPromise(result)) {
         return result.then(
           handleNativeReadableStreamPromiseResult.bind({

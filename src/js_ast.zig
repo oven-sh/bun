@@ -7840,6 +7840,9 @@ pub const Macro = struct {
                                 } else if (value.as(JSC.WebCore.Request)) |resp| {
                                     mime_type = HTTP.MimeType.init(resp.mimeType());
                                     blob_ = resp.body.use();
+                                } else if (value.as(JSC.WebCore.Blob)) |resp| {
+                                    blob_ = resp.*;
+                                    blob_.?.allocator = null;
                                 }
                             } else {
                                 var private_data = JSCBase.JSPrivateDataPtr.from(JSC.C.JSObjectGetPrivate(value.asObjectRef()).?);
@@ -7856,11 +7859,7 @@ pub const Macro = struct {
                                         this.macro.vm.runErrorHandler(value, null);
                                         return error.MacroFailed;
                                     },
-                                    .Blob => {
-                                        var blob = private_data.as(JSC.WebCore.Blob);
-                                        blob_ = blob.*;
-                                        blob.* = JSC.WebCore.Blob.initEmpty(blob.globalThis);
-                                    },
+
                                     else => {},
                                 }
                             }
@@ -8083,7 +8082,7 @@ pub const Macro = struct {
 
             // Give it >= 256 KB stack space
             // Cast to usize to ensure we get an 8 byte aligned pointer
-            const PooledFrame = ObjectPool([@maximum(@sizeOf(@Frame(Run.runAsync)), 256_000) / @sizeOf(usize)]usize, null, true, 1);
+            const PooledFrame = ObjectPool([@maximum(@sizeOf(@Frame(Run.runAsync)), 1024 * 1024 * 2) / @sizeOf(usize)]usize, null, true, 1);
             var pooled_frame = PooledFrame.get(default_allocator);
             defer pooled_frame.release();
 

@@ -163,6 +163,13 @@ using JSBuffer = WebCore::JSBuffer;
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#else
+// for sysconf
+#include <unistd.h>
+#endif
+
 // #include <iostream>
 static bool has_loaded_jsc = false;
 
@@ -524,6 +531,9 @@ GENERATED_CONSTRUCTOR_SETTER(JSResponse);
 
 GENERATED_CONSTRUCTOR_GETTER(JSRequest);
 GENERATED_CONSTRUCTOR_SETTER(JSRequest);
+
+GENERATED_CONSTRUCTOR_GETTER(JSBlob);
+GENERATED_CONSTRUCTOR_SETTER(JSBlob);
 
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(JSMessageEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_SETTER(JSMessageEvent);
@@ -1867,6 +1877,31 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
+    m_navigatorObject.initLater(
+        [](const Initializer<JSObject>& init) {
+            int cpuCount = 0;
+#ifdef __APPLE__
+            size_t count_len = sizeof(cpuCount);
+            sysctlbyname("hw.logicalcpu", &cpuCount, &count_len, NULL, 0);
+#else
+            // TODO: windows
+            cpuCount = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
+
+            auto str = WTF::String::fromUTF8(Bun__userAgent);
+            JSC::Identifier userAgentIdentifier = JSC::Identifier::fromString(init.vm, "userAgent"_s);
+            JSC::Identifier hardwareConcurrencyIdentifier = JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s);
+
+            JSC::JSObject* obj = JSC::constructEmptyObject(init.owner, init.owner->objectPrototype(), 3);
+            obj->putDirect(init.vm, userAgentIdentifier, JSC::jsString(init.vm, str));
+            obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
+                jsNontrivialString(init.vm, "Navigator"_s), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+
+            obj->putDirect(init.vm, hardwareConcurrencyIdentifier, JSC::jsNumber(cpuCount));
+            init.set(
+                obj);
+        });
+
     this->m_pendingVirtualModuleResultStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
@@ -1882,6 +1917,12 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSArrayBufferControllerPrototype.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::ArrayBufferSink);
+            init.set(prototype);
+        });
+
+    m_JSFileSinkControllerPrototype.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::FileSink);
             init.set(prototype);
         });
 
@@ -1946,6 +1987,16 @@ void GlobalObject::finishCreation(VM& vm)
             object->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "read"_s), JSC::jsNumber(0), 0);
             object->putDirect(init.vm, JSC::Identifier::fromString(init.vm, "written"_s), JSC::jsNumber(0), 0);
             init.set(object);
+        });
+
+    m_JSFileSinkClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::FileSink);
+            auto* structure = JSFileSink::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSFileSinkConstructor::create(init.vm, init.global, JSFileSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
         });
 
     m_JSArrayBufferSinkClassStructure.initLater(
@@ -2079,6 +2130,18 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
         return JSC::JSValue::encode(scope.exception());
 
     return JSC::JSValue::encode(result);
+}
+
+JSC::JSObject* GlobalObject::navigatorObject()
+{
+    return this->m_navigatorObject.get(this);
+}
+
+JSC_DEFINE_CUSTOM_GETTER(functionLazyNavigatorGetter,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::PropertyName))
+{
+    return JSC::JSValue::encode(reinterpret_cast<Zig::GlobalObject*>(globalObject)->navigatorObject());
 }
 
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
@@ -2229,6 +2292,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectCustomAccessor(vm, builtinNames.lazyStreamPrototypeMapPrivateName(), JSC::CustomGetterSetter::create(vm, functionLazyLoadStreamPrototypeMap_getter, nullptr),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "navigator"_s), JSC::CustomGetterSetter::create(vm, functionLazyNavigatorGetter, nullptr),
+        JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
     putDirect(vm, builtinNames.requireMapPrivateName(), this->requireMap(),
         JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
@@ -2239,6 +2305,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         JSC::PropertyAttribute::DontDelete | 0);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "TextDecoder"_s), JSC::CustomGetterSetter::create(vm, JSTextDecoder_getter, JSTextDecoder_setter),
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "Blob"_s), JSC::CustomGetterSetter::create(vm, JSBlob_getter, JSBlob_setter),
         JSC::PropertyAttribute::DontDelete | 0);
 
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "DOMException"_s), JSC::CustomGetterSetter::create(vm, JSDOMException_getter, nullptr),
@@ -2270,7 +2339,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("MessageEvent"_s, JSMessageEvent);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("WebSocket"_s, JSWebSocket);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("Headers"_s, JSFetchHeaders);
-    PUT_WEBCORE_GENERATED_CONSTRUCTOR("TextEncoder"_s, JSTextEncoder);
     PUT_WEBCORE_GENERATED_CONSTRUCTOR("URLSearchParams"_s, JSURLSearchParams);
 
     putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().TransformStreamPublicName(), CustomGetterSetter::create(vm, jsServiceWorkerGlobalScope_TransformStreamConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
@@ -2533,6 +2601,11 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_processEnvObject.visit(visitor);
     thisObject->m_processObject.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
+    thisObject->m_navigatorObject.visit(visitor);
+
+    thisObject->m_JSHTTPResponseSinkClassStructure.visit(visitor);
+    thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
+    thisObject->m_JSFileSinkClassStructure.visit(visitor);
 
     visitor.append(thisObject->m_JSBufferSetterValue);
     visitor.append(thisObject->m_JSTextEncoderSetterValue);

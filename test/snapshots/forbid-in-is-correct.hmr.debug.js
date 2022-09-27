@@ -2,15 +2,13 @@ import {
 __HMRClient as Bun
 } from "http://localhost:8080/bun:wrap";
 Bun.activate(true);
-
 import {
 __FastRefreshModule as FastHMR
 } from "http://localhost:8080/bun:wrap";
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var hmr = new FastHMR(346837007, "forbid-in-is-correct.js", FastRefresh), exports = hmr.exports;
-
+var hmr = new FastHMR(483885974, "forbid-in-is-correct.js", FastRefresh), exports = hmr.exports;
 (hmr._load = function() {
   var foo = () => {
     var D = (i, r) => () => (r || i((r = { exports: {} }).exports, r), r.exports);

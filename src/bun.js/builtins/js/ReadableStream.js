@@ -244,6 +244,8 @@ function consumeReadableStream(nativePtr, nativeType, inputStream) {
                 }  else {
                     return -1;
                 }
+
+                
             }
 
             readMany() {

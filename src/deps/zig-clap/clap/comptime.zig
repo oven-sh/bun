@@ -44,6 +44,7 @@ pub fn ComptimeClap(
         multi_options: [multi_options][]const []const u8,
         flags: [flags]bool,
         pos: []const []const u8,
+        passthrough_positionals: []const []const u8,
         allocator: mem.Allocator,
 
         pub fn parse(iter: anytype, opt: clap.ParseOptions) !@This() {
@@ -54,6 +55,7 @@ pub fn ComptimeClap(
             }
 
             var pos = std.ArrayList([]const u8).init(allocator);
+            var passthrough_positionals = std.ArrayList([]const u8).init(allocator);
 
             var res = @This(){
                 .single_options = [_]?[]const u8{null} ** single_options,
@@ -61,16 +63,37 @@ pub fn ComptimeClap(
                 .flags = [_]bool{false} ** flags,
                 .pos = undefined,
                 .allocator = allocator,
+                .passthrough_positionals = undefined,
             };
 
             var stream = clap.StreamingClap(usize, @typeInfo(@TypeOf(iter)).Pointer.child){
                 .params = converted_params,
                 .iter = iter,
             };
+
             while (try stream.next()) |arg| {
                 const param = arg.param;
                 if (param.names.long == null and param.names.short == null) {
                     try pos.append(arg.value.?);
+                    if (opt.stop_after_positional_at > 0 and pos.items.len >= opt.stop_after_positional_at) {
+                        const bun = @import("../../../global.zig");
+                        if (comptime bun.Environment.isWindows) @compileError(
+                            "TODO: implement stop_after_positional_at on windows",
+                        );
+
+                        var remaining_ = std.os.argv[@minimum(std.os.argv.len, stream.iter.args.inner.index)..];
+                        const first: []const u8 = if (remaining_.len > 0) bun.span(remaining_[0]) else "";
+                        if (first.len > 0 and std.mem.eql(u8, first, "--")) {
+                            remaining_ = remaining_[1..];
+                        }
+
+                        try passthrough_positionals.ensureTotalCapacityPrecise(remaining_.len);
+                        for (remaining_) |arg_| {
+                            // use bun.span due to the optimization for long strings
+                            passthrough_positionals.appendAssumeCapacity(bun.span(arg_));
+                        }
+                        break;
+                    }
                 } else if (param.takes_value == .one or param.takes_value == .one_optional) {
                     debug.assert(res.single_options.len != 0);
                     if (res.single_options.len != 0)
@@ -89,7 +112,7 @@ pub fn ComptimeClap(
             for (multis) |*multi, i|
                 res.multi_options[i] = multi.toOwnedSlice();
             res.pos = pos.toOwnedSlice();
-
+            res.passthrough_positionals = passthrough_positionals.toOwnedSlice();
             return res;
         }
 
@@ -128,6 +151,10 @@ pub fn ComptimeClap(
 
         pub fn positionals(parser: @This()) []const []const u8 {
             return parser.pos;
+        }
+
+        pub fn remaining(parser: @This()) []const []const u8 {
+            return parser.passthrough_positionals;
         }
 
         pub fn hasFlag(comptime name: []const u8) bool {

@@ -76,6 +76,7 @@ const Transpiler = @import("./transpiler.zig");
 const VirtualMachine = @import("../javascript.zig").VirtualMachine;
 const IOTask = JSC.IOTask;
 const zlib = @import("../../zlib.zig");
+const Which = @import("../../which.zig");
 
 const is_bindgen = JSC.is_bindgen;
 const max_addressible_memory = std.math.maxInt(u56);
@@ -127,6 +128,80 @@ pub fn getCSSImports() []ZigString {
         ZigString.fromStringPointer(css_imports_list[i], css_imports_buf.items, &css_imports_list_strings[i]);
     }
     return css_imports_list_strings[0..tail];
+}
+
+pub fn which(
+    // this
+    _: void,
+    globalThis: js.JSContextRef,
+    // function
+    _: js.JSObjectRef,
+    // thisObject
+    _: js.JSObjectRef,
+    arguments_: []const js.JSValueRef,
+    exception: js.ExceptionRef,
+) js.JSValueRef {
+    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var arguments = JSC.Node.ArgumentsSlice.from(globalThis.bunVM(), arguments_);
+    defer arguments.deinit();
+    const path_arg = arguments.nextEat() orelse {
+        JSC.throwInvalidArguments("which: expected 1 argument, got 0", .{}, globalThis, exception);
+        return JSC.JSValue.jsUndefined().asObjectRef();
+    };
+
+    var path_str: ZigString.Slice = ZigString.Slice.empty;
+    var bin_str: ZigString.Slice = ZigString.Slice.empty;
+    var cwd_str: ZigString.Slice = ZigString.Slice.empty;
+    defer {
+        path_str.deinit();
+        bin_str.deinit();
+        cwd_str.deinit();
+    }
+
+    if (path_arg.isEmptyOrUndefinedOrNull()) {
+        return JSC.JSValue.jsNull().asObjectRef();
+    }
+
+    bin_str = path_arg.toSlice(globalThis, globalThis.bunVM().allocator);
+
+    if (bin_str.len >= bun.MAX_PATH_BYTES) {
+        JSC.throwInvalidArguments("bin path is too long", .{}, globalThis, exception);
+        return JSC.JSValue.jsUndefined().asObjectRef();
+    }
+
+    if (bin_str.len == 0) {
+        return JSC.JSValue.jsNull().asObjectRef();
+    }
+
+    path_str = ZigString.Slice.fromUTF8(
+        globalThis.bunVM().bundler.env.map.get("PATH") orelse "",
+    );
+    cwd_str = ZigString.Slice.fromUTF8(
+        globalThis.bunVM().bundler.fs.top_level_dir,
+    );
+
+    if (arguments.nextEat()) |arg| {
+        if (!arg.isEmptyOrUndefinedOrNull() and arg.isObject()) {
+            if (arg.get(globalThis, "PATH")) |str_| {
+                path_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+            }
+
+            if (arg.get(globalThis, "cwd")) |str_| {
+                cwd_str = str_.toSlice(globalThis, globalThis.bunVM().allocator);
+            }
+        }
+    }
+
+    if (Which.which(
+        &path_buf,
+        path_str.slice(),
+        cwd_str.slice(),
+        bin_str.slice(),
+    )) |bin_path| {
+        return ZigString.init(bin_path).withEncoding().toValueGC(globalThis).asObjectRef();
+    }
+
+    return JSC.JSValue.jsNull().asObjectRef();
 }
 
 pub fn inspect(
@@ -282,8 +357,8 @@ pub fn getStdin(
         blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
 
         return ctx.ptr().putCachedObject(
-            &ZigString.init("BunSTDIN"),
-            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+            ZigString.static("BunSTDIN"),
+            blob.toJS(ctx),
         ).asObjectRef();
     }
 
@@ -305,8 +380,8 @@ pub fn getStderr(
         blob.* = JSC.WebCore.Blob.initWithStore(store, ctx.ptr());
 
         return ctx.ptr().putCachedObject(
-            &ZigString.init("BunSTDERR"),
-            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+            ZigString.static("BunSTDERR"),
+            blob.toJS(ctx),
         ).asObjectRef();
     }
 
@@ -329,7 +404,7 @@ pub fn getStdout(
 
         return ctx.ptr().putCachedObject(
             &ZigString.init("BunSTDOUT"),
-            JSC.JSValue.fromRef(JSC.WebCore.Blob.Class.make(ctx, blob)),
+            blob.toJS(ctx),
         ).asObjectRef();
     }
 
@@ -1115,6 +1190,13 @@ pub const Class = NewClass(
         },
         .inflateSync = .{
             .rfn = JSC.wrapWithHasContainer(JSZlib, "inflateSync", false, false, true),
+        },
+
+        .which = .{
+            .rfn = which,
+        },
+        .spawn = .{
+            .rfn = JSC.wrapWithHasContainer(Subprocess, "spawn", false, false, false),
         },
     },
     .{
@@ -2767,11 +2849,8 @@ pub const FFI = struct {
     fn getCPtr(value: JSValue) ?usize {
         // pointer to C function
         if (value.isNumber()) {
-            const addr = @bitCast(u64, value.asNumber());
-            if (addr > 0) {
-                return addr;
-            }
-            // pointer to C function as a BigInt
+            const addr = value.asPtrAddress();
+            if (addr > 0) return addr;
         } else if (value.isBigInt()) {
             const addr = @bitCast(u64, value.toUInt64NoTruncate());
             if (addr > 0) {
@@ -3289,5 +3368,845 @@ pub const JSZlib = struct {
 
         var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
         return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+    }
+};
+
+pub const Subprocess = struct {
+    pub usingnamespace JSC.Codegen.JSSubprocess;
+
+    pid: std.os.pid_t,
+    // on macOS, this is nothing
+    // on linux, it's a pidfd
+    pidfd: std.os.fd_t = std.math.maxInt(std.os.fd_t),
+
+    stdin: Writable,
+    stdout: Readable,
+    stderr: Readable,
+
+    killed: bool = false,
+    has_ref: bool = false,
+
+    exit_promise: JSValue = JSValue.zero,
+    this_jsvalue: JSValue = JSValue.zero,
+
+    exit_code: ?u8 = null,
+    waitpid_err: ?JSC.Node.Syscall.Error = null,
+
+    has_waitpid_task: bool = false,
+    notification_task: JSC.AnyTask = undefined,
+    waitpid_task: JSC.AnyTask = undefined,
+
+    wait_task: JSC.ConcurrentTask = .{},
+
+    finalized: bool = false,
+
+    globalThis: *JSC.JSGlobalObject,
+
+    pub fn constructor(
+        _: *JSC.JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) callconv(.C) ?*Subprocess {
+        return null;
+    }
+
+    const Readable = union(enum) {
+        fd: JSC.Node.FileDescriptor,
+        pipe: JSC.WebCore.ReadableStream,
+        inherit: void,
+        ignore: void,
+        closed: void,
+
+        pub fn init(stdio: std.meta.Tag(Stdio), fd: i32, globalThis: *JSC.JSGlobalObject) Readable {
+            return switch (stdio) {
+                .inherit => Readable{ .inherit = {} },
+                .ignore => Readable{ .ignore = {} },
+                .pipe => brk: {
+                    var blob = JSC.WebCore.Blob.findOrCreateFileFromPath(.{ .fd = fd }, globalThis);
+                    defer blob.detach();
+
+                    var stream = JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
+
+                    break :brk Readable{ .pipe = JSC.WebCore.ReadableStream.fromJS(stream, globalThis).? };
+                },
+                .callback, .fd, .path, .blob => Readable{ .fd = @intCast(JSC.Node.FileDescriptor, fd) },
+            };
+        }
+
+        pub fn close(this: *Readable) void {
+            switch (this.*) {
+                .fd => |fd| {
+                    _ = JSC.Node.Syscall.close(fd);
+                },
+                .pipe => |pipe| {
+                    pipe.done();
+                },
+                else => {},
+            }
+
+            this.* = .closed;
+        }
+
+        pub fn toJS(this: Readable) JSValue {
+            switch (this) {
+                .fd => |fd| {
+                    return JSValue.jsNumber(fd);
+                },
+                .pipe => |pipe| {
+                    return pipe.toJS();
+                },
+                else => {
+                    return JSValue.jsUndefined();
+                },
+            }
+        }
+    };
+
+    pub fn getStderr(
+        this: *Subprocess,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return this.stderr.toJS();
+    }
+
+    pub fn getStdin(
+        this: *Subprocess,
+        globalThis: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return this.stdin.toJS(globalThis);
+    }
+
+    pub fn getStdout(
+        this: *Subprocess,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return this.stdout.toJS();
+    }
+
+    pub fn kill(
+        this: *Subprocess,
+        globalThis: *JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSValue {
+        var arguments = callframe.arguments(1);
+        var sig: i32 = 0;
+
+        if (arguments.len > 0) {
+            sig = arguments.ptr[0].toInt32();
+        }
+
+        if (!(sig > -1 and sig < std.math.maxInt(u8))) {
+            globalThis.throwInvalidArguments("Invalid signal: must be > -1 and < 255", .{});
+            return JSValue.jsUndefined();
+        }
+
+        if (this.killed) {
+            return JSValue.jsUndefined();
+        }
+
+        if (comptime Environment.isLinux) {
+            // should this be handled differently?
+            // this effectively shouldn't happen
+            if (this.pidfd == std.math.maxInt(std.os.fd_t)) {
+                return JSValue.jsUndefined();
+            }
+
+            // first appeared in Linux 5.1
+            const rc = std.os.linux.pidfd_send_signal(this.pidfd, @intCast(u8, sig), null, 0);
+
+            if (rc != 0) {
+                globalThis.throwValue(JSC.Node.Syscall.Error.fromCode(std.os.linux.getErrno(rc), .kill).toJSC(globalThis));
+                return JSValue.jsUndefined();
+            }
+        } else {
+            const err = std.c.kill(this.pid, sig);
+            if (err != 0) {
+                return JSC.Node.Syscall.Error.fromCode(std.c.getErrno(err), .kill).toJSC(globalThis);
+            }
+        }
+
+        return JSValue.jsUndefined();
+    }
+
+    pub fn onKill(
+        this: *Subprocess,
+    ) void {
+        if (this.killed) {
+            return;
+        }
+
+        this.killed = true;
+        this.closePorts();
+    }
+
+    pub fn closePorts(this: *Subprocess) void {
+        if (comptime Environment.isLinux) {
+            if (this.pidfd != std.math.maxInt(std.os.fd_t)) {
+                _ = std.os.close(this.pidfd);
+                this.pidfd = std.math.maxInt(std.os.fd_t);
+            }
+        }
+
+        if (this.stdout == .pipe) {
+            this.stdout.pipe.cancel(this.globalThis);
+        }
+
+        if (this.stderr == .pipe) {
+            this.stderr.pipe.cancel(this.globalThis);
+        }
+
+        this.stdin.close();
+        this.stdout.close();
+        this.stderr.close();
+    }
+
+    pub fn unref(this: *Subprocess) void {
+        if (!this.has_ref)
+            return;
+        this.has_ref = false;
+        this.globalThis.bunVM().active_tasks -= 1;
+    }
+
+    pub fn ref(this: *Subprocess) void {
+        if (this.has_ref)
+            return;
+        this.has_ref = true;
+        this.globalThis.bunVM().active_tasks += 1;
+    }
+
+    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        this.ref();
+        return JSC.JSValue.jsUndefined();
+    }
+
+    pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        this.unref();
+        return JSC.JSValue.jsUndefined();
+    }
+
+    pub fn getPid(
+        this: *Subprocess,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSValue.jsNumber(this.pid);
+    }
+
+    pub fn getKilled(
+        this: *Subprocess,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        return JSValue.jsBoolean(this.killed);
+    }
+
+    const Writable = union(enum) {
+        pipe: *JSC.WebCore.FileSink,
+        fd: JSC.Node.FileDescriptor,
+        inherit: void,
+        ignore: void,
+
+        pub fn init(stdio: std.meta.Tag(Stdio), fd: i32, globalThis: *JSC.JSGlobalObject) !Writable {
+            switch (stdio) {
+                .path, .pipe, .callback => {
+                    var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
+                    sink.* = .{
+                        .opened_fd = fd,
+                        .buffer = bun.ByteList.init(&.{}),
+                        .allocator = globalThis.bunVM().allocator,
+                    };
+
+                    return Writable{ .pipe = sink };
+                },
+                .blob, .fd => {
+                    return Writable{ .fd = @intCast(JSC.Node.FileDescriptor, fd) };
+                },
+                .inherit => {
+                    return Writable{ .inherit = {} };
+                },
+                .ignore => {
+                    return Writable{ .ignore = {} };
+                },
+            }
+        }
+
+        pub fn toJS(this: Writable, globalThis: *JSC.JSGlobalObject) JSValue {
+            return switch (this) {
+                .pipe => |pipe| pipe.toJS(globalThis),
+                .fd => |fd| JSValue.jsNumber(fd),
+                .ignore => JSValue.jsUndefined(),
+                .inherit => JSValue.jsUndefined(),
+            };
+        }
+
+        pub fn close(this: *Writable) void {
+            return switch (this.*) {
+                .pipe => |pipe| {
+                    _ = pipe.end(null);
+                },
+                .fd => |fd| {
+                    _ = JSC.Node.Syscall.close(fd);
+                },
+                .ignore => {},
+                .inherit => {},
+            };
+        }
+    };
+
+    pub fn finalize(this: *Subprocess) callconv(.C) void {
+        this.unref();
+        this.closePorts();
+        this.finalized = true;
+
+        if (this.exit_code != null)
+            bun.default_allocator.destroy(this);
+    }
+
+    pub fn getExitStatus(
+        this: *Subprocess,
+        globalThis: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.exit_code) |code| {
+            return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(code));
+        }
+
+        if (this.exit_promise == .zero) {
+            this.exit_promise = JSC.JSPromise.create(globalThis).asValue(globalThis);
+        }
+
+        return this.exit_promise;
+    }
+
+    pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue) JSValue {
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var allocator = arena.allocator();
+
+        var env: [*:null]?[*:0]const u8 = undefined;
+
+        var env_array = std.ArrayListUnmanaged(?[*:0]const u8){
+            .items = &.{},
+            .capacity = 0,
+        };
+
+        var cwd = globalThis.bunVM().bundler.fs.top_level_dir;
+
+        var stdio = [3]Stdio{
+            .{ .ignore = .{} },
+            .{ .inherit = .{} },
+            .{ .pipe = .{} },
+        };
+
+        var PATH = globalThis.bunVM().bundler.env.get("PATH") orelse "";
+        var argv: std.ArrayListUnmanaged(?[*:0]const u8) = undefined;
+        {
+            var cmd_value = args.get(globalThis, "cmd") orelse {
+                globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+                return JSValue.jsUndefined();
+            };
+
+            var cmds_array = cmd_value.arrayIterator(globalThis);
+            argv = @TypeOf(argv).initCapacity(allocator, cmds_array.len) catch {
+                globalThis.throw("out of memory", .{});
+                return JSValue.jsUndefined();
+            };
+
+            if (cmd_value.isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+                return JSValue.jsUndefined();
+            }
+
+            if (cmds_array.len == 0) {
+                globalThis.throwInvalidArguments("cmd must not be empty", .{});
+                return JSValue.jsUndefined();
+            }
+
+            {
+                var first_cmd = cmds_array.next().?;
+                var arg0 = first_cmd.toSlice(globalThis, allocator);
+                defer arg0.deinit();
+                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
+                    globalThis.throwInvalidArguments("cmd not in $PATH: {s}", .{arg0});
+                    return JSValue.jsUndefined();
+                };
+                argv.appendAssumeCapacity(allocator.dupeZ(u8, bun.span(resolved)) catch {
+                    globalThis.throw("out of memory", .{});
+                    return JSValue.jsUndefined();
+                });
+            }
+
+            while (cmds_array.next()) |value| {
+                argv.appendAssumeCapacity(value.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
+                    globalThis.throw("out of memory", .{});
+                    return JSValue.jsUndefined();
+                });
+            }
+
+            if (argv.items.len == 0) {
+                globalThis.throwInvalidArguments("cmd must be an array of strings", .{});
+                return JSValue.jsUndefined();
+            }
+
+            if (args.get(globalThis, "cwd")) |cwd_| {
+                if (!cwd_.isEmptyOrUndefinedOrNull()) {
+                    cwd = cwd_.getZigString(globalThis).toOwnedSliceZ(allocator) catch {
+                        globalThis.throw("out of memory", .{});
+                        return JSValue.jsUndefined();
+                    };
+                }
+            }
+
+            if (args.get(globalThis, "env")) |object| {
+                if (!object.isEmptyOrUndefinedOrNull()) {
+                    if (!object.isObject()) {
+                        globalThis.throwInvalidArguments("env must be an object", .{});
+                        return JSValue.jsUndefined();
+                    }
+
+                    var object_iter = JSC.JSPropertyIterator(.{
+                        .skip_empty_name = false,
+                        .include_value = true,
+                    }).init(globalThis, object.asObjectRef());
+                    defer object_iter.deinit();
+                    env_array.ensureTotalCapacityPrecise(allocator, object_iter.len) catch {
+                        globalThis.throw("out of memory", .{});
+                        return JSValue.jsUndefined();
+                    };
+
+                    while (object_iter.next()) |key| {
+                        var value = object_iter.value;
+                        var line = std.fmt.allocPrintZ(allocator, "{}={}", .{ key, value.getZigString(globalThis) }) catch {
+                            globalThis.throw("out of memory", .{});
+                            return JSValue.jsUndefined();
+                        };
+
+                        if (key.eqlComptime("PATH")) {
+                            PATH = bun.span(line["PATH=".len..]);
+                        }
+                        env_array.append(allocator, line) catch {
+                            globalThis.throw("out of memory", .{});
+                            return JSValue.jsUndefined();
+                        };
+                    }
+                }
+            }
+
+            if (args.get(globalThis, "stdio")) |stdio_val| {
+                if (!stdio_val.isEmptyOrUndefinedOrNull()) {
+                    if (stdio_val.jsType().isArray()) {
+                        var stdio_iter = stdio_val.arrayIterator(globalThis);
+                        stdio_iter.len = @minimum(stdio_iter.len, 3);
+                        var i: usize = 0;
+                        while (stdio_iter.next()) |value| : (i += 1) {
+                            if (!extractStdio(globalThis, i, value, &stdio))
+                                return JSC.JSValue.jsUndefined();
+                        }
+                    } else {
+                        globalThis.throwInvalidArguments("stdio must be an array", .{});
+                        return JSValue.jsUndefined();
+                    }
+                }
+            } else {
+                if (args.get(globalThis, "stdin")) |value| {
+                    if (!extractStdio(globalThis, std.os.STDIN_FILENO, value, &stdio))
+                        return JSC.JSValue.jsUndefined();
+                }
+
+                if (args.get(globalThis, "stderr")) |value| {
+                    if (!extractStdio(globalThis, std.os.STDERR_FILENO, value, &stdio))
+                        return JSC.JSValue.jsUndefined();
+                }
+
+                if (args.get(globalThis, "stdout")) |value| {
+                    if (!extractStdio(globalThis, std.os.STDOUT_FILENO, value, &stdio))
+                        return JSC.JSValue.jsUndefined();
+                }
+            }
+        }
+
+        var attr = PosixSpawn.Attr.init() catch {
+            globalThis.throw("out of memory", .{});
+            return JSValue.jsUndefined();
+        };
+
+        defer attr.deinit();
+        var actions = PosixSpawn.Actions.init() catch |err| return globalThis.handleError(err, "in posix_spawn");
+        if (comptime Environment.isMac) {
+            attr.set(
+                os.darwin.POSIX_SPAWN_CLOEXEC_DEFAULT | os.darwin.POSIX_SPAWN_SETSIGDEF | os.darwin.POSIX_SPAWN_SETSIGMASK,
+            ) catch |err| return globalThis.handleError(err, "in posix_spawn");
+        } else if (comptime Environment.isLinux) {
+            attr.set(
+                bun.C.linux.POSIX_SPAWN.SETSIGDEF | bun.C.linux.POSIX_SPAWN.SETSIGMASK,
+            ) catch |err| return globalThis.handleError(err, "in posix_spawn");
+        }
+        defer actions.deinit();
+
+        if (env_array.items.len == 0) {
+            env_array.items = globalThis.bunVM().bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.handleError(err, "in posix_spawn");
+            env_array.capacity = env_array.items.len;
+        }
+
+        const any_ignore = stdio[0] == .ignore or stdio[1] == .ignore or stdio[2] == .ignore;
+        const dev_null_fd = @intCast(
+            i32,
+            if (any_ignore)
+                std.os.openZ("/dev/null", std.os.O.RDONLY | std.os.O.WRONLY, 0) catch |err| {
+                    globalThis.throw("failed to open /dev/null: {s}", .{err});
+                    return JSValue.jsUndefined();
+                }
+            else
+                -1,
+        );
+
+        const stdin_pipe = if (stdio[0].isPiped()) os.pipe2(os.O.NONBLOCK) catch |err| {
+            globalThis.throw("failed to create stdin pipe: {s}", .{err});
+            return JSValue.jsUndefined();
+        } else undefined;
+        errdefer if (stdio[0].isPiped()) destroyPipe(stdin_pipe);
+
+        const stdout_pipe = if (stdio[1].isPiped()) os.pipe2(os.O.NONBLOCK) catch |err| {
+            globalThis.throw("failed to create stdout pipe: {s}", .{err});
+            return JSValue.jsUndefined();
+        } else undefined;
+        errdefer if (stdio[1].isPiped()) destroyPipe(stdout_pipe);
+
+        const stderr_pipe = if (stdio[2].isPiped()) os.pipe2(os.O.NONBLOCK) catch |err| {
+            globalThis.throw("failed to create stderr pipe: {s}", .{err});
+            return JSValue.jsUndefined();
+        } else undefined;
+        errdefer if (stdio[2].isPiped()) destroyPipe(stderr_pipe);
+
+        stdio[0].setUpChildIoPosixSpawn(
+            &actions,
+            stdin_pipe,
+            std.os.STDIN_FILENO,
+            dev_null_fd,
+        ) catch |err| return globalThis.handleError(err, "in configuring child stdin");
+
+        stdio[1].setUpChildIoPosixSpawn(
+            &actions,
+            stdout_pipe,
+            std.os.STDOUT_FILENO,
+            dev_null_fd,
+        ) catch |err| return globalThis.handleError(err, "in configuring child stdout");
+
+        stdio[2].setUpChildIoPosixSpawn(
+            &actions,
+            stderr_pipe,
+            std.os.STDERR_FILENO,
+            dev_null_fd,
+        ) catch |err| return globalThis.handleError(err, "in configuring child stderr");
+
+        actions.chdir(cwd) catch |err| return globalThis.handleError(err, "in chdir()");
+
+        argv.append(allocator, null) catch {
+            globalThis.throw("out of memory", .{});
+            return JSValue.jsUndefined();
+        };
+
+        if (env_array.items.len > 0) {
+            env_array.append(allocator, null) catch {
+                globalThis.throw("out of memory", .{});
+                return JSValue.jsUndefined();
+            };
+            env = @ptrCast(@TypeOf(env), env_array.items.ptr);
+        }
+
+        const pid = switch (PosixSpawn.spawnZ(argv.items[0].?, actions, attr, @ptrCast([*:null]?[*:0]const u8, argv.items[0..].ptr), env)) {
+            .err => |err| return err.toJSC(globalThis),
+            .result => |pid_| pid_,
+        };
+
+        const pidfd: std.os.fd_t = brk: {
+            if (Environment.isMac) {
+                break :brk @intCast(std.os.fd_t, pid);
+            }
+
+            const kernel = @import("../../analytics.zig").GenerateHeader.GeneratePlatform.kernelVersion();
+
+            // pidfd_nonblock only supported in 5.10+
+            const flags: u32 = if (kernel.orderWithoutTag(.{ .major = 5, .minor = 10, .patch = 0 }).compare(.gte))
+                std.os.O.NONBLOCK
+            else
+                0;
+
+            const fd = std.os.linux.pidfd_open(
+                pid,
+                flags,
+            );
+
+            switch (std.os.linux.getErrno(fd)) {
+                .SUCCESS => break :brk @intCast(std.os.fd_t, fd),
+                else => |err| {
+                    globalThis.throwValue(JSC.Node.Syscall.Error.fromCode(err, .open).toJSC(globalThis));
+                    var status: u32 = 0;
+                    // ensure we don't leak the child process on error
+                    _ = std.os.linux.waitpid(pid, &status, 0);
+                    return JSValue.jsUndefined();
+                },
+            }
+        };
+
+        var subprocess = globalThis.allocator().create(Subprocess) catch {
+            globalThis.throw("out of memory", .{});
+            return JSValue.jsUndefined();
+        };
+
+        subprocess.* = Subprocess{
+            .globalThis = globalThis,
+            .pid = pid,
+            .pidfd = pidfd,
+            .stdin = Writable.init(std.meta.activeTag(stdio[std.os.STDIN_FILENO]), stdin_pipe[1], globalThis) catch {
+                globalThis.throw("out of memory", .{});
+                return JSValue.jsUndefined();
+            },
+            .stdout = Readable.init(std.meta.activeTag(stdio[std.os.STDOUT_FILENO]), stdout_pipe[0], globalThis),
+            .stderr = Readable.init(std.meta.activeTag(stdio[std.os.STDERR_FILENO]), stderr_pipe[0], globalThis),
+        };
+
+        subprocess.this_jsvalue = subprocess.toJS(globalThis);
+        subprocess.this_jsvalue.ensureStillAlive();
+
+        switch (globalThis.bunVM().poller.watch(
+            @intCast(JSC.Node.FileDescriptor, pidfd),
+            .process,
+            Subprocess,
+            subprocess,
+        )) {
+            .result => {},
+            .err => |err| {
+                if (err.getErrno() == .SRCH) {
+                    @panic("This shouldn't happen");
+                }
+
+                // process has already exited
+                // https://cs.github.com/libuv/libuv/blob/b00d1bd225b602570baee82a6152eaa823a84fa6/src/unix/process.c#L1007
+                subprocess.onExitNotification();
+            },
+        }
+
+        return subprocess.this_jsvalue;
+    }
+
+    pub fn onExitNotification(
+        this: *Subprocess,
+    ) void {
+        this.wait(this.globalThis.bunVM());
+    }
+
+    pub fn wait(this: *Subprocess, vm: *JSC.VirtualMachine) void {
+        if (this.has_waitpid_task) {
+            return;
+        }
+
+        vm.uws_event_loop.?.active -|= 1;
+
+        this.has_waitpid_task = true;
+        const pid = this.pid;
+        switch (PosixSpawn.waitpid(pid, 0)) {
+            .err => |err| {
+                this.waitpid_err = err;
+            },
+            .result => |status| {
+                this.exit_code = @truncate(u8, status.status);
+            },
+        }
+
+        this.waitpid_task = JSC.AnyTask.New(Subprocess, onExit).init(this);
+        this.has_waitpid_task = true;
+        vm.eventLoop().enqueueTask(JSC.Task.init(&this.waitpid_task));
+    }
+
+    fn onExit(this: *Subprocess) void {
+        this.closePorts();
+
+        this.has_waitpid_task = false;
+
+        if (this.exit_promise != .zero) {
+            var promise = this.exit_promise;
+            this.exit_promise = .zero;
+            if (this.exit_code) |code| {
+                promise.asPromise().?.resolve(this.globalThis, JSValue.jsNumber(code));
+            } else if (this.waitpid_err) |err| {
+                this.waitpid_err = null;
+                promise.asPromise().?.reject(this.globalThis, err.toJSC(this.globalThis));
+            } else {
+                // crash in debug mode
+                if (comptime Environment.allow_assert)
+                    unreachable;
+            }
+        }
+
+        this.unref();
+
+        if (this.finalized) {
+            this.finalize();
+        }
+    }
+
+    const os = std.os;
+    fn destroyPipe(pipe: [2]os.fd_t) void {
+        os.close(pipe[0]);
+        if (pipe[0] != pipe[1]) os.close(pipe[1]);
+    }
+
+    const PosixSpawn = @import("./bun/spawn.zig").PosixSpawn;
+
+    const Stdio = union(enum) {
+        inherit: void,
+        ignore: void,
+        fd: JSC.Node.FileDescriptor,
+        path: JSC.Node.PathLike,
+        blob: JSC.WebCore.Blob,
+        pipe: void,
+        callback: JSC.JSValue,
+
+        pub fn isPiped(self: Stdio) bool {
+            return switch (self) {
+                .blob, .callback, .pipe => true,
+                else => false,
+            };
+        }
+
+        fn setUpChildIoPosixSpawn(
+            stdio: @This(),
+            actions: *PosixSpawn.Actions,
+            pipe_fd: [2]i32,
+            std_fileno: i32,
+            _: i32,
+        ) !void {
+            switch (stdio) {
+                .blob, .callback, .pipe => {
+                    const idx: usize = if (std_fileno == 0) 0 else 1;
+                    try actions.dup2(pipe_fd[idx], std_fileno);
+                    try actions.close(pipe_fd[1 - idx]);
+                },
+                .fd => |fd| {
+                    try actions.dup2(fd, std_fileno);
+                },
+                .path => |pathlike| {
+                    const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.WRONLY) else @as(u32, std.os.O.RDONLY);
+                    try actions.open(std_fileno, pathlike.slice(), flag | std.os.O.CREAT, 0o664);
+                },
+                .inherit => {
+                    if (comptime Environment.isMac) {
+                        try actions.inherit(std_fileno);
+                    } else {
+                        try actions.dup2(std_fileno, std_fileno);
+                    }
+                },
+                .ignore => {
+                    const flag = if (std_fileno == std.os.STDIN_FILENO) @as(u32, os.O.RDONLY) else @as(u32, std.os.O.WRONLY);
+                    try actions.openZ(std_fileno, "/dev/null", flag, 0o664);
+                },
+            }
+        }
+    };
+
+    fn extractStdio(
+        globalThis: *JSC.JSGlobalObject,
+        i: usize,
+        value: JSValue,
+        stdio_array: []Stdio,
+    ) bool {
+        if (value.isEmptyOrUndefinedOrNull()) {
+            return true;
+        }
+
+        if (value.isString()) {
+            const str = value.getZigString(globalThis);
+            if (str.eqlComptime("inherit")) {
+                stdio_array[i] = Stdio{ .inherit = {} };
+            } else if (str.eqlComptime("ignore")) {
+                stdio_array[i] = Stdio{ .ignore = {} };
+            } else if (str.eqlComptime("pipe")) {
+                stdio_array[i] = Stdio{ .pipe = {} };
+            } else {
+                globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', or null", .{});
+                return false;
+            }
+
+            return true;
+        } else if (value.isNumber()) {
+            const fd_ = value.toInt64();
+            if (fd_ < 0) {
+                globalThis.throwInvalidArguments("file descriptor must be a positive integer", .{});
+                return false;
+            }
+
+            const fd = @intCast(JSC.Node.FileDescriptor, fd_);
+
+            switch (@intCast(std.os.fd_t, i)) {
+                std.os.STDIN_FILENO => {
+                    if (i == std.os.STDERR_FILENO or i == std.os.STDOUT_FILENO) {
+                        globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
+                        return false;
+                    }
+                },
+
+                std.os.STDOUT_FILENO, std.os.STDERR_FILENO => {
+                    if (i == std.os.STDIN_FILENO) {
+                        globalThis.throwInvalidArguments("stdout and stderr cannot be used for stdin", .{});
+                        return false;
+                    }
+                },
+                else => {},
+            }
+
+            stdio_array[i] = Stdio{ .fd = fd };
+
+            return true;
+        } else if (value.as(JSC.WebCore.Blob)) |blob| {
+            var store = blob.store orelse {
+                globalThis.throwInvalidArguments("Blob is detached (in stdio)", .{});
+                return false;
+            };
+
+            if (i == std.os.STDIN_FILENO and store.data == .bytes) {
+                stdio_array[i] = .{ .blob = blob.dupe() };
+                return true;
+            }
+
+            if (store.data != .file) {
+                globalThis.throwInvalidArguments("Blob is not a file (in stdio)", .{});
+                return false;
+            }
+
+            if (store.data.file.pathlike == .fd) {
+                if (store.data.file.pathlike.fd == @intCast(JSC.Node.FileDescriptor, i)) {
+                    stdio_array[i] = Stdio{ .inherit = {} };
+                } else {
+                    switch (@intCast(std.os.fd_t, i)) {
+                        std.os.STDIN_FILENO => {
+                            if (i == std.os.STDERR_FILENO or i == std.os.STDOUT_FILENO) {
+                                globalThis.throwInvalidArguments("stdin cannot be used for stdout or stderr", .{});
+                                return false;
+                            }
+                        },
+
+                        std.os.STDOUT_FILENO, std.os.STDERR_FILENO => {
+                            if (i == std.os.STDIN_FILENO) {
+                                globalThis.throwInvalidArguments("stdout and stderr cannot be used for stdin", .{});
+                                return false;
+                            }
+                        },
+                        else => {},
+                    }
+
+                    stdio_array[i] = Stdio{ .fd = store.data.file.pathlike.fd };
+                }
+
+                return true;
+            }
+
+            stdio_array[i] = .{ .path = store.data.file.pathlike.path };
+            return true;
+        } else if (value.isCallable(globalThis.vm())) {
+            stdio_array[i] = .{ .callback = value };
+            value.ensureStillAlive();
+            return true;
+        }
+
+        globalThis.throwInvalidArguments("stdio must be an array of 'inherit', 'ignore', or null", .{});
+        return false;
     }
 };

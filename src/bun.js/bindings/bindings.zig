@@ -140,6 +140,10 @@ pub const ZigString = extern struct {
         else
             try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
 
+        if (list.capacity > list.items.len) {
+            list.items.ptr[list.items.len] = 0;
+        }
+
         return list.items;
     }
 
@@ -184,6 +188,15 @@ pub const ZigString = extern struct {
         len: u32,
         allocated: bool = false,
 
+        pub fn fromUTF8(input: []const u8) Slice {
+            return .{
+                .ptr = input.ptr,
+                .len = @truncate(u32, input.len),
+                .allocated = false,
+                .allocator = bun.default_allocator,
+            };
+        }
+
         pub const empty = Slice{ .allocator = bun.default_allocator, .ptr = undefined, .len = 0, .allocated = false };
 
         pub fn clone(this: Slice, allocator: std.mem.Allocator) !Slice {
@@ -219,6 +232,24 @@ pub const ZigString = extern struct {
 
         pub fn sliceZ(this: Slice) [:0]const u8 {
             return std.meta.assumeSentinel(this.ptr[0..this.len], 0);
+        }
+
+        pub fn toSliceZ(this: Slice, buf: []u8) [:0]const u8 {
+            if (this.len == 0) {
+                return "";
+            }
+
+            if (this.ptr[this.len] == 0) {
+                return this.sliceZ();
+            }
+
+            if (this.len >= buf.len) {
+                return "";
+            }
+
+            std.mem.copy(u8, buf[0..this.len], this.slice());
+            buf[this.len] = 0;
+            return std.meta.assumeSentinel(buf[0..this.len], 0);
         }
 
         pub fn mut(this: Slice) []u8 {
@@ -1789,6 +1820,10 @@ pub const JSGlobalObject = extern struct {
     pub const name = "JSC::JSGlobalObject";
     pub const namespace = "JSC";
 
+    pub fn allocator(this: *JSGlobalObject) std.mem.Allocator {
+        return this.bunVM().allocator;
+    }
+
     pub fn throwInvalidArguments(
         this: *JSGlobalObject,
         comptime fmt: string,
@@ -1859,6 +1894,34 @@ pub const JSGlobalObject = extern struct {
         } else {
             this.vm().throwError(this, ZigString.init(fmt).toValue(this));
         }
+    }
+
+    pub fn throwValue(
+        this: *JSGlobalObject,
+        value: JSC.JSValue,
+    ) void {
+        this.vm().throwError(this, value);
+    }
+
+    pub fn throwError(
+        this: *JSGlobalObject,
+        err: anyerror,
+        comptime fmt: string,
+    ) void {
+        var str = ZigString.init(std.fmt.allocPrint(this.bunVM().allocator, "{s} " ++ fmt, .{@errorName(err)}) catch return);
+        str.markUTF8();
+        var err_value = str.toErrorInstance(this);
+        this.vm().throwError(this, err_value);
+        this.bunVM().allocator.free(ZigString.untagged(str.ptr)[0..str.len]);
+    }
+
+    pub fn handleError(
+        this: *JSGlobalObject,
+        err: anyerror,
+        comptime fmt: string,
+    ) JSValue {
+        this.throwError(err, fmt);
+        return JSValue.jsUndefined();
     }
 
     // pub fn createError(globalObject: *JSGlobalObject, error_type: ErrorType, message: *String) *JSObject {
@@ -3666,7 +3729,7 @@ pub const CallFrame = opaque {
         var buf: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
         const len = self.argumentsCount();
         var ptr = self.argumentsPtr();
-        switch (len) {
+        switch (@minimum(len, max)) {
             0 => {
                 return .{ .ptr = buf, .len = 0 };
             },

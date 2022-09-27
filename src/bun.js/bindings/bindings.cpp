@@ -1208,7 +1208,7 @@ JSC__JSValue JSC__JSValue__createStringArray(JSC__JSGlobalObject* globalObject, 
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (arg2 == 0) {
-        return JSC::JSValue::encode(JSC::JSArray::create(vm, 0));
+        return JSC::JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
     }
 
     JSC::JSArray* array = nullptr;

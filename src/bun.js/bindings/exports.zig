@@ -186,6 +186,7 @@ pub const JSReadableStreamBytes = JSC.WebCore.ByteStream.Source.JSReadableStream
 pub const JSArrayBufferSink = JSC.WebCore.ArrayBufferSink.JSSink;
 pub const JSHTTPSResponseSink = JSC.WebCore.HTTPSResponseSink.JSSink;
 pub const JSHTTPResponseSink = JSC.WebCore.HTTPResponseSink.JSSink;
+pub const JSFileSink = JSC.WebCore.FileSink.JSSink;
 
 // WebSocket
 pub const WebSocketHTTPClient = @import("../../http/websocket_http_client.zig").WebSocketHTTPClient;
@@ -252,6 +253,7 @@ pub const ResolvedSource = extern struct {
         @"node:events" = 1026,
         @"node:string_decoder" = 1027,
         @"node:module" = 1028,
+        @"node:tty" = 1029,
     };
 };
 
@@ -943,7 +945,7 @@ pub const ZigConsoleClient = struct {
             return;
         }
 
-        var console = JS.VirtualMachine.vm.console;
+        var console = global.bunVM().console;
 
         if (message_type == .Clear) {
             Output.resetTerminal();
@@ -984,7 +986,10 @@ pub const ZigConsoleClient = struct {
                 true,
                 true,
             )
-        else if (message_type != .Trace)
+        else if (message_type == .Log) {
+            _ = console.writer.write("\n") catch 0;
+            console.writer.flush() catch {};
+        } else if (message_type != .Trace)
             writer.writeAll("undefined\n") catch unreachable;
 
         if (message_type == .Trace) {
@@ -1796,6 +1801,9 @@ pub const ZigConsoleClient = struct {
                     } else if (value.as(JSC.WebCore.Request)) |request| {
                         request.writeFormat(this, writer_, enable_ansi_colors) catch {};
                         return;
+                    } else if (value.as(JSC.WebCore.Blob)) |blob| {
+                        blob.writeFormat(this, writer_, enable_ansi_colors) catch {};
+                        return;
                     } else if (jsType != .DOMWrapper) {
                         if (CAPI.JSObjectGetPrivate(value.asRef())) |private_data_ptr| {
                             const priv_data = JSPrivateDataPtr.from(private_data_ptr);
@@ -1808,11 +1816,6 @@ pub const ZigConsoleClient = struct {
                                 .ResolveError => {
                                     const resolve_error = priv_data.as(JS.ResolveError);
                                     resolve_error.msg.writeFormat(writer_, enable_ansi_colors) catch {};
-                                    return;
-                                },
-                                .Blob => {
-                                    var request = priv_data.as(JSC.WebCore.Blob);
-                                    request.writeFormat(this, writer_, enable_ansi_colors) catch {};
                                     return;
                                 },
                                 else => {},
@@ -2778,6 +2781,7 @@ comptime {
         JSArrayBufferSink.shim.ref();
         JSHTTPResponseSink.shim.ref();
         JSHTTPSResponseSink.shim.ref();
+        JSFileSink.shim.ref();
 
         JSReadableStreamFile.shim.ref();
         _ = ZigString__free;

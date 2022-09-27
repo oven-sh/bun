@@ -231,7 +231,8 @@ pub const RunCommand = struct {
             var combined_script_buf = try allocator.alloc(u8, combined_script_len);
             std.mem.copy(u8, combined_script_buf, script);
             var remaining_script_buf = combined_script_buf[script.len..];
-            for (passthrough) |p| {
+            for (passthrough) |part| {
+                var p = part;
                 remaining_script_buf[0] = ' ';
                 std.mem.copy(u8, remaining_script_buf[1..], p);
                 remaining_script_buf = remaining_script_buf[p.len + 1 ..];
@@ -715,49 +716,7 @@ pub const RunCommand = struct {
             script_name_to_search = positionals[0];
         }
 
-        var passthrough: []const string = &[_]string{};
-
-        var passthrough_list = std.ArrayList(string).init(ctx.allocator);
-        if (script_name_to_search.len > 0) {
-            get_passthrough: {
-
-                // If they explicitly pass "--", that means they want everything after that to be passed through.
-                for (std.os.argv) |argv, i| {
-                    if (strings.eqlComptime(std.mem.span(argv), "--")) {
-                        if (std.os.argv.len > i + 1) {
-                            var count: usize = 0;
-                            for (std.os.argv[i + 1 ..]) |_| {
-                                count += 1;
-                            }
-                            try passthrough_list.ensureTotalCapacity(count);
-
-                            for (std.os.argv[i + 1 ..]) |arg| {
-                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
-                            }
-
-                            passthrough = passthrough_list.toOwnedSlice();
-                            break :get_passthrough;
-                        }
-                    }
-                }
-
-                // If they do not pass "--", assume they want everything after the script name to be passed through.
-                for (std.os.argv) |argv, i| {
-                    if (strings.eql(std.mem.span(argv), script_name_to_search)) {
-                        if (std.os.argv.len > i + 1) {
-                            try passthrough_list.ensureTotalCapacity(std.os.argv[i + 1 ..].len);
-
-                            for (std.os.argv[i + 1 ..]) |arg| {
-                                passthrough_list.appendAssumeCapacity(std.mem.span(arg));
-                            }
-
-                            passthrough = passthrough_list.toOwnedSlice();
-                            break :get_passthrough;
-                        }
-                    }
-                }
-            }
-        }
+        const passthrough = ctx.passthrough;
 
         if (comptime log_errors) {
             if (script_name_to_search.len > 0) {

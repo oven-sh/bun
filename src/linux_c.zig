@@ -375,3 +375,90 @@ pub fn get_release(name_buffer: *[std.os.HOST_NAME_MAX]u8) []const u8 {
 
     return name_buffer[0..result.len];
 }
+
+// Taken from spawn.h header
+pub const POSIX_SPAWN = struct {
+    pub const RESETIDS = 0x01;
+    pub const SETPGROUP = 0x02;
+    pub const SETSIGDEF = 0x04;
+    pub const SETSIGMASK = 0x08;
+    pub const SETSCHEDPARAM = 0x10;
+    pub const SETSCHEDULER = 0x20;
+    pub const USEVFORK = 0x40;
+    pub const SETSID = 0x80;
+};
+
+const fd_t = std.os.fd_t;
+const pid_t = std.os.pid_t;
+const mode_t = std.os.mode_t;
+const sigset_t = std.c.sigset_t;
+const sched_param = std.os.sched_param;
+
+pub const posix_spawnattr_t = extern struct {
+    __flags: c_short,
+    __pgrp: pid_t,
+    __sd: sigset_t,
+    __ss: sigset_t,
+    __sp: struct_sched_param,
+    __policy: c_int,
+    __pad: [16]c_int,
+};
+pub const struct_sched_param = extern struct {
+    sched_priority: c_int,
+};
+pub const struct___spawn_action = opaque {};
+pub const posix_spawn_file_actions_t = extern struct {
+    __allocated: c_int,
+    __used: c_int,
+    __actions: ?*struct___spawn_action,
+    __pad: [16]c_int,
+};
+
+pub extern "c" fn posix_spawn(
+    pid: *pid_t,
+    path: [*:0]const u8,
+    actions: ?*const posix_spawn_file_actions_t,
+    attr: ?*const posix_spawnattr_t,
+    argv: [*:null]?[*:0]const u8,
+    env: [*:null]?[*:0]const u8,
+) c_int;
+pub extern "c" fn posix_spawnp(
+    pid: *pid_t,
+    path: [*:0]const u8,
+    actions: ?*const posix_spawn_file_actions_t,
+    attr: ?*const posix_spawnattr_t,
+    argv: [*:null]?[*:0]const u8,
+    env: [*:null]?[*:0]const u8,
+) c_int;
+pub extern fn posix_spawnattr_init(__attr: *posix_spawnattr_t) c_int;
+pub extern fn posix_spawnattr_destroy(__attr: *posix_spawnattr_t) c_int;
+pub extern fn posix_spawnattr_getsigdefault(noalias __attr: [*c]const posix_spawnattr_t, noalias __sigdefault: [*c]sigset_t) c_int;
+pub extern fn posix_spawnattr_setsigdefault(noalias __attr: [*c]posix_spawnattr_t, noalias __sigdefault: [*c]const sigset_t) c_int;
+pub extern fn posix_spawnattr_getsigmask(noalias __attr: [*c]const posix_spawnattr_t, noalias __sigmask: [*c]sigset_t) c_int;
+pub extern fn posix_spawnattr_setsigmask(noalias __attr: [*c]posix_spawnattr_t, noalias __sigmask: [*c]const sigset_t) c_int;
+pub extern fn posix_spawnattr_getflags(noalias __attr: [*c]const posix_spawnattr_t, noalias __flags: [*c]c_short) c_int;
+pub extern fn posix_spawnattr_setflags(_attr: [*c]posix_spawnattr_t, __flags: c_short) c_int;
+pub extern fn posix_spawnattr_getpgroup(noalias __attr: [*c]const posix_spawnattr_t, noalias __pgroup: [*c]pid_t) c_int;
+pub extern fn posix_spawnattr_setpgroup(__attr: [*c]posix_spawnattr_t, __pgroup: pid_t) c_int;
+pub extern fn posix_spawnattr_getschedpolicy(noalias __attr: [*c]const posix_spawnattr_t, noalias __schedpolicy: [*c]c_int) c_int;
+pub extern fn posix_spawnattr_setschedpolicy(__attr: [*c]posix_spawnattr_t, __schedpolicy: c_int) c_int;
+pub extern fn posix_spawnattr_getschedparam(noalias __attr: [*c]const posix_spawnattr_t, noalias __schedparam: [*c]struct_sched_param) c_int;
+pub extern fn posix_spawnattr_setschedparam(noalias __attr: [*c]posix_spawnattr_t, noalias __schedparam: [*c]const struct_sched_param) c_int;
+pub extern fn posix_spawn_file_actions_init(__file_actions: *posix_spawn_file_actions_t) c_int;
+pub extern fn posix_spawn_file_actions_destroy(__file_actions: *posix_spawn_file_actions_t) c_int;
+pub extern fn posix_spawn_file_actions_addopen(noalias __file_actions: *posix_spawn_file_actions_t, __fd: c_int, noalias __path: [*:0]const u8, __oflag: c_int, __mode: mode_t) c_int;
+pub extern fn posix_spawn_file_actions_addclose(__file_actions: *posix_spawn_file_actions_t, __fd: c_int) c_int;
+pub extern fn posix_spawn_file_actions_adddup2(__file_actions: *posix_spawn_file_actions_t, __fd: c_int, __newfd: c_int) c_int;
+pub const POSIX_SPAWN_RESETIDS = @as(c_int, 0x01);
+pub const POSIX_SPAWN_SETPGROUP = @as(c_int, 0x02);
+pub const POSIX_SPAWN_SETSIGDEF = @as(c_int, 0x04);
+pub const POSIX_SPAWN_SETSIGMASK = @as(c_int, 0x08);
+pub const POSIX_SPAWN_SETSCHEDPARAM = @as(c_int, 0x10);
+pub const POSIX_SPAWN_SETSCHEDULER = @as(c_int, 0x20);
+
+pub extern "c" fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+
+// not available in linux
+// pub extern "c" fn posix_spawn_file_actions_addinherit_np(actions: *posix_spawn_file_actions_t, filedes: fd_t) c_int;
+
+pub extern "c" fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;

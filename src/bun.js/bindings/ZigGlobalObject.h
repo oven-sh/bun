@@ -177,6 +177,11 @@ public:
     JSC::Structure* FFIFunctionStructure() { return m_JSFFIFunctionStructure.getInitializedOnMainThread(this); }
     JSC::Structure* NapiClassStructure() { return m_NapiClassStructure.getInitializedOnMainThread(this); }
 
+    JSC::Structure* FileSinkStructure() { return m_JSFileSinkClassStructure.getInitializedOnMainThread(this); }
+    JSC::JSObject* FileSink() { return m_JSFileSinkClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSValue FileSinkPrototype() { return m_JSFileSinkClassStructure.prototypeInitializedOnMainThread(this); }
+    JSC::JSValue JSReadableFileSinkControllerPrototype() { return m_JSFileSinkControllerPrototype.getInitializedOnMainThread(this); }
+
     JSC::Structure* ArrayBufferSinkStructure() { return m_JSArrayBufferSinkClassStructure.getInitializedOnMainThread(this); }
     JSC::JSObject* ArrayBufferSink() { return m_JSArrayBufferSinkClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue ArrayBufferSinkPrototype() { return m_JSArrayBufferSinkClassStructure.prototypeInitializedOnMainThread(this); }
@@ -330,6 +335,8 @@ public:
     mutable WriteBarrier<Unknown> m_JSFetchHeadersSetterValue;
     mutable WriteBarrier<Unknown> m_JSURLSearchParamsSetterValue;
 
+    JSObject* navigatorObject();
+
     void trackFFIFunction(JSC::JSFunction* function)
     {
         this->m_ffiFunctions.append(JSC::Strong<JSC::JSFunction> { vm(), function });
@@ -378,13 +385,19 @@ private:
     LazyClassStructure m_JSArrayBufferSinkClassStructure;
     LazyClassStructure m_JSHTTPResponseSinkClassStructure;
     LazyClassStructure m_JSHTTPSResponseSinkClassStructure;
+    LazyClassStructure m_JSFileSinkClassStructure;
     LazyClassStructure m_JSBufferListClassStructure;
     LazyClassStructure m_JSStringDecoderClassStructure;
     LazyClassStructure m_JSReadableStateClassStructure;
 
+    LazyProperty<JSGlobalObject, JSObject> m_navigatorObject;
+
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
+    LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
+
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
+
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, JSObject> m_processEnvObject;
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;

@@ -15,6 +15,7 @@ test("exists", () => {
   expect(typeof MessageEvent !== "undefined").toBe(true);
   expect(typeof TextEncoder !== "undefined").toBe(true);
   expect(typeof WebSocket !== "undefined").toBe(true);
+  expect(typeof Blob !== "undefined").toBe(true);
 });
 
 test("CloseEvent", () => {
@@ -104,4 +105,12 @@ it("URL.prototype.origin", () => {
   expect(hostname).toBe("html.spec.whatwg.org");
   expect(host).toBe("html.spec.whatwg.org");
   expect(origin).toBe("https://html.spec.whatwg.org");
+});
+
+test("navigator", () => {
+  expect(globalThis.navigator !== undefined).toBe(true);
+  const { version } = process;
+  const userAgent = `Bun/${version.substring(1)}`;
+  expect(navigator.hardwareConcurrency > 0).toBe(true);
+  expect(navigator.userAgent).toBe(userAgent);
 });

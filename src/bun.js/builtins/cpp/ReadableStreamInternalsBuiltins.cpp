@@ -2253,7 +2253,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 2505;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 2512;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "(function (stream, autoAllocateChunkSize) {\n" \
@@ -2277,6 +2277,7 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "    handleResult = function handleResult(result, controller, view) {\n" \
     "      \"use strict\";\n" \
     "\n" \
+    "      \n" \
     "      if (result && @isPromise(result)) {\n" \
     "        return result.then(\n" \
     "          handleNativeReadableStreamPromiseResult.bind({\n" \

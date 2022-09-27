@@ -57,9 +57,8 @@ pub const Run = struct {
             .ctx = ctx,
             .entry_path = entry_path,
         };
+        run.vm.argv = ctx.passthrough;
         run.vm.arena = &run.arena;
-
-        run.vm.argv = ctx.positionals;
 
         if (ctx.debug.macros) |macros| {
             run.vm.bundler.options.macro_remap = macros;
@@ -154,7 +153,7 @@ pub const Run = struct {
                             this.vm.active_tasks > 0)
                         {
                             this.vm.event_loop.ensureWaker();
-                            _ = this.vm.event_loop.waker.?.wait() catch 0;
+                            _ = this.vm.uws_event_loop.?.run();
                         }
                     }
                 }

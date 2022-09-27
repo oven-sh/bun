@@ -800,6 +800,13 @@ pub const ESMConditions = struct {
 };
 
 pub const JSX = struct {
+    pub const RuntimeMap = bun.ComptimeStringMap(JSX.Runtime, .{
+        .{ "react", JSX.Runtime.classic },
+        .{ "react-jsx", JSX.Runtime.automatic },
+        .{ "react-jsxDEV", JSX.Runtime.automatic },
+        .{ "solid", JSX.Runtime.solid },
+    });
+
     pub const Pragma = struct {
         // these need to be arrays
         factory: []const string = Defaults.Factory,

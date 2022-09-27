@@ -1,6 +1,6 @@
 {
   "name": "bun-framework-next",
-  "version": "12.2.3",
+  "version": "12.2.5",
   "main": "empty.js",
   "repository": "https://github.com/oven-sh/bun",
   "module": "empty.js",
@@ -14,7 +14,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "react-is": "^18"
+    "react-is": "*"
   },
   "peerDependencies": {
     "next": "~12.2.3"

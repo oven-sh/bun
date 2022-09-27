@@ -204,7 +204,10 @@ enum SyntheticModuleType : uint64_t {
     Events = 1026,
     StringDecoder = 1027,
     Module = 1028,
+    TTY = 1029,
 };
+
+extern "C" const char* Bun__userAgent;
 
 extern "C" ZigErrorCode Zig_ErrorCodeParserError;
 

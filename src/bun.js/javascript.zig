@@ -88,7 +88,6 @@ const Bun = JSC.API.Bun;
 const EventLoop = JSC.EventLoop;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 pub const GlobalConstructors = [_]type{
-    WebCore.Blob.Constructor,
     JSC.Cloudflare.HTMLRewriter.Constructor,
 };
 
@@ -350,7 +349,22 @@ pub const VirtualMachine = struct {
     has_any_macro_remappings: bool = false,
     is_from_devserver: bool = false,
     has_enabled_macro_mode: bool = false,
+
+    /// The arguments used to launch the process _after_ the script name and bun and any flags applied to Bun
+    ///     "bun run foo --bar"
+    ///          ["--bar"]
+    ///     "bun run foo baz --bar"
+    ///          ["baz", "--bar"]
+    ///     "bun run foo
+    ///          []
+    ///     "bun foo --bar"
+    ///          ["--bar"]
+    ///     "bun foo baz --bar"
+    ///          ["baz", "--bar"]
+    ///     "bun foo
+    ///          []
     argv: []const []const u8 = &[_][]const u8{"bun"},
+
     global_api_constructors: [GlobalConstructors.len]JSC.JSValue = undefined,
 
     origin_timer: std.time.Timer = undefined,
@@ -553,6 +567,7 @@ pub const VirtualMachine = struct {
         VirtualMachine.vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        VirtualMachine.vm.regular_event_loop.pending_processes_to_exit = std.AutoArrayHashMap(*JSC.Subprocess, void).init(allocator);
         VirtualMachine.vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
         VirtualMachine.vm.regular_event_loop.concurrent_tasks = .{};
         VirtualMachine.vm.event_loop = &VirtualMachine.vm.regular_event_loop;
@@ -808,6 +823,7 @@ pub const VirtualMachine = struct {
                 .@"node:module" => return jsSyntheticModule(.@"node:module"),
                 .@"node:events" => return jsSyntheticModule(.@"node:events"),
                 .@"node:process" => return jsSyntheticModule(.@"node:process"),
+                .@"node:tty" => return jsSyntheticModule(.@"node:tty"),
                 .@"node:stream" => {
                     return ResolvedSource{
                         .allocator = null,
@@ -2610,6 +2626,7 @@ pub const HardcodedModule = enum {
     @"node:string_decoder",
     @"node:timers",
     @"node:timers/promises",
+    @"node:tty",
     @"node:url",
     @"undici",
     @"ws",
@@ -2647,6 +2664,7 @@ pub const HardcodedModule = enum {
             .{ "node:string_decoder", HardcodedModule.@"node:string_decoder" },
             .{ "node:timers", HardcodedModule.@"node:timers" },
             .{ "node:timers/promises", HardcodedModule.@"node:timers/promises" },
+            .{ "node:tty", HardcodedModule.@"node:tty" },
             .{ "node:url", HardcodedModule.@"node:url" },
             .{ "undici", HardcodedModule.@"undici" },
             .{ "ws", HardcodedModule.@"ws" },
@@ -2690,6 +2708,7 @@ pub const HardcodedModule = enum {
             .{ "node:string_decoder", "node:string_decoder" },
             .{ "node:timers", "node:timers" },
             .{ "node:timers/promises", "node:timers/promises" },
+            .{ "node:tty", "node:tty" },
             .{ "node:url", "node:url" },
             .{ "os", "node:os" },
             .{ "path", "node:path" },
@@ -2703,6 +2722,7 @@ pub const HardcodedModule = enum {
             .{ "string_decoder", "node:string_decoder" },
             .{ "timers", "node:timers" },
             .{ "timers/promises", "node:timers/promises" },
+            .{ "tty", "node:tty" },
             .{ "undici", "undici" },
             .{ "url", "node:url" },
             .{ "ws", "ws" },

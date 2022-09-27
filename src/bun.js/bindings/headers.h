@@ -885,6 +885,25 @@ ZIG_DECL JSC__JSValue HTTPResponseSink__start(JSC__JSGlobalObject* arg0, JSC__Ca
 ZIG_DECL JSC__JSValue HTTPResponseSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
 
 #endif
+CPP_DECL JSC__JSValue FileSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC__JSValue FileSink__createObject(JSC__JSGlobalObject* arg0, void* arg1);
+CPP_DECL void FileSink__detachPtr(JSC__JSValue JSValue0);
+CPP_DECL void* FileSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void FileSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
+CPP_DECL void FileSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC__JSValue FileSink__close(JSC__JSGlobalObject* arg0, void* arg1);
+ZIG_DECL JSC__JSValue FileSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue FileSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL void FileSink__finalize(void* arg0);
+ZIG_DECL JSC__JSValue FileSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue FileSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+
+#endif
 
 #ifdef __cplusplus
 

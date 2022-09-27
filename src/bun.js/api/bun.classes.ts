@@ -42,8 +42,12 @@ export default [
         getter: "getKilled",
       },
 
-      exitStatus: {
-        getter: "getExitStatus",
+      exitCode: {
+        getter: "getExitCode",
+      },
+
+      exited: {
+        getter: "getExited",
         cache: true,
       },
     },

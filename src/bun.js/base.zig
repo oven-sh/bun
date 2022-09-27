@@ -22,7 +22,7 @@ const Request = WebCore.Request;
 const Router = @import("./api/router.zig");
 const FetchEvent = WebCore.FetchEvent;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
-
+const uws = @import("uws");
 const Body = WebCore.Body;
 const TaggedPointerTypes = @import("../tagged_pointer.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
@@ -368,21 +368,6 @@ pub const To = struct {
                     }
                 }
             };
-        }
-    };
-
-    pub const Ref = struct {
-        pub inline fn str(ref: anytype) js.JSStringRef {
-            return @as(js.JSStringRef, ref);
-        }
-    };
-
-    pub const Zig = struct {
-        pub inline fn str(ref: anytype, buf: anytype) string {
-            return buf[0..js.JSStringGetUTF8CString(Ref.str(ref), buf.ptr, buf.len)];
-        }
-        pub inline fn ptr(comptime StructType: type, obj: js.JSObjectRef) *StructType {
-            return GetJSPrivateData(StructType, obj).?;
         }
     };
 };
@@ -3864,3 +3849,130 @@ pub fn cachedBoundFunction(comptime name: [:0]const u8, comptime callback: anyty
         }
     }.getter;
 }
+
+/// Track whether an object should keep the event loop alive
+pub const Ref = struct {
+    has: bool = false,
+
+    pub fn init() Ref {
+        return .{};
+    }
+
+    pub fn unref(this: *Ref, vm: *JSC.VirtualMachine) void {
+        if (!this.has)
+            return;
+        this.has = false;
+        vm.active_tasks -= 1;
+    }
+
+    pub fn ref(this: *Ref, vm: *JSC.VirtualMachine) void {
+        if (this.has)
+            return;
+        this.has = true;
+        vm.active_tasks += 1;
+    }
+};
+
+/// Track if an object whose file descriptor is being watched should keep the event loop alive.
+/// This is not reference counted. It only tracks active or inactive.
+pub const PollRef = struct {
+    status: Status = .inactive,
+
+    const Status = enum { active, inactive, done };
+
+    /// Make calling ref() on this poll into a no-op.
+    pub fn disable(this: *PollRef) void {
+        this.unref();
+        this.status = .done;
+    }
+
+    /// Only intended to be used from EventLoop.Poller
+    pub fn deactivate(this: *PollRef, loop: *uws.Loop) void {
+        if (this.status != .active)
+            return;
+
+        this.status = .inactive;
+        loop.num_polls -= 1;
+        loop.active -= 1;
+    }
+
+    /// Only intended to be used from EventLoop.Poller
+    pub fn activate(this: *PollRef, loop: *uws.Loop) void {
+        if (this.status != .inactive)
+            return;
+
+        this.status = .active;
+        loop.num_polls += 1;
+        loop.active += 1;
+    }
+
+    pub fn init() PollRef {
+        return .{};
+    }
+
+    /// Prevent a poll from keeping the process alive.
+    pub fn unref(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .active)
+            return;
+        this.status = .inactive;
+        vm.uws_event_loop.?.num_polls -= 1;
+        vm.uws_event_loop.?.active -= 1;
+    }
+
+    /// Allow a poll to keep the process alive.
+    pub fn ref(this: *PollRef, vm: *JSC.VirtualMachine) void {
+        if (this.status != .inactive)
+            return;
+        this.status = .active;
+        vm.uws_event_loop.?.num_polls += 1;
+        vm.uws_event_loop.?.active += 1;
+    }
+};
+
+pub const Strong = struct {
+    ref: ?*JSC.napi.Ref = null,
+
+    pub fn init() Strong {
+        return .{};
+    }
+
+    pub fn get(this: *Strong) ?JSValue {
+        var ref = this.ref orelse return null;
+        const result = ref.get();
+        if (result == .zero) {
+            return null;
+        }
+
+        return result;
+    }
+
+    pub fn swap(this: *Strong) JSValue {
+        var ref = this.ref orelse return .zero;
+        const result = ref.get();
+        if (result == .zero) {
+            return .zero;
+        }
+
+        ref.set(.zero);
+        return result;
+    }
+
+    pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSValue) void {
+        var ref: *JSC.napi.Ref = this.ref orelse {
+            this.ref = JSC.napi.Ref.create(globalThis, value);
+            return;
+        };
+        ref.set(value);
+    }
+
+    pub fn clear(this: *Strong) void {
+        var ref: *JSC.napi.Ref = this.ref orelse return;
+        ref.set(JSC.JSValue.zero);
+    }
+
+    pub fn deinit(this: *Strong) void {
+        var ref: *JSC.napi.Ref = this.ref orelse return;
+        this.ref = null;
+        ref.destroy();
+    }
+};

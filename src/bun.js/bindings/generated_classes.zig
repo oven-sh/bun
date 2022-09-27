@@ -61,8 +61,11 @@ pub const JSSubprocess = struct {
             @compileLog("Subprocess.finalize is not a finalizer");
         }
 
-        if (@TypeOf(Subprocess.getExitStatus) != GetterType)
-            @compileLog("Expected Subprocess.getExitStatus to be a getter");
+        if (@TypeOf(Subprocess.getExitCode) != GetterType)
+            @compileLog("Expected Subprocess.getExitCode to be a getter");
+
+        if (@TypeOf(Subprocess.getExited) != GetterType)
+            @compileLog("Expected Subprocess.getExited to be a getter");
 
         if (@TypeOf(Subprocess.kill) != CallbackType)
             @compileLog("Expected Subprocess.kill to be a callback");
@@ -90,7 +93,8 @@ pub const JSSubprocess = struct {
             @export(Subprocess.doRef, .{ .name = "SubprocessPrototype__doRef" });
             @export(Subprocess.doUnref, .{ .name = "SubprocessPrototype__doUnref" });
             @export(Subprocess.finalize, .{ .name = "SubprocessClass__finalize" });
-            @export(Subprocess.getExitStatus, .{ .name = "SubprocessPrototype__getExitStatus" });
+            @export(Subprocess.getExitCode, .{ .name = "SubprocessPrototype__getExitCode" });
+            @export(Subprocess.getExited, .{ .name = "SubprocessPrototype__getExited" });
             @export(Subprocess.getKilled, .{ .name = "SubprocessPrototype__getKilled" });
             @export(Subprocess.getPid, .{ .name = "SubprocessPrototype__getPid" });
             @export(Subprocess.getStderr, .{ .name = "SubprocessPrototype__getStderr" });

@@ -18,6 +18,6 @@ const proc = spawn({
 
 const result = await readableStreamToText(proc.stdout);
 
-await proc.exitStatus;
+await proc.exited();
 
 console.log(result);

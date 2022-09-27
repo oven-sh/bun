@@ -2253,7 +2253,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerCanClo
 const JSC::ConstructAbility s_readableStreamInternalsLazyLoadStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsLazyLoadStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsLazyLoadStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsLazyLoadStreamCodeLength = 2512;
+const int s_readableStreamInternalsLazyLoadStreamCodeLength = 2614;
 static const JSC::Intrinsic s_readableStreamInternalsLazyLoadStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "(function (stream, autoAllocateChunkSize) {\n" \
@@ -2286,12 +2286,14 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "          }),\n" \
     "          (err) => controller.error(err)\n" \
     "        );\n" \
-    "      } else if (result !== false) {\n" \
+    "      } else if (typeof result === 'number') {\n" \
     "        if (view && view.byteLength === result) {\n" \
     "          controller.byobRequest.respondWithNewView(view);\n" \
     "        } else {\n" \
     "          controller.byobRequest.respond(result);\n" \
     "        }\n" \
+    "      } else if (result.constructor === @Uint8Array) {\n" \
+    "        controller.enqueue(result);\n" \
     "      }\n" \
     "\n" \
     "      if (closer[0] || result === false) {\n" \
@@ -2317,6 +2319,7 @@ const char* const s_readableStreamInternalsLazyLoadStreamCode =
     "\n" \
     "      pull_(controller) {\n" \
     "        closer[0] = false;\n" \
+    "\n" \
     "        var result;\n" \
     "\n" \
     "        const view = controller.byobRequest.view;\n" \

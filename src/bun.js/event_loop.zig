@@ -462,16 +462,14 @@ pub const Poller = struct {
         switch (ptr.tag()) {
             @field(Pollable.Tag, "FileBlobLoader") => {
                 var loader = ptr.as(FileBlobLoader);
-                loop.active -= 1;
-                loop.num_polls -= 1;
+                loader.poll_ref.deactivate(loop);
 
                 loader.onPoll(@bitCast(i64, kqueue_event.data), kqueue_event.flags);
             },
             @field(Pollable.Tag, "Subprocess") => {
                 var loader = ptr.as(JSC.Subprocess);
 
-                loop.num_polls -= 1;
-                loop.active -= 1;
+                loader.poll_ref.deactivate(loop);
 
                 // kqueue sends the same notification multiple times in the same tick potentially
                 // so we have to dedupe it
@@ -479,9 +477,7 @@ pub const Poller = struct {
             },
             @field(Pollable.Tag, "FileSink") => {
                 var loader = ptr.as(JSC.WebCore.FileSink);
-
-                loop.num_polls -= 1;
-                loop.active -= 1;
+                loader.poll_ref.deactivate(loop);
 
                 loader.onPoll(0, 0);
             },
@@ -499,16 +495,13 @@ pub const Poller = struct {
         switch (ptr.tag()) {
             @field(Pollable.Tag, "FileBlobLoader") => {
                 var loader = ptr.as(FileBlobLoader);
-                loop.active -= 1;
-                loop.num_polls -= 1;
+                loader.poll_ref.deactivate(loop);
 
                 loader.onPoll(0, 0);
             },
             @field(Pollable.Tag, "Subprocess") => {
                 var loader = ptr.as(JSC.Subprocess);
-
-                loop.num_polls -= 1;
-                loop.active -= 1;
+                loader.poll_ref.deactivate(loop);
 
                 // kqueue sends the same notification multiple times in the same tick potentially
                 // so we have to dedupe it
@@ -516,9 +509,7 @@ pub const Poller = struct {
             },
             @field(Pollable.Tag, "FileSink") => {
                 var loader = ptr.as(JSC.WebCore.FileSink);
-
-                loop.num_polls -= 1;
-                loop.active -= 1;
+                loader.poll_ref.deactivate(loop);
 
                 loader.onPoll(0, 0);
             },
@@ -570,8 +561,7 @@ pub const Poller = struct {
                 return errno;
             }
 
-            this.loop.?.num_polls += 1;
-            this.loop.?.active += 1;
+            ctx.poll_ref.activate(this.loop.?);
 
             return JSC.Maybe(void).success;
         } else if (comptime Environment.isMac) {
@@ -635,8 +625,7 @@ pub const Poller = struct {
             const errno = std.c.getErrno(rc);
 
             if (errno == .SUCCESS) {
-                this.loop.?.num_polls += 1;
-                this.loop.?.active += 1;
+                ctx.poll_ref.activate(this.loop.?);
                 return JSC.Maybe(void).success;
             }
 
@@ -668,6 +657,8 @@ pub const Poller = struct {
                 return errno;
             }
 
+            ctx.poll_ref.deactivate(this.loop.?);
+
             return JSC.Maybe(void).success;
         } else if (comptime Environment.isMac) {
             var changelist = std.mem.zeroes([2]std.os.system.kevent64_s);
@@ -730,6 +721,7 @@ pub const Poller = struct {
             const errno = std.c.getErrno(rc);
 
             if (errno == .SUCCESS) {
+                ctx.poll_ref.deactivate(this.loop.?);
                 return JSC.Maybe(void).success;
             }
 

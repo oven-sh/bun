@@ -565,7 +565,7 @@ pub const Fetch = struct {
 
             var ref = this.ref;
             const promise_value = ref.get();
-            defer ref.destroy(globalThis);
+            defer ref.destroy();
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 this.clearData();
@@ -4084,7 +4084,6 @@ pub const Body = struct {
 
         pub const empty = Value{ .Empty = .{} };
 
-
         pub fn toReadableStream(this: *Value, globalThis: *JSGlobalObject) JSValue {
             JSC.markBinding();
 
@@ -4489,7 +4488,6 @@ pub const Body = struct {
         if (body.value == .Blob)
             std.debug.assert(body.value.Blob.allocator == null); // owned by Body
 
-
         return body;
     }
 };
@@ -4712,7 +4710,7 @@ pub const Request = struct {
 
                     if (urlOrObject.fastGet(globalThis, .body)) |body_| {
                         if (Body.Value.fromJS(globalThis, body_)) |body| {
-                            request.body = body.value;
+                            request.body = body;
                         } else {
                             return null;
                         }
@@ -4729,7 +4727,7 @@ pub const Request = struct {
 
                 if (arguments[1].fastGet(globalThis, .body)) |body_| {
                     if (Body.Value.fromJS(globalThis, body_)) |body| {
-                        request.body = body.value;
+                        request.body = body;
                     } else {
                         return null;
                     }

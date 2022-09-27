@@ -3384,7 +3384,8 @@ pub const Subprocess = struct {
     stderr: Readable,
 
     killed: bool = false,
-    has_ref: bool = false,
+    reffer: JSC.Ref = JSC.Ref.init(),
+    poll_ref: JSC.PollRef = JSC.PollRef.init(),
 
     exit_promise: JSValue = JSValue.zero,
     this_jsvalue: JSValue = JSValue.zero,
@@ -3401,6 +3402,16 @@ pub const Subprocess = struct {
     finalized: bool = false,
 
     globalThis: *JSC.JSGlobalObject,
+
+    pub fn ref(this: *Subprocess) void {
+        this.reffer.ref(this.globalThis.bunVM());
+        this.poll_ref.ref(this.globalThis.bunVM());
+    }
+
+    pub fn unref(this: *Subprocess) void {
+        this.reffer.unref(this.globalThis.bunVM());
+        this.poll_ref.unref(this.globalThis.bunVM());
+    }
 
     pub fn constructor(
         _: *JSC.JSGlobalObject,
@@ -3425,8 +3436,9 @@ pub const Subprocess = struct {
                     defer blob.detach();
 
                     var stream = JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, 0);
-
-                    break :brk Readable{ .pipe = JSC.WebCore.ReadableStream.fromJS(stream, globalThis).? };
+                    var out = JSC.WebCore.ReadableStream.fromJS(stream, globalThis).?;
+                    out.ptr.File.stored_global_this_ = globalThis;
+                    break :brk Readable{ .pipe = out };
                 },
                 .callback, .fd, .path, .blob => Readable{ .fd = @intCast(JSC.Node.FileDescriptor, fd) },
             };
@@ -3559,20 +3571,6 @@ pub const Subprocess = struct {
         this.stderr.close();
     }
 
-    pub fn unref(this: *Subprocess) void {
-        if (!this.has_ref)
-            return;
-        this.has_ref = false;
-        this.globalThis.bunVM().active_tasks -= 1;
-    }
-
-    pub fn ref(this: *Subprocess) void {
-        if (this.has_ref)
-            return;
-        this.has_ref = true;
-        this.globalThis.bunVM().active_tasks += 1;
-    }
-
     pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
         this.ref();
         return JSC.JSValue.jsUndefined();
@@ -3608,7 +3606,7 @@ pub const Subprocess = struct {
                 .path, .pipe, .callback => {
                     var sink = try globalThis.bunVM().allocator.create(JSC.WebCore.FileSink);
                     sink.* = .{
-                        .opened_fd = fd,
+                        .fd = fd,
                         .buffer = bun.ByteList.init(&.{}),
                         .allocator = globalThis.bunVM().allocator,
                     };
@@ -3659,7 +3657,7 @@ pub const Subprocess = struct {
             bun.default_allocator.destroy(this);
     }
 
-    pub fn getExitStatus(
+    pub fn getExited(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
@@ -3672,6 +3670,16 @@ pub const Subprocess = struct {
         }
 
         return this.exit_promise;
+    }
+
+    pub fn getExitCode(
+        this: *Subprocess,
+        _: *JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.exit_code) |code| {
+            return JSC.JSValue.jsNumber(code);
+        }
+        return JSC.JSValue.jsNull();
     }
 
     pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue) JSValue {

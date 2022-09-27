@@ -27,8 +27,12 @@ extern "C" void* SubprocessClass__construct(JSC::JSGlobalObject*, JSC::CallFrame
 JSC_DECLARE_CUSTOM_GETTER(jsSubprocessConstructor);
 extern "C" void SubprocessClass__finalize(void*);
 
-extern "C" JSC::EncodedJSValue SubprocessPrototype__getExitStatus(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
-JSC_DECLARE_CUSTOM_GETTER(SubprocessPrototype__exitStatusGetterWrap);
+extern "C" JSC::EncodedJSValue SubprocessPrototype__getExitCode(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(SubprocessPrototype__exitCodeGetterWrap);
+
+
+extern "C" JSC::EncodedJSValue SubprocessPrototype__getExited(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject);
+JSC_DECLARE_CUSTOM_GETTER(SubprocessPrototype__exitedGetterWrap);
 
 
 extern "C" EncodedJSValue SubprocessPrototype__kill(void* ptr, JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
@@ -67,7 +71,8 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSSubprocessPrototype, JSSubprocessPrototype
 
 
   static const HashTableValue JSSubprocessPrototypeTableValues[] = {
-{ "exitStatus"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__exitStatusGetterWrap, 0 } }  ,
+{ "exitCode"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__exitCodeGetterWrap, 0 } }  ,
+{ "exited"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__exitedGetterWrap, 0 } }  ,
 { "kill"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, SubprocessPrototype__killCallback, 1 } }  ,
 { "killed"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__killedGetterWrap, 0 } }  ,
 { "pid"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, SubprocessPrototype__pidGetterWrap, 0 } }  ,
@@ -97,25 +102,31 @@ JSC_DEFINE_CUSTOM_GETTER(jsSubprocessConstructor, (JSGlobalObject * lexicalGloba
     
 
 
-JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__exitStatusGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__exitCodeGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     auto& vm = lexicalGlobalObject->vm();
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSSubprocess* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
-      JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    
-    if (JSValue cachedValue = thisObject->m_exitStatus.get())
-        return JSValue::encode(cachedValue);
-    
-    JSC::JSValue result = JSC::JSValue::decode(
-        SubprocessPrototype__getExitStatus(thisObject->wrapped(), globalObject)
-    );
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = SubprocessPrototype__getExitCode(thisObject->wrapped(), globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    thisObject->m_exitStatus.set(vm, thisObject, result);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+    RELEASE_AND_RETURN(throwScope, result);
 }
+        
 
+JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__exitedGetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSSubprocess* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
+    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    JSC::EncodedJSValue result = SubprocessPrototype__getExited(thisObject->wrapped(), globalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, result);
+}
+        
 
 JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__killCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -394,7 +405,6 @@ void JSSubprocess::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSSubprocess* thisObject = jsCast<JSSubprocess*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_exitStatus);
     visitor.append(thisObject->m_stderr);
     visitor.append(thisObject->m_stdin);
     visitor.append(thisObject->m_stdout);

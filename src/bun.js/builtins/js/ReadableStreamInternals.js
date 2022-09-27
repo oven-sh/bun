@@ -1864,12 +1864,14 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
           }),
           (err) => controller.error(err)
         );
-      } else if (result !== false) {
+      } else if (typeof result === 'number') {
         if (view && view.byteLength === result) {
           controller.byobRequest.respondWithNewView(view);
         } else {
           controller.byobRequest.respond(result);
         }
+      } else if (result.constructor === @Uint8Array) {
+        controller.enqueue(result);
       }
 
       if (closer[0] || result === false) {
@@ -1895,6 +1897,7 @@ function lazyLoadStream(stream, autoAllocateChunkSize) {
 
       pull_(controller) {
         closer[0] = false;
+
         var result;
 
         const view = controller.byobRequest.view;

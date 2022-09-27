@@ -826,6 +826,12 @@ extern "C" napi_status napi_delete_reference(napi_env env, napi_ref ref)
     return napi_ok;
 }
 
+extern "C" void napi_delete_reference_internal(napi_ref ref)
+{
+    NapiRef* napiRef = toJS(ref);
+    napiRef->~NapiRef();
+}
+
 extern "C" napi_status napi_is_detached_arraybuffer(napi_env env,
     napi_value arraybuffer,
     bool* result)

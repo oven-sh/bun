@@ -33,9 +33,9 @@ pub const Ref = opaque {
         return napi_get_reference_value_internal(ref);
     }
 
-    pub fn destroy(ref: *Ref, globalThis: *JSC.JSGlobalObject) void {
+    pub fn destroy(ref: *Ref) void {
         JSC.markBinding();
-        std.debug.assert(napi_delete_reference(globalThis, ref) == .ok);
+        napi_delete_reference_internal(ref);
     }
 
     pub fn set(this: *Ref, value: JSC.JSValue) void {
@@ -43,6 +43,7 @@ pub const Ref = opaque {
         napi_set_ref(this, value);
     }
 
+    extern fn napi_delete_reference_internal(ref: *Ref) void;
     extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const napi_handle_scope = napi_env;

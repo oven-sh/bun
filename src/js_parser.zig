@@ -12979,6 +12979,7 @@ fn NewParser_(
                                 // Don't substitute an identifier for a non-identifier if this is an
                                 // assignment target, since it'll cause a syntax error
                                 if (@as(Expr.Tag, newvalue.data) == .e_identifier or in.assign_target == .none) {
+                                    p.ignoreUsage(e_.ref);
                                     return newvalue;
                                 }
 

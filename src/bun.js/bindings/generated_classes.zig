@@ -845,6 +845,9 @@ pub const JSRequest = struct {
             @compileLog("Expected Request.getArrayBuffer to be a callback");
         if (@TypeOf(Request.getBlob) != CallbackType)
             @compileLog("Expected Request.getBlob to be a callback");
+        if (@TypeOf(Request.getBody) != GetterType)
+            @compileLog("Expected Request.getBody to be a getter");
+
         if (@TypeOf(Request.getBodyUsed) != GetterType)
             @compileLog("Expected Request.getBodyUsed to be a getter");
 
@@ -893,6 +896,7 @@ pub const JSRequest = struct {
             @export(Request.finalize, .{ .name = "RequestClass__finalize" });
             @export(Request.getArrayBuffer, .{ .name = "RequestPrototype__getArrayBuffer" });
             @export(Request.getBlob, .{ .name = "RequestPrototype__getBlob" });
+            @export(Request.getBody, .{ .name = "RequestPrototype__getBody" });
             @export(Request.getBodyUsed, .{ .name = "RequestPrototype__getBodyUsed" });
             @export(Request.getCache, .{ .name = "RequestPrototype__getCache" });
             @export(Request.getCredentials, .{ .name = "RequestPrototype__getCredentials" });
@@ -968,6 +972,9 @@ pub const JSResponse = struct {
             @compileLog("Expected Response.getArrayBuffer to be a callback");
         if (@TypeOf(Response.getBlob) != CallbackType)
             @compileLog("Expected Response.getBlob to be a callback");
+        if (@TypeOf(Response.getBody) != GetterType)
+            @compileLog("Expected Response.getBody to be a getter");
+
         if (@TypeOf(Response.getBodyUsed) != GetterType)
             @compileLog("Expected Response.getBodyUsed to be a getter");
 
@@ -1010,6 +1017,7 @@ pub const JSResponse = struct {
             @export(Response.finalize, .{ .name = "ResponseClass__finalize" });
             @export(Response.getArrayBuffer, .{ .name = "ResponsePrototype__getArrayBuffer" });
             @export(Response.getBlob, .{ .name = "ResponsePrototype__getBlob" });
+            @export(Response.getBody, .{ .name = "ResponsePrototype__getBody" });
             @export(Response.getBodyUsed, .{ .name = "ResponsePrototype__getBodyUsed" });
             @export(Response.getHeaders, .{ .name = "ResponsePrototype__getHeaders" });
             @export(Response.getJSON, .{ .name = "ResponsePrototype__getJSON" });

@@ -10,6 +10,7 @@ export default [
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
+      body: { getter: "getBody", cache: true },
       arrayBuffer: { fn: "getArrayBuffer" },
       blob: { fn: "getBlob" },
       clone: { fn: "doClone", length: 1 },
@@ -74,6 +75,7 @@ export default [
         getter: "getURL",
         cache: true,
       },
+      body: { getter: "getBody", cache: true },
 
       text: { fn: "getText" },
       json: { fn: "getJSON" },

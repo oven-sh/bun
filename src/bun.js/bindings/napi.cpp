@@ -751,6 +751,17 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
     return napi_ok;
 }
 
+extern "C" void napi_set_ref(NapiRef* ref, JSC__JSValue val_)
+{
+
+    JSC::JSValue val = JSC::JSValue::decode(val_);
+    if (val) {
+        ref->strongRef.set(ref->globalObject->vm(), val);
+    } else {
+        ref->strongRef.clear();
+    }
+}
+
 extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     void* native_object,
     napi_finalize finalize_cb,
@@ -792,6 +803,11 @@ extern "C" napi_status napi_get_reference_value(napi_env env, napi_ref ref,
     *result = toNapi(napiRef->value());
 
     return napi_ok;
+}
+
+extern "C" JSC__JSValue napi_get_reference_value_internal(NapiRef* napiRef)
+{
+    return JSC::JSValue::encode(napiRef->value());
 }
 
 extern "C" napi_status napi_reference_ref(napi_env env, napi_ref ref,

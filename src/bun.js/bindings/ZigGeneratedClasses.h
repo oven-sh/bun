@@ -1309,7 +1309,8 @@ class JSRequest final : public JSC::JSDestructibleObject {
 
         DECLARE_VISIT_CHILDREN;
 
-        mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
+        mutable JSC::WriteBarrier<JSC::Unknown> m_body;
+mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
 mutable JSC::WriteBarrier<JSC::Unknown> m_url;
     };
 class JSRequestPrototype final : public JSC::JSNonFinalObject {
@@ -1434,7 +1435,8 @@ class JSResponse final : public JSC::JSDestructibleObject {
 
         DECLARE_VISIT_CHILDREN;
 
-        mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
+        mutable JSC::WriteBarrier<JSC::Unknown> m_body;
+mutable JSC::WriteBarrier<JSC::Unknown> m_headers;
 mutable JSC::WriteBarrier<JSC::Unknown> m_statusText;
 mutable JSC::WriteBarrier<JSC::Unknown> m_url;
     };

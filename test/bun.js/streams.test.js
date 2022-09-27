@@ -22,6 +22,34 @@ it("exists globally", () => {
   expect(typeof CountQueuingStrategy).toBe("function");
 });
 
+it("new Response(stream).body", async () => {
+  var stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+      controller.close();
+    },
+    cancel() {},
+  });
+  var response = new Response(stream);
+  expect(response.body).toBe(stream);
+  expect(await response.text()).toBe("helloworld");
+});
+
+it("new Request({body: stream}).body", async () => {
+  var stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue("hello");
+      controller.enqueue("world");
+      controller.close();
+    },
+    cancel() {},
+  });
+  var response = new Request({ body: stream });
+  expect(response.body).toBe(stream);
+  expect(await response.text()).toBe("helloworld");
+});
+
 it("ReadableStream (readMany)", async () => {
   var stream = new ReadableStream({
     pull(controller) {

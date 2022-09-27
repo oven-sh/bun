@@ -145,6 +145,18 @@ pub const Response = struct {
         return JSValue.jsBoolean(this.body.value == .Used);
     }
 
+    pub fn getBody(
+        this: *Response,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.body.value == .Used) {
+            globalThis.throw("Body already used", .{});
+            return JSValue.jsUndefined();
+        }
+
+        return this.body.value.toReadableStream(globalThis);
+    }
+
     pub fn getStatusText(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
@@ -194,21 +206,21 @@ pub const Response = struct {
     }
 
     pub fn cloneInto(
-        this: *const Response,
+        this: *Response,
         new_response: *Response,
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
     ) void {
         new_response.* = Response{
             .allocator = allocator,
-            .body = this.body.clone(allocator, globalThis),
+            .body = this.body.clone(globalThis),
             .url = allocator.dupe(u8, this.url) catch unreachable,
             .status_text = allocator.dupe(u8, this.status_text) catch unreachable,
             .redirected = this.redirected,
         };
     }
 
-    pub fn clone(this: *const Response, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Response {
+    pub fn clone(this: *Response, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Response {
         var new_response = allocator.create(Response) catch unreachable;
         this.cloneInto(new_response, allocator, globalThis);
         return new_response;
@@ -267,7 +279,7 @@ pub const Response = struct {
 
                 return default.value;
             },
-            .Used, .Locked, .Empty, .Error => return default.value,
+            .InternalBlob, .Used, .Locked, .Empty, .Error => return default.value,
         }
     }
 
@@ -552,7 +564,7 @@ pub const Fetch = struct {
             const globalThis = this.global_this;
 
             var ref = this.ref;
-            const promise_value = ref.get(globalThis);
+            const promise_value = ref.get();
             defer ref.destroy(globalThis);
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
@@ -596,7 +608,7 @@ pub const Fetch = struct {
             var allocator = this.global_this.bunVM().allocator;
             const http_response = this.result.response;
             var response = allocator.create(Response) catch unreachable;
-            const blob = Blob.init(this.response_buffer.toOwnedSliceLeaky(), allocator, this.global_this);
+            const internal_blob = this.response_buffer.list.toManaged(this.response_buffer.allocator);
             this.response_buffer = .{ .allocator = default_allocator, .list = .{
                 .items = &.{},
                 .capacity = 0,
@@ -613,7 +625,7 @@ pub const Fetch = struct {
                         .status_code = @truncate(u16, http_response.status_code),
                     },
                     .value = .{
-                        .Blob = blob,
+                        .InternalBlob = internal_blob,
                     },
                 },
             };
@@ -937,6 +949,15 @@ pub const Blob = struct {
         return this.store == null;
     }
 
+    pub fn writeFormatForSize(size: usize, writer: anytype, comptime enable_ansi_colors: bool) !void {
+        try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
+        try writer.print(
+            comptime Output.prettyFmt(" (<yellow>{any}<r>)", enable_ansi_colors),
+            .{
+                bun.fmt.size(size),
+            },
+        );
+    }
     pub fn writeFormat(this: *const Blob, formatter: *JSC.Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
 
@@ -947,38 +968,34 @@ pub const Blob = struct {
             return;
         }
 
-        var store = this.store.?;
-        switch (store.data) {
-            .file => |file| {
-                try writer.writeAll(comptime Output.prettyFmt("<r>FileRef<r>", enable_ansi_colors));
-                switch (file.pathlike) {
-                    .path => |path| {
-                        try writer.print(
-                            comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
-                            .{
-                                path.slice(),
-                            },
-                        );
-                    },
-                    .fd => |fd| {
-                        try writer.print(
-                            comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
-                            .{
-                                fd,
-                            },
-                        );
-                    },
-                }
-            },
-            .bytes => {
-                try writer.writeAll(comptime Output.prettyFmt("<r>Blob<r>", enable_ansi_colors));
-                try writer.print(
-                    comptime Output.prettyFmt(" (<yellow>{any}<r>)", enable_ansi_colors),
-                    .{
-                        bun.fmt.size(this.size),
-                    },
-                );
-            },
+        {
+            var store = this.store.?;
+            switch (store.data) {
+                .file => |file| {
+                    try writer.writeAll(comptime Output.prettyFmt("<r>FileRef<r>", enable_ansi_colors));
+                    switch (file.pathlike) {
+                        .path => |path| {
+                            try writer.print(
+                                comptime Output.prettyFmt(" (<green>\"{s}\"<r>)<r>", enable_ansi_colors),
+                                .{
+                                    path.slice(),
+                                },
+                            );
+                        },
+                        .fd => |fd| {
+                            try writer.print(
+                                comptime Output.prettyFmt(" (<r>fd: <yellow>{d}<r>)<r>", enable_ansi_colors),
+                                .{
+                                    fd,
+                                },
+                            );
+                        },
+                    }
+                },
+                .bytes => {
+                    try writeFormatForSize(this.size, writer, enable_ansi_colors);
+                },
+            }
         }
 
         if (this.content_type.len > 0 or this.offset > 0) {
@@ -1071,7 +1088,7 @@ pub const Blob = struct {
                     bun.default_allocator.destroy(this);
                     promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
                 },
-                .Empty, .Blob => {
+                .InternalBlob, .Empty, .Blob => {
                     var blob = value.use();
                     // TODO: this should be one promise not two!
                     const new_promise = writeFileWithSourceDestination(globalThis.ref(), &blob, &file_blob);
@@ -1273,7 +1290,7 @@ pub const Blob = struct {
         var source_blob: Blob = brk: {
             if (data.as(Response)) |response| {
                 switch (response.body.value) {
-                    .Used, .Empty, .Blob => {
+                    .InternalBlob, .Used, .Empty, .Blob => {
                         break :brk response.body.use();
                     },
                     .Error => {
@@ -1302,7 +1319,7 @@ pub const Blob = struct {
 
             if (data.as(Request)) |request| {
                 switch (request.body) {
-                    .Used, .Empty, .Blob => {
+                    .InternalBlob, .Used, .Empty, .Blob => {
                         break :brk request.body.use();
                     },
                     .Error => {
@@ -3321,11 +3338,6 @@ pub const Blob = struct {
         return slice_[0..@minimum(slice_.len, @as(usize, this.size))];
     }
 
-    pub fn view(this: *const Blob) []const u8 {
-        if (this.size == 0 or this.store == null) return "";
-        return this.store.?.sharedView()[this.offset..][0..this.size];
-    }
-
     pub const Lifetime = JSC.WebCore.Lifetime;
     pub fn setIsASCIIFlag(this: *Blob, is_all_ascii: bool) void {
         this.is_all_ascii = is_all_ascii;
@@ -3881,10 +3893,10 @@ pub const Body = struct {
         return this.value.use();
     }
 
-    pub fn clone(this: Body, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) Body {
+    pub fn clone(this: *Body, globalThis: *JSGlobalObject) Body {
         return Body{
             .init = this.init.clone(globalThis),
-            .value = this.value.clone(allocator),
+            .value = this.value.clone(globalThis),
         };
     }
 
@@ -3911,6 +3923,16 @@ pub const Body = struct {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
             try this.value.Blob.writeFormat(formatter, writer, enable_ansi_colors);
+        } else if (this.value == .InternalBlob) {
+            try formatter.printComma(Writer, writer, enable_ansi_colors);
+            try writer.writeAll("\n");
+            try Blob.writeFormatForSize(this.value.InternalBlob.items.len, writer, enable_ansi_colors);
+        } else if (this.value == .Locked) {
+            if (this.value.Locked.readable) |stream| {
+                try formatter.printComma(Writer, writer, enable_ansi_colors);
+                try writer.writeAll("\n");
+                formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
+            }
         }
     }
 
@@ -3982,6 +4004,8 @@ pub const Body = struct {
         /// conditionally runs when requesting data
         /// used in HTTP server to ignore request bodies unless asked for it
         onPull: ?fn (ctx: *anyopaque) void = null,
+        onDrain: ?fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
+
         deinit: bool = false,
         action: Action = Action.none,
 
@@ -4041,6 +4065,9 @@ pub const Body = struct {
 
     pub const Value = union(Tag) {
         Blob: Blob,
+        /// Single-use Blob
+        /// Avoids a heap allocation.
+        InternalBlob: std.ArrayList(u8),
         Locked: PendingValue,
         Used: void,
         Empty: void,
@@ -4048,6 +4075,7 @@ pub const Body = struct {
 
         pub const Tag = enum {
             Blob,
+            InternalBlob,
             Locked,
             Used,
             Empty,
@@ -4055,6 +4083,87 @@ pub const Body = struct {
         };
 
         pub const empty = Value{ .Empty = .{} };
+
+
+        pub fn toReadableStream(this: *Value, globalThis: *JSGlobalObject) JSValue {
+            JSC.markBinding();
+
+            switch (this.*) {
+                .Used, .Empty => {
+                    return JSC.WebCore.ReadableStream.empty(globalThis);
+                },
+                .InternalBlob => |*bytes| {
+                    var blob = Blob.init(bytes.toOwnedSlice(), bytes.allocator, globalThis);
+                    defer blob.detach();
+                    var readable = JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, blob.size);
+                    this.* = .{
+                        .Locked = .{
+                            .readable = JSC.WebCore.ReadableStream.fromJS(readable, globalThis).?,
+                            .global = globalThis,
+                        },
+                    };
+                    return readable;
+                },
+                .Blob => {
+                    var blob = this.Blob;
+                    defer blob.detach();
+                    var readable = JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, blob.size);
+                    readable.protect();
+                    this.* = .{
+                        .Locked = .{
+                            .readable = JSC.WebCore.ReadableStream.fromJS(readable, globalThis).?,
+                            .global = globalThis,
+                        },
+                    };
+                    return readable;
+                },
+                .Locked => {
+                    var locked = &this.Locked;
+                    if (locked.readable) |readable| {
+                        return readable.value;
+                    }
+                    var drain_result: JSC.WebCore.DrainResult = .{
+                        .estimated_size = 0,
+                    };
+
+                    if (locked.onDrain) |drain| {
+                        locked.onDrain = null;
+                        drain_result = drain(locked.task.?);
+                    }
+
+                    if (drain_result == .empty or drain_result == .aborted) {
+                        this.* = .{ .Empty = void{} };
+                        return JSC.WebCore.ReadableStream.empty(globalThis);
+                    }
+
+                    var reader = bun.default_allocator.create(JSC.WebCore.ByteStream.Source) catch unreachable;
+                    reader.* = .{
+                        .context = undefined,
+                        .globalThis = globalThis,
+                    };
+
+                    reader.context.setup();
+
+                    if (drain_result == .estimated_size) {
+                        reader.context.highWaterMark = @truncate(Blob.SizeType, drain_result.estimated_size);
+                        reader.context.size_hint = @truncate(Blob.SizeType, drain_result.estimated_size);
+                    } else if (drain_result == .owned) {
+                        reader.context.buffer = drain_result.owned.list;
+                        reader.context.size_hint = @truncate(Blob.SizeType, drain_result.owned.size_hint);
+                    }
+
+                    locked.readable = .{
+                        .ptr = .{ .Bytes = &reader.context },
+                        .value = reader.toJS(globalThis),
+                    };
+
+                    locked.readable.?.value.protect();
+                    return locked.readable.?.value;
+                },
+
+                else => unreachable,
+            }
+        }
 
         pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?Value {
             if (JSC.WebCore.ReadableStream.fromJS(value, globalThis)) |readable| {
@@ -4121,13 +4230,29 @@ pub const Body = struct {
 
                 if (locked.promise) |promise| {
                     locked.promise = null;
-                    var blob = new.use();
 
                     switch (locked.action) {
                         .getText => {
-                            promise.asPromise().?.resolve(global, blob.getTextTransfer(global.ref()));
+                            if (new.* == .InternalBlob) {
+                                var bytes = new.InternalBlob;
+                                new.* = .{ .Empty = void{} };
+                                var str = ZigString.init(bytes.items).withEncoding();
+                                str.mark();
+                                if (str.is16Bit()) {
+                                    const out = str.toValueGC(global);
+                                    bytes.deinit();
+                                    promise.asPromise().?.resolve(global, out);
+                                } else {
+                                    const out = str.toExternalValue(global);
+                                    promise.asPromise().?.resolve(global, out);
+                                }
+                            } else {
+                                var blob = new.use();
+                                promise.asPromise().?.resolve(global, blob.getTextTransfer(global.ref()));
+                            }
                         },
                         .getJSON => {
+                            var blob = new.use();
                             const json_value = blob.toJSON(global, .share);
                             blob.detach();
 
@@ -4138,17 +4263,25 @@ pub const Body = struct {
                             }
                         },
                         .getArrayBuffer => {
-                            promise.asPromise().?.resolve(global, blob.getArrayBufferTransfer(global));
+                            if (new.* == .InternalBlob) {
+                                const marked = JSC.MarkedArrayBuffer.fromBytes(new.InternalBlob.items, new.InternalBlob.allocator, .ArrayBuffer);
+                                new.* = .{ .Empty = void{} };
+                                var object_ref = marked.toJS(global, null);
+                                promise.asPromise().?.resolve(global, JSC.JSValue.c(object_ref));
+                            } else {
+                                var blob = new.use();
+                                promise.asPromise().?.resolve(global, blob.getArrayBufferTransfer(global));
+                            }
                         },
                         .getBlob => {
                             var ptr = bun.default_allocator.create(Blob) catch unreachable;
-                            ptr.* = blob;
+                            ptr.* = new.use();
                             ptr.allocator = bun.default_allocator;
                             promise.asPromise().?.resolve(global, ptr.toJS(global));
                         },
                         else => {
                             var ptr = bun.default_allocator.create(Blob) catch unreachable;
-                            ptr.* = blob;
+                            ptr.* = new.use();
                             ptr.allocator = bun.default_allocator;
                             promise.asInternalPromise().?.resolve(global, ptr.toJS(global));
                         },
@@ -4160,6 +4293,7 @@ pub const Body = struct {
         pub fn slice(this: Value) []const u8 {
             return switch (this) {
                 .Blob => this.Blob.sharedView(),
+                .InternalBlob => |list| list.items,
                 else => "",
             };
         }
@@ -4169,6 +4303,15 @@ pub const Body = struct {
                 .Blob => {
                     var new_blob = this.Blob;
                     std.debug.assert(new_blob.allocator == null); // owned by Body
+                    this.* = .{ .Used = .{} };
+                    return new_blob;
+                },
+                .InternalBlob => {
+                    var new_blob = Blob.init(
+                        this.InternalBlob.toOwnedSlice(),
+                        this.InternalBlob.allocator,
+                        JSC.VirtualMachine.vm.global,
+                    );
                     this.* = .{ .Used = .{} };
                     return new_blob;
                 },
@@ -4228,12 +4371,20 @@ pub const Body = struct {
         pub fn deinit(this: *Value) void {
             const tag = @as(Tag, this.*);
             if (tag == .Locked) {
-                if (this.Locked.readable) |*readable| {
-                    readable.done();
+                if (!this.Locked.deinit) {
+                    this.Locked.deinit = true;
+
+                    if (this.Locked.readable) |*readable| {
+                        readable.done();
+                    }
                 }
 
-                this.Locked.deinit = true;
                 return;
+            }
+
+            if (tag == .InternalBlob) {
+                this.InternalBlob.clearAndFree();
+                this.* = Value.empty;
             }
 
             if (tag == .Blob) {
@@ -4246,8 +4397,18 @@ pub const Body = struct {
             }
         }
 
-        pub fn clone(this: Value, _: std.mem.Allocator) Value {
-            if (this == .Blob) {
+        pub fn clone(this: *Value, globalThis: *JSC.JSGlobalObject) Value {
+            if (this.* == .InternalBlob) {
+                this.* = .{
+                    .Blob = Blob.init(
+                        this.InternalBlob.toOwnedSlice(),
+                        this.InternalBlob.allocator,
+                        globalThis,
+                    ),
+                };
+            }
+
+            if (this.* == .Blob) {
                 return Value{ .Blob = this.Blob.dupe() };
             }
 
@@ -4319,9 +4480,15 @@ pub const Body = struct {
             } else |_| {}
         }
 
+        if (value.isUndefined()) {
+            body.value = Value.empty;
+            return body;
+        }
+
         body.value = Value.fromJS(globalThis, value) orelse return null;
         if (body.value == .Blob)
             std.debug.assert(body.value.Blob.allocator == null); // owned by Body
+
 
         return body;
     }
@@ -4358,7 +4525,18 @@ pub const Request = struct {
             try writer.writeAll("\"");
             if (this.body == .Blob) {
                 try writer.writeAll("\n");
+                try formatter.writeIndent(Writer, writer);
                 try this.body.Blob.writeFormat(formatter, writer, enable_ansi_colors);
+            } else if (this.body == .InternalBlob) {
+                try writer.writeAll("\n");
+                try formatter.writeIndent(Writer, writer);
+                try Blob.writeFormatForSize(this.body.InternalBlob.items.len, writer, enable_ansi_colors);
+            } else if (this.body == .Locked) {
+                if (this.body.Locked.readable) |stream| {
+                    try writer.writeAll("\n");
+                    try formatter.writeIndent(Writer, writer);
+                    formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
+                }
             }
         }
         try writer.writeAll("\n");
@@ -4392,7 +4570,7 @@ pub const Request = struct {
 
                 return MimeType.other.value;
             },
-            .Error, .Used, .Locked, .Empty => return MimeType.other.value,
+            .InternalBlob, .Error, .Used, .Locked, .Empty => return MimeType.other.value,
         }
     }
 
@@ -4413,6 +4591,18 @@ pub const Request = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         return ZigString.init("").toValueGC(globalThis);
+    }
+
+    pub fn getBody(
+        this: *Request,
+        globalThis: *JSC.JSGlobalObject,
+    ) callconv(.C) JSValue {
+        if (this.body == .Used) {
+            globalThis.throw("Body already used", .{});
+            return JSValue.jsUndefined();
+        }
+
+        return this.body.toReadableStream(globalThis);
     }
 
     pub fn getIntegrity(
@@ -4521,17 +4711,9 @@ pub const Request = struct {
                     }
 
                     if (urlOrObject.fastGet(globalThis, .body)) |body_| {
-                        if (Blob.get(globalThis, body_, true, false)) |blob| {
-                            if (blob.size > 0) {
-                                request.body = Body.Value{ .Blob = blob };
-                            }
-                        } else |err| {
-                            if (err == error.InvalidArguments) {
-                                globalThis.throwInvalidArguments("Expected an Array", .{});
-                                return null;
-                            }
-
-                            globalThis.throwInvalidArguments("Invalid Body object", .{});
+                        if (Body.Value.fromJS(globalThis, body_)) |body| {
+                            request.body = body.value;
+                        } else {
                             return null;
                         }
                     }
@@ -4546,17 +4728,9 @@ pub const Request = struct {
                 }
 
                 if (arguments[1].fastGet(globalThis, .body)) |body_| {
-                    if (Blob.get(globalThis, body_, true, false)) |blob| {
-                        if (blob.size > 0) {
-                            request.body = Body.Value{ .Blob = blob };
-                        }
-                    } else |err| {
-                        if (err == error.InvalidArguments) {
-                            globalThis.throwInvalidArguments("Expected an Array", .{});
-                            return null;
-                        }
-
-                        globalThis.throwInvalidArguments("Invalid Body object", .{});
+                    if (Body.Value.fromJS(globalThis, body_)) |body| {
+                        request.body = body.value;
+                    } else {
                         return null;
                     }
                 }
@@ -4614,7 +4788,7 @@ pub const Request = struct {
         globalThis: *JSGlobalObject,
     ) void {
         req.* = Request{
-            .body = this.body.clone(allocator),
+            .body = this.body.clone(globalThis),
             .url = ZigString.init(allocator.dupe(u8, this.url.slice()) catch unreachable),
             .method = this.method,
         };

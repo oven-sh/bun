@@ -12,6 +12,7 @@ const Channel = @import("../sync.zig").Channel;
 pub const napi_env = *JSC.JSGlobalObject;
 pub const Ref = opaque {
     pub fn create(globalThis: *JSC.JSGlobalObject, value: JSValue) *Ref {
+        JSC.markBinding();
         var ref: *Ref = undefined;
         std.debug.assert(
             napi_create_reference(
@@ -22,20 +23,27 @@ pub const Ref = opaque {
             ) == .ok,
         );
         if (comptime bun.Environment.isDebug) {
-            std.debug.assert(ref.get(globalThis) == value);
+            std.debug.assert(ref.get() == value);
         }
         return ref;
     }
 
-    pub fn get(ref: *Ref, globalThis: *JSC.JSGlobalObject) JSValue {
-        var value: JSValue = JSValue.zero;
-        std.debug.assert(napi_get_reference_value(globalThis, ref, &value) == .ok);
-        return value;
+    pub fn get(ref: *Ref) JSValue {
+        JSC.markBinding();
+        return napi_get_reference_value_internal(ref);
     }
 
     pub fn destroy(ref: *Ref, globalThis: *JSC.JSGlobalObject) void {
+        JSC.markBinding();
         std.debug.assert(napi_delete_reference(globalThis, ref) == .ok);
     }
+
+    pub fn set(this: *Ref, value: JSC.JSValue) void {
+        JSC.markBinding();
+        napi_set_ref(this, value);
+    }
+
+    extern fn napi_set_ref(ref: *Ref, value: JSC.JSValue) void;
 };
 pub const napi_handle_scope = napi_env;
 pub const napi_escapable_handle_scope = struct_napi_escapable_handle_scope__;
@@ -664,6 +672,7 @@ pub extern fn napi_delete_reference(env: napi_env, ref: *Ref) napi_status;
 pub extern fn napi_reference_ref(env: napi_env, ref: *Ref, result: [*c]u32) napi_status;
 pub extern fn napi_reference_unref(env: napi_env, ref: *Ref, result: [*c]u32) napi_status;
 pub extern fn napi_get_reference_value(env: napi_env, ref: *Ref, result: *napi_value) napi_status;
+pub extern fn napi_get_reference_value_internal(ref: *Ref) JSC.JSValue;
 
 // JSC scans the stack
 // we don't need this

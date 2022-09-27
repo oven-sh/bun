@@ -46,7 +46,7 @@ fn _disabledAssert(_: bool) void {
     unreachable;
 }
 
-const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
+pub const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
 const ExprListLoc = struct {
     list: ExprNodeList,
     loc: logger.Loc,

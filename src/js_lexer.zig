@@ -29,11 +29,8 @@ pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
 pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifier;
 pub const ChildlessJSXTags = tables.ChildlessJSXTags;
-fn _disabledAssert(_: bool) void {
-    if (!Environment.allow_assert) @compileLog("assert is missing an if (Environment.allow_assert)");
-    unreachable;
-}
-const assert = if (Environment.allow_assert) std.debug.assert else _disabledAssert;
+const assert = @import("js_parser.zig").assert;
+
 fn notimpl() noreturn {
     Global.panic("not implemented yet!", .{});
 }

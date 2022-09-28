@@ -569,7 +569,6 @@ pub fn decodeVLQ(encoded: []const u8, start: usize) VLQResult {
 }
 
 pub const LineOffsetTable = struct {
-
     /// The source map specification is very loose and does not specify what
     /// column numbers actually mean. The popular "source-map" library from Mozilla
     /// appears to interpret them as counts of UTF-16 code units, so we generate
@@ -633,9 +632,8 @@ pub const LineOffsetTable = struct {
 
         var remaining = contents;
         while (remaining.len > 0) {
-            const len_ = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-            const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], len_, i32, 0);
-            const cp_len = @as(usize, len_);
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
+            const c = strings.decodeWTF8RuneTWithInvalid(remaining[0..cp_len], cp_len, i32, 0);
 
             if (column == 0) {
                 line_byte_offset = @truncate(
@@ -678,7 +676,7 @@ pub const LineOffsetTable = struct {
                 switch (c) {
                     (@maximum('\r', '\n') + 1)...127 => {
                         // skip ahead to the next newline or non-ascii character
-                        if (strings.indexOfNewlineOrNonASCIICheckStart(remaining, @as(u32, len_), false)) |j| {
+                        if (strings.indexOfNewlineOrNonASCIICheckStart(remaining, @as(u32, cp_len), false)) |j| {
                             column += @intCast(i32, j);
                             remaining = remaining[j..];
                         } else {
@@ -1006,7 +1004,7 @@ pub const Chunk = struct {
                 var c: i32 = 0;
                 while (i < n) {
                     const len = strings.wtf8ByteSequenceLengthWithInvalid(slice[i]);
-                    c = strings.decodeWTF8RuneT(slice[i..].ptr[0..4], len, i32, strings.unicode_replacement);
+                    c = strings.decodeWTF8RuneTWithInvalid(slice[i .. i + len], len, i32, strings.unicode_replacement);
                     i += @as(usize, len);
 
                     switch (c) {

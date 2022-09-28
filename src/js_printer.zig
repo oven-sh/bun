@@ -51,7 +51,8 @@ const first_high_surrogate = 0xD800;
 const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
-const CodepointIterator = @import("./string_immutable.zig").UnsignedCodepointIterator;
+const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
+const CodeUnitType = i32;
 const assert = std.debug.assert;
 
 threadlocal var imported_module_ids_list: std.ArrayList(u32) = undefined;
@@ -95,8 +96,8 @@ pub fn estimateLengthForJSON(input: []const u8, comptime ascii_only: bool) usize
     while (strings.indexOfNeedsEscape(remaining)) |i| {
         len += i;
         remaining = remaining[i..];
-        const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-        const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], char_len, i32, 0);
+        const char_len = strings.wtf8ByteSequenceLength(remaining[0]);
+        const c = strings.decodeWTF8RuneT(remaining[0..char_len], char_len, i32, 0);
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             len += @as(u32, char_len);
         } else if (c <= 0xFFFF) {
@@ -119,8 +120,8 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     var i: usize = 0;
     var n: usize = text.len;
     while (i < n) {
-        const width = strings.wtf8ByteSequenceLengthWithInvalid(text[i]);
-        const c = strings.decodeWTF8RuneT(text.ptr[i .. i + 4][0..4], width, i32, 0);
+        const width = strings.wtf8ByteSequenceLength(text[i]);
+        const c = strings.decodeWTF8RuneT(text[i .. i + width], width, i32, 0);
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             const remain = text[i + @as(usize, width) ..];
             if (strings.indexOfNeedsEscape(remain)) |j| {
@@ -250,7 +251,7 @@ pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer,
             strings.wtf8ByteSequenceLengthWithInvalid(text[0]);
 
         const c: i32 = if (comptime encoding == .utf8)
-            strings.decodeWTF8RuneT(text.ptr[0..4], width, i32, 0)
+            strings.decodeWTF8RuneTWithInvalid(text[0..width], width, i32, 0)
         else brk: {
             const char = text[0];
             if (char <= 0x7F) {
@@ -1142,7 +1143,6 @@ pub fn NewPrinter(
         }
 
         pub fn _printQuotedUTF16(e: *Printer, text: []const u16, quote: u8, comptime raw: bool, comptime is_quote_backtick: bool) void {
-            const CodeUnitType = u32;
             var i: u32 = 0;
             const n: u32 = @intCast(u32, text.len);
             var is_interpolater_open = false;
@@ -1213,11 +1213,11 @@ pub fn NewPrinter(
                     cp_hex_width += @boolToInt(cp_hex_width == 1 or cp_hex_width == 3);
 
                     var ptr = ptr: {
-                        const escaped_char_size: CodeUnitType = cp_hex_width +
-                            @as(CodeUnitType, if (raw and c == '\\' and is_interpolater_open) "`}".len else 0) +
-                            @as(CodeUnitType, if (raw and !is_interpolater_open) "${`".len else 0) +
-                            @as(CodeUnitType, "\\x".len | "\\u".len | "\\0".len | "\\b".len | "\\v".len | "\\f".len | "\\r".len | "\\\\".len) +
-                            @as(CodeUnitType, if (cp >= 0x10000) "{}".len else 0);
+                        const escaped_char_size: u32 = cp_hex_width +
+                            @as(u32, if (raw and c == '\\' and is_interpolater_open) "`}".len else 0) +
+                            @as(u32, if (raw and !is_interpolater_open) "${`".len else 0) +
+                            @as(u32, "\\x".len | "\\u".len | "\\0".len | "\\b".len | "\\v".len | "\\f".len | "\\r".len | "\\\\".len) +
+                            @as(u32, if (cp >= 0x10000) "{}".len else 0);
 
                         const reserved = e.writer.reserve(escaped_char_size) catch unreachable;
                         e.writer.advance(escaped_char_size);
@@ -4403,7 +4403,8 @@ pub fn NewPrinter(
             var iter = CodepointIterator.init(identifier);
             var cursor = CodepointIterator.Cursor{};
             while (iter.next(&cursor)) {
-                switch (cursor.c) {
+                const c = @intCast(u32, cursor.c);
+                switch (c) {
                     first_ascii...last_ascii => {
                         if (!is_ascii) {
                             ascii_start = cursor.i;
@@ -4416,20 +4417,20 @@ pub fn NewPrinter(
                             is_ascii = false;
                         }
 
-                        switch (cursor.c) {
+                        switch (c) {
                             0...0xFFFF => {
                                 p.print([_]u8{
                                     '\\',
                                     'u',
-                                    hex_chars[cursor.c >> 12],
-                                    hex_chars[(cursor.c >> 8) & 15],
-                                    hex_chars[(cursor.c >> 4) & 15],
-                                    hex_chars[cursor.c & 15],
+                                    hex_chars[c >> 12],
+                                    hex_chars[(c >> 8) & 15],
+                                    hex_chars[(c >> 4) & 15],
+                                    hex_chars[c & 15],
                                 });
                             },
                             else => {
                                 p.print("\\u{");
-                                std.fmt.formatInt(cursor.c, 16, .lower, .{}, p) catch unreachable;
+                                std.fmt.formatInt(c, 16, .lower, .{}, p) catch unreachable;
                                 p.print("}");
                             },
                         }
@@ -4446,12 +4447,11 @@ pub fn NewPrinter(
             const n = name.len;
             var i: usize = 0;
 
-            const CodeUnitType = u32;
             while (i < n) {
-                var c: CodeUnitType = name[i];
+                var c = @intCast(u32, name[i]);
                 i += 1;
 
-                if (c & ~@as(CodeUnitType, 0x03ff) == 0xd800 and i < n) {
+                if (c & ~@as(u32, 0x03ff) == 0xd800 and i < n) {
                     c = 0x10000 + (((c & 0x03ff) << 10) | (name[i] & 0x03ff));
                     i += 1;
                 }

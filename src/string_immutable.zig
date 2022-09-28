@@ -2436,20 +2436,20 @@ pub fn encodeWTF8RuneT(p: []u8, r: u32, rune_length: u3) void {
     }
 }
 
-// pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
-//     return switch (first_byte) {
-//         0 => 0,
-//         1...0x80 - 1 => 1,
-//         else => if ((first_byte & 0xE0) == 0xC0)
-//             @as(u3, 2)
-//         else if ((first_byte & 0xF0) == 0xE0)
-//             @as(u3, 3)
-//         else if ((first_byte & 0xF8) == 0xF0)
-//             @as(u3, 4)
-//         else
-//             @as(u3, 1),
-//     };
-// }
+pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {
+    return switch (first_byte) {
+        0 => 0,
+        1...0x80 - 1 => 1,
+        else => if ((first_byte & 0xE0) == 0xC0)
+            @as(u3, 2)
+        else if ((first_byte & 0xF0) == 0xE0)
+            @as(u3, 3)
+        else if ((first_byte & 0xF8) == 0xF0)
+            @as(u3, 4)
+        else
+            @as(u3, 1),
+    };
+}
 
 /// 0 == invalid
 pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
@@ -2471,7 +2471,7 @@ pub inline fn wtf8ByteSequenceLengthWithInvalid(first_byte: u8) u3 {
 /// This is a clone of esbuild's decodeWTF8Rune
 /// which was a clone of golang's "utf8.DecodeRune" that was modified to decode using WTF-8 instead.
 /// Asserts a multi-byte codepoint
-pub inline fn decodeWTF8RuneTMultibyte(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
+pub inline fn decodeWTF8RuneTMultibyte(p: string, len: u3, comptime T: type, comptime zero: T) T {
     std.debug.assert(len > 1);
 
     const s1 = p[1];
@@ -3296,10 +3296,18 @@ test "print UTF16" {
 /// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
 /// - Invalid codepoints are replaced with `zero` parameter
 /// - Null bytes return 0
-pub fn decodeWTF8RuneT(p: *const [4]u8, len: u3, comptime T: type, comptime zero: T) T {
+pub fn decodeWTF8RuneT(p: string, len: u3, comptime T: type, comptime zero: T) T {
     if (len == 0) return zero;
     if (len == 1) return p[0];
 
+    return decodeWTF8RuneTMultibyte(p, len, T, zero);
+}
+
+/// Convert potentially ill-formed UTF-8 or UTF-16 bytes to a Unicode Codepoint.
+/// - Invalid codepoints are replaced with `zero` parameter
+/// - Null bytes return 1
+pub fn decodeWTF8RuneTWithInvalid(p: string, len: u3, comptime T: type, comptime zero: T) T {
+    if (len == 1) return p[0];
     return decodeWTF8RuneTMultibyte(p, len, T, zero);
 }
 
@@ -3480,23 +3488,20 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             }
 
             const cp_len = wtf8ByteSequenceLengthWithInvalid(it.bytes[pos]);
-            const error_char = comptime std.math.minInt(CodePointType);
+            const error_char = comptime std.math.maxInt(CodePointType);
 
             const codepoint = @as(
                 CodePointType,
                 switch (cp_len) {
                     0 => unreachable,
                     1 => it.bytes[pos],
-                    else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
+                    else => decodeWTF8RuneTMultibyte(it.bytes[pos .. pos + cp_len], cp_len, CodePointType, error_char),
                 },
             );
 
             cursor.* = Cursor{
                 .i = pos,
-                .c = if (error_char != codepoint)
-                    codepoint
-                else
-                    unicode_replacement,
+                .c = if (codepoint != error_char) codepoint else unicode_replacement,
                 .width = if (codepoint != error_char) cp_len else 1,
             };
 
@@ -3585,7 +3590,6 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
 }
 
 pub const CodepointIterator = NewCodePointIterator(CodePoint, -1);
-pub const UnsignedCodepointIterator = NewCodePointIterator(u32, 0);
 
 pub fn NewLengthSorter(comptime Type: type, comptime field: string) type {
     return struct {

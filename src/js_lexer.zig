@@ -582,11 +582,11 @@ fn NewLexer_(
             stringLiteral: while (true) {
                 switch (lexer.code_point) {
                     '\\' => {
+                        needs_slow_path = true;
                         lexer.step();
 
                         // Handle Windows CRLF
                         if (lexer.code_point == '\r') {
-                            needs_slow_path = true;
                             lexer.step();
                             if (lexer.code_point == '\n') {
                                 lexer.step();
@@ -601,18 +601,6 @@ fn NewLexer_(
 
                                 break;
                             }
-                        }
-
-                        switch (lexer.code_point) {
-                            // 0 cannot be in this list because it may be a legacy octal literal
-                            'v', 'f', 't', 'r', 'n', '`', '\'', '"', 0x2028, 0x2029 => {
-                                lexer.step();
-
-                                continue :stringLiteral;
-                            },
-                            else => {
-                                needs_slow_path = true;
-                            },
                         }
                     },
                     // This indicates the end of the file
@@ -855,23 +843,20 @@ fn NewLexer_(
         }
 
         inline fn nextCodepoint(it: *LexerType) CodePoint {
+            if (it.current >= it.source.contents.len) return -1;
             const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
             const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
+            const error_char = std.math.maxInt(CodePoint);
 
             const code_point = switch (slice.len) {
                 0 => -1,
                 1 => @as(CodePoint, slice[0]),
-                else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @intCast(u3, slice.len), CodePoint, strings.unicode_replacement),
+                else => strings.decodeWTF8RuneTMultibyte(slice[0..cp_len], cp_len, CodePoint, error_char),
             };
 
             it.end = it.current;
-
-            it.current += if (code_point != strings.unicode_replacement)
-                cp_len
-            else
-                1;
-
-            return code_point;
+            it.current += if (code_point == error_char) 1 else cp_len;
+            return if (code_point == error_char) strings.unicode_replacement else code_point;
         }
 
         fn step(lexer: *LexerType) void {

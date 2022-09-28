@@ -139,28 +139,25 @@ pub const Lexer = struct {
     }
 
     inline fn nextCodepointSlice(it: *Lexer) []const u8 {
-        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
+        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents[it.current]);
         return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
     }
 
     inline fn nextCodepoint(it: *Lexer) CodePoint {
-        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
+        if (it.current >= it.source.contents.len) return -1;
+        const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents[it.current]);
         const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
+        const error_char = std.math.maxInt(CodePoint);
 
         const code_point = switch (slice.len) {
             0 => -1,
             1 => @as(CodePoint, slice[0]),
-            else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @intCast(u3, slice.len), CodePoint, strings.unicode_replacement),
+            else => strings.decodeWTF8RuneTMultibyte(slice[0..cp_len], cp_len, CodePoint, error_char),
         };
 
         it.end = it.current;
-
-        it.current += if (code_point != strings.unicode_replacement)
-            cp_len
-        else
-            1;
-
-        return code_point;
+        it.current += if (code_point == error_char) 1 else cp_len;
+        return if (code_point == error_char) strings.unicode_replacement else code_point;
     }
 
     inline fn step(lexer: *Lexer) void {

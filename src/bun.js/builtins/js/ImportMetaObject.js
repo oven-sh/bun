@@ -148,9 +148,13 @@ function requireESM(resolved) {
   }
   var exports = @Loader.getModuleNamespaceObject(entry.module);
   var commonJS = exports.default;
-  if (commonJS && @isCallable(commonJS) && @commonJSSymbol in commonJS) {
+  var cjs = commonJS && commonJS[@commonJSSymbol];
+  if (cjs === 0) {
+    return commonJS;
+  } else if (cjs && @isCallable(commonJS)) {
     return commonJS();
   }
+  
   return exports;
 }
 

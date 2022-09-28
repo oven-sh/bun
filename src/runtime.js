@@ -128,7 +128,7 @@ export var __commonJS = (cb, name) => {
     return mod_exports;
   };
 
-  requireFunction[cjsRequireSymbol] = true;
+  requireFunction[cjsRequireSymbol] = 1;
   return requireFunction;
 };
 

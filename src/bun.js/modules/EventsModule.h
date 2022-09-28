@@ -3,6 +3,7 @@
 
 namespace Zig {
 using namespace WebCore;
+
 inline void generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
                                      JSC::Identifier moduleKey,
                                      Vector<JSC::Identifier, 4> &exportNames,
@@ -31,6 +32,23 @@ inline void generateEventsSourceCode(JSC::JSGlobalObject *lexicalGlobalObject,
   exportValues.append(JSC::JSFunction::create(
       vm, lexicalGlobalObject, 0, MAKE_STATIC_STRING_IMPL("on"),
       Events_functionOn, ImplementationVisibility::Public));
+
+  JSFunction *eventEmitterModuleCJS =
+      jsCast<JSFunction *>(WebCore::JSEventEmitter::getConstructor(
+          vm, reinterpret_cast<Zig::GlobalObject *>(globalObject)));
+
+  eventEmitterModuleCJS->putDirect(
+      vm,
+      PropertyName(
+          Identifier::fromUid(vm.symbolRegistry().symbolForKey("CommonJS"_s))),
+      jsNumber(0), 0);
+
+  for (size_t i = 0; i < exportNames.size(); i++) {
+    eventEmitterModuleCJS->putDirect(vm, exportNames[i], exportValues.at(i), 0);
+  }
+
+  exportNames.append(JSC::Identifier::fromString(vm, "default"_s));
+  exportValues.append(eventEmitterModuleCJS);
 }
 
 } // namespace Zig

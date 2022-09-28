@@ -5207,11 +5207,17 @@ pub const Request = struct {
 
         return request;
     }
+
+    pub fn constructor(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) ?*Request {
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
         const request = constructInto(globalThis, arguments) orelse return false;
 
+        var request_ = getAllocator(globalThis).create(Request) catch return null;
         request_.* = request;
         return request_;
     }

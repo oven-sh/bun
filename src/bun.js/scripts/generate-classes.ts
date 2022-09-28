@@ -320,6 +320,11 @@ function generateConstructorImpl(typeName, obj) {
 
   const hashTableIdentifier = hashTable.length ? `${name}TableValues` : "";
   return `
+${
+  obj.estimatedSize
+    ? `extern "C" size_t ${symbolName(typeName, "estimatedSize")}(void* ptr);`
+    : ""
+}
 ${renderStaticDecls(classSymbolName, typeName, fields)}
 ${hashTable}
 
@@ -379,6 +384,14 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     ${className(typeName)}* instance = ${className(
     typeName
   )}::create(vm, globalObject, structure, ptr);
+  ${
+    obj.estimatedSize
+      ? `vm.heap.reportExtraMemoryAllocated(${symbolName(
+          obj.name,
+          "estimatedSize"
+        )}(instance->wrapped()));`
+      : ""
+  }
 
     return JSValue::encode(instance);
 }
@@ -389,6 +402,14 @@ extern "C" EncodedJSValue ${typeName}__create(Zig::GlobalObject* globalObject, v
   ${className(typeName)}* instance = ${className(
     typeName
   )}::create(vm, globalObject, structure, ptr);
+  ${
+    obj.estimatedSize
+      ? `vm.heap.reportExtraMemoryAllocated(${symbolName(
+          obj.name,
+          "estimatedSize"
+        )}(ptr));`
+      : ""
+  }
   return JSValue::encode(instance);
 }
 
@@ -675,11 +696,13 @@ function generateClassHeader(typeName, obj) {
   var { klass, proto, JSType = "Object" } = obj;
   const name = className(typeName);
 
-  const DECLARE_VISIT_CHILDREN = [
-    ...Object.values(klass),
-    ...Object.values(proto),
-  ].find((a) => !!a.cache)
-    ? "DECLARE_VISIT_CHILDREN;"
+  const DECLARE_VISIT_CHILDREN =
+    obj.estimatedSize ||
+    [...Object.values(klass), ...Object.values(proto)].find((a) => !!a.cache)
+      ? "DECLARE_VISIT_CHILDREN;"
+      : "";
+  const sizeEstimator = obj.estimatedSize
+    ? "static size_t estimatedSize(JSCell* cell, VM& vm);"
     : "";
 
   return `
@@ -747,8 +770,8 @@ function generateClassHeader(typeName, obj) {
   `;
 }
 
-function generateClassImpl(typeName, obj) {
-  const { klass: fields, finalize, proto, construct } = obj;
+function generateClassImpl(typeName, obj: ClassDefinition) {
+  const { klass: fields, finalize, proto, construct, estimatedSize } = obj;
   const name = className(typeName);
   var symbolName = classSymbolName;
 
@@ -761,7 +784,7 @@ function generateClassImpl(typeName, obj) {
     .join("\n");
 
   var DEFINE_VISIT_CHILDREN = "";
-  if (DEFINE_VISIT_CHILDREN_LIST.length) {
+  if (DEFINE_VISIT_CHILDREN_LIST.length || estimatedSize) {
     DEFINE_VISIT_CHILDREN = `
 template<typename Visitor>
 void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -769,6 +792,13 @@ void ${name}::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ${name}* thisObject = jsCast<${name}*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    ${
+      estimatedSize
+        ? `if (auto* ptr = thisObject->wrapped()) {
+visitor.reportExtraMemoryVisited(${symbolName(obj.name, "estimatedSize")}(ptr));
+}`
+        : ""
+    }
 ${DEFINE_VISIT_CHILDREN_LIST}
 }
 
@@ -897,6 +927,7 @@ function generateZig(
     construct,
     finalize,
     noConstructor,
+    estimatedSize,
   } = {} as ClassDefinition
 ) {
   const exports: [string, string][] = [];
@@ -909,6 +940,10 @@ function generateZig(
     exports.push([`finalize`, classSymbolName(typeName, "finalize")]);
   }
 
+  if (estimatedSize) {
+    exports.push([`estimatedSize`, symbolName(typeName, "estimatedSize")]);
+  }
+
   Object.values(klass).map((a) =>
     appendSymbols(exports, (name) => classSymbolName(typeName, name), a)
   );
@@ -918,6 +953,14 @@ function generateZig(
 
   function typeCheck() {
     var output = "";
+
+    if (estimatedSize) {
+      output += `
+        if (@TypeOf(${typeName}.estimatedSize) != (fn(*${typeName}) callconv(.C) usize)) {
+           @compileLog("${typeName}.estimatedSize is not a size function");
+        }
+      `;
+    }
 
     if (construct) {
       output += `

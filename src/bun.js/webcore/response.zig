@@ -5215,8 +5215,7 @@ pub const Request = struct {
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
-        const request = constructInto(globalThis, arguments) orelse return false;
-
+        const request = constructInto(globalThis, arguments) orelse return null;
         var request_ = getAllocator(globalThis).create(Request) catch return null;
         request_.* = request;
         return request_;

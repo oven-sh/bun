@@ -350,6 +350,7 @@ pub extern fn JSC__Exception__create(arg0: ?*JSC__JSGlobalObject, arg1: [*c]JSC_
 pub extern fn JSC__Exception__getStackTrace(arg0: [*c]JSC__Exception, arg1: [*c]ZigStackTrace) void;
 pub extern fn JSC__Exception__value(arg0: [*c]JSC__Exception) JSC__JSValue;
 pub extern fn JSC__VM__clearExecutionTimeLimit(arg0: [*c]JSC__VM) void;
+pub extern fn JSC__VM__collectAsync(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__create(HeapType0: u8) [*c]JSC__VM;
 pub extern fn JSC__VM__deferGC(arg0: [*c]JSC__VM, arg1: ?*anyopaque, ArgFn2: ?fn (?*anyopaque) callconv(.C) void) void;
 pub extern fn JSC__VM__deinit(arg0: [*c]JSC__VM, arg1: ?*JSC__JSGlobalObject) void;
@@ -357,6 +358,7 @@ pub extern fn JSC__VM__deleteAllCode(arg0: [*c]JSC__VM, arg1: ?*JSC__JSGlobalObj
 pub extern fn JSC__VM__doWork(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__drainMicrotasks(arg0: [*c]JSC__VM) void;
 pub extern fn JSC__VM__executionForbidden(arg0: [*c]JSC__VM) bool;
+pub extern fn JSC__VM__heapSize(arg0: [*c]JSC__VM) usize;
 pub extern fn JSC__VM__holdAPILock(arg0: [*c]JSC__VM, arg1: ?*anyopaque, ArgFn2: ?fn (?*anyopaque) callconv(.C) void) void;
 pub extern fn JSC__VM__isEntered(arg0: [*c]JSC__VM) bool;
 pub extern fn JSC__VM__isJITEnabled(...) bool;

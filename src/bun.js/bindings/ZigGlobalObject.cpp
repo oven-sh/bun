@@ -1,4 +1,3 @@
-
 #include "root.h"
 #include "ZigGlobalObject.h"
 
@@ -115,7 +114,8 @@
 #include "JavaScriptCore/RemoteInspectorServer.h"
 #endif
 
-using JSGlobalObject = JSC::JSGlobalObject;
+using JSGlobalObject
+    = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
 using JSString = JSC::JSString;
@@ -979,6 +979,30 @@ JSC_DEFINE_CUSTOM_SETTER(noop_setter,
 static NeverDestroyed<const String> pathToFileURLString(MAKE_STATIC_STRING_IMPL("pathToFileURL"));
 static NeverDestroyed<const String> fileURLToPathString(MAKE_STATIC_STRING_IMPL("fileURLToPath"));
 
+enum ReadableStreamTag : int32_t {
+    Invalid = -1,
+
+    /// ReadableStreamDefaultController or ReadableByteStreamController
+    JavaScript = 0,
+
+    /// ReadableByteStreamController
+    /// but with a BlobLoader
+    /// we can skip the BlobLoader and just use the underlying Blob
+    Blob = 1,
+
+    /// ReadableByteStreamController
+    /// but with a FileLoader
+    /// we can skip the FileLoader and just use the underlying File
+    File = 2,
+
+    /// This is a direct readable stream
+    /// That means we can turn it into whatever we want
+    Direct = 3,
+
+    // This is an ambiguous stream of bytes
+    Bytes = 4,
+};
+
 // we're trying out a new way to do this lazy loading
 static JSC_DECLARE_HOST_FUNCTION(functionLazyLoad);
 static JSC_DEFINE_HOST_FUNCTION(functionLazyLoad,
@@ -1010,12 +1034,16 @@ JSC:
                 return JSC::JSValue::encode(JSC::JSValue {});
             }
 
-            case 1: {
+            case ReadableStreamTag::Blob: {
                 return ByteBlob__JSReadableStreamSource__load(globalObject);
             }
-            case 2: {
+            case ReadableStreamTag::File: {
                 return FileBlobLoader__JSReadableStreamSource__load(globalObject);
             }
+            case ReadableStreamTag::Bytes: {
+                return ByteStream__JSReadableStreamSource__load(globalObject);
+            }
+
             default: {
                 auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
                 JSC::throwTypeError(globalObject, scope, "lazyLoad expects a string"_s);
@@ -1352,6 +1380,7 @@ extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig:
     WebCore::Exception exception { AbortError };
     ReadableStream(*globalObject, *readableStream).cancel(exception);
 }
+
 extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject);
 extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {

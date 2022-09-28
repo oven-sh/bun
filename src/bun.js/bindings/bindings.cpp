@@ -265,7 +265,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
         uint32_t hash = nameView.hash();
         nameHashes[i++] = hash;
         size_t name_len = nameView.length();
-        auto value = WTF::StringView(reinterpret_cast<const LChar*>(header.second.data()), header.second.length()).toStringWithoutCopying().isolatedCopy();
+        auto value = WTF::StringView(reinterpret_cast<const LChar*>(header.second.data()), header.second.length()).toString();
 
         if (name_len < 255) {
             if (seenHeaderSizes[name_len]) {
@@ -642,6 +642,17 @@ void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC__JSGlobalObject* global,
 
     map->remove(global, val);
 }
+
+void JSC__VM__collectAsync(JSC__VM* vm)
+{
+    vm->heap.collectAsync();
+}
+
+size_t JSC__VM__heapSize(JSC__VM* arg0)
+{
+    return arg0->heap.size();
+}
+
 // This is very naive!
 JSC__JSInternalPromise* JSC__VM__reloadModule(JSC__VM* vm, JSC__JSGlobalObject* arg1,
     ZigString arg2)

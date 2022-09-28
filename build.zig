@@ -177,6 +177,7 @@ const BunBuildOptions = struct {
     sha: [:0]const u8 = "",
     baseline: bool = false,
     bindgen: bool = false,
+    sizegen: bool = false,
 
     pub fn step(this: BunBuildOptions, b: anytype) *std.build.OptionsStep {
         var opts = b.addOptions();
@@ -184,6 +185,7 @@ const BunBuildOptions = struct {
         opts.addOption(@TypeOf(this.sha), "sha", this.sha);
         opts.addOption(@TypeOf(this.baseline), "baseline", this.baseline);
         opts.addOption(@TypeOf(this.bindgen), "bindgen", this.bindgen);
+        opts.addOption(@TypeOf(this.sizegen), "sizegen", this.sizegen);
         return opts;
     }
 };
@@ -396,7 +398,13 @@ pub fn build(b: *std.build.Builder) !void {
         obj.setOutputDir(output_dir);
         obj.setBuildMode(mode);
 
-        obj.addOptions("build_options", default_build_options.step(b));
+        var actual_build_options = default_build_options;
+        if (b.option(bool, "generate-sizes", "Generate sizes of things") orelse false) {
+            actual_build_options.sizegen = true;
+            obj.setOutputDir(b.pathFromRoot("misctools/sizegen"));
+        }
+
+        obj.addOptions("build_options", actual_build_options.step(b));
 
         obj.linkLibC();
 
@@ -511,12 +519,14 @@ pub fn build(b: *std.build.Builder) !void {
 
         try configureObjectStep(b, headers_obj, target, obj.main_pkg_path.?);
         try linkObjectFiles(b, headers_obj, target);
+
         {
             var before = b.addLog("\x1b[" ++ color_map.get("magenta").? ++ "\x1b[" ++ color_map.get("b").? ++ "[{s} tests]" ++ "\x1b[" ++ color_map.get("d").? ++ " ----\n\n" ++ "\x1b[0m", .{"bun"});
             var after = b.addLog("\x1b[" ++ color_map.get("d").? ++ "–––---\n\n" ++ "\x1b[0m", .{});
             headers_step.dependOn(&before.step);
             headers_step.dependOn(&headers_obj.step);
             headers_step.dependOn(&after.step);
+            headers_obj.addOptions("build_options", default_build_options.step(b));
         }
 
         for (headers_obj.packages.items) |pkg_| {
@@ -526,7 +536,10 @@ pub fn build(b: *std.build.Builder) !void {
 
             test_.setMainPkgPath(obj.main_pkg_path.?);
             test_.setTarget(target);
+            try configureObjectStep(b, test_, target, obj.main_pkg_path.?);
             try linkObjectFiles(b, test_, target);
+            test_.addOptions("build_options", default_build_options.step(b));
+
             if (pkg.dependencies) |children| {
                 test_.packages = std.ArrayList(std.build.Pkg).init(b.allocator);
                 try test_.packages.appendSlice(children);

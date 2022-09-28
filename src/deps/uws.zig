@@ -260,7 +260,20 @@ pub fn NewSocketHandler(comptime ssl: bool) type {
 pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
-pub const us_timer_t = opaque {};
+pub const Timer = opaque {
+    pub fn create(loop: *Loop, falltrhough: bool, ptr: ?*anyopaque) *Timer {
+        return us_create_timer(loop, @as(c_int, @boolToInt(falltrhough)), if (ptr != null) 8 else 0);
+    }
+
+    pub fn set(this: *Timer, ptr: ?*anyopaque, cb: ?fn (*Timer) callconv(.C) void, ms: c_int, repeat_ms: c_int) void {
+        us_timer_set(this, cb, ms, repeat_ms);
+        us_timer_ext(this).* = ptr.?;
+    }
+
+    pub fn ext(this: *Timer, comptime Type: type) ?*Type {
+        return @ptrCast(*Type, @alignCast(@alignOf(Type), us_timer_ext(this).*.?));
+    }
+};
 pub const SocketContext = opaque {
     pub fn getNativeHandle(this: *SocketContext, comptime ssl: bool) *anyopaque {
         return us_socket_context_get_native_handle(comptime @as(c_int, @boolToInt(ssl)), this).?;
@@ -292,7 +305,7 @@ pub const Loop = extern struct {
     pub const InternalLoopData = extern struct {
         pub const us_internal_async = opaque {};
 
-        sweep_timer: ?*us_timer_t,
+        sweep_timer: ?*Timer,
         wakeup_async: ?*us_internal_async,
         last_write_failed: c_int,
         head: ?*SocketContext,
@@ -390,11 +403,11 @@ pub const Loop = extern struct {
 };
 const uintmax_t = c_ulong;
 
-extern fn us_create_timer(loop: ?*Loop, fallthrough: c_int, ext_size: c_uint) ?*us_timer_t;
-extern fn us_timer_ext(timer: ?*us_timer_t) ?*anyopaque;
-extern fn us_timer_close(timer: ?*us_timer_t) void;
-extern fn us_timer_set(timer: ?*us_timer_t, cb: ?fn (?*us_timer_t) callconv(.C) void, ms: c_int, repeat_ms: c_int) void;
-extern fn us_timer_loop(t: ?*us_timer_t) ?*Loop;
+extern fn us_create_timer(loop: ?*Loop, fallthrough: c_int, ext_size: c_uint) *Timer;
+extern fn us_timer_ext(timer: ?*Timer) *?*anyopaque;
+extern fn us_timer_close(timer: ?*Timer) void;
+extern fn us_timer_set(timer: ?*Timer, cb: ?fn (*Timer) callconv(.C) void, ms: c_int, repeat_ms: c_int) void;
+extern fn us_timer_loop(t: ?*Timer) ?*Loop;
 pub const us_socket_context_options_t = extern struct {
     key_file_name: [*c]const u8 = null,
     cert_file_name: [*c]const u8 = null,

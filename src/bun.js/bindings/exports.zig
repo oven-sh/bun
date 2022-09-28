@@ -2783,6 +2783,7 @@ comptime {
         JSHTTPSResponseSink.shim.ref();
         JSFileSink.shim.ref();
 
+        JSReadableStreamBytes.shim.ref();
         JSReadableStreamFile.shim.ref();
         _ = ZigString__free;
         _ = ZigString__free_global;

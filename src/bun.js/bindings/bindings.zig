@@ -118,6 +118,18 @@ pub const ZigString = extern struct {
         return out;
     }
 
+    pub fn maxUTF8ByteLength(this: ZigString) usize {
+        if (this.isUTF8())
+            return this.len;
+
+        if (this.is16Bit()) {
+            return this.utf16SliceAligned().len * 3;
+        }
+
+        // latin1
+        return this.len * 2;
+    }
+
     pub fn utf8ByteLength(this: ZigString) usize {
         if (this.isUTF8()) {
             return this.len;
@@ -3581,6 +3593,18 @@ pub const VM = extern struct {
         });
     }
 
+    pub fn heapSize(vm: *VM) usize {
+        return cppFn("heapSize", .{
+            vm,
+        });
+    }
+
+    pub fn collectAsync(vm: *VM) void {
+        return cppFn("collectAsync", .{
+            vm,
+        });
+    }
+
     pub fn setExecutionForbidden(vm: *VM, forbidden: bool) void {
         cppFn("setExecutionForbidden", .{ vm, forbidden });
     }
@@ -3632,7 +3656,7 @@ pub const VM = extern struct {
             vm,
         });
     }
-    pub const Extern = [_][]const u8{ "releaseWeakRefs", "throwError", "doWork", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
+    pub const Extern = [_][]const u8{ "collectAsync", "heapSize", "releaseWeakRefs", "throwError", "doWork", "deferGC", "holdAPILock", "runGC", "generateHeapSnapshot", "isJITEnabled", "deleteAllCode", "create", "deinit", "setExecutionForbidden", "executionForbidden", "isEntered", "throwError", "drainMicrotasks", "whenIdle", "shrinkFootprint", "setExecutionTimeLimit", "clearExecutionTimeLimit" };
 };
 
 pub const ThrowScope = extern struct {

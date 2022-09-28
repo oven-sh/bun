@@ -7,7 +7,7 @@ const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
-const JSC = @import("javascript_core");
+const JSC = @import("root").JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
@@ -2796,7 +2796,7 @@ pub const ByteStream = struct {
 
         const chunk = stream.slice();
 
-        if (this.pending.state != .pending) {
+        if (this.pending.state == .pending) {
             std.debug.assert(this.buffer.items.len == 0);
             var to_copy = this.pending_buffer[0..@minimum(chunk.len, this.pending_buffer.len)];
             const pending_buffer_len = this.pending_buffer.len;
@@ -2825,7 +2825,8 @@ pub const ByteStream = struct {
             const remaining = chunk[to_copy.len..];
             if (remaining.len > 0)
                 this.append(stream, to_copy.len, allocator) catch @panic("Out of memory while copying request body");
-            resume this.pending.frame;
+
+            this.pending.run();
             return;
         }
 

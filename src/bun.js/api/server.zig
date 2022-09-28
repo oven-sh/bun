@@ -529,7 +529,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
         response_protected: bool = false,
         response_ptr: ?*JSC.WebCore.Response = null,
-        blob: JSC.WebCore.Blob = JSC.WebCore.Blob{},
+        blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .InlineBlob = .{} },
         promise: ?*JSC.JSValue = null,
         has_abort_handler: bool = false,
         has_sendfile_ctx: bool = false,
@@ -1040,7 +1040,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return false;
             }
 
-            var bytes = this.blob.sharedView();
+            var bytes = this.blob.slice();
             _ = this.sendWritableBytesForBlob(bytes, write_offset, resp);
             return true;
         }
@@ -1079,8 +1079,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // We tried open() in another thread for this
         // it was not faster due to the mountain of syscalls
         pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
-            this.blob = blob;
-            const file = &this.blob.store.?.data.file;
+            this.blob = .{ .Blob = blob };
+            const file = &this.blob.store().?.data.file;
             var file_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
             const auto_close = file.pathlike != .fd;
             const fd = if (!auto_close)
@@ -1146,19 +1146,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            this.blob.size = @intCast(Blob.SizeType, stat.size);
+            this.blob.Blob.size = @intCast(Blob.SizeType, stat.size);
             this.needs_content_length = true;
 
             this.sendfile = .{
                 .fd = fd,
-                .remain = this.blob.size,
+                .remain = this.blob.Blob.size,
                 .auto_close = auto_close,
                 .socket_fd = if (!this.aborted) this.resp.getNativeHandle() else -999,
             };
 
             this.resp.runCorkedWithType(*RequestContext, renderMetadataAndNewline, this);
 
-            if (this.blob.size == 0) {
+            if (this.blob.Blob.size == 0) {
                 this.cleanupAndFinalizeAfterSendfile();
                 return;
             }
@@ -1186,7 +1186,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             this.setAbortHandler();
-            this.blob.doReadFileInternal(*RequestContext, this, onReadFile, this.server.globalThis);
+            this.blob.Blob.doReadFileInternal(*RequestContext, this, onReadFile, this.server.globalThis);
         }
 
         pub fn onReadFile(this: *RequestContext, result: Blob.Store.ReadFile.ResultType) void {
@@ -1202,10 +1202,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             const is_temporary = result.result.is_temporary;
             if (!is_temporary) {
-                this.blob.resolveSize();
+                this.blob.Blob.resolveSize();
                 this.doRenderBlob();
             } else {
-                this.blob.size = @truncate(Blob.SizeType, result.result.buf.len);
+                this.blob.Blob.size = @truncate(Blob.SizeType, result.result.buf.len);
                 this.response_buf_owned = .{ .items = result.result.buf, .capacity = result.result.buf.len };
                 this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
             }
@@ -1224,7 +1224,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.blob.needsToReadFile()) {
                 this.req.setYield(false);
                 if (!this.has_sendfile_ctx)
-                    this.doSendfile(this.blob);
+                    this.doSendfile(this.blob.Blob);
                 return;
             }
 
@@ -1498,8 +1498,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.runErrorHandler(err);
                     return;
                 },
-                .Blob => {
-                    this.blob = value.use();
+                .InlineBlob, .InternalBlob, .Blob => {
+                    this.blob = value.useAsAnyBlob();
                     this.renderWithBlobFromBodyValue();
                     return;
                 },
@@ -1532,9 +1532,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             // fast path for Blob
                             .Blob => |val| {
                                 streamLog("was Blob", .{});
-                                this.blob = JSC.WebCore.Blob.initWithStore(val.store, this.server.globalThis);
-                                this.blob.offset = val.offset;
-                                this.blob.size = val.remain;
+                                var blob = JSC.WebCore.Blob.initWithStore(val.store, this.server.globalThis);
+                                blob.offset = val.offset;
+                                blob.size = val.remain;
+                                this.blob = .{ .Blob = blob };
 
                                 val.store.ref();
                                 stream.detach(this.server.globalThis);
@@ -1546,7 +1547,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             // fast path for File
                             .File => |val| {
                                 streamLog("was File Blob", .{});
-                                this.blob = JSC.WebCore.Blob.initWithStore(val.store, this.server.globalThis);
+                                this.blob = .{
+                                    .Blob = JSC.WebCore.Blob.initWithStore(val.store, this.server.globalThis),
+                                };
                                 val.store.ref();
 
                                 // it should be lazy, file shouldn't have opened yet.
@@ -1570,23 +1573,22 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                                 stream.detach(this.server.globalThis);
 
-                                this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
-
                                 // If we've received the complete body by the time this function is called
                                 // we can avoid streaming it and just send it all at once.
                                 if (byte_stream.has_received_last_chunk) {
-                                    this.blob.size = @truncate(Blob.SizeType, this.response_buf_owned.items.len);
+                                    this.blob.from(byte_stream.buffer);
                                     byte_stream.parent().deinit();
-                                    this.renderResponseBufferAndMetadataCorked();
+                                    this.doRenderBlob();
                                     return;
                                 }
 
                                 byte_stream.pipe = JSC.WebCore.ByteStream.Pipe.New(@This(), onPipe).init(this);
                                 this.byte_stream = byte_stream;
+                                this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 
                                 // we don't set size here because even if we have a hint
                                 // uWebSockets won't let us partially write streaming content
-                                this.blob.size = 0;
+                                this.blob.detach();
 
                                 // if we've received metadata and part of the body, send everything we can and drain
                                 if (this.response_buf_owned.items.len > 0) {
@@ -1655,7 +1657,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // Faster to do the memcpy than to do the two network calls
             // We are not streaming
             // This is an important performance optimization
-            if (this.has_abort_handler and this.blob.sharedView().len < 16384 - 1024) {
+            if (this.has_abort_handler and this.blob.slice().len < 16384 - 1024) {
                 this.resp.runCorkedWithType(*RequestContext, doRenderBlobCorked, this);
             } else {
                 this.doRenderBlobCorked();
@@ -1769,7 +1771,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn renderMetadata(this: *RequestContext) void {
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
-            const size = this.blob.size;
+            const size = this.blob.slice().len;
             status = if (status == 200 and size == 0 and !this.blob.isDetached())
                 204
             else
@@ -1784,11 +1786,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         break :brk MimeType.byName(content.slice());
                     }
                 }
-                break :brk if (this.blob.content_type.len > 0)
-                    MimeType.byName(this.blob.content_type)
-                else if (MimeType.sniff(this.blob.sharedView())) |content|
+
+                break :brk if (this.blob.contentType().len > 0)
+                    MimeType.byName(this.blob.contentType())
+                else if (MimeType.sniff(this.blob.slice())) |content|
                     content
-                else if (this.blob.is_all_ascii orelse false)
+                else if (this.blob.wasString())
                     MimeType.text
                 else
                     MimeType.other;
@@ -1815,7 +1818,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // 1. Bun.file("foo")
             // 2. The content-disposition header is not present
             if (!has_content_disposition and content_type.category.autosetFilename()) {
-                if (this.blob.store) |store| {
+                if (this.blob.store()) |store| {
                     if (store.data == .file) {
                         if (store.data.file.pathlike == .path) {
                             const basename = std.fs.path.basename(store.data.file.pathlike.path.slice());
@@ -1839,7 +1842,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn renderBytes(this: *RequestContext) void {
-            const bytes = this.blob.sharedView();
+            const bytes = this.blob.slice();
 
             if (!this.resp.tryEnd(
                 bytes,
@@ -1903,8 +1906,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 var old = req.body;
                 if (bytes.items.len == 0) {
                     req.body = .{ .Empty = {} };
+                } else if (bytes.items.len < JSC.WebCore.InlineBlob.available_bytes) {
+                    req.body = .{ .InlineBlob = JSC.WebCore.InlineBlob.init(bytes.items) };
+                    bytes.deinit(bun.default_allocator);
                 } else {
-                    req.body = .{ .InternalBlob = bytes.toManaged(this.allocator) };
+                    req.body = .{
+                        .InternalBlob = .{
+                            .bytes = bytes.toManaged(this.allocator),
+                        },
+                    };
                 }
 
                 if (old == .Locked)

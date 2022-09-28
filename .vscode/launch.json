@@ -5,9 +5,9 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun test",
-      "program": "bun-debug",
-      "args": ["wiptest", "${file}"],
-      "cwd": "${workspaceFolder}/test",
+      "program": "/build/bun/packages/debug-bun-linux-x64/bun-debug",
+      "args": ["dev"],
+      "cwd": "/build/bun/_test",
       "env": {
         "FORCE_COLOR": "1"
       },
@@ -17,7 +17,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun test (all)",
-      "program": "bun-debug",
+      "program": "/build/bun/packages/debug-bun-linux-x64/bun-debug",
       "args": ["wiptest"],
       "cwd": "${workspaceFolder}/test",
       "env": {
@@ -29,7 +29,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run current file",
-      "program": "bun-debug",
+      "program": "/build/bun/packages/debug-bun-linux-x64/bun-debug",
       "args": ["${file}"],
       "cwd": "${file}/../../",
       "env": {
@@ -41,7 +41,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun run",
-      "program": "bun-debug",
+      "program": "/build/bun/packages/debug-bun-linux-x64/bun-debug",
       "args": ["check.tsx", "-c"],
       "cwd": "${env:HOME}/Build/react-ssr",
       "env": {
@@ -54,7 +54,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun http example",
-      "program": "bun-debug",
+      "program": "/build/bun/packages/debug-bun-linux-x64/bun-debug",
       "args": ["run", "examples/http.ts"],
       "cwd": "${workspaceFolder}",
       "env": {
@@ -66,7 +66,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun http file example",
-      "program": "bun-debug",
+      "program": "/build/bun/packages/debug-bun-linux-x64/bun-debug",
       "args": ["run", "examples/bun/http-file.ts"],
       "cwd": "${workspaceFolder}",
       "env": {
@@ -78,7 +78,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "bun html-rewriter example",
-      "program": "bun-debug",
+      "program": "/build/bun/packages/debug-bun-linux-x64/bun-debug",
       "args": ["run", "examples/bun/html-rewriter.ts"],
       "cwd": "${workspaceFolder}",
       "env": {

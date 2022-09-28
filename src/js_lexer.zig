@@ -5,6 +5,7 @@ const build_options = @import("build_options");
 const js_ast = @import("js_ast.zig");
 
 const bun = @import("global.zig");
+const js_printer = @import("js_printer.zig");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -21,6 +22,9 @@ const JavascriptString = []const u16;
 const unicode = std.unicode;
 
 const Source = logger.Source;
+const first_ascii = js_printer.first_ascii;
+const last_ascii = js_printer.last_ascii;
+
 pub const T = tables.T;
 pub const Keywords = tables.Keywords;
 pub const tokenToString = tables.tokenToString;
@@ -585,22 +589,31 @@ fn NewLexer_(
                         needs_slow_path = true;
                         lexer.step();
 
-                        // Handle Windows CRLF
-                        if (lexer.code_point == '\r') {
-                            lexer.step();
-                            if (lexer.code_point == '\n') {
-                                lexer.step();
+                        if (comptime is_json) {
+                            switch (lexer.code_point) {
+                                '"', '/', '\\', 'b', 'f', 'n', 'r', 't' => {},
+                                else => try lexer.syntaxError(),
                             }
-                            if (comptime !is_json) continue :stringLiteral;
-                            try lexer.addDefaultError("Unexpected carriage return character in JSON");
+
+                            if (json_options.ignore_trailing_escape_sequences) {
+                                if (lexer.code_point == quote and lexer.current >= lexer.source.contents.len) {
+                                    break;
+                                }
+                            }
                         }
 
-                        if (comptime is_json and json_options.ignore_trailing_escape_sequences) {
-                            if (lexer.code_point == quote and lexer.current >= lexer.source.contents.len) {
-                                lexer.step();
+                        switch (lexer.code_point) {
+                            '$', quote, '\\' => {},
+                            '\r', '\n' => {
+                                if (comptime quote == 0) { // .env file rule
+                                    break :stringLiteral;
+                                }
 
-                                break;
-                            }
+                                if (is_json and lexer.code_point == '\r') {
+                                    try lexer.addDefaultError("Unexpected carriage return character in JSON");
+                                }
+                            },
+                            else => continue,
                         }
                     },
                     // This indicates the end of the file
@@ -614,12 +627,24 @@ fn NewLexer_(
                     },
 
                     '\r' => {
-                        if (comptime quote != '`') {
-                            try lexer.addDefaultError("Unterminated string literal");
-                        }
-
                         // Template literals require newline normalization
                         needs_slow_path = true;
+
+                        if (comptime is_json) {
+                            try lexer.addDefaultError("Unexpected carriage return character in JSON");
+                        }
+
+                        // Implicitly-quoted strings end when they reach a newline OR end of file
+                        // This only applies to .env
+                        switch (comptime quote) {
+                            0 => {
+                                break :stringLiteral;
+                            },
+                            '`' => {},
+                            else => {
+                                try lexer.addDefaultError("Unterminated string literal");
+                            },
+                        }
                     },
 
                     '\n' => {
@@ -656,17 +681,18 @@ fn NewLexer_(
                     // exit condition
                     quote => {
                         lexer.step();
-
                         break;
                     },
 
                     else => {
-
                         // Non-ASCII strings need the slow path
-                        if (lexer.code_point >= 0x80) {
+                        if (lexer.code_point > last_ascii) {
                             needs_slow_path = true;
-                        } else if (is_json and lexer.code_point < 0x20) {
-                            try lexer.syntaxError();
+                        } else if (lexer.code_point < first_ascii) {
+                            if (comptime is_json) try lexer.syntaxError();
+                            if (lexer.code_point != '\t') {
+                                needs_slow_path = true;
+                            }
                         } else if (comptime quote == '"' or quote == '\'') {
                             const remainder = lexer.source.contents[lexer.current..];
                             if (remainder.len >= 4096) {
@@ -719,16 +745,6 @@ fn NewLexer_(
                     try lexer.addRangeError(lexer.range(), "JSON strings must use double quotes", .{}, true);
                 }
             }
-
-            // for (text)
-            // // if (needs_slow_path) {
-            // //     // Slow path
-
-            // //     // lexer.string_literal = lexer.(lexer.start + 1, text);
-            // // } else {
-            // //     // Fast path
-
-            // // }
         }
 
         /// Parses a backtick without post-processing escape sequences. Used for calls of the form: foo`\x10`, especially String.raw`\?`. The only
@@ -746,21 +762,21 @@ fn NewLexer_(
             while (true) {
                 switch (lexer.code_point) {
                     '\\' => {
-                        lexer.step(); // skip the next
+                        lexer.step();
+
+                        switch (lexer.code_point) {
+                            // skip next codepoint if it is one of these
+                            '$', '`', '\\' => {},
+
+                            // do not skip next codepoint if it is a \r or non-ascii
+                            else => continue,
+                        }
                     },
 
                     // This indicates the end of the file
                     -1 => {
                         try lexer.addDefaultError("Unterminated string literal");
                         break;
-                    },
-
-                    '\r' => {
-                        // Template literals require newline normalization
-                        needs_slow_path = true;
-                        lexer.step();
-                        utf16_size_difference += @boolToInt(lexer.code_point == '\n');
-                        continue;
                     },
 
                     '$' => {
@@ -778,8 +794,18 @@ fn NewLexer_(
                     // exit condition
                     '`' => break,
 
+                    '\r' => {
+                        // Template literals require newline normalization
+                        needs_slow_path = true;
+                        lexer.step();
+                        utf16_size_difference += @boolToInt(lexer.code_point == '\n');
+                        continue;
+                    },
+
+                    '\t', '\n' => {},
+
                     else => {
-                        if (lexer.code_point >= 0x80) {
+                        if (lexer.code_point > last_ascii or lexer.code_point < first_ascii) {
                             needs_slow_path = true;
                             var utf8_char_width = @intCast(u3, lexer.current - lexer.end);
                             var utf16_char_width: u32 = if (lexer.code_point > 0xFFFF) 2 else 1;
@@ -792,7 +818,9 @@ fn NewLexer_(
                 lexer.step();
             }
 
+            // varies slightly from corresponding non-raw line of code because we call lexer.step() after, rather than before this line
             const string_literal_slice_end = lexer.end - @boolToInt(lexer.code_point == '{');
+            lexer.step();
             std.debug.assert(string_literal_slice_end <= lexer.source.contents.len);
             lexer.string_literal_slice = lexer.source.contents[lexer.start + 1 .. string_literal_slice_end];
 
@@ -804,7 +832,6 @@ fn NewLexer_(
                 try lexer.decodeEscapeSequencesRaw(lexer.string_literal_slice, &lexer.string_literal_buffer);
                 lexer.string_literal = lexer.string_literal_buffer.items;
             }
-            lexer.step();
         }
 
         fn decodeEscapeSequencesRaw(_: *LexerType, text: string, buf: *std.ArrayList(u16)) !void {
@@ -844,7 +871,7 @@ fn NewLexer_(
 
         inline fn nextCodepoint(it: *LexerType) CodePoint {
             if (it.current >= it.source.contents.len) return -1;
-            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
+            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents[it.current]);
             const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
             const error_char = std.math.maxInt(CodePoint);
 

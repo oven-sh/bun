@@ -1,3 +1,5 @@
+_test
+.gitignore
 .DS_Store
 zig-cache
 *.wasm
@@ -104,3 +106,5 @@ src/runtime.version
 *.database
 *.db
 misctools/machbench
+packages/bun-error/package-lock.json
+.vscode/launch.json

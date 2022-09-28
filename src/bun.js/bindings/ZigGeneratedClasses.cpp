@@ -121,12 +121,19 @@ JSC_DEFINE_CUSTOM_GETTER(SubprocessPrototype__exitedGetterWrap, (JSGlobalObject 
     Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSSubprocess* thisObject = jsCast<JSSubprocess*>(JSValue::decode(thisValue));
-    JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
-    JSC::EncodedJSValue result = SubprocessPrototype__getExited(thisObject->wrapped(), globalObject);
+      JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
+    
+    if (JSValue cachedValue = thisObject->m_exited.get())
+        return JSValue::encode(cachedValue);
+    
+    JSC::JSValue result = JSC::JSValue::decode(
+        SubprocessPrototype__getExited(thisObject->wrapped(), globalObject)
+    );
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, result);
+    thisObject->m_exited.set(vm, thisObject, result);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
-        
+
 
 JSC_DEFINE_HOST_FUNCTION(SubprocessPrototype__killCallback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -315,6 +322,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSSubprocessConstructor::construct(
     }
 
     JSSubprocess* instance = JSSubprocess::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -323,6 +331,7 @@ extern "C" EncodedJSValue Subprocess__create(Zig::GlobalObject* globalObject, vo
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSSubprocessStructure();
   JSSubprocess* instance = JSSubprocess::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -405,6 +414,8 @@ void JSSubprocess::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSSubprocess* thisObject = jsCast<JSSubprocess*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    
+    visitor.append(thisObject->m_exited);
     visitor.append(thisObject->m_stderr);
     visitor.append(thisObject->m_stdin);
     visitor.append(thisObject->m_stdout);
@@ -560,6 +571,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSSHA1Constructor::construct(JSC::J
     }
 
     JSSHA1* instance = JSSHA1::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -568,6 +580,7 @@ extern "C" EncodedJSValue SHA1__create(Zig::GlobalObject* globalObject, void* pt
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSSHA1Structure();
   JSSHA1* instance = JSSHA1::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -792,6 +805,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMD5Constructor::construct(JSC::JS
     }
 
     JSMD5* instance = JSMD5::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -800,6 +814,7 @@ extern "C" EncodedJSValue MD5__create(Zig::GlobalObject* globalObject, void* ptr
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSMD5Structure();
   JSMD5* instance = JSMD5::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -1024,6 +1039,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMD4Constructor::construct(JSC::JS
     }
 
     JSMD4* instance = JSMD4::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -1032,6 +1048,7 @@ extern "C" EncodedJSValue MD4__create(Zig::GlobalObject* globalObject, void* ptr
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSMD4Structure();
   JSMD4* instance = JSMD4::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -1256,6 +1273,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSSHA224Constructor::construct(JSC:
     }
 
     JSSHA224* instance = JSSHA224::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -1264,6 +1282,7 @@ extern "C" EncodedJSValue SHA224__create(Zig::GlobalObject* globalObject, void* 
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSSHA224Structure();
   JSSHA224* instance = JSSHA224::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -1488,6 +1507,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSSHA512Constructor::construct(JSC:
     }
 
     JSSHA512* instance = JSSHA512::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -1496,6 +1516,7 @@ extern "C" EncodedJSValue SHA512__create(Zig::GlobalObject* globalObject, void* 
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSSHA512Structure();
   JSSHA512* instance = JSSHA512::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -1720,6 +1741,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSSHA384Constructor::construct(JSC:
     }
 
     JSSHA384* instance = JSSHA384::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -1728,6 +1750,7 @@ extern "C" EncodedJSValue SHA384__create(Zig::GlobalObject* globalObject, void* 
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSSHA384Structure();
   JSSHA384* instance = JSSHA384::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -1952,6 +1975,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSSHA256Constructor::construct(JSC:
     }
 
     JSSHA256* instance = JSSHA256::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -1960,6 +1984,7 @@ extern "C" EncodedJSValue SHA256__create(Zig::GlobalObject* globalObject, void* 
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSSHA256Structure();
   JSSHA256* instance = JSSHA256::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -2184,6 +2209,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSSHA512_256Constructor::construct(
     }
 
     JSSHA512_256* instance = JSSHA512_256::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -2192,6 +2218,7 @@ extern "C" EncodedJSValue SHA512_256__create(Zig::GlobalObject* globalObject, vo
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSSHA512_256Structure();
   JSSHA512_256* instance = JSSHA512_256::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -2410,6 +2437,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextDecoderConstructor::construct
     }
 
     JSTextDecoder* instance = JSTextDecoder::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -2418,6 +2446,7 @@ extern "C" EncodedJSValue TextDecoder__create(Zig::GlobalObject* globalObject, v
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSTextDecoderStructure();
   JSTextDecoder* instance = JSTextDecoder::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 
@@ -2500,6 +2529,7 @@ void JSTextDecoder::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSTextDecoder* thisObject = jsCast<JSTextDecoder*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    
     visitor.append(thisObject->m_encoding);
 }
 
@@ -2904,6 +2934,10 @@ void JSRequestPrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* global
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
+extern "C" size_t Request__estimatedSize(void* ptr);
+
+
+
 void JSRequestConstructor::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSRequestPrototype* prototype)
 {
     Base::finishCreation(vm, 0, "Request"_s, PropertyAdditionMode::WithoutStructureTransition);
@@ -2947,6 +2981,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSRequestConstructor::construct(JSC
     }
 
     JSRequest* instance = JSRequest::create(vm, globalObject, structure, ptr);
+  vm.heap.reportExtraMemoryAllocated(Request__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -2955,6 +2990,7 @@ extern "C" EncodedJSValue Request__create(Zig::GlobalObject* globalObject, void*
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSRequestStructure();
   JSRequest* instance = JSRequest::create(vm, globalObject, structure, ptr);
+  vm.heap.reportExtraMemoryAllocated(Request__estimatedSize(ptr));
   return JSValue::encode(instance);
 }
 
@@ -3037,6 +3073,9 @@ void JSRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSRequest* thisObject = jsCast<JSRequest*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    if (auto* ptr = thisObject->wrapped()) {
+visitor.reportExtraMemoryVisited(Request__estimatedSize(ptr));
+}
     visitor.append(thisObject->m_body);
     visitor.append(thisObject->m_headers);
     visitor.append(thisObject->m_url);
@@ -3360,6 +3399,7 @@ void JSResponsePrototype::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globa
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
+extern "C" size_t Response__estimatedSize(void* ptr);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ResponseClass__constructError);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ResponseClass__constructJSON);
 extern "C" JSC_DECLARE_HOST_FUNCTION(ResponseClass__constructRedirect);
@@ -3414,6 +3454,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSResponseConstructor::construct(JS
     }
 
     JSResponse* instance = JSResponse::create(vm, globalObject, structure, ptr);
+  vm.heap.reportExtraMemoryAllocated(Response__estimatedSize(instance->wrapped()));
 
     return JSValue::encode(instance);
 }
@@ -3422,6 +3463,7 @@ extern "C" EncodedJSValue Response__create(Zig::GlobalObject* globalObject, void
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSResponseStructure();
   JSResponse* instance = JSResponse::create(vm, globalObject, structure, ptr);
+  vm.heap.reportExtraMemoryAllocated(Response__estimatedSize(ptr));
   return JSValue::encode(instance);
 }
 
@@ -3504,6 +3546,9 @@ void JSResponse::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSResponse* thisObject = jsCast<JSResponse*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    if (auto* ptr = thisObject->wrapped()) {
+visitor.reportExtraMemoryVisited(Response__estimatedSize(ptr));
+}
     visitor.append(thisObject->m_body);
     visitor.append(thisObject->m_headers);
     visitor.append(thisObject->m_statusText);
@@ -3773,6 +3818,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBlobConstructor::construct(JSC::J
     }
 
     JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
+  
 
     return JSValue::encode(instance);
 }
@@ -3781,6 +3827,7 @@ extern "C" EncodedJSValue Blob__create(Zig::GlobalObject* globalObject, void* pt
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->JSBlobStructure();
   JSBlob* instance = JSBlob::create(vm, globalObject, structure, ptr);
+  
   return JSValue::encode(instance);
 }
 

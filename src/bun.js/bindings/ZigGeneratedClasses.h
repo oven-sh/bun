@@ -5,8 +5,6 @@
 
 #include "root.h"
 
-#include "JSEventEmitter.h"
-
 namespace Zig {
 }
 
@@ -17,9 +15,9 @@ namespace WebCore {
 using namespace Zig;
 using namespace JSC;
 
-class JSSubprocess final : public JSDestructibleObject {
+class JSSubprocess final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSSubprocess* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -68,7 +66,8 @@ class JSSubprocess final : public JSDestructibleObject {
 
         DECLARE_VISIT_CHILDREN;
 
-        mutable JSC::WriteBarrier<JSC::Unknown> m_stderr;
+        mutable JSC::WriteBarrier<JSC::Unknown> m_exited;
+mutable JSC::WriteBarrier<JSC::Unknown> m_stderr;
 mutable JSC::WriteBarrier<JSC::Unknown> m_stdin;
 mutable JSC::WriteBarrier<JSC::Unknown> m_stdout;
     };
@@ -143,9 +142,9 @@ class JSSubprocessPrototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSubprocessPrototype* prototype);
     };
-class JSSHA1 final : public JSDestructibleObject {
+class JSSHA1 final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSSHA1* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -267,9 +266,9 @@ class JSSHA1Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSHA1Prototype* prototype);
     };
-class JSMD5 final : public JSDestructibleObject {
+class JSMD5 final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSMD5* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -391,9 +390,9 @@ class JSMD5Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSMD5Prototype* prototype);
     };
-class JSMD4 final : public JSDestructibleObject {
+class JSMD4 final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSMD4* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -515,9 +514,9 @@ class JSMD4Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSMD4Prototype* prototype);
     };
-class JSSHA224 final : public JSDestructibleObject {
+class JSSHA224 final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSSHA224* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -639,9 +638,9 @@ class JSSHA224Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSHA224Prototype* prototype);
     };
-class JSSHA512 final : public JSDestructibleObject {
+class JSSHA512 final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSSHA512* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -763,9 +762,9 @@ class JSSHA512Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSHA512Prototype* prototype);
     };
-class JSSHA384 final : public JSDestructibleObject {
+class JSSHA384 final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSSHA384* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -887,9 +886,9 @@ class JSSHA384Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSHA384Prototype* prototype);
     };
-class JSSHA256 final : public JSDestructibleObject {
+class JSSHA256 final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSSHA256* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -1011,9 +1010,9 @@ class JSSHA256Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSHA256Prototype* prototype);
     };
-class JSSHA512_256 final : public JSDestructibleObject {
+class JSSHA512_256 final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSSHA512_256* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -1135,9 +1134,9 @@ class JSSHA512_256Prototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSSHA512_256Prototype* prototype);
     };
-class JSTextDecoder final : public JSDestructibleObject {
+class JSTextDecoder final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSTextDecoder* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -1259,9 +1258,9 @@ class JSTextDecoderPrototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSTextDecoderPrototype* prototype);
     };
-class JSRequest final : public JSDestructibleObject {
+class JSRequest final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSRequest* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -1385,9 +1384,9 @@ class JSRequestPrototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSRequestPrototype* prototype);
     };
-class JSResponse final : public JSDestructibleObject {
+class JSResponse final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSResponse* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;
@@ -1512,9 +1511,9 @@ class JSResponsePrototype final : public JSC::JSNonFinalObject {
     
         void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSResponsePrototype* prototype);
     };
-class JSBlob final : public JSDestructibleObject {
+class JSBlob final : public JSC::JSDestructibleObject {
     public:
-        using Base = JSDestructibleObject;
+        using Base = JSC::JSDestructibleObject;
         static JSBlob* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     
         DECLARE_EXPORT_INFO;

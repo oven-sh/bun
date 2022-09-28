@@ -837,6 +837,10 @@ pub const JSRequest = struct {
     extern fn Request__dangerouslySetPtr(JSC.JSValue, ?*Request) bool;
 
     comptime {
+        if (@TypeOf(Request.estimatedSize) != (fn (*Request) callconv(.C) usize)) {
+            @compileLog("Request.estimatedSize is not a size function");
+        }
+
         if (@TypeOf(Request.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Request)) {
             @compileLog("Request.constructor is not a constructor");
         }
@@ -897,6 +901,7 @@ pub const JSRequest = struct {
         if (!JSC.is_bindgen) {
             @export(Request.constructor, .{ .name = "RequestClass__construct" });
             @export(Request.doClone, .{ .name = "RequestPrototype__doClone" });
+            @export(Request.estimatedSize, .{ .name = "Request__estimatedSize" });
             @export(Request.finalize, .{ .name = "RequestClass__finalize" });
             @export(Request.getArrayBuffer, .{ .name = "RequestPrototype__getArrayBuffer" });
             @export(Request.getBlob, .{ .name = "RequestPrototype__getBlob" });
@@ -964,6 +969,10 @@ pub const JSResponse = struct {
     extern fn Response__dangerouslySetPtr(JSC.JSValue, ?*Response) bool;
 
     comptime {
+        if (@TypeOf(Response.estimatedSize) != (fn (*Response) callconv(.C) usize)) {
+            @compileLog("Response.estimatedSize is not a size function");
+        }
+
         if (@TypeOf(Response.constructor) != (fn (*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*Response)) {
             @compileLog("Response.constructor is not a constructor");
         }
@@ -1018,6 +1027,7 @@ pub const JSResponse = struct {
             @export(Response.constructor, .{ .name = "ResponseClass__construct" });
             @export(Response.constructRedirect, .{ .name = "ResponseClass__constructRedirect" });
             @export(Response.doClone, .{ .name = "ResponsePrototype__doClone" });
+            @export(Response.estimatedSize, .{ .name = "Response__estimatedSize" });
             @export(Response.finalize, .{ .name = "ResponseClass__finalize" });
             @export(Response.getArrayBuffer, .{ .name = "ResponsePrototype__getArrayBuffer" });
             @export(Response.getBlob, .{ .name = "ResponsePrototype__getBlob" });

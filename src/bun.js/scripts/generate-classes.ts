@@ -773,7 +773,6 @@ function generateClassHeader(typeName, obj) {
 function generateClassImpl(typeName, obj: ClassDefinition) {
   const { klass: fields, finalize, proto, construct, estimatedSize } = obj;
   const name = className(typeName);
-  var symbolName = classSymbolName;
 
   const DEFINE_VISIT_CHILDREN_LIST = [
     ...Object.entries(fields),

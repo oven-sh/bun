@@ -3939,6 +3939,13 @@ pub const AnyBlob = union(enum) {
     InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
 
+    pub fn size(this: *const AnyBlob) Blob.SizeType {
+        return switch (this.*) {
+            .Blob => this.Blob.size,
+            else => @truncate(Blob.SizeType, this.slice().len),
+        };
+    }
+
     pub fn from(this: *AnyBlob, list: std.ArrayList(u8)) void {
         this.* = .{
             .InternalBlob = InternalBlob{
@@ -4103,8 +4110,8 @@ pub const Body = struct {
     init: Init = Init{ .headers = null, .status_code = 200 },
     value: Value = Value.empty,
 
-    pub inline fn len(this: *const Body) usize {
-        return this.slice().len;
+    pub inline fn len(this: *const Body) Blob.SizeType {
+        return this.value.size();
     }
 
     pub fn slice(this: *const Body) []const u8 {
@@ -4148,7 +4155,7 @@ pub const Body = struct {
         } else if (this.value == .InternalBlob or this.value == .InlineBlob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
-            try Blob.writeFormatForSize(this.value.slice().len, writer, enable_ansi_colors);
+            try Blob.writeFormatForSize(this.value.size(), writer, enable_ansi_colors);
         } else if (this.value == .Locked) {
             if (this.value.Locked.readable) |stream| {
                 try formatter.printComma(Writer, writer, enable_ansi_colors);
@@ -4160,8 +4167,9 @@ pub const Body = struct {
 
     pub fn deinit(this: *Body, _: std.mem.Allocator) void {
         if (this.init.headers) |headers| {
-            headers.deref();
             this.init.headers = null;
+
+            headers.deref();
         }
         this.value.deinit();
     }
@@ -4313,6 +4321,15 @@ pub const Body = struct {
         Used: void,
         Empty: void,
         Error: JSValue,
+
+        pub fn size(this: *const Value) Blob.SizeType {
+            return switch (this.*) {
+                .Blob => this.Blob.size,
+                .InternalBlob => @truncate(Blob.SizeType, this.InternalBlob.sliceConst().len),
+                .InlineBlob => @truncate(Blob.SizeType, this.InlineBlob.sliceConst().len),
+                else => 0,
+            };
+        }
 
         pub fn estimatedSize(this: *const Value) usize {
             return switch (this.*) {
@@ -4738,14 +4755,12 @@ pub const Body = struct {
                     return new_blob;
                 },
                 .InlineBlob => {
-                    var new_blob = Blob.init(
+                    const new_blob = Blob.create(
                         this.InlineBlob.toOwnedSlice(),
                         bun.default_allocator,
                         JSC.VirtualMachine.vm.global,
+                        this.InlineBlob.was_string,
                     );
-                    if (this.InlineBlob.was_string) {
-                        new_blob.content_type = MimeType.text.value;
-                    }
 
                     this.* = .{ .Used = .{} };
                     return new_blob;
@@ -4865,6 +4880,10 @@ pub const Body = struct {
                         globalThis,
                     ),
                 };
+            }
+
+            if (this.* == .InlineBlob) {
+                return this.*;
             }
 
             if (this.* == .Blob) {

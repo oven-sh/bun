@@ -7,7 +7,7 @@ const ZigURL = @import("../../url.zig").URL;
 const HTTPClient = @import("http");
 const NetworkThread = HTTPClient.NetworkThread;
 const AsyncIO = NetworkThread.AsyncIO;
-const JSC = @import("root").JSC;
+const JSC = @import("javascript_core");
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
@@ -1118,9 +1118,12 @@ pub const FileSink = struct {
     }
 
     fn cleanup(this: *FileSink) void {
-        this.unwatch(this.fd);
-
         if (this.fd != std.math.maxInt(JSC.Node.FileDescriptor)) {
+            if (this.scheduled_count > 0) {
+                this.scheduled_count = 0;
+                this.unwatch(this.fd);
+            }
+
             _ = JSC.Node.Syscall.close(this.fd);
             this.fd = std.math.maxInt(JSC.Node.FileDescriptor);
         }

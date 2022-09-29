@@ -3390,7 +3390,7 @@ pub const FileBlobLoader = struct {
                 // macOS FIONREAD doesn't seem to work here
                 // but we can get this information from the kqueue callback so we don't need to
                 if (len == 0) {
-                    const FIONREAD = if (Environment.isLinux) std.os.linux.FIONREAD else bun.C.FIONREAD;
+                    const FIONREAD = if (Environment.isLinux) std.os.linux.T.FIONREAD else bun.C.FIONREAD;
                     const rc: c_int = std.c.ioctl(this.fd, FIONREAD, &len);
                     if (rc != 0) {
                         len = 0;

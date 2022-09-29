@@ -754,7 +754,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         send_buffer: bun.LinearFifo(u8, .Dynamic),
 
         globalThis: *JSC.JSGlobalObject,
-        event_loop_ref: bool = false,
+        poll_ref: JSC.PollRef = JSC.PollRef.init(),
 
         pub const name = if (ssl) "WebSocketClientTLS" else "WebSocketClient";
 
@@ -1418,15 +1418,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             ) orelse return null;
             adopted.send_buffer.ensureTotalCapacity(2048) catch return null;
             adopted.receive_buffer.ensureTotalCapacity(2048) catch return null;
-            adopted.event_loop_ref = true;
-            adopted.globalThis.bunVM().us_loop_reference_count +|= 1;
-            globalThis.bunVM().active_tasks += 1;
+            adopted.poll_ref.ref(globalThis.bunVM());
 
             var buffered_slice: []u8 = buffered_data[0..buffered_data_len];
             if (buffered_slice.len > 0) {
                 const InitialDataHandler = struct {
                     adopted: *WebSocket,
                     slice: []u8,
+                    task: JSC.AnyTask = undefined,
+
+                    pub const Handle = JSC.AnyTask.New(@This(), handle);
 
                     pub fn handle(this: *@This()) void {
                         defer {
@@ -1446,7 +1447,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     .adopted = adopted,
                     .slice = buffered_slice,
                 };
-                globalThis.bunVM().uws_event_loop.?.nextTick(*InitialDataHandler, initial_data, InitialDataHandler.handle);
+                initial_data.task = InitialDataHandler.Handle.init(initial_data);
+                globalThis.bunVM().eventLoop().enqueueTask(JSC.Task.init(&initial_data.task));
             }
             return @ptrCast(
                 *anyopaque,
@@ -1457,11 +1459,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         pub fn finalize(this: *WebSocket) callconv(.C) void {
             this.clearData();
 
-            if (this.event_loop_ref) {
-                this.event_loop_ref = false;
-                this.globalThis.bunVM().us_loop_reference_count -|= 1;
-                this.globalThis.bunVM().active_tasks -|= 1;
-            }
+            this.poll_ref.unref(this.globalThis.bunVM());
 
             this.outgoing_websocket = null;
 

@@ -1380,7 +1380,11 @@ pub const ZigConsoleClient = struct {
                         JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => .Set,
                         JSValue.JSType.JSDate => .JSON,
                         JSValue.JSType.JSPromise => .Promise,
-                        .ArrayBuffer, JSValue.JSType.Object, JSValue.JSType.FinalObject => .Object,
+                        .ArrayBuffer,
+                        JSValue.JSType.Object,
+                        JSValue.JSType.FinalObject,
+                        .ModuleNamespaceObject,
+                        => .Object,
 
                         JSValue.JSType.Int8Array,
                         JSValue.JSType.Uint8Array,

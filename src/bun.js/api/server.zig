@@ -1657,7 +1657,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // Faster to do the memcpy than to do the two network calls
             // We are not streaming
             // This is an important performance optimization
-            if (this.has_abort_handler and this.blob.slice().len < 16384 - 1024) {
+            if (this.has_abort_handler and this.blob.size() < 16384 - 1024) {
                 this.resp.runCorkedWithType(*RequestContext, doRenderBlobCorked, this);
             } else {
                 this.doRenderBlobCorked();
@@ -1771,7 +1771,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn renderMetadata(this: *RequestContext) void {
             var response: *JSC.WebCore.Response = this.response_ptr.?;
             var status = response.statusCode();
-            const size = this.blob.slice().len;
+            const size = this.blob.size();
             status = if (status == 200 and size == 0 and !this.blob.isDetached())
                 204
             else
@@ -2091,7 +2091,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         has_js_deinited: bool = false,
         listen_callback: JSC.AnyTask = undefined,
         allocator: std.mem.Allocator,
-        keeping_js_alive: bool = false,
+        poll_ref: JSC.PollRef = .{},
 
         pub const Class = JSC.NewClass(
             ThisServer,
@@ -2282,7 +2282,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
             if (this.pending_requests == 0 and this.listener == null and this.has_js_deinited) {
-                this.deref();
+                this.unref();
                 this.deinit();
             }
         }
@@ -2290,7 +2290,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         pub fn stop(this: *ThisServer) void {
             if (this.listener) |listener| {
                 this.listener = null;
-                this.deref();
+                this.unref();
                 listener.close();
             }
 
@@ -2327,6 +2327,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         }
 
         noinline fn onListenFailed(this: *ThisServer) void {
+            this.unref();
+
             var zig_str: ZigString = ZigString.init("");
             var output_buf: [4096]u8 = undefined;
 
@@ -2403,23 +2405,20 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             this.listener = socket;
             this.vm.uws_event_loop = uws.Loop.get();
-            this.ref();
         }
 
         pub fn ref(this: *ThisServer) void {
-            if (this.keeping_js_alive) return;
+            if (this.poll_ref.isActive()) return;
 
-            this.vm.us_loop_reference_count +|= 1;
+            this.poll_ref.ref(this.vm);
             this.vm.eventLoop().start_server_on_next_tick = true;
-            this.keeping_js_alive = true;
         }
 
-        pub fn deref(this: *ThisServer) void {
-            if (!this.keeping_js_alive) return;
+        pub fn unref(this: *ThisServer) void {
+            if (!this.poll_ref.isActive()) return;
 
-            this.vm.us_loop_reference_count -|= 1;
+            this.poll_ref.unref(this.vm);
             this.vm.eventLoop().start_server_on_next_tick = false;
-            this.keeping_js_alive = false;
         }
 
         pub fn onBunInfoRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
@@ -2662,6 +2661,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             else
                 this.config.hostname;
 
+            this.ref();
             this.app.listenWithConfig(*ThisServer, this, onListen, .{
                 .port = this.config.port,
                 .host = host,

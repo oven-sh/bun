@@ -1758,19 +1758,6 @@ pub const SourceCode = extern struct {
 
 pub const Thenables = opaque {};
 
-pub const StrongValue = opaque {
-    pub const shim = Shimmer("JSC", "JSFunction", @This());
-
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/JSFunction.h";
-    pub const name = "JSC::JSFunction";
-    pub const namespace = "JSC";
-
-    pub fn get(this: *StrongValue) JSValue {
-        return cppFn("get", .{this});
-    }
-};
-
 pub const JSFunction = extern struct {
     pub const shim = Shimmer("JSC", "JSFunction", @This());
     bytes: shim.Bytes,
@@ -2685,7 +2672,7 @@ pub const JSValue = enum(JSValueReprInt) {
             this.asObjectRef(),
             @ptrCast(JSC.C.JSValueRef, thisValue.asNullableVoid()),
             args.len,
-            @ptrCast([*]const JSC.C.JSValueRef, args.ptr),
+            @ptrCast(?[*]const JSC.C.JSValueRef, args.ptr),
         );
     }
 
@@ -3569,6 +3556,32 @@ pub const VM = extern struct {
         global_object: *JSGlobalObject,
     ) void {
         return cppFn("deleteAllCode", .{ vm, global_object });
+    }
+
+    extern fn Bun__setOnEachMicrotaskTick(vm: *VM, ptr: ?*anyopaque, callback: ?(fn (*anyopaque) callconv(.C) void)) void;
+
+    pub fn onEachMicrotask(vm: *VM, comptime Ptr: type, ptr: *Ptr, comptime callback: fn (*Ptr) void) void {
+        if (comptime is_bindgen) {
+            return;
+        }
+
+        const callback_ = callback;
+        const Wrapper = struct {
+            pub fn run(ptr_: *anyopaque) callconv(.C) void {
+                var ptr__ = @ptrCast(*Ptr, @alignCast(@alignOf(Ptr), ptr_));
+                callback_(ptr__);
+            }
+        };
+
+        Bun__setOnEachMicrotaskTick(vm, ptr, Wrapper.run);
+    }
+
+    pub fn clearMicrotaskCallback(vm: *VM) void {
+        if (comptime is_bindgen) {
+            return;
+        }
+
+        Bun__setOnEachMicrotaskTick(vm, null, null);
     }
 
     pub fn whenIdle(

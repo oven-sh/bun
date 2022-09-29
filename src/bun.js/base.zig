@@ -2766,7 +2766,6 @@ const BigIntStats = JSC.Node.BigIntStats;
 const Transpiler = @import("./api/transpiler.zig");
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
-const TimeoutTask = JSC.BunTimer.Timeout.TimeoutTask;
 const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;
 const Element = JSC.Cloudflare.Element;
 const Comment = JSC.Cloudflare.Comment;
@@ -2823,7 +2822,6 @@ pub const JSPrivateDataPtr = TaggedPointerUnion(.{
     SSLServer,
     Stats,
     TextChunk,
-    TimeoutTask,
     Transpiler,
     FFI,
 });
@@ -3936,6 +3934,16 @@ pub const Strong = struct {
         return .{};
     }
 
+    pub fn create(
+        value: JSC.JSValue,
+        globalThis: *JSC.JSGlobalObject,
+    ) Strong {
+        var str = Strong.init();
+        if (value != .zero)
+            str.set(globalThis, value);
+        return str;
+    }
+
     pub fn get(this: *Strong) ?JSValue {
         var ref = this.ref orelse return null;
         const result = ref.get();
@@ -3959,6 +3967,7 @@ pub const Strong = struct {
 
     pub fn set(this: *Strong, globalThis: *JSC.JSGlobalObject, value: JSValue) void {
         var ref: *JSC.napi.Ref = this.ref orelse {
+            if (value == .zero) return;
             this.ref = JSC.napi.Ref.create(globalThis, value);
             return;
         };

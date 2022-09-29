@@ -13,7 +13,6 @@ const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 const typeBaseName = @import("../meta.zig").typeBaseName;
 const CopyFilePromiseTask = WebCore.Blob.Store.CopyFile.CopyFilePromiseTask;
 const AsyncTransformTask = @import("./api/transpiler.zig").TransformTask.AsyncTransformTask;
-const BunTimerTimeoutTask = Bun.Timer.Timeout.TimeoutTask;
 const ReadFileTask = WebCore.Blob.Store.ReadFile.ReadFileTask;
 const WriteFileTask = WebCore.Blob.Store.WriteFile.WriteFileTask;
 const napi_async_work = JSC.napi.napi_async_work;
@@ -175,7 +174,6 @@ pub const Task = TaggedPointerUnion(.{
     Microtask,
     MicrotaskForDefaultGlobalObject,
     AsyncTransformTask,
-    BunTimerTimeoutTask,
     ReadFileTask,
     CopyFilePromiseTask,
     WriteFileTask,
@@ -252,11 +250,6 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, typeBaseName(@typeName(JSC.napi.napi_async_work))) => {
                     var transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
-                    transform_task.*.runFromJS();
-                    vm_.active_tasks -|= 1;
-                },
-                @field(Task.Tag, @typeName(BunTimerTimeoutTask)) => {
-                    var transform_task: *BunTimerTimeoutTask = task.get(BunTimerTimeoutTask).?;
                     transform_task.*.runFromJS();
                     vm_.active_tasks -|= 1;
                 },
@@ -416,8 +409,8 @@ pub const EventLoop = struct {
         if (this.virtual_machine.uws_event_loop == null) {
             var actual = uws.Loop.get().?;
             this.virtual_machine.uws_event_loop = actual;
-            _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
-            _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
+            // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
+            // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.global.vm(), JSC.VM.drainMicrotasks);
         }
     }
 
@@ -440,10 +433,8 @@ pub const EventLoop = struct {
         this.concurrent_tasks.push(task);
 
         if (this.virtual_machine.uws_event_loop) |loop| {
-            const deferCount = this.defer_count.fetchAdd(1, .Monotonic);
-            if (deferCount == 0) {
-                loop.wakeup();
-            }
+            _ = this.defer_count.fetchAdd(1, .Monotonic);
+            loop.wakeup();
         }
     }
 };

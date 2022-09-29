@@ -256,8 +256,11 @@ public:
 
         jsFunctionOnLoadObjectResultResolve,
         jsFunctionOnLoadObjectResultReject,
+
+        Bun__TestScope__onReject,
+        Bun__TestScope__onResolve,
     };
-    static constexpr size_t promiseFunctionsSize = 18;
+    static constexpr size_t promiseFunctionsSize = 20;
 
     static PromiseFunctions promiseHandlerID(EncodedJSValue (*handler)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
     {
@@ -301,6 +304,10 @@ public:
             return PromiseFunctions::jsFunctionOnLoadObjectResultResolve;
         } else if (handler == jsFunctionOnLoadObjectResultReject) {
             return PromiseFunctions::jsFunctionOnLoadObjectResultReject;
+        } else if (handler == Bun__TestScope__onReject) {
+            return PromiseFunctions::Bun__TestScope__onReject;
+        } else if (handler == Bun__TestScope__onResolve) {
+            return PromiseFunctions::Bun__TestScope__onResolve;
         } else {
             RELEASE_ASSERT_NOT_REACHED();
         }

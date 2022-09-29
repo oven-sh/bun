@@ -2758,7 +2758,7 @@ pub const HTTPServerRequestContext = JSC.API.Server.RequestContext;
 pub const HTTPSSLServerRequestContext = JSC.API.SSLServer.RequestContext;
 pub const HTTPDebugServerRequestContext = JSC.API.DebugServer.RequestContext;
 pub const HTTPDebugSSLServerRequestContext = JSC.API.DebugSSLServer.RequestContext;
-
+pub const TestScope = @import("../test/jest.zig").TestScope;
 comptime {
     if (!is_bindgen) {
         WebSocketHTTPClient.shim.ref();
@@ -2782,10 +2782,11 @@ comptime {
         JSHTTPResponseSink.shim.ref();
         JSHTTPSResponseSink.shim.ref();
         JSFileSink.shim.ref();
-
         JSReadableStreamBytes.shim.ref();
         JSReadableStreamFile.shim.ref();
         _ = ZigString__free;
         _ = ZigString__free_global;
+
+        TestScope.shim.ref();
     }
 }

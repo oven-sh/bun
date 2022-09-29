@@ -412,10 +412,7 @@ pub const VirtualMachine = struct {
         return this.event_loop;
     }
 
-    pub fn prepareLoop(this: *VirtualMachine) void {
-        var loop = this.uws_event_loop.?;
-        _ = loop.addPostHandler(*JSC.EventLoop, this.eventLoop(), JSC.EventLoop.tick);
-    }
+    pub fn prepareLoop(_: *VirtualMachine) void {}
 
     pub fn enterUWSLoop(this: *VirtualMachine) void {
         var loop = this.uws_event_loop.?;
@@ -1473,7 +1470,7 @@ pub const VirtualMachine = struct {
         this.waitForPromise(promise);
 
         if (this.eventLoop().start_server_on_next_tick) {
-            this.enterUWSLoop();
+            this.uws_event_loop.?.tick();
         }
 
         return promise;

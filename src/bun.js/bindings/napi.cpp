@@ -132,13 +132,15 @@ void NapiRef::unref()
     bool clear = refCount == 1;
     refCount = refCount > 0 ? refCount - 1 : 0;
     if (clear) {
-        JSC::JSValue val = strongRef.get();
-        if (val.isString()) {
-            weakValueRef.setString(val.toString(globalObject.get()), weakValueHandleOwner(), this);
-        } else if (val.isObject()) {
-            weakValueRef.setObject(val.getObject(), weakValueHandleOwner(), this);
-        } else {
-            weakValueRef.setPrimitive(val);
+        if (JSC::JSValue val = strongRef.get()) {
+
+            if (val.isString()) {
+                weakValueRef.setString(val.toString(globalObject.get()), weakValueHandleOwner(), this);
+            } else if (val.isObject()) {
+                weakValueRef.setObject(val.getObject(), weakValueHandleOwner(), this);
+            } else {
+                weakValueRef.setPrimitive(val);
+            }
         }
         strongRef.clear();
     }
@@ -717,8 +719,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
 
     JSC::JSValue val = toJS(value);
 
-    if (!val.isObject()) {
-
+    if (!val || !val.isObject()) {
         return napi_object_expected;
     }
 

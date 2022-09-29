@@ -2108,6 +2108,18 @@ void GlobalObject::finishCreation(VM& vm)
     RELEASE_ASSERT(classInfo());
 }
 
+extern "C" void Bun__setOnEachMicrotaskTick(JSC::VM* vm, void* ptr, void (*callback)(void* ptr))
+{
+    if (callback == nullptr) {
+        vm->setOnEachMicrotaskTick(nullptr);
+        return;
+    }
+
+    vm->setOnEachMicrotaskTick([=](JSC::VM& vm) {
+        callback(ptr);
+    });
+}
+
 // This implementation works the same as setTimeout(myFunction, 0)
 // TODO: make it more efficient
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate

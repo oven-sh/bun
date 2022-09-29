@@ -134,41 +134,34 @@ pub const Run = struct {
             Output.flush();
         }
 
-        this.vm.global.vm().releaseWeakRefs();
-        _ = this.vm.arena.gc(false);
-        _ = this.vm.global.vm().runGC(false);
-        this.vm.tick();
+        // don't run the GC if we don't actually need to
+        if (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0 or
+            this.vm.uws_event_loop.?.active > 0 or
+            this.vm.eventLoop().tickConcurrentWithCount() > 0)
+        {
+            this.vm.global.vm().releaseWeakRefs();
+            _ = this.vm.arena.gc(false);
+            _ = this.vm.global.vm().runGC(false);
+            this.vm.tick();
+        }
 
         {
-            var any = false;
-            while (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0) {
+            while (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0 or this.vm.uws_event_loop.?.active > 0) {
                 this.vm.tick();
-                any = true;
-                if (this.vm.active_tasks > 0) {
-                    if (this.vm.eventLoop().tickConcurrentWithCount() == 0) {
-                        _ = this.vm.arena.gc(false);
-                        _ = this.vm.global.vm().runGC(false);
 
-                        if (this.vm.eventLoop().tickConcurrentWithCount() == 0 and
-                            this.vm.active_tasks > 0)
-                        {
-                            this.vm.event_loop.ensureWaker();
-                            _ = this.vm.uws_event_loop.?.run();
-                        }
-                    }
+                if (this.vm.eventLoop().tickConcurrentWithCount() == 0) {
+                    this.vm.uws_event_loop.?.tick();
                 }
             }
 
-            if (any) {
-                if (this.vm.log.msgs.items.len > 0) {
-                    if (Output.enable_ansi_colors) {
-                        this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                    } else {
-                        this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                    }
-                    Output.prettyErrorln("\n", .{});
-                    Output.flush();
+            if (this.vm.log.msgs.items.len > 0) {
+                if (Output.enable_ansi_colors) {
+                    this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
+                } else {
+                    this.vm.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
                 }
+                Output.prettyErrorln("\n", .{});
+                Output.flush();
             }
         }
 

@@ -382,8 +382,8 @@ pub const EventLoop = struct {
                     this.tick();
 
                     if (promise.status(this.global.vm()) == .Pending) {
-                        if (this.virtual_machine.uws_event_loop != null) {
-                            this.runUSocketsLoop();
+                        if (this.tickConcurrentWithCount() == 0) {
+                            this.virtual_machine.uws_event_loop.?.tick();
                         }
                     }
                 }

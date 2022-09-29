@@ -144,6 +144,8 @@ function testBlobInterface(blobbyConstructor, hasBlobFn) {
           if (withGC) gc();
           expect(blobed.size).toBe(size);
           if (withGC) gc();
+          blobed.type = "";
+          if (withGC) gc();
           expect(blobed.type).toBe("");
           if (withGC) gc();
           blobed.type = "application/json";

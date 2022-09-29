@@ -223,9 +223,7 @@ pub const HTMLRewriter = struct {
     }
 
     pub fn transform(this: *HTMLRewriter, global: *JSGlobalObject, response: *Response) JSValue {
-        var input = response.body.slice();
-
-        if (input.len == 0 and !(response.body.value == .Blob and response.body.value.Blob.needsToReadFile())) {
+        if (response.body.len() == 0 and !(response.body.value == .Blob and response.body.value.Blob.needsToReadFile())) {
             return this.returnEmptyResponse(global, response);
         }
 
@@ -413,11 +411,14 @@ pub const HTMLRewriter = struct {
             for (sink.context.element_handlers.items) |doc| {
                 doc.ctx = sink;
             }
-
+            const input_size = original.body.len();
             sink.rewriter = builder.build(
                 .UTF8,
                 .{
-                    .preallocated_parsing_buffer_size = @maximum(original.body.len(), 1024),
+                    .preallocated_parsing_buffer_size = if (input_size == JSC.WebCore.Blob.max_size)
+                        1024
+                    else
+                        @maximum(input_size, 1024),
                     .max_allowed_memory_usage = std.math.maxInt(u32),
                 },
                 false,
@@ -454,19 +455,18 @@ pub const HTMLRewriter = struct {
             result.url = bun.default_allocator.dupe(u8, original.url) catch unreachable;
             result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
 
-            var input: JSC.WebCore.Blob = original.body.value.use();
+            var input = original.body.value.useAsAnyBlob();
 
             const is_pending = input.needsToReadFile();
             defer if (!is_pending) input.detach();
 
             if (is_pending) {
-                input.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
-            } else if (sink.runOutputSink(input.sharedView(), false, false)) |error_value| {
+                input.Blob.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
+            } else if (sink.runOutputSink(input.slice(), false, false)) |error_value| {
                 return error_value;
             }
 
             // Hold off on cloning until we're actually done.
-
             return sink.response.toJS(sink.global.ref());
         }
 

@@ -3878,6 +3878,10 @@ pub const PollRef = struct {
 
     const Status = enum { active, inactive, done };
 
+    pub inline fn isActive(this: PollRef) bool {
+        return this.status == .active;
+    }
+
     /// Make calling ref() on this poll into a no-op.
     pub fn disable(this: *PollRef) void {
         this.unref();

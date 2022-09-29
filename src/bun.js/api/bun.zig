@@ -2198,80 +2198,85 @@ pub const Timer = struct {
         return VirtualMachine.vm.timer.last_id;
     }
 
-    const Pool = bun.ObjectPool(Timeout, null, true, 1000);
-
+    const uws = @import("uws");
     pub const Timeout = struct {
         id: i32 = 0,
-        callback: JSValue,
+        callback: JSC.Strong = .{},
         interval: i32 = 0,
-        completion: NetworkThread.Completion = undefined,
         repeat: bool = false,
-        io_task: ?*TimeoutTask = null,
         cancelled: bool = false,
+        globalThis: *JSC.JSGlobalObject,
+        timer: *uws.Timer,
+        poll_ref: JSC.PollRef = JSC.PollRef.init(),
+        task_ref: JSC.Ref = JSC.Ref.init(),
 
-        pub const TimeoutTask = IOTask(Timeout);
+        // When deleting a timeout that is currently being called, we delay
+        in_progress: bool = false,
+        reschedule: bool = false,
+        task: JSC.AnyTask = undefined,
 
-        pub fn run(this: *Timeout, _task: *TimeoutTask) void {
-            this.io_task = _task;
-            NetworkThread.global.io.timeout(
-                *Timeout,
-                this,
-                onCallback,
-                &this.completion,
-                if (this.interval > 0) std.time.ns_per_ms * @intCast(
-                    u63,
-                    this.interval,
-                ) else 1,
-            );
+        pub fn ref(this: *Timeout) void {
+            this.task_ref.ref(this.globalThis.bunVM());
         }
 
-        pub fn onCallback(this: *Timeout, _: *NetworkThread.Completion, _: NetworkThread.AsyncIO.TimeoutError!void) void {
-            this.io_task.?.onFinish();
+        pub fn unref(this: *Timeout) void {
+            this.task_ref.unref(this.globalThis.bunVM());
         }
 
-        pub fn then(this: *Timeout, global: *JSGlobalObject) void {
-            if (comptime JSC.is_bindgen)
-                unreachable;
+        pub fn run(timer: *uws.Timer) callconv(.C) void {
+            timer.ext(Timeout).?.then();
+        }
 
-            var vm = global.bunVM();
+        pub fn perform(this: *Timeout) void {
+            var vm = this.globalThis.bunVM();
+            const callback = this.callback.get() orelse @panic("Expected callback in timer");
+            const result = callback.call(this.globalThis, &.{});
 
-            if (!this.cancelled) {
-                if (this.repeat) {
-                    this.io_task.?.deinit();
-                    var task = Timeout.TimeoutTask.createOnJSThread(vm.allocator, global, this) catch unreachable;
-                    vm.timer.timeouts.put(vm.allocator, this.id, this) catch unreachable;
-                    this.io_task = task;
-                    task.schedule();
-                }
+            if (result.isAnyError(this.globalThis)) {
+                vm.runErrorHandler(result, null);
+            }
+            this.in_progress = false;
+            if (!this.repeat) this.cancelled = true;
 
-                _ = JSC.C.JSObjectCallAsFunction(global.ref(), this.callback.asObjectRef(), null, 0, null, null);
-
-                if (this.repeat)
-                    return;
-
-                vm.timer.active -|= 1;
-                vm.active_tasks -|= 1;
-            } else {
-                // the active tasks count is already cleared for canceled timeout,
-                // add one here to neutralize the `-|= 1` in event loop.
-                vm.active_tasks +|= 1;
+            if (this.reschedule) {
+                this.in_progress = true;
             }
 
-            this.clear(global);
+            if (this.cancelled and !this.in_progress) this.deinit();
         }
 
-        pub fn clear(this: *Timeout, global: *JSGlobalObject) void {
+        pub fn schedule(this: *Timeout) void {
+            this.in_progress = true;
+            this.task = JSC.AnyTask.New(Timeout, perform).init(this);
+            this.globalThis.bunVM().eventLoop().enqueueTask(JSC.Task.init(&this.task));
+            this.reschedule = false;
+        }
+
+        pub fn then(this: *Timeout) void {
             if (comptime JSC.is_bindgen)
                 unreachable;
 
+            if (!this.cancelled and !this.in_progress) {
+                this.schedule();
+            } else if (!this.cancelled and this.in_progress) {
+                this.reschedule = true;
+            }
+
+            if (this.cancelled and !this.in_progress) this.deinit();
+        }
+
+        pub fn deinit(this: *Timeout) void {
+            if (comptime JSC.is_bindgen)
+                unreachable;
+
+            var vm = this.globalThis.bunVM();
             this.cancelled = true;
-            JSC.C.JSValueUnprotect(global.ref(), this.callback.asObjectRef());
-            _ = VirtualMachine.vm.timer.timeouts.swapRemove(this.id);
-            if (this.io_task) |task| {
-                task.deinit();
-                this.io_task = null;
-            }
-            Pool.releaseValue(this);
+            this.poll_ref.unref(vm);
+            _ = vm.timer.timeouts.swapRemove(this.id);
+            this.timer.deinit();
+            this.unref();
+            this.callback.deinit();
+            vm.allocator.destroy(this);
         }
     };
 
@@ -2283,14 +2288,20 @@ pub const Timer = struct {
         repeat: bool,
     ) !void {
         if (comptime is_bindgen) unreachable;
-        var timeout = Pool.first(globalThis.bunVM().allocator);
-        js.JSValueProtect(globalThis.ref(), callback.asObjectRef());
-        timeout.* = Timeout{ .id = id, .callback = callback, .interval = countdown.toInt32(), .repeat = repeat };
-        var task = try Timeout.TimeoutTask.createOnJSThread(VirtualMachine.vm.allocator, globalThis, timeout);
-        VirtualMachine.vm.timer.timeouts.put(VirtualMachine.vm.allocator, id, timeout) catch unreachable;
-        VirtualMachine.vm.timer.active +|= 1;
-        VirtualMachine.vm.active_tasks +|= 1;
-        task.schedule();
+        var vm = globalThis.bunVM();
+        var timeout = try vm.allocator.create(Timeout);
+        timeout.* = Timeout{
+            .id = id,
+            .callback = JSC.Strong.create(callback, globalThis),
+            .interval = countdown.toInt32(),
+            .repeat = repeat,
+            .globalThis = globalThis,
+            .timer = uws.Timer.create(vm.uws_event_loop.?, false, timeout),
+        };
+        timeout.timer.set(timeout, Timeout.run, timeout.interval, @as(i32, @boolToInt(repeat)) * timeout.interval);
+        timeout.poll_ref.ref(vm);
+        timeout.ref();
+        vm.timer.timeouts.put(vm.allocator, id, timeout) catch unreachable;
     }
 
     pub fn setTimeout(
@@ -2299,8 +2310,8 @@ pub const Timer = struct {
         countdown: JSValue,
     ) callconv(.C) JSValue {
         if (comptime is_bindgen) unreachable;
-        const id = VirtualMachine.vm.timer.last_id;
-        VirtualMachine.vm.timer.last_id +%= 1;
+        const id = globalThis.bunVM().timer.last_id;
+        globalThis.bunVM().timer.last_id +%= 1;
 
         Timer.set(id, globalThis, callback, countdown, false) catch
             return JSValue.jsUndefined();
@@ -2313,8 +2324,8 @@ pub const Timer = struct {
         countdown: JSValue,
     ) callconv(.C) JSValue {
         if (comptime is_bindgen) unreachable;
-        const id = VirtualMachine.vm.timer.last_id;
-        VirtualMachine.vm.timer.last_id +%= 1;
+        const id = globalThis.bunVM().timer.last_id;
+        globalThis.bunVM().timer.last_id +%= 1;
 
         Timer.set(id, globalThis, callback, countdown, true) catch
             return JSValue.jsUndefined();
@@ -2325,10 +2336,11 @@ pub const Timer = struct {
     pub fn clearTimer(id: JSValue, _: *JSGlobalObject) void {
         if (comptime is_bindgen) unreachable;
         var timer: *Timeout = VirtualMachine.vm.timer.timeouts.get(id.toInt32()) orelse return;
-        timer.cancelled = true;
-        VirtualMachine.vm.timer.active -|= 1;
-        // here we also remove the active task count added in event_loop.
-        VirtualMachine.vm.active_tasks -|= 2;
+        if (timer.in_progress) {
+            timer.cancelled = true;
+        } else {
+            timer.deinit();
+        }
     }
 
     pub fn clearTimeout(

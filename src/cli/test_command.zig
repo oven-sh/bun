@@ -43,7 +43,7 @@ const Jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Test = TestRunner.Test;
 const NetworkThread = @import("http").NetworkThread;
-
+const uws = @import("uws");
 pub const CommandLineReporter = struct {
     jest: TestRunner,
     callback: TestRunner.Callback,
@@ -410,6 +410,9 @@ pub const TestCommand = struct {
                 TestCommand.run(reporter, vm, files[files.len - 1].slice(), allocator) catch {};
             }
         };
+
+        vm_.eventLoop().ensureWaker();
+
         var ctx = Context{ .reporter = reporter_, .vm = vm_, .files = files_, .allocator = allocator_ };
         vm_.runWithAPILock(Context, &ctx, Context.begin);
     }
@@ -443,6 +446,7 @@ pub const TestCommand = struct {
 
         Output.prettyErrorln("<r>\n{s}:\n", .{resolution.path_pair.primary.name.filename});
         Output.flush();
+
         var promise = try vm.loadEntryPoint(resolution.path_pair.primary.text);
 
         switch (promise.status(vm.global.vm())) {
@@ -456,7 +460,21 @@ pub const TestCommand = struct {
 
         var modules: []*Jest.DescribeScope = reporter.jest.files.items(.module_scope)[file_start..];
         for (modules) |module| {
-            module.runTests(vm.global.ref());
+            module.runTests(JSC.JSValue.zero, vm.global.ref());
+            vm.eventLoop().tick();
+
+            while (vm.active_tasks > 0) {
+                if (!Jest.Jest.runner.?.has_pending_tests) Jest.Jest.runner.?.drain();
+                vm.eventLoop().tick();
+
+                while (Jest.Jest.runner.?.has_pending_tests) : (vm.eventLoop().tick()) {
+                    vm.eventLoop().tick();
+                    if (!Jest.Jest.runner.?.has_pending_tests) break;
+                    vm.uws_event_loop.?.tick();
+                }
+            }
+            _ = vm.global.vm().runGC(false);
         }
+        vm.global.vm().clearMicrotaskCallback();
     }
 };

@@ -35,6 +35,9 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         globalThis: *JSGlobalObject,
         concurrent_task: JSC.ConcurrentTask = .{},
 
+        // This is a poll because we want it to enter the uSockets loop
+        ref: JSC.PollRef = .{},
+
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
             this.* = .{
@@ -45,7 +48,6 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
                 .globalThis = globalThis,
             };
             this.promise.protect();
-            VirtualMachine.vm.active_tasks +|= 1;
             return this;
         }
 
@@ -72,6 +74,8 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn schedule(this: *This) void {
+            this.ref.ref(this.event_loop.virtual_machine);
+
             WorkPool.schedule(&this.task);
         }
 
@@ -80,6 +84,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
+            this.ref.unref(this.event_loop.virtual_machine);
             this.allocator.destroy(this);
         }
     };
@@ -95,6 +100,9 @@ pub fn IOTask(comptime Context: type) type {
         globalThis: *JSGlobalObject,
         concurrent_task: ConcurrentTask = .{},
 
+        // This is a poll because we want it to enter the uSockets loop
+        ref: JSC.PollRef = .{},
+
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
             this.* = .{
@@ -103,7 +111,7 @@ pub fn IOTask(comptime Context: type) type {
                 .allocator = allocator,
                 .globalThis = globalThis,
             };
-            VirtualMachine.vm.active_tasks +|= 1;
+
             return this;
         }
 
@@ -118,6 +126,7 @@ pub fn IOTask(comptime Context: type) type {
         }
 
         pub fn schedule(this: *This) void {
+            this.ref.ref(this.event_loop.virtual_machine);
             NetworkThread.init() catch return;
             NetworkThread.global.schedule(NetworkThread.Batch.from(&this.task));
         }
@@ -128,6 +137,7 @@ pub fn IOTask(comptime Context: type) type {
 
         pub fn deinit(this: *This) void {
             var allocator = this.allocator;
+            this.ref.unref(this.event_loop.virtual_machine);
             this.* = undefined;
             allocator.destroy(this);
         }
@@ -217,7 +227,6 @@ pub const EventLoop = struct {
     pub fn tickWithCount(this: *EventLoop) u32 {
         var global = this.global;
         var global_vm = global.vm();
-        var vm_ = this.virtual_machine;
         var counter: usize = 0;
         while (this.tasks.readItem()) |task| {
             defer counter += 1;
@@ -234,46 +243,38 @@ pub const EventLoop = struct {
                     var fetch_task: *Fetch.FetchTasklet = task.get(Fetch.FetchTasklet).?;
                     fetch_task.onDone();
                     fetch_task.deinit();
-                    vm_.active_tasks -|= 1;
                 },
                 @field(Task.Tag, @typeName(AsyncTransformTask)) => {
                     var transform_task: *AsyncTransformTask = task.get(AsyncTransformTask).?;
                     transform_task.*.runFromJS();
                     transform_task.deinit();
-                    vm_.active_tasks -|= 1;
                 },
                 @field(Task.Tag, @typeName(CopyFilePromiseTask)) => {
                     var transform_task: *CopyFilePromiseTask = task.get(CopyFilePromiseTask).?;
                     transform_task.*.runFromJS();
                     transform_task.deinit();
-                    vm_.active_tasks -|= 1;
                 },
                 @field(Task.Tag, typeBaseName(@typeName(JSC.napi.napi_async_work))) => {
                     var transform_task: *JSC.napi.napi_async_work = task.get(JSC.napi.napi_async_work).?;
                     transform_task.*.runFromJS();
-                    vm_.active_tasks -|= 1;
                 },
                 @field(Task.Tag, @typeName(ReadFileTask)) => {
                     var transform_task: *ReadFileTask = task.get(ReadFileTask).?;
                     transform_task.*.runFromJS();
                     transform_task.deinit();
-                    vm_.active_tasks -|= 1;
                 },
                 @field(Task.Tag, @typeName(WriteFileTask)) => {
                     var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
                     transform_task.*.runFromJS();
                     transform_task.deinit();
-                    vm_.active_tasks -|= 1;
                 },
                 @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
                     var any: *AnyTask = task.get(AnyTask).?;
                     any.run();
-                    vm_.active_tasks -|= 1;
                 },
                 @field(Task.Tag, typeBaseName(@typeName(CppTask))) => {
                     var any: *CppTask = task.get(CppTask).?;
                     any.run(global);
-                    vm_.active_tasks -|= 1;
                 },
                 else => if (Environment.allow_assert) {
                     bun.Output.prettyln("\nUnexpected tag: {s}\n", .{@tagName(task.tag())});

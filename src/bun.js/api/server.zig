@@ -516,7 +516,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
         req: *uws.Request,
-        url: string,
         method: HTTP.Method,
         aborted: bool = false,
         finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
@@ -526,8 +525,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pending_promises_for_abort: u8 = 0,
 
         has_marked_complete: bool = false,
-        response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
-        response_protected: bool = false,
+        response_jsvalue: JSC.Strong = JSC.Strong.init(),
         response_ptr: ?*JSC.WebCore.Response = null,
         blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .InlineBlob = .{} },
         promise: ?*JSC.JSValue = null,
@@ -536,17 +534,22 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         has_called_error_handler: bool = false,
         needs_content_length: bool = false,
         sendfile: SendfileContext = undefined,
-        request_js_object: JSC.C.JSObjectRef = null,
+        request_jsvalue: JSC.Strong = JSC.Strong.init(),
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
         sink: ?*ResponseStream.JSSink = null,
         byte_stream: ?*JSC.WebCore.ByteStream = null,
+
+        /// Used in errors
+        pathname: []const u8 = "",
 
         has_written_status: bool = false,
 
         /// Used either for temporary blob data or fallback
         /// When the response body is a temporary value
         response_buf_owned: std.ArrayListUnmanaged(u8) = .{},
+
+        keepalive: bool = true,
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled;
@@ -588,8 +591,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.renderMissing();
                 return;
             };
-            ctx.response_jsvalue = value;
-            JSC.C.JSValueProtect(ctx.server.globalThis.ref(), value.asObjectRef());
+            ctx.response_jsvalue.set(ctx.server.globalThis, value);
 
             ctx.render(response);
         }
@@ -636,13 +638,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("204 No Content");
                 ctx.has_written_status = true;
-                ctx.resp.endWithoutBody();
+                ctx.resp.endWithoutBody(ctx.shouldCloseConnection());
                 ctx.finalize();
             } else {
                 if (!ctx.has_written_status)
                     ctx.resp.writeStatus("200 OK");
                 ctx.has_written_status = true;
-                ctx.resp.end("Welcome to Bun! To get started, return a Response object.", false);
+                ctx.resp.end("Welcome to Bun! To get started, return a Response object.", ctx.shouldCloseConnection());
                 ctx.finalize();
             }
         }
@@ -691,7 +693,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 @TypeOf(bb_writer),
                 bb_writer,
             ) catch unreachable;
-            if (this.resp.tryEnd(bb.items, bb.items.len)) {
+            if (this.resp.tryEnd(bb.items, bb.items.len, this.shouldCloseConnection())) {
                 bb.clearAndFree();
                 this.finalizeWithoutDeinit();
                 return;
@@ -712,6 +714,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.resp.tryEnd(
                 this.response_buf_owned.items,
                 this.response_buf_owned.items.len,
+                this.shouldCloseConnection(),
             )) {
                 this.resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
                 this.setAbortHandler();
@@ -747,7 +750,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.finalizeForAbort();
                 return false;
             }
-            resp.end("", false);
+            resp.end("", this.shouldCloseConnection());
             this.finalize();
             return false;
         }
@@ -766,9 +769,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .allocator = server.allocator,
                 .resp = resp,
                 .req = req,
-                // this memory is owned by the Request object
-                .url = strings.append(this.allocator, server.base_url_string_for_joining, req.url()) catch
-                    @panic("Out of memory while joining the URL path?"),
                 .method = HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
             };
@@ -908,6 +908,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.byte_stream = null;
                 stream.unpipe();
             }
+
+            if (this.pathname.len > 0) {
+                this.allocator.free(bun.constStrToU8(this.pathname));
+                this.pathname = "";
+            }
         }
         pub fn finalize(this: *RequestContext) void {
             this.finalizeWithoutDeinit();
@@ -953,7 +958,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
             this.resp.setWriteOffset(this.sendfile.offset);
-            this.resp.endWithoutBody();
+            this.resp.endWithoutBody(this.shouldCloseConnection());
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
                 _ = JSC.Node.Syscall.close(this.sendfile.fd);
@@ -1049,7 +1054,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             std.debug.assert(this.resp == resp);
 
             var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
-            if (resp.tryEnd(bytes, bytes_.len)) {
+            if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.finalize();
                 return true;
             } else {
@@ -1062,7 +1067,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             std.debug.assert(this.resp == resp);
 
             var bytes = bytes_[@minimum(bytes_.len, @truncate(usize, write_offset))..];
-            if (resp.tryEnd(bytes, bytes_.len)) {
+            if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.response_buf_owned.items.len = 0;
                 this.finalize();
             } else {
@@ -1250,6 +1255,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     .res = this.resp,
                     .allocator = this.allocator,
                     .buffer = bun.ByteList.init(""),
+                    .keepalive = !this.resp.state().isHttpConnectionClose(),
                 },
             };
             var signal = &response_stream.sink.signal;
@@ -1308,7 +1314,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.renderMissing();
                     return;
                 } else if (wrote_anything and !responded and !this.aborted) {
-                    this.resp.endStream(false);
+                    this.resp.endStream(this.shouldCloseConnection());
                 }
 
                 this.finalize();
@@ -1413,7 +1419,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             } else if (!responded and wrote_anything and !req.aborted) {
                 req.resp.clearAborted();
-                req.resp.endStream(false);
+                req.resp.endStream(req.shouldCloseConnection());
             }
 
             req.finalize();
@@ -1640,7 +1646,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // so any write will buffer if the write fails
             if (this.resp.write(chunk)) {
                 if (stream.isDone()) {
-                    this.resp.endStream(false);
+                    this.resp.endStream(this.shouldCloseConnection());
                     this.finalize();
                 }
             } else {
@@ -1686,7 +1692,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         this.has_written_status = true;
                     }
 
-                    this.resp.endWithoutBody();
+                    this.resp.endWithoutBody(this.shouldCloseConnection());
                 },
                 else => {
                     if (!this.has_written_status) {
@@ -1709,6 +1715,21 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             runErrorHandlerWithStatusCode(this, value, 500);
         }
 
+        fn ensurePathname(this: *RequestContext) []const u8 {
+            if (this.pathname.len > 0)
+                return this.pathname;
+
+            if (!this.has_abort_handler) {
+                return this.req.url();
+            }
+
+            return "/";
+        }
+
+        pub inline fn shouldCloseConnection(this: *const RequestContext) bool {
+            return this.resp.state().isHttpConnectionClose();
+        }
+
         fn finishRunningErrorHandler(this: *RequestContext, value: JSC.JSValue, status: u16) void {
             var vm = this.server.vm;
             var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(this.allocator);
@@ -1721,7 +1742,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     error.ExceptionOcurred,
                     exception_list.toOwnedSlice(),
                     "<r><red>{s}<r> - <b>{s}<r> failed",
-                    .{ @as(string, @tagName(this.method)), this.url },
+                    .{ @as(string, @tagName(this.method)), this.ensurePathname() },
                 );
             } else {
                 if (status != 404)
@@ -1847,6 +1868,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.resp.tryEnd(
                 bytes,
                 bytes.len,
+                this.shouldCloseConnection(),
             )) {
                 this.resp.onWritable(*RequestContext, onWritableBytes, this);
                 // given a blob, we might not have set an abort handler yet
@@ -1970,7 +1992,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (len > this.server.config.max_request_body_size) {
                 this.resp.writeStatus("413 Request Entity Too Large");
-                this.resp.endWithoutBody();
+                this.resp.endWithoutBody(true);
 
                 this.finalize();
                 return JSC.WebCore.DrainResult{
@@ -2014,7 +2036,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     request.ensureStillAlive();
 
                     this.resp.writeStatus("413 Request Entity Too Large");
-                    this.resp.endWithoutBody();
+                    this.resp.endWithoutBody(true);
                     this.finalize();
                     return;
                 }
@@ -2488,9 +2510,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             request_object.* = .{
-                .url = JSC.ZigString.init(ctx.url),
+                .url = JSC.ZigString.Empty,
                 .method = ctx.method,
                 .uws_request = req,
+                .base_url_string_for_joining = this.base_url_string_for_joining,
                 .body = .{
                     .Locked = .{
                         .task = ctx,
@@ -2582,7 +2605,10 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             if (wait_for_promise) {
                 // Even if the user hasn't requested it, we have to start downloading the body!!
                 // terrible for performance.
-                if (request_object.body == .Locked and (request_object.body.Locked.promise == null and request_object.body.Locked.readable == null) and ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody())) {
+                if (request_object.body == .Locked and
+                    (request_object.body.Locked.promise == null and request_object.body.Locked.readable == null) and
+                    ((HTTP.Method.which(req.method()) orelse HTTP.Method.OPTIONS).hasRequestBody()))
+                {
                     const req_len: usize = brk: {
                         if (req.header("content-length")) |content_length| {
                             break :brk std.fmt.parseInt(usize, content_length, 10) catch 0;
@@ -2593,7 +2619,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
                     if (req_len > this.config.max_request_body_size) {
                         resp.writeStatus("413 Request Entity Too Large");
-                        resp.endWithoutBody();
+                        resp.endWithoutBody(true);
                         this.finalize();
                         return;
                     }
@@ -2601,7 +2627,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     if ((req_len > 0)) {
                         ctx.request_body_buf.ensureTotalCapacityPrecise(ctx.allocator, req_len) catch {
                             resp.writeStatus("413 Request Entity Too Large");
-                            resp.endWithoutBody();
+                            resp.endWithoutBody(true);
                             this.finalize();
                             return;
                         };
@@ -2609,13 +2635,24 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     }
                 }
 
-                ctx.setAbortHandler();
-                ctx.pending_promises_for_abort += 1;
-
                 // we have to clone the request headers here since they will soon belong to a different request
                 if (request_object.headers == null) {
                     request_object.headers = JSC.FetchHeaders.createFromUWS(this.globalThis, req);
                 }
+                request_object.ensureURL() catch {
+                    request_object.url = ZigString.Empty;
+                };
+
+                if (comptime debug_mode) {
+                    ctx.pathname = request_object.url.slice();
+                }
+
+                // This object dies after the stack frame is popped
+                // so we have to clear it in here too
+                request_object.uws_request = null;
+
+                ctx.setAbortHandler();
+                ctx.pending_promises_for_abort += 1;
 
                 response_value.then(this.globalThis, ctx, RequestContext.onResolve, RequestContext.onReject);
                 return;

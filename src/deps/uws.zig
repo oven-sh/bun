@@ -902,8 +902,12 @@ pub fn NewApp(comptime ssl: bool) type {
                 uws_res_end(ssl_flag, res.downcast(), data.ptr, data.len, close_connection);
             }
 
-            pub fn tryEnd(res: *Response, data: []const u8, total: usize) bool {
-                return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total);
+            pub fn tryEnd(res: *Response, data: []const u8, total: usize, close: bool) bool {
+                return uws_res_try_end(ssl_flag, res.downcast(), data.ptr, data.len, total, close);
+            }
+
+            pub fn state(res: *const Response) State {
+                return uws_res_state(ssl_flag, @ptrCast(*const uws_res, @alignCast(@alignOf(*const uws_res), res)));
             }
 
             pub fn prepareForSendfile(res: *Response) void {
@@ -934,7 +938,7 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn writeHeaderInt(res: *Response, key: []const u8, value: u64) void {
                 uws_res_write_header_int(ssl_flag, res.downcast(), key.ptr, key.len, value);
             }
-            pub fn endWithoutBody(res: *Response) void {
+            pub fn endWithoutBody(res: *Response, _: bool) void {
                 uws_res_end_without_body(ssl_flag, res.downcast());
             }
             pub fn write(res: *Response, data: []const u8) bool {
@@ -1185,7 +1189,14 @@ extern fn uws_ws_get_remote_address_as_text(ssl: i32, ws: ?*uws_websocket_t, des
 const uws_res = opaque {};
 extern fn uws_res_uncork(ssl: i32, res: *uws_res) void;
 extern fn uws_res_end(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize, close_connection: bool) void;
-extern fn uws_res_try_end(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize, total: usize) bool;
+extern fn uws_res_try_end(
+    ssl: i32,
+    res: *uws_res,
+    data: [*c]const u8,
+    length: usize,
+    total: usize,
+    close: bool,
+) bool;
 extern fn uws_res_pause(ssl: i32, res: *uws_res) void;
 extern fn uws_res_resume(ssl: i32, res: *uws_res) void;
 extern fn uws_res_write_continue(ssl: i32, res: *uws_res) void;
@@ -1266,3 +1277,35 @@ pub const uws_app_listen_config_t = extern struct {
 };
 
 extern fn us_socket_mark_needs_more_not_ssl(socket: ?*uws_res) void;
+
+extern fn uws_res_state(ssl: c_int, res: *const uws_res) State;
+
+pub const State = enum(i32) {
+    HTTP_STATUS_CALLED = 1,
+    HTTP_WRITE_CALLED = 2,
+    HTTP_END_CALLED = 4,
+    HTTP_RESPONSE_PENDING = 8,
+    HTTP_CONNECTION_CLOSE = 16,
+
+    _,
+
+    pub inline fn isResponsePending(this: State) bool {
+        return @enumToInt(this) & @enumToInt(State.HTTP_RESPONSE_PENDING) != 0;
+    }
+
+    pub inline fn isHttpEndCalled(this: State) bool {
+        return @enumToInt(this) & @enumToInt(State.HTTP_END_CALLED) != 0;
+    }
+
+    pub inline fn isHttpWriteCalled(this: State) bool {
+        return @enumToInt(this) & @enumToInt(State.HTTP_WRITE_CALLED) != 0;
+    }
+
+    pub inline fn isHttpStatusCalled(this: State) bool {
+        return @enumToInt(this) & @enumToInt(State.HTTP_STATUS_CALLED) != 0;
+    }
+
+    pub inline fn isHttpConnectionClose(this: State) bool {
+        return @enumToInt(this) & @enumToInt(State.HTTP_CONNECTION_CLOSE) != 0;
+    }
+};

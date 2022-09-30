@@ -4980,6 +4980,7 @@ pub const Request = struct {
 
     // We must report a consistent value for this
     reported_estimated_size: ?u63 = null,
+    base_url_string_for_joining: []const u8 = "",
 
     pub usingnamespace JSC.Codegen.JSRequest;
 
@@ -5169,7 +5170,33 @@ pub const Request = struct {
         this: *Request,
         globalObject: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
+        this.ensureURL() catch {
+            globalObject.throw("Failed to join URL", .{});
+            return JSValue.jsUndefined();
+        };
+
         return this.url.toValueGC(globalObject);
+    }
+
+    pub fn ensureURL(this: *Request) !void {
+        if (this.url.len > 0) return;
+
+        if (this.uws_request) |req| {
+            if (this.base_url_string_for_joining.len > 0) {
+                const str = try strings.append(bun.default_allocator, this.base_url_string_for_joining, req.url());
+                this.url = ZigString.init(str);
+                if (!strings.isAllASCII(str)) this.url.markUTF8();
+                this.url.mark();
+
+                // don't keep this around when we don't need it
+                this.base_url_string_for_joining = "";
+            } else {
+                this.url = ZigString.init(try bun.default_allocator.dupe(u8, req.url())).withEncoding();
+                if (!strings.isAllASCII(this.url.slice())) this.url.markUTF8();
+
+                this.url.mark();
+            }
+        }
     }
 
     pub fn constructInto(
@@ -5285,6 +5312,8 @@ pub const Request = struct {
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
     ) void {
+        this.ensureURL() catch {};
+
         req.* = Request{
             .body = this.body.clone(globalThis),
             .url = ZigString.init(allocator.dupe(u8, this.url.slice()) catch unreachable),

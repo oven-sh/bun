@@ -1430,6 +1430,26 @@ pub const JSPromise = extern struct {
         Rejected = 2,
     };
 
+    pub fn wrap(
+        globalObject: *JSGlobalObject,
+        value: JSValue,
+    ) JSValue {
+        if (value.isEmpty()) {
+            return resolvedPromiseValue(globalObject, JSValue.jsUndefined());
+        } else if (value.isEmptyOrUndefinedOrNull()) {
+            return resolvedPromiseValue(globalObject, value);
+        }
+
+        if (value.jsType() == .JSPromise) {
+            return value;
+        }
+
+        if (value.isAnyError(globalObject)) {
+            return rejectedPromiseValue(globalObject, value);
+        }
+
+        return resolvedPromiseValue(globalObject, value);
+    }
     pub fn status(this: *const JSPromise, vm: *VM) Status {
         return shim.cppFn("status", .{ this, vm });
     }
@@ -1448,6 +1468,8 @@ pub const JSPromise = extern struct {
         return cppFn("resolvedPromise", .{ globalThis, value });
     }
 
+    /// Create a new promise with an already fulfilled value
+    /// This is the faster function for doing that.
     pub fn resolvedPromiseValue(globalThis: *JSGlobalObject, value: JSValue) JSValue {
         return cppFn("resolvedPromiseValue", .{ globalThis, value });
     }
@@ -1460,6 +1482,9 @@ pub const JSPromise = extern struct {
         return cppFn("rejectedPromiseValue", .{ globalThis, value });
     }
 
+    /// Fulfill an existing promise with the value
+    /// The value can be another Promise
+    /// If you want to create a new Promise that is already resolved, see JSPromise.resolvedPromiseValue
     pub fn resolve(this: *JSPromise, globalThis: *JSGlobalObject, value: JSValue) void {
         cppFn("resolve", .{ this, globalThis, value });
     }
@@ -2658,7 +2683,7 @@ pub const JSValue = enum(JSValueReprInt) {
         if (this.isEmptyOrUndefinedOrNull())
             return false;
 
-        return JSC.C.JSValueIsInstanceOfConstructor(global.ref(), this.asObjectRef(), constructor.asObjectRef(), null);
+        return JSC.C.JSValueIsInstanceOfConstructor(global, this.asObjectRef(), constructor.asObjectRef(), null);
     }
 
     pub fn call(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
@@ -2668,7 +2693,7 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding();
         return JSC.C.JSObjectCallAsFunctionReturnValue(
-            globalThis.ref(),
+            globalThis,
             this.asObjectRef(),
             @ptrCast(JSC.C.JSValueRef, thisValue.asNullableVoid()),
             args.len,
@@ -4032,7 +4057,7 @@ pub const ExternalStringImpl = extern struct {
 
 pub const JSArray = struct {
     pub fn from(globalThis: *JSGlobalObject, arguments: []const JSC.JSValue) JSValue {
-        return JSC.JSValue.c(JSC.C.JSObjectMakeArray(globalThis.ref(), arguments.len, @ptrCast(?[*]const JSC.C.JSObjectRef, arguments.ptr), null));
+        return JSC.JSValue.c(JSC.C.JSObjectMakeArray(globalThis, arguments.len, @ptrCast(?[*]const JSC.C.JSObjectRef, arguments.ptr), null));
     }
 };
 

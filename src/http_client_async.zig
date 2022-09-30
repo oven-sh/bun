@@ -1189,6 +1189,18 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
 
 const Task = ThreadPool.Task;
 
+fn printRequest(request: picohttp.Request) void {
+    @setCold(true);
+    Output.prettyErrorln("Request: {}", .{request});
+    Output.flush();
+}
+
+fn printResponse(response: picohttp.Response) void {
+    @setCold(true);
+    Output.prettyErrorln("Response: {}", .{response});
+    Output.flush();
+}
+
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     switch (this.state.request_stage) {
         .pending, .headers => {
@@ -1209,6 +1221,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                 this.closeAndFail(error.OutOfMemory, is_ssl, socket);
                 return;
             };
+
+            if (this.verbose) {
+                printRequest(request);
+            }
 
             const headers_len = list.items.len;
             std.debug.assert(list.items.len == writer.context.items.len);
@@ -1796,7 +1812,7 @@ pub fn handleResponseMetadata(
     }
 
     if (this.verbose) {
-        Output.prettyErrorln("Response: {s}", .{response});
+        printResponse(response);
     }
 
     this.state.pending_response = response;

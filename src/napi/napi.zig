@@ -899,6 +899,7 @@ pub const napi_async_work = struct {
     can_deinit: bool = false,
     wait_for_deinit: bool = false,
     scheduled: bool = false,
+    ref: JSC.PollRef = .{},
     pub const Status = enum(u32) {
         pending = 0,
         started = 1,
@@ -942,14 +943,18 @@ pub const napi_async_work = struct {
     pub fn schedule(this: *napi_async_work) void {
         if (this.scheduled) return;
         this.scheduled = true;
+        this.ref.ref(this.global.bunVM());
         WorkPool.schedule(&this.task);
     }
 
     pub fn cancel(this: *napi_async_work) bool {
+        this.ref.unref(this.global.bunVM());
         return this.status.compareAndSwap(@enumToInt(Status.cancelled), @enumToInt(Status.pending), .SeqCst, .SeqCst) != null;
     }
 
     pub fn deinit(this: *napi_async_work) void {
+        this.ref.unref(this.global.bunVM());
+
         if (this.can_deinit) {
             bun.default_allocator.destroy(this);
             return;

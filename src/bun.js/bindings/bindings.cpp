@@ -255,42 +255,48 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject*
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     HTTPHeaderMap map = HTTPHeaderMap();
 
+outer:
     for (const auto& header : req) {
         StringView nameView = StringView(reinterpret_cast<const LChar*>(header.first.data()), header.first.length());
 
         uint32_t hash = nameView.hash();
         nameHashes[i++] = hash;
         size_t name_len = nameView.length();
-        auto value = WTF::StringView(reinterpret_cast<const LChar*>(header.second.data()), header.second.length()).toString();
 
-        if (name_len < 255) {
-            if (seenHeaderSizes[name_len]) {
-                bool found = false;
-                for (size_t j = 0; j < i; j++) {
-                    if (nameHashes[j] == hash) {
-                        map.add(nameView.toString(), WTF::String(WTF::StringImpl::createWithoutCopying(header.second.data(), header.second.length())));
-                        found = true;
-                        break;
-                    }
-                }
-
-                if (found)
-                    continue;
-            } else {
-                seenHeaderSizes.set(name_len);
-            }
-        } else {
+        if (UNLIKELY(name_len >= 255)) {
+            auto value = WTF::StringView(reinterpret_cast<const LChar*>(header.second.data()), header.second.length()).toString();
             map.add(nameView.toString(), value);
             continue;
         }
 
+        if (seenHeaderSizes[name_len]) {
+            if (i > 56)
+                __builtin_unreachable();
+
+            for (size_t j = 0; j < i - 1; j++) {
+                if (nameHashes[j] == hash) {
+                    // When the same header is seen twice, we need to merge them
+                    // Merging already allocates
+                    // so we can skip that step here
+                    map.add(nameView.toString(), WTF::String(WTF::StringImpl::createWithoutCopying(header.second.data(), header.second.length())));
+                    goto outer;
+                }
+            }
+        }
+
         HTTPHeaderName name;
 
+        auto value = WTF::StringView(reinterpret_cast<const LChar*>(header.second.data()), header.second.length()).toString();
         if (WebCore::findHTTPHeaderName(nameView, name)) {
             map.add(name, value);
         } else {
             map.setUncommonHeader(nameView.toString().isolatedCopy(), value);
         }
+
+        seenHeaderSizes[name_len] = true;
+
+        if (i > 56)
+            __builtin_unreachable();
     }
 
     headers->setInternalHeaders(WTFMove(map));

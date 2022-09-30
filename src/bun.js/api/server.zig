@@ -525,7 +525,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pending_promises_for_abort: u8 = 0,
 
         has_marked_complete: bool = false,
-        response_jsvalue: JSC.Strong = JSC.Strong.init(),
+        response_jsvalue: JSC.JSValue = JSC.JSValue.zero,
+        response_protected: bool = false,
         response_ptr: ?*JSC.WebCore.Response = null,
         blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .InlineBlob = .{} },
         promise: ?*JSC.JSValue = null,
@@ -534,7 +535,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         has_called_error_handler: bool = false,
         needs_content_length: bool = false,
         sendfile: SendfileContext = undefined,
-        request_jsvalue: JSC.Strong = JSC.Strong.init(),
+        request_js_object: JSC.C.JSObjectRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
         sink: ?*ResponseStream.JSSink = null,
@@ -591,7 +592,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.renderMissing();
                 return;
             };
-            ctx.response_jsvalue.set(ctx.server.globalThis, value);
+            ctx.response_jsvalue = value;
+            JSC.C.JSValueProtect(ctx.server.globalThis.ref(), value.asObjectRef());
 
             ctx.render(response);
         }

@@ -289,9 +289,9 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeChe
     auto source = sourceStr->value(lexicalGlobalObject);
     size_t res = 0;
     if (!source.is8Bit()) {
-        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->length());
+        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->byteLength());
     } else {
-        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->length());
+        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->byteLength());
     }
 
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -431,9 +431,9 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
 
     size_t res = 0;
     if (!source.is8Bit()) {
-        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->length());
+        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->byteLength());
     } else {
-        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->length());
+        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->byteLength());
     }
 
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);

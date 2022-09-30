@@ -2523,7 +2523,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     },
                 },
             };
-            request_object.url.mark();
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.C.JSValueRef{request_object.toJS(this.globalThis).asObjectRef()};
             ctx.request_js_object = args[0];

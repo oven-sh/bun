@@ -3179,7 +3179,7 @@ pub const FileBlobLoader = struct {
 
     pub fn scheduleAsync(this: *FileReader, chunk_size: Blob.SizeType) void {
         this.scheduled_count += 1;
-        this.loop.virtual_machine.active_tasks +|= 1;
+        this.poll_ref.ref(this.globalThis().bunVM());
         std.debug.assert(this.started);
         NetworkThread.init() catch {};
         this.concurrent.chunk_size = chunk_size;

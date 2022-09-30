@@ -1914,18 +1914,33 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
         fn send(this: *@This(), buf: []const u8) bool {
             std.debug.assert(!this.done);
-            const success = if (!this.requested_end) this.res.write(buf) else this.res.tryEnd(buf, this.end_len);
-            this.has_backpressure = !success;
-            log("send: {d} bytes (backpressure: {d})", .{ buf.len, this.has_backpressure });
-            return success;
+            defer log("send: {d} bytes (backpressure: {d})", .{ buf.len, this.has_backpressure });
+            if (this.requested_end and !this.res.state().isHttpWriteCalled()) {
+                const success = this.res.tryEnd(buf, this.end_len, false);
+                this.has_backpressure = !success;
+                return success;
+            }
+
+            if (this.requested_end) {
+                this.res.end(buf, false);
+                this.has_backpressure = false;
+                return true;
+            } else {
+                const backpressure = this.res.write(buf);
+                this.has_backpressure = backpressure;
+
+                return true;
+            }
+
+            unreachable;
         }
 
         fn readableSlice(this: *@This()) []const u8 {
             return this.buffer.ptr[this.offset..this.buffer.cap][0..this.buffer.len];
         }
 
-        pub fn onWritable(this: *@This(), available: c_ulong, _: *UWSResponse) callconv(.C) bool {
-            log("onWritable ({d})", .{available});
+        pub fn onWritable(this: *@This(), write_offset: c_ulong, _: *UWSResponse) callconv(.C) bool {
+            log("onWritable ({d})", .{write_offset});
 
             if (this.done) {
                 this.res.endStream(false);
@@ -1935,7 +1950,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
 
             // do not write more than available
             // if we do, it will cause this to be delayed until the next call, each time
-            const to_write = @minimum(@truncate(Blob.SizeType, available), @as(Blob.SizeType, this.buffer.len));
+            const to_write = @minimum(@truncate(Blob.SizeType, write_offset), @as(Blob.SizeType, this.buffer.len));
 
             // figure out how much data exactly to write
             const readable = this.readableSlice()[0..to_write];
@@ -1968,7 +1983,7 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
             // pending_flush or callback could have caused another send()
             // so we check again if we should report readiness
             if (!this.done and !this.requested_end and !this.hasBackpressure()) {
-                const pending = @truncate(Blob.SizeType, available) - to_write;
+                const pending = @truncate(Blob.SizeType, write_offset) -| to_write;
                 const written_after_flush = this.wrote - initial_wrote;
                 const to_report = pending - @minimum(written_after_flush, pending);
 

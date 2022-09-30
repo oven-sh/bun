@@ -2402,8 +2402,8 @@ pub const ArrayBuffer = extern struct {
         };
     }
 
-    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: *const anyopaque, len: usize) JSValue;
-    extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: *const anyopaque, len: usize) JSValue;
+    extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
+    extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
 
     pub fn fromTypedArray(ctx: JSC.C.JSContextRef, value: JSC.JSValue, _: JSC.C.ExceptionRef) ArrayBuffer {
         var out = std.mem.zeroes(ArrayBuffer);
@@ -2417,6 +2417,24 @@ pub const ArrayBuffer = extern struct {
     }
 
     pub fn toJSUnchecked(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
+
+        // The reason for this is
+        // JSC C API returns a detached arraybuffer
+        // if you pass it a zero-length TypedArray
+        // we don't ever want to send the user a detached arraybuffer
+        // that's just silly.
+        if (this.byte_len == 0) {
+            if (this.typed_array_type == .ArrayBuffer) {
+                return create(ctx, "", .ArrayBuffer);
+            }
+
+            if (this.typed_array_type == .Uint8Array) {
+                return create(ctx, "", .Uint8Array);
+            }
+
+            // TODO: others
+        }
+
         if (this.typed_array_type == .ArrayBuffer) {
             return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
                 ctx,
@@ -2445,7 +2463,7 @@ pub const ArrayBuffer = extern struct {
         }
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (!bun.Global.Mimalloc.mi_is_in_heap_region(this.ptr)) {
+        if (this.len > 0 and !bun.Global.Mimalloc.mi_is_in_heap_region(this.ptr)) {
             if (this.typed_array_type == .ArrayBuffer) {
                 return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(
                     ctx,
@@ -2506,13 +2524,21 @@ pub const ArrayBuffer = extern struct {
 
     pub const fromArrayBuffer = fromTypedArray;
 
-    pub inline fn slice(this: *const @This()) []u8 {
-        return this.ptr[this.offset .. this.offset + this.len];
-    }
-
+    /// The equivalent of
+    ///
+    /// ```js
+    ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
+    /// ```
     pub inline fn byteSlice(this: *const @This()) []u8 {
         return this.ptr[this.offset .. this.offset + this.byte_len];
     }
+
+    /// The equivalent of
+    ///
+    /// ```js
+    ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
+    /// ```
+    pub const slice = byteSlice;
 
     pub inline fn asU16(this: *const @This()) []u16 {
         return std.mem.bytesAsSlice(u16, @alignCast(@alignOf([*]u16), this.ptr[this.offset..this.byte_len]));
@@ -2573,7 +2599,7 @@ pub const MarkedArrayBuffer = struct {
     };
 
     pub inline fn slice(this: *const @This()) []u8 {
-        return this.buffer.slice();
+        return this.buffer.byteSlice();
     }
 
     pub fn destroy(this: *MarkedArrayBuffer) void {

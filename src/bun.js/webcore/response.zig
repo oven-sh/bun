@@ -726,6 +726,7 @@ pub const Fetch = struct {
             disable_timeout: bool,
             disable_keepalive: bool,
             url: ZigURL,
+            verbose: bool = false,
         };
 
         pub fn queue(
@@ -785,6 +786,7 @@ pub const Fetch = struct {
         };
         var disable_timeout = false;
         var disable_keepalive = false;
+        var verbose = false;
         if (first_arg.isString()) {
             var url_zig_str = ZigString.init("");
             JSValue.fromRef(arguments[0]).toZigString(&url_zig_str, globalThis);
@@ -848,6 +850,16 @@ pub const Fetch = struct {
                         }
                     }
                 }
+
+                // non-standard debug things
+                if (arguments.len == 3) {
+                    const special = arguments[2].?.value();
+                    if (!special.isEmptyOrUndefinedOrNull() and special.isObject()) {
+                        if (special.get(globalThis, "verbose")) |verb| {
+                            verbose = verb.toBoolean();
+                        }
+                    }
+                }
             }
         } else if (first_arg.as(Request)) |request| {
             url = ZigURL.parse(request.url.dupe(getAllocator(ctx)) catch unreachable);
@@ -877,6 +889,7 @@ pub const Fetch = struct {
                 .timeout = std.time.ns_per_hour,
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
+                .verbose = verbose,
             },
             JSC.JSValue.fromRef(deferred_promise),
         ) catch unreachable;

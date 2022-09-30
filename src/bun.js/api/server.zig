@@ -154,7 +154,7 @@ pub const ServerConfig = struct {
                 if (sliced.len > 0) {
                     result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     if (std.os.system.access(result.key_file_name, std.os.F_OK) != 0) {
-                        JSC.throwInvalidArguments("Unable to access keyFile path", .{}, global.ref(), exception);
+                        JSC.throwInvalidArguments("Unable to access keyFile path", .{}, global, exception);
                         result.deinit();
 
                         return null;
@@ -168,7 +168,7 @@ pub const ServerConfig = struct {
                 if (sliced.len > 0) {
                     result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                     if (std.os.system.access(result.cert_file_name, std.os.F_OK) != 0) {
-                        JSC.throwInvalidArguments("Unable to access certFile path", .{}, global.ref(), exception);
+                        JSC.throwInvalidArguments("Unable to access certFile path", .{}, global, exception);
                         result.deinit();
                         return null;
                     }
@@ -192,7 +192,7 @@ pub const ServerConfig = struct {
                     if (sliced.len > 0) {
                         result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                         if (std.os.system.access(result.ca_file_name, std.os.F_OK) != 0) {
-                            JSC.throwInvalidArguments("Invalid caFile path", .{}, global.ref(), exception);
+                            JSC.throwInvalidArguments("Invalid caFile path", .{}, global, exception);
                             result.deinit();
                             return null;
                         }
@@ -204,7 +204,7 @@ pub const ServerConfig = struct {
                     if (sliced.len > 0) {
                         result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
                         if (std.os.system.access(result.dh_params_file_name, std.os.F_OK) != 0) {
-                            JSC.throwInvalidArguments("Invalid dhParamsFile path", .{}, global.ref(), exception);
+                            JSC.throwInvalidArguments("Invalid dhParamsFile path", .{}, global, exception);
                             result.deinit();
                             return null;
                         }
@@ -276,7 +276,7 @@ pub const ServerConfig = struct {
 
         if (arguments.next()) |arg| {
             if (arg.isUndefinedOrNull() or !arg.isObject()) {
-                JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("Bun.serve expects an object", .{}, global, exception);
                 return args;
             }
 
@@ -322,25 +322,25 @@ pub const ServerConfig = struct {
 
             if (arg.getTruthy(global, "error")) |onError| {
                 if (!onError.isCallable(global.vm())) {
-                    JSC.throwInvalidArguments("Expected error to be a function", .{}, global.ref(), exception);
+                    JSC.throwInvalidArguments("Expected error to be a function", .{}, global, exception);
                     if (args.ssl_config) |*conf| {
                         conf.deinit();
                     }
                     return args;
                 }
-                JSC.C.JSValueProtect(global.ref(), onError.asObjectRef());
+                JSC.C.JSValueProtect(global, onError.asObjectRef());
                 args.onError = onError;
             }
 
             if (arg.getTruthy(global, "fetch")) |onRequest| {
                 if (!onRequest.isCallable(global.vm())) {
-                    JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global.ref(), exception);
+                    JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                     return args;
                 }
-                JSC.C.JSValueProtect(global.ref(), onRequest.asObjectRef());
+                JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
             } else {
-                JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("Expected fetch() to be a function", .{}, global, exception);
                 if (args.ssl_config) |*conf| {
                     conf.deinit();
                 }
@@ -349,7 +349,7 @@ pub const ServerConfig = struct {
         }
 
         if (args.port == 0) {
-            JSC.throwInvalidArguments("Invalid port: must be > 0", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("Invalid port: must be > 0", .{}, global, exception);
         }
 
         if (args.base_uri.len > 0) {
@@ -2117,6 +2117,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
         allocator: std.mem.Allocator,
         poll_ref: JSC.PollRef = .{},
 
+        temporary_url_buffer: std.ArrayListUnmanaged(u8) = .{},
+
         pub const Class = JSC.NewClass(
             ThisServer,
             .{ .name = "Server" },
@@ -2227,7 +2229,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             if (existing_request == null) {
                 existing_request = Request{
-                    .url = ZigString.init(url.href),
+                    .url = url.href,
                     .headers = headers,
                     .body = body,
                     .method = method,
@@ -2236,7 +2238,6 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             var request = ctx.bunVM().allocator.create(Request) catch unreachable;
             request.* = existing_request.?;
-            request.url.mark();
 
             var args_ = [_]JSC.C.JSValueRef{request.toJS(this.globalThis).asObjectRef()};
             const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(
@@ -2332,7 +2333,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             server.* = .{
                 .globalThis = globalThis,
                 .config = config,
-                .base_url_string_for_joining = strings.trim(config.base_url.href, "/"),
+                .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
                 .vm = JSC.VirtualMachine.vm,
                 .allocator = Arena.getThreadlocalDefault(),
             };
@@ -2512,7 +2513,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
             request_object.* = .{
-                .url = JSC.ZigString.Empty,
+                .url = "",
                 .method = ctx.method,
                 .uws_request = req,
                 .base_url_string_for_joining = this.base_url_string_for_joining,
@@ -2636,16 +2637,19 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                     }
                 }
 
+                request_object.uws_request = req;
+
+                request_object.ensureURL() catch {
+                    request_object.url = "";
+                };
+
                 // we have to clone the request headers here since they will soon belong to a different request
                 if (request_object.headers == null) {
                     request_object.headers = JSC.FetchHeaders.createFromUWS(this.globalThis, req);
                 }
-                request_object.ensureURL() catch {
-                    request_object.url = ZigString.Empty;
-                };
 
                 if (comptime debug_mode) {
-                    ctx.pathname = request_object.url.slice();
+                    ctx.pathname = bun.default_allocator.dupe(u8, request_object.url) catch unreachable;
                 }
 
                 // This object dies after the stack frame is popped

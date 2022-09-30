@@ -1875,12 +1875,25 @@ pub const Hash = struct {
                         input = blob.sharedView();
                     } else {
                         switch (arg.jsTypeLoose()) {
-                            .ArrayBuffer, .Int8Array, .Uint8Array, .Uint8ClampedArray, .Int16Array, .Uint16Array, .Int32Array, .Uint32Array, .Float32Array, .Float64Array, .BigInt64Array, .BigUint64Array, .DataView => {
+                            .ArrayBuffer,
+                            .Int8Array,
+                            .Uint8Array,
+                            .Uint8ClampedArray,
+                            .Int16Array,
+                            .Uint16Array,
+                            .Int32Array,
+                            .Uint32Array,
+                            .Float32Array,
+                            .Float64Array,
+                            .BigInt64Array,
+                            .BigUint64Array,
+                            .DataView,
+                            => {
                                 var array_buffer = arg.asArrayBuffer(ctx.ptr()) orelse {
                                     JSC.throwInvalidArguments("ArrayBuffer conversion error", .{}, ctx, exception);
                                     return null;
                                 };
-                                input = array_buffer.slice();
+                                input = array_buffer.byteSlice();
                             },
                             else => {
                                 input_slice = arg.toSlice(ctx.ptr(), bun.default_allocator);

@@ -554,6 +554,7 @@ pub const Fetch = struct {
         request_headers: Headers = Headers{ .allocator = undefined },
         ref: *JSC.napi.Ref = undefined,
         concurrent_task: JSC.ConcurrentTask = .{},
+        poll_ref: JSC.PollRef = .{},
 
         pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet {
             return FetchTasklet{};
@@ -584,6 +585,9 @@ pub const Fetch = struct {
             var ref = this.ref;
             const promise_value = ref.get();
             defer ref.destroy();
+            var poll_ref = this.poll_ref;
+            var vm = globalThis.bunVM();
+            defer poll_ref.unref(vm);
 
             if (promise_value.isEmptyOrUndefinedOrNull()) {
                 this.clearData();
@@ -709,6 +713,7 @@ pub const Fetch = struct {
                 ),
             );
             fetch_tasklet.http.?.client.disable_timeout = fetch_options.disable_timeout;
+            fetch_tasklet.http.?.client.verbose = fetch_options.verbose;
             fetch_tasklet.http.?.client.disable_keepalive = fetch_options.disable_keepalive;
             return fetch_tasklet;
         }
@@ -739,7 +744,7 @@ pub const Fetch = struct {
 
             var batch = NetworkThread.Batch{};
             node.http.?.schedule(allocator, &batch);
-            VirtualMachine.vm.active_tasks +|= 1;
+            node.poll_ref.ref(global.bunVM());
 
             HTTPClient.http_thread.schedule(batch);
 

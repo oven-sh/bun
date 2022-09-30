@@ -214,11 +214,22 @@ pub const StringOrBuffer = union(Tag) {
                 var zig_str = value.toSlice(global, allocator);
                 return StringOrBuffer{ .string = zig_str.slice() };
             },
-            JSC.JSValue.JSType.ArrayBuffer => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global.ref(), value, exception),
-            },
-            JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global.ref(), value, exception),
+
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => StringOrBuffer{
+                .buffer = Buffer.fromArrayBuffer(global, value, exception),
             },
             else => null,
         };
@@ -263,11 +274,22 @@ pub const StringOrNodeBuffer = union(Tag) {
                 var zig_str = value.toSlice(global, allocator);
                 return StringOrNodeBuffer{ .string = zig_str.slice() };
             },
-            JSC.JSValue.JSType.ArrayBuffer => StringOrNodeBuffer{
-                .buffer = Buffer.fromArrayBuffer(global.ref(), value, exception),
-            },
-            JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => StringOrBuffer{
-                .buffer = Buffer.fromArrayBuffer(global.ref(), value, exception),
+
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => StringOrBuffer{
+                .buffer = Buffer.fromArrayBuffer(global, value, exception),
             },
             else => null,
         };
@@ -317,7 +339,20 @@ pub const SliceOrBuffer = union(Tag) {
                 var zig_str = value.toSlice(global, allocator);
                 return SliceOrBuffer{ .string = zig_str };
             },
-            JSC.JSValue.JSType.ArrayBuffer, JSC.JSValue.JSType.Uint8Array, JSC.JSValue.JSType.DataView => SliceOrBuffer{
+            .ArrayBuffer,
+            .Int8Array,
+            .Uint8Array,
+            .Uint8ClampedArray,
+            .Int16Array,
+            .Uint16Array,
+            .Int32Array,
+            .Uint32Array,
+            .Float32Array,
+            .Float64Array,
+            .BigInt64Array,
+            .BigUint64Array,
+            .DataView,
+            => SliceOrBuffer{
                 .buffer = JSC.MarkedArrayBuffer{
                     .buffer = value.asArrayBuffer(global) orelse return null,
                     .allocator = null,

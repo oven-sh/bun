@@ -417,6 +417,8 @@ pub const TestCommand = struct {
         vm_.runWithAPILock(Context, &ctx, Context.begin);
     }
 
+    fn timerNoop(_: *uws.Timer) callconv(.C) void {}
+
     pub fn run(
         reporter: *CommandLineReporter,
         vm: *JSC.VirtualMachine,
@@ -460,7 +462,7 @@ pub const TestCommand = struct {
 
         var modules: []*Jest.DescribeScope = reporter.jest.files.items(.module_scope)[file_start..];
         for (modules) |module| {
-            module.runTests(JSC.JSValue.zero, vm.global.ref());
+            module.runTests(JSC.JSValue.zero, vm.global);
             vm.eventLoop().tick();
 
             while (vm.active_tasks > 0) {

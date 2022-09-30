@@ -2050,13 +2050,13 @@ pub const EventListenerMixin = struct {
         };
 
         var fetch_args: [1]js.JSObjectRef = undefined;
-        fetch_args[0] = FetchEvent.Class.make(vm.global.ref(), fetch_event);
-        JSC.C.JSValueProtect(vm.global.ref(), fetch_args[0]);
-        defer JSC.C.JSValueUnprotect(vm.global.ref(), fetch_args[0]);
+        fetch_args[0] = FetchEvent.Class.make(vm.global, fetch_event);
+        JSC.C.JSValueProtect(vm.global, fetch_args[0]);
+        defer JSC.C.JSValueUnprotect(vm.global, fetch_args[0]);
 
         for (listeners.items) |listener_ref| {
             vm.tick();
-            var result = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), listener_ref, null, 1, &fetch_args);
+            var result = js.JSObjectCallAsFunctionReturnValue(vm.global, listener_ref, null, 1, &fetch_args);
             vm.tick();
             var promise = JSInternalPromise.resolvedPromise(vm.global, result);
 
@@ -2261,8 +2261,8 @@ pub const ResolveError = struct {
             .allocator = allocator,
             .referrer = Fs.Path.init(referrer),
         };
-        var ref = Class.make(globalThis.ref(), resolve_error);
-        js.JSValueProtect(globalThis.ref(), ref);
+        var ref = Class.make(globalThis, resolve_error);
+        js.JSValueProtect(globalThis, ref);
         return ref;
     }
 
@@ -2436,8 +2436,8 @@ pub const BuildError = struct {
             .allocator = allocator,
         };
 
-        var ref = Class.make(globalThis.ref(), build_error);
-        js.JSValueProtect(globalThis.ref(), ref);
+        var ref = Class.make(globalThis, build_error);
+        js.JSValueProtect(globalThis, ref);
         return ref;
     }
 

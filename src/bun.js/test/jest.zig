@@ -760,11 +760,11 @@ pub const TestScope = struct {
         var vm = VirtualMachine.vm;
         var callback = this.callback;
         defer {
-            js.JSValueUnprotect(vm.global.ref(), callback);
+            js.JSValueUnprotect(vm.global, callback);
             this.callback = null;
         }
         JSC.markBinding();
-        const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global.ref(), callback, null, 0, null);
+        const initial_value = js.JSObjectCallAsFunctionReturnValue(vm.global, callback, null, 0, null);
 
         if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
             vm.runErrorHandler(initial_value, null);
@@ -884,7 +884,7 @@ pub const DescribeScope = struct {
         return struct {
             const this_hook = hook;
             pub fn run(
-                this: *DescribeScope,
+                _: *DescribeScope,
                 ctx: js.JSContextRef,
                 _: js.JSObjectRef,
                 _: js.JSObjectRef,
@@ -898,7 +898,7 @@ pub const DescribeScope = struct {
 
                 JSC.JSValue.c(arguments[0]).protect();
                 const name = comptime @as(string, @tagName(this_hook));
-                @field(this, name).append(getAllocator(ctx), JSC.JSValue.c(arguments[0])) catch unreachable;
+                @field(DescribeScope.active, name).append(getAllocator(ctx), JSC.JSValue.c(arguments[0])) catch unreachable;
                 return JSC.JSValue.jsBoolean(true).asObjectRef();
             }
         }.run;

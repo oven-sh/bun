@@ -1011,7 +1011,7 @@ export fn Bun__resolve(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    const value = doResolveWithArgs(global.ref(), specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
+    const value = doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
         return JSC.JSPromise.rejectedPromiseValue(global, JSC.JSValue.fromRef(exception[0]));
     };
     return JSC.JSPromise.resolvedPromiseValue(global, value);
@@ -1024,7 +1024,7 @@ export fn Bun__resolveSync(
 ) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     var exception = &exception_;
-    return doResolveWithArgs(global.ref(), specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
+    return doResolveWithArgs(global, specifier.getZigString(global), source.getZigString(global), exception, true) orelse {
         return JSC.JSValue.fromRef(exception[0]);
     };
 }
@@ -1351,7 +1351,7 @@ pub const Crypto = struct {
                     return output_buf.value;
                 } else {
                     var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, output_digest_slice) catch unreachable, .Uint8Array);
-                    return array_buffer_out.toJSUnchecked(globalThis.ref(), null);
+                    return array_buffer_out.toJSUnchecked(globalThis, null);
                 }
             }
 
@@ -1463,7 +1463,7 @@ pub const Crypto = struct {
                     return output_buf.value;
                 } else {
                     var array_buffer_out = JSC.ArrayBuffer.fromBytes(bun.default_allocator.dupe(u8, &output_digest_buf) catch unreachable, .Uint8Array);
-                    return array_buffer_out.toJSUnchecked(globalThis.ref(), null);
+                    return array_buffer_out.toJSUnchecked(globalThis, null);
                 }
             }
 
@@ -2734,11 +2734,11 @@ pub const FFI = struct {
         }
 
         const array_buffer = value.asArrayBuffer(globalThis) orelse {
-            return JSC.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())}, globalThis.ref());
+            return JSC.toInvalidArguments("Expected ArrayBufferView but received {s}", .{@tagName(value.jsType())}, globalThis);
         };
 
         if (array_buffer.len == 0) {
-            return JSC.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("ArrayBufferView must have a length > 0. A pointer to empty memory doesn't work", .{}, globalThis);
         }
 
         var addr: usize = @ptrToInt(array_buffer.ptr);
@@ -2748,7 +2748,7 @@ pub const FFI = struct {
         if (byteOffset) |off| {
             if (!off.isEmptyOrUndefinedOrNull()) {
                 if (!off.isNumber()) {
-                    return JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis.ref());
+                    return JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis);
                 }
             }
 
@@ -2760,20 +2760,20 @@ pub const FFI = struct {
             }
 
             if (addr > @ptrToInt(array_buffer.ptr) + @as(usize, array_buffer.byte_len)) {
-                return JSC.toInvalidArguments("byteOffset out of bounds", .{}, globalThis.ref());
+                return JSC.toInvalidArguments("byteOffset out of bounds", .{}, globalThis);
             }
         }
 
         if (addr > max_addressible_memory) {
-            return JSC.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Pointer is outside max addressible memory, which usually means a bug in your program.", .{}, globalThis);
         }
 
         if (addr == 0) {
-            return JSC.toInvalidArguments("Pointer must not be 0", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Pointer must not be 0", .{}, globalThis);
         }
 
         if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
-            return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis);
         }
 
         if (comptime Environment.allow_assert) {
@@ -2790,16 +2790,16 @@ pub const FFI = struct {
 
     pub fn getPtrSlice(globalThis: *JSGlobalObject, value: JSValue, byteOffset: ?JSValue, byteLength: ?JSValue) ValueOrError {
         if (!value.isNumber()) {
-            return .{ .err = JSC.toInvalidArguments("ptr must be a number.", .{}, globalThis.ref()) };
+            return .{ .err = JSC.toInvalidArguments("ptr must be a number.", .{}, globalThis) };
         }
 
         const num = value.asPtrAddress();
         if (num == 0) {
-            return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis.ref()) };
+            return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis) };
         }
 
         // if (!std.math.isFinite(num)) {
-        //     return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis.ref()) };
+        //     return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis) };
         // }
 
         var addr = @bitCast(usize, num);
@@ -2814,40 +2814,40 @@ pub const FFI = struct {
                 }
 
                 if (addr == 0) {
-                    return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("ptr cannot be zero, that would segfault Bun :(", .{}, globalThis) };
                 }
 
                 if (!std.math.isFinite(byte_off.asNumber())) {
-                    return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("ptr must be a finite number.", .{}, globalThis) };
                 }
             } else if (!byte_off.isEmptyOrUndefinedOrNull()) {
                 // do nothing
             } else {
-                return .{ .err = JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis.ref()) };
+                return .{ .err = JSC.toInvalidArguments("Expected number for byteOffset", .{}, globalThis) };
             }
         }
 
         if (addr == 0xDEADBEEF or addr == 0xaaaaaaaa or addr == 0xAAAAAAAA) {
-            return .{ .err = JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis.ref()) };
+            return .{ .err = JSC.toInvalidArguments("ptr to invalid memory, that would segfault Bun :(", .{}, globalThis) };
         }
 
         if (byteLength) |valueLength| {
             if (!valueLength.isEmptyOrUndefinedOrNull()) {
                 if (!valueLength.isNumber()) {
-                    return .{ .err = JSC.toInvalidArguments("length must be a number.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("length must be a number.", .{}, globalThis) };
                 }
 
                 if (valueLength.asNumber() == 0.0) {
-                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
                 const length_i = valueLength.toInt64();
                 if (length_i < 0) {
-                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("length must be > 0. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
                 if (length_i > max_addressible_memory) {
-                    return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis.ref()) };
+                    return .{ .err = JSC.toInvalidArguments("length exceeds max addressable memory. This usually means a bug in your code.", .{}, globalThis) };
                 }
 
                 const length = @intCast(usize, length_i);
@@ -2910,7 +2910,7 @@ pub const FFI = struct {
                     }
                 }
 
-                return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis.ref(), ctx, callback, null);
+                return JSC.ArrayBuffer.fromBytes(slice, JSC.JSValue.JSType.ArrayBuffer).toJSWithContext(globalThis, ctx, callback, null);
             },
         }
     }
@@ -3299,10 +3299,10 @@ pub const JSZlib = struct {
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, opts) catch |err| {
             if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis.ref());
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
             }
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
         };
 
         reader.readAll() catch {
@@ -3317,7 +3317,7 @@ pub const JSZlib = struct {
         reader.list_ptr = &reader.list;
 
         var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
     }
 
     pub fn inflateSync(
@@ -3331,10 +3331,10 @@ pub const JSZlib = struct {
             .windowBits = -15,
         }) catch |err| {
             if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis.ref());
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
             }
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
         };
 
         reader.readAll() catch {
@@ -3349,7 +3349,7 @@ pub const JSZlib = struct {
         reader.list_ptr = &reader.list;
 
         var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
     }
 
     pub fn gunzipSync(
@@ -3361,10 +3361,10 @@ pub const JSZlib = struct {
         var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
         var reader = zlib.ZlibReaderArrayList.init(compressed, &list, allocator) catch |err| {
             if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis.ref());
+                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
             }
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
         };
 
         reader.readAll() catch {
@@ -3379,7 +3379,7 @@ pub const JSZlib = struct {
         reader.list_ptr = &reader.list;
 
         var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis.ref(), reader, reader_deallocator, null);
+        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
     }
 };
 

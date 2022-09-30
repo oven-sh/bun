@@ -620,7 +620,7 @@ pub const ArgumentsSlice = struct {
 
     pub fn unprotect(this: *ArgumentsSlice) void {
         var iter = this.protected.iterator(.{});
-        var ctx = this.vm.global.ref();
+        var ctx = this.vm.global;
         while (iter.next()) |i| {
             JSC.C.JSValueUnprotect(ctx, this.all[i].asObjectRef());
         }
@@ -636,7 +636,7 @@ pub const ArgumentsSlice = struct {
         if (this.remaining.len == 0) return;
         const index = this.all.len - this.remaining.len;
         this.protected.set(index);
-        JSC.C.JSValueProtect(this.vm.global.ref(), this.all[index].asObjectRef());
+        JSC.C.JSValueProtect(this.vm.global, this.all[index].asObjectRef());
         this.eat();
     }
 
@@ -1324,7 +1324,7 @@ pub const Emitter = struct {
 
                         if (once[i]) {
                             this.once_count -= 1;
-                            JSC.C.JSValueUnprotect(globalThis.ref(), callback.asObjectRef());
+                            JSC.C.JSValueUnprotect(globalThis, callback.asObjectRef());
                             this.list.orderedRemove(i);
                             slice = this.list.slice();
                             callbacks = slice.items(.callback);
@@ -1380,9 +1380,9 @@ pub const Path = struct {
     pub fn basename(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) {
-            return JSC.toInvalidArguments("path is required", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("path is required", .{}, globalThis);
         }
-        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
+        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis));
         var allocator = stack_fallback.get();
 
         var arguments: []JSC.JSValue = args_ptr[0..args_len];
@@ -1411,9 +1411,9 @@ pub const Path = struct {
     pub fn dirname(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) {
-            return JSC.toInvalidArguments("path is required", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("path is required", .{}, globalThis);
         }
-        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
+        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis));
         var allocator = stack_fallback.get();
 
         var arguments: []JSC.JSValue = args_ptr[0..args_len];
@@ -1432,9 +1432,9 @@ pub const Path = struct {
     pub fn extname(globalThis: *JSC.JSGlobalObject, _: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) {
-            return JSC.toInvalidArguments("path is required", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("path is required", .{}, globalThis);
         }
-        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
+        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis));
         var allocator = stack_fallback.get();
         var arguments: []JSC.JSValue = args_ptr[0..args_len];
 
@@ -1448,15 +1448,15 @@ pub const Path = struct {
     pub fn format(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0) {
-            return JSC.toInvalidArguments("pathObject is required", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("pathObject is required", .{}, globalThis);
         }
         var path_object: JSC.JSValue = args_ptr[0];
         const js_type = path_object.jsType();
         if (!js_type.isObject()) {
-            return JSC.toInvalidArguments("pathObject is required", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("pathObject is required", .{}, globalThis);
         }
 
-        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis.ref()));
+        var stack_fallback = std.heap.stackFallback(4096, JSC.getAllocator(globalThis));
         var allocator = stack_fallback.get();
         var dir = JSC.ZigString.Empty;
         var name_ = JSC.ZigString.Empty;
@@ -1636,7 +1636,7 @@ pub const Path = struct {
     pub fn parse(globalThis: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(.C) JSC.JSValue {
         if (comptime is_bindgen) return JSC.JSValue.jsUndefined();
         if (args_len == 0 or !args_ptr[0].jsType().isStringLike()) {
-            return JSC.toInvalidArguments("path string is required", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("path string is required", .{}, globalThis);
         }
         var path_slice: JSC.ZigString.Slice = args_ptr[0].toSlice(globalThis, heap_allocator);
         defer path_slice.deinit();

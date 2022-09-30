@@ -1324,7 +1324,7 @@ pub const ZigConsoleClient = struct {
                     // Temporary workaround
                     // console.log(process.env) shows up as [class JSCallbackObject]
                     // We want to print it like an object
-                    if (CAPI.JSValueIsObjectOfClass(globalThis.ref(), value.asObjectRef(), JSC.API.Bun.EnvironmentVariables.Class.get().?[0])) {
+                    if (CAPI.JSValueIsObjectOfClass(globalThis, value.asObjectRef(), JSC.API.Bun.EnvironmentVariables.Class.get().?[0])) {
                         return .{
                             .tag = .Object,
                             .cell = js_type,
@@ -1784,7 +1784,7 @@ pub const ZigConsoleClient = struct {
                             writer.writeAll(" ");
                         }
 
-                        const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis.ref(), ref, i, null));
+                        const element = JSValue.fromRef(CAPI.JSObjectGetPropertyAtIndex(this.globalThis, ref, i, null));
                         const tag = Tag.get(element, this.globalThis);
 
                         this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
@@ -2056,7 +2056,7 @@ pub const ZigConsoleClient = struct {
                             .skip_empty_name = true,
 
                             .include_value = true,
-                        }).init(this.globalThis.ref(), props.asObjectRef());
+                        }).init(this.globalThis, props.asObjectRef());
                         defer props_iter.deinit();
 
                         var children_prop = props.get(this.globalThis, "children");
@@ -2214,7 +2214,7 @@ pub const ZigConsoleClient = struct {
                         var props_iter = JSC.JSPropertyIterator(.{
                             .skip_empty_name = true,
                             .include_value = true,
-                        }).init(this.globalThis.ref(), object);
+                        }).init(this.globalThis, object);
                         defer props_iter.deinit();
 
                         const prev_quote_strings = this.quote_strings;

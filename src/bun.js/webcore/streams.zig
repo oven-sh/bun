@@ -519,7 +519,7 @@ pub const StreamResult = union(Tag) {
 
         pub fn toJS(this: Writable, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
-                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis.ref()))).asValue(globalThis),
+                .err => |err| JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis))).asValue(globalThis),
 
                 .owned => |len| JSC.JSValue.jsNumber(len),
                 .owned_and_done => |len| JSC.JSValue.jsNumber(len),
@@ -599,10 +599,10 @@ pub const StreamResult = union(Tag) {
     pub fn toJS(this: *const StreamResult, globalThis: *JSGlobalObject) JSValue {
         switch (this.*) {
             .owned => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis.ref(), null);
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
             },
             .owned_and_done => |list| {
-                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis.ref(), null);
+                return JSC.ArrayBuffer.fromBytes(list.slice(), .Uint8Array).toJS(globalThis, null);
             },
             .temporary => |temp| {
                 var array = JSC.JSValue.createUninitializedUint8Array(globalThis, temp.len);
@@ -629,7 +629,7 @@ pub const StreamResult = union(Tag) {
             },
 
             .err => |err| {
-                return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis.ref()))).asValue(globalThis);
+                return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.toJS(globalThis))).asValue(globalThis);
             },
 
             // false == controller.close()
@@ -2543,7 +2543,7 @@ pub fn ReadableStreamSource(
                         return JSValue.jsUndefined();
                     },
                     .temporary_and_done, .owned_and_done, .into_array_and_done => {
-                        JSC.C.JSObjectSetPropertyAtIndex(globalThis.ref(), array, 0, JSValue.jsBoolean(true).asObjectRef(), null);
+                        JSC.C.JSObjectSetPropertyAtIndex(globalThis, array, 0, JSValue.jsBoolean(true).asObjectRef(), null);
                         return result.toJS(globalThis);
                     },
                     else => return result.toJS(globalThis),

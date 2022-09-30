@@ -99,9 +99,7 @@ pub fn match(
         var url = URL.parse(path_.?.slice());
         pathname = url.pathname;
     } else if (arg.as(Request)) |req| {
-        var path_string = req.url;
-        path_ = path_string.toSlice(bun.default_allocator);
-        var url = URL.parse(path_.?.slice());
+        var url = URL.parse(req.url);
         pathname = url.pathname;
     }
 

@@ -94,11 +94,11 @@ pub const FFI = struct {
     pub fn callback(globalThis: *JSGlobalObject, interface: JSC.JSValue, js_callback: JSC.JSValue) JSValue {
         JSC.markBinding();
         if (!interface.isObject()) {
-            return JSC.toInvalidArguments("Expected object", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Expected object", .{}, globalThis);
         }
 
         if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable(globalThis.vm())) {
-            return JSC.toInvalidArguments("Expected callback function", .{}, globalThis.ref());
+            return JSC.toInvalidArguments("Expected callback function", .{}, globalThis);
         }
 
         const allocator = VirtualMachine.vm.allocator;
@@ -110,13 +110,13 @@ pub const FFI = struct {
         }
 
         // TODO: WeakRefHandle that automatically frees it?
-        JSC.C.JSValueProtect(globalThis.ref(), js_callback.asObjectRef());
+        JSC.C.JSValueProtect(globalThis, js_callback.asObjectRef());
         func.base_name = "";
 
         func.compileCallback(allocator, globalThis, js_callback.asObjectRef().?) catch return ZigString.init("Out of memory").toErrorInstance(globalThis);
         switch (func.step) {
             .failed => |err| {
-                JSC.C.JSValueUnprotect(globalThis.ref(), js_callback.asObjectRef());
+                JSC.C.JSValueUnprotect(globalThis, js_callback.asObjectRef());
                 const message = ZigString.init(err.msg).toErrorInstance(globalThis);
 
                 func.deinit(globalThis, allocator);
@@ -124,7 +124,7 @@ pub const FFI = struct {
                 return message;
             },
             .pending => {
-                JSC.C.JSValueUnprotect(globalThis.ref(), js_callback.asObjectRef());
+                JSC.C.JSValueUnprotect(globalThis, js_callback.asObjectRef());
                 func.deinit(globalThis, allocator);
                 return ZigString.init("Failed to compile, but not sure why. Please report this bug").toErrorInstance(globalThis);
             },
@@ -165,7 +165,7 @@ pub const FFI = struct {
         const allocator = VirtualMachine.vm.allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
-            return JSC.toInvalidArguments("Expected an object", .{}, global.ref());
+            return JSC.toInvalidArguments("Expected an object", .{}, global);
         }
 
         var function: Function = .{};
@@ -194,7 +194,7 @@ pub const FFI = struct {
         }
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
-            return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global.ref());
+            return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
         }
 
         var symbols = std.StringArrayHashMapUnmanaged(Function){};
@@ -252,7 +252,7 @@ pub const FFI = struct {
     //     const allocator = VirtualMachine.vm.allocator;
 
     //     if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
-    //         return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global.ref());
+    //         return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
     //     }
 
     //     var symbols = std.StringArrayHashMapUnmanaged(Function){};
@@ -274,11 +274,11 @@ pub const FFI = struct {
         defer name_slice.deinit();
 
         if (name_slice.len == 0) {
-            return JSC.toInvalidArguments("Invalid library name", .{}, global.ref());
+            return JSC.toInvalidArguments("Invalid library name", .{}, global);
         }
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
-            return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global.ref());
+            return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
         }
 
         const name = name_slice.sliceZ();
@@ -292,7 +292,7 @@ pub const FFI = struct {
             return val;
         }
         if (symbols.count() == 0) {
-            return JSC.toInvalidArguments("Expected at least one symbol", .{}, global.ref());
+            return JSC.toInvalidArguments("Expected at least one symbol", .{}, global);
         }
 
         var dylib: std.DynLib = brk: {
@@ -312,16 +312,16 @@ pub const FFI = struct {
             };
         };
 
-        var obj = JSC.JSValue.c(JSC.C.JSObjectMake(global.ref(), null, null));
-        JSC.C.JSValueProtect(global.ref(), obj.asObjectRef());
-        defer JSC.C.JSValueUnprotect(global.ref(), obj.asObjectRef());
+        var obj = JSC.JSValue.c(JSC.C.JSObjectMake(global, null, null));
+        JSC.C.JSValueProtect(global, obj.asObjectRef());
+        defer JSC.C.JSValueUnprotect(global, obj.asObjectRef());
         for (symbols.values()) |*function| {
             const function_name = function.base_name.?;
 
             // optional if the user passed "ptr"
             if (function.symbol_from_dynamic_library == null) {
                 var resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
-                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ std.mem.span(function_name), name_slice.slice() }, global.ref());
+                    const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ std.mem.span(function_name), name_slice.slice() }, global);
                     for (symbols.values()) |*value| {
                         allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                         value.arg_types.clearAndFree(allocator);
@@ -339,7 +339,7 @@ pub const FFI = struct {
                     std.mem.span(@errorName(err)),
                     std.mem.span(function_name),
                     name_slice.slice(),
-                }, global.ref());
+                }, global);
                 for (symbols.values()) |*value| {
                     allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
@@ -391,7 +391,7 @@ pub const FFI = struct {
             .functions = symbols,
         };
 
-        var close_object = JSC.JSValue.c(Class.make(global.ref(), lib));
+        var close_object = JSC.JSValue.c(Class.make(global, lib));
 
         return JSC.JSValue.createObject2(global, &ZigString.init("close"), &ZigString.init("symbols"), close_object, obj);
     }
@@ -401,7 +401,7 @@ pub const FFI = struct {
         const allocator = VirtualMachine.vm.allocator;
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
-            return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global.ref());
+            return JSC.toInvalidArguments("Expected an options object with symbol names", .{}, global);
         }
 
         var symbols = std.StringArrayHashMapUnmanaged(Function){};
@@ -414,7 +414,7 @@ pub const FFI = struct {
             return val;
         }
         if (symbols.count() == 0) {
-            return JSC.toInvalidArguments("Expected at least one symbol", .{}, global.ref());
+            return JSC.toInvalidArguments("Expected at least one symbol", .{}, global);
         }
 
         var obj = JSValue.createEmptyObject(global, if (symbols.count() < 64) symbols.count() else 0);
@@ -424,7 +424,7 @@ pub const FFI = struct {
             const function_name = function.base_name.?;
 
             if (function.symbol_from_dynamic_library == null) {
-                const ret = JSC.toInvalidArguments("Symbol for \"{s}\" not found", .{std.mem.span(function_name)}, global.ref());
+                const ret = JSC.toInvalidArguments("Symbol for \"{s}\" not found", .{std.mem.span(function_name)}, global);
                 for (symbols.values()) |*value| {
                     allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
@@ -437,7 +437,7 @@ pub const FFI = struct {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
                     std.mem.span(@errorName(err)),
                     std.mem.span(function_name),
-                }, global.ref());
+                }, global);
                 for (symbols.values()) |*value| {
                     allocator.free(bun.constStrToU8(std.mem.span(value.base_name.?)));
                     value.arg_types.clearAndFree(allocator);
@@ -488,7 +488,7 @@ pub const FFI = struct {
             .functions = symbols,
         };
 
-        var close_object = JSC.JSValue.c(Class.make(global.ref(), lib));
+        var close_object = JSC.JSValue.c(Class.make(global, lib));
 
         return JSC.JSValue.createObject2(global, ZigString.static("close"), ZigString.static("symbols"), close_object, obj);
     }
@@ -534,7 +534,7 @@ pub const FFI = struct {
                 defer type_name.deinit();
                 abi_types.appendAssumeCapacity(ABIType.label.get(type_name.slice()) orelse {
                     abi_types.clearAndFree(allocator);
-                    return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global.ref());
+                    return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown type {s}", .{type_name.slice()}, global);
                 });
             }
         }
@@ -560,7 +560,7 @@ pub const FFI = struct {
             defer ret_slice.deinit();
             return_type = ABIType.label.get(ret_slice.slice()) orelse {
                 abi_types.clearAndFree(allocator);
-                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global.ref());
+                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Unknown return type {s}", .{ret_slice.slice()}, global);
             };
         }
 
@@ -593,7 +593,7 @@ pub const FFI = struct {
             .skip_empty_name = true,
 
             .include_value = true,
-        }).init(global.ref(), object.asObjectRef());
+        }).init(global, object.asObjectRef());
         defer symbols_iter.deinit();
 
         try symbols.ensureTotalCapacity(allocator, symbols_iter.len);
@@ -602,7 +602,7 @@ pub const FFI = struct {
             const value = symbols_iter.value;
 
             if (value.isEmptyOrUndefinedOrNull()) {
-                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global.ref());
+                return JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "Expected an object for key \"{any}\"", .{prop}, global);
             }
 
             var function: Function = .{};

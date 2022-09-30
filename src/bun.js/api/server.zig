@@ -355,14 +355,14 @@ pub const ServerConfig = struct {
         if (args.base_uri.len > 0) {
             args.base_url = URL.parse(args.base_uri);
             if (args.base_url.hostname.len == 0) {
-                JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global, exception);
                 bun.default_allocator.free(bun.constStrToU8(args.base_uri));
                 args.base_uri = "";
                 return args;
             }
 
             if (!strings.isAllASCII(args.base_uri)) {
-                JSC.throwInvalidArguments("Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.", .{}, global, exception);
                 bun.default_allocator.free(bun.constStrToU8(args.base_uri));
                 args.base_uri = "";
                 return args;
@@ -401,7 +401,7 @@ pub const ServerConfig = struct {
                 std.fmt.allocPrint(bun.default_allocator, "{s}://{s}:{d}/", .{ protocol, hostname, args.port })) catch unreachable;
 
             if (!strings.isAllASCII(hostname)) {
-                JSC.throwInvalidArguments("Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.", .{}, global.ref(), exception);
+                JSC.throwInvalidArguments("Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.", .{}, global, exception);
                 bun.default_allocator.free(bun.constStrToU8(args.base_uri));
                 args.base_uri = "";
                 return args;
@@ -413,14 +413,14 @@ pub const ServerConfig = struct {
         // I don't think there's a case where this can happen
         // but let's check anyway, just in case
         if (args.base_url.hostname.len == 0) {
-            JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("baseURI must have a hostname", .{}, global, exception);
             bun.default_allocator.free(bun.constStrToU8(args.base_uri));
             args.base_uri = "";
             return args;
         }
 
         if (args.base_url.username.len > 0 or args.base_url.password.len > 0) {
-            JSC.throwInvalidArguments("baseURI can't have a username or password", .{}, global.ref(), exception);
+            JSC.throwInvalidArguments("baseURI can't have a username or password", .{}, global, exception);
             bun.default_allocator.free(bun.constStrToU8(args.base_uri));
             args.base_uri = "";
             return args;
@@ -593,7 +593,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return;
             };
             ctx.response_jsvalue = value;
-            JSC.C.JSValueProtect(ctx.server.globalThis.ref(), value.asObjectRef());
+            JSC.C.JSValueProtect(ctx.server.globalThis, value.asObjectRef());
 
             ctx.render(response);
         }
@@ -815,7 +815,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     this.request_js_object = null;
                     defer request_js.ensureStillAlive();
-                    defer JSC.C.JSValueUnprotect(this.server.globalThis.ref(), request_js.asObjectRef());
+                    defer JSC.C.JSValueUnprotect(this.server.globalThis, request_js.asObjectRef());
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
                     if (request_js.as(Request)) |req| {
@@ -883,7 +883,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 this.request_js_object = null;
                 defer request_js.ensureStillAlive();
-                defer JSC.C.JSValueUnprotect(this.server.globalThis.ref(), request_js.asObjectRef());
+                defer JSC.C.JSValueUnprotect(this.server.globalThis, request_js.asObjectRef());
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (request_js.as(Request)) |req| {
@@ -903,7 +903,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 } else if (promise.asPromise()) |prom| {
                     prom.rejectAsHandled(this.server.globalThis, (JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis)));
                 }
-                JSC.C.JSValueUnprotect(this.server.globalThis.ref(), promise.asObjectRef());
+                JSC.C.JSValueUnprotect(this.server.globalThis, promise.asObjectRef());
             }
 
             if (this.byte_stream) |stream| {
@@ -1764,7 +1764,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.server.config.onError.isEmpty() and !this.has_called_error_handler) {
                 this.has_called_error_handler = true;
                 var args = [_]JSC.C.JSValueRef{value.asObjectRef()};
-                const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis.ref(), this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
+                const result = JSC.C.JSObjectCallAsFunctionReturnValue(this.server.globalThis, this.server.config.onError.asObjectRef(), this.server.thisObject.asObjectRef(), 1, &args);
 
                 if (!result.isEmptyOrUndefinedOrNull()) {
                     if (result.isError() or result.isAggregateError(this.server.globalThis)) {
@@ -2240,7 +2240,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             var args_ = [_]JSC.C.JSValueRef{request.toJS(this.globalThis).asObjectRef()};
             const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(
-                this.globalThis.ref(),
+                this.globalThis,
                 this.config.onRequest.asObjectRef(),
                 this.thisObject.asObjectRef(),
                 1,
@@ -2268,7 +2268,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
         pub fn stopFromJS(this: *ThisServer) JSC.JSValue {
             if (this.listener != null) {
-                JSC.C.JSValueUnprotect(this.globalThis.ref(), this.thisObject.asObjectRef());
+                JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
                 this.thisObject = JSC.JSValue.jsUndefined();
                 this.stop();
             }
@@ -2530,7 +2530,7 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             ctx.request_js_object = args[0];
             const request_value = JSValue.c(args[0]);
             request_value.ensureStillAlive();
-            const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis.ref(), this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
+            const response_value = JSC.C.JSObjectCallAsFunctionReturnValue(this.globalThis, this.config.onRequest.asObjectRef(), this.thisObject.asObjectRef(), 1, &args);
             request_value.ensureStillAlive();
             response_value.ensureStillAlive();
 

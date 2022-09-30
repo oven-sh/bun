@@ -1262,7 +1262,7 @@ pub const ThreadSafeFunction = struct {
         } else {
             // TODO: wrapper that reports errors
             _ = JSC.C.JSObjectCallAsFunction(
-                this.event_loop.global.ref(),
+                this.event_loop.global,
                 this.javascript_function.asObjectRef(),
                 JSC.JSValue.jsUndefined().asObjectRef(),
                 0,
@@ -1290,7 +1290,7 @@ pub const ThreadSafeFunction = struct {
             fun(this.event_loop.global, opaq, this.finalizer.ctx);
         }
 
-        JSC.C.JSValueUnprotect(this.event_loop.global.ref(), this.javascript_function.asObjectRef());
+        JSC.C.JSValueUnprotect(this.event_loop.global, this.javascript_function.asObjectRef());
         bun.default_allocator.destroy(this);
     }
 

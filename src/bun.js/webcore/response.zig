@@ -1148,7 +1148,7 @@ pub const Blob = struct {
                 .InlineBlob, .InternalBlob, .Empty, .Blob => {
                     var blob = value.use();
                     // TODO: this should be one promise not two!
-                    const new_promise = writeFileWithSourceDestination(globalThis.ref(), &blob, &file_blob);
+                    const new_promise = writeFileWithSourceDestination(globalThis, &blob, &file_blob);
                     if (JSC.JSValue.fromRef(new_promise.?).asPromise()) |_promise| {
                         switch (_promise.status(globalThis.vm())) {
                             .Pending => {
@@ -3646,7 +3646,7 @@ pub const Blob = struct {
             .share => {
                 this.store.?.ref();
                 return JSC.ArrayBuffer.fromBytes(buf, .ArrayBuffer).toJSWithContext(
-                    global.ref(),
+                    global,
                     this.store.?,
                     JSC.BlobArrayBuffer_deallocator,
                     null,
@@ -3656,7 +3656,7 @@ pub const Blob = struct {
                 var store = this.store.?;
                 this.transfer();
                 return JSC.ArrayBuffer.fromBytes(buf, .ArrayBuffer).toJSWithContext(
-                    global.ref(),
+                    global,
                     store,
                     JSC.BlobArrayBuffer_deallocator,
                     null,
@@ -3664,7 +3664,7 @@ pub const Blob = struct {
             },
             .temporary => {
                 return JSC.ArrayBuffer.fromBytes(buf, .ArrayBuffer).toJS(
-                    global.ref(),
+                    global,
                     null,
                 );
             },
@@ -4823,7 +4823,7 @@ pub const Body = struct {
                     } else if (promise.asPromise()) |internal| {
                         internal.reject(global, error_instance);
                     }
-                    JSC.C.JSValueUnprotect(global.ref(), promise.asObjectRef());
+                    JSC.C.JSValueUnprotect(global, promise.asObjectRef());
                     locked.promise = null;
                 }
 
@@ -4885,7 +4885,7 @@ pub const Body = struct {
             }
 
             if (tag == .Error) {
-                JSC.C.JSValueUnprotect(VirtualMachine.vm.global.ref(), this.Error.asObjectRef());
+                JSC.C.JSValueUnprotect(VirtualMachine.vm.global, this.Error.asObjectRef());
             }
         }
 

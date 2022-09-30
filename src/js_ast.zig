@@ -7756,7 +7756,7 @@ pub const Macro = struct {
                     if (comptime is_bindgen) return undefined;
                     var macro_callback = macro.vm.macros.get(id) orelse return caller;
 
-                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global.ref(), macro_callback, null, args_count, &args_buf);
+                    var result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(macro.vm.global, macro_callback, null, args_count, &args_buf);
 
                     var runner = Run{
                         .caller = caller,
@@ -7958,7 +7958,7 @@ pub const Macro = struct {
                             var object_iter = JSC.JSPropertyIterator(.{
                                 .skip_empty_name = false,
                                 .include_value = true,
-                            }).init(this.global.ref(), object);
+                            }).init(this.global, object);
                             defer object_iter.deinit();
                             var properties = this.allocator.alloc(G.Property, object_iter.len) catch unreachable;
                             errdefer this.allocator.free(properties);
@@ -8073,7 +8073,7 @@ pub const Macro = struct {
             exception_holder = Zig.ZigException.Holder.init();
             expr_nodes_buf[0] = JSNode.initExpr(caller);
             args_buf[0] = JSNode.Class.make(
-                macro.vm.global.ref(),
+                macro.vm.global,
                 &expr_nodes_buf[0],
             );
             args_buf[1] = if (javascript_object.isEmpty()) null else javascript_object.asObjectRef();

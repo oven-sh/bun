@@ -1,5 +1,5 @@
-import { gc } from "bun";
 import { describe, expect, it } from "bun:test";
+import { gc, gcTick } from "gc";
 import {
   closeSync,
   existsSync,
@@ -219,26 +219,33 @@ describe("writeSync", () => {
 
 describe("readFileSync", () => {
   it("works", () => {
+    gc();
     const text = readFileSync(import.meta.dir + "/readFileSync.txt", "utf8");
+    gc();
     expect(text).toBe("File read successfully");
+    gc();
   });
 
   it("works with a file url", () => {
+    gc();
     const text = readFileSync(
       new URL("file://" + import.meta.dir + "/readFileSync.txt"),
       "utf8"
     );
+    gc();
     expect(text).toBe("File read successfully");
   });
 
   it("works with special files in the filesystem", () => {
     {
       const text = readFileSync("/dev/null", "utf8");
+      gc();
       expect(text).toBe("");
     }
 
     if (process.platform === "linux") {
       const text = readFileSync("/proc/filesystems");
+      gc();
       expect(text.length > 0).toBe(true);
     }
   });
@@ -257,8 +264,10 @@ describe("readFileSync", () => {
 
 describe("readFile", () => {
   it("works", async () => {
+    gc();
     await new Promise((resolve, reject) => {
       readFile(import.meta.dir + "/readFileSync.txt", "utf8", (err, text) => {
+        gc();
         expect(text).toBe("File read successfully");
         resolve(true);
       });
@@ -266,12 +275,15 @@ describe("readFile", () => {
   });
 
   it("returning Buffer works", async () => {
+    gc();
     await new Promise((resolve, reject) => {
+      gc();
       readFile(import.meta.dir + "/readFileSync.txt", (err, text) => {
         const encoded = [
           70, 105, 108, 101, 32, 114, 101, 97, 100, 32, 115, 117, 99, 99, 101,
           115, 115, 102, 117, 108, 108, 121,
         ];
+        gc();
         for (let i = 0; i < encoded.length; i++) {
           expect(text[i]).toBe(encoded[i]);
         }

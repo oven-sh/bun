@@ -1,5 +1,4 @@
 export function gc() {
-  // console.trace("GC");
   Bun.gc(true);
 }
 

@@ -6,6 +6,131 @@ import { readFileSync } from "fs";
 
 var port = 40001;
 
+{
+  const BodyMixin = [
+    Request.prototype.arrayBuffer,
+    Request.prototype.blob,
+    Request.prototype.text,
+    Request.prototype.json,
+  ];
+  const useRequestObjectValues = [true, false];
+
+  for (let RequestPrototyeMixin of BodyMixin) {
+    for (let useRequestObject of useRequestObjectValues) {
+      describe(`Request.prototoype.${RequestPrototyeMixin.name}() ${
+        useRequestObject ? "fetch(req)" : "fetch(url)"
+      }`, () => {
+        const inputFixture = [
+          [JSON.stringify("Hello World"), JSON.stringify("Hello World")],
+          [
+            JSON.stringify("Hello World 123"),
+            Buffer.from(JSON.stringify("Hello World 123")).buffer,
+          ],
+          [
+            JSON.stringify("Hello World 456"),
+            Buffer.from(JSON.stringify("Hello World 456")),
+          ],
+          [
+            JSON.stringify(
+              "EXTREMELY LONG VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(
+                100
+              )
+            ),
+            Buffer.from(
+              JSON.stringify(
+                "EXTREMELY LONG VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(
+                  100
+                )
+              )
+            ),
+          ],
+          [
+            JSON.stringify(
+              "EXTREMELY LONG 🔥 UTF16 🔥 VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(
+                100
+              )
+            ),
+            Buffer.from(
+              JSON.stringify(
+                "EXTREMELY LONG 🔥 UTF16 🔥 VERY LONG STRING WOW SO LONG YOU WONT BELIEVE IT! ".repeat(
+                  100
+                )
+              )
+            ),
+          ],
+        ];
+        for (const [name, input] of inputFixture) {
+          test(`${name.slice(
+            0,
+            Math.min(name.length ?? name.byteLength, 64)
+          )}`, async () => {
+            await runInServer(
+              {
+                async fetch(req) {
+                  var result = await RequestPrototyeMixin.call(req);
+                  if (RequestPrototyeMixin === Request.prototype.json) {
+                    result = JSON.stringify(result);
+                  }
+                  if (typeof result === "string") {
+                    expect(result.length).toBe(name.length);
+                    expect(result).toBe(name);
+                  } else if (result && result instanceof Blob) {
+                    expect(result.size).toBe(
+                      new TextEncoder().encode(name).byteLength
+                    );
+                    expect(await result.text()).toBe(name);
+                  } else {
+                    expect(result.byteLength).toBe(
+                      Buffer.from(input).byteLength
+                    );
+                    expect(Bun.SHA1.hash(result, "base64")).toBe(
+                      Bun.SHA1.hash(input, "base64")
+                    );
+                  }
+                  return new Response(result, {
+                    headers: req.headers,
+                  });
+                },
+              },
+              async (url) => {
+                var response;
+
+                if (useRequestObject) {
+                  response = await fetch(
+                    new Request({
+                      body: input,
+                      method: "POST",
+                      url: url,
+                      headers: {
+                        "content-type": "text/plain",
+                      },
+                    })
+                  );
+                } else {
+                  response = await fetch(url, {
+                    body: input,
+                    method: "POST",
+                    headers: {
+                      "content-type": "text/plain",
+                    },
+                  });
+                }
+
+                expect(response.status).toBe(200);
+                expect(response.headers.get("content-length")).toBe(
+                  String(Buffer.from(input).byteLength)
+                );
+                expect(response.headers.get("content-type")).toBe("text/plain");
+                expect(await response.text()).toBe(name);
+              }
+            );
+          });
+        }
+      });
+    }
+  }
+}
+
 async function runInServer(
   opts: ServeOptions,
   cb: (url: string) => void | Promise<void>
@@ -63,27 +188,28 @@ describe("reader", function () {
     // - 1 byte
     // - less than the InlineBlob limit
     // - multiple chunks
+    // - backpressure
     for (let inputLength of [
       0,
       1,
       2,
       12,
-      63,
-      128,
+      95,
+      1024,
+      1024 * 1024,
       1024 * 1024 * 2,
-      1024 * 1024 * 4,
     ]) {
       var bytes = new Uint8Array(inputLength);
       {
         const chunk = Math.min(bytes.length, 256);
         for (var i = 0; i < chunk; i++) {
-          bytes[i] = i % 256;
+          bytes[i] = 255 - i;
         }
       }
 
       if (bytes.length > 255) fillRepeating(bytes, 0, bytes.length);
 
-      for (var huge_ of [
+      for (const huge_ of [
         bytes,
         bytes.buffer,
         new DataView(bytes.buffer),
@@ -114,11 +240,11 @@ describe("reader", function () {
         new Float32Array(bytes).subarray(0, 1),
       ]) {
         gc();
-
-        it(`works with ${huge_.constructor.name}(${
-          huge_.byteLength ?? huge_.size
-        }:${inputLength})`, async () => {
-          var huge = huge_;
+        const thisArray = huge_;
+        it(`works with ${thisArray.constructor.name}(${
+          thisArray.byteLength ?? thisArray.size
+        }:${inputLength}) via req.body.getReader() in chunks`, async () => {
+          var huge = thisArray;
           var called = false;
           gc();
 
@@ -148,6 +274,7 @@ describe("reader", function () {
                   expect(req.headers.get("user-agent")).toBe(
                     navigator.userAgent
                   );
+
                   var reader = req.body.getReader();
                   called = true;
                   var buffers = [];
@@ -185,6 +312,7 @@ describe("reader", function () {
                 headers: {
                   "content-type": "text/plain",
                   "x-custom": "hello",
+                  "x-typed-array": thisArray.constructor.name,
                 },
               });
               huge = undefined;
@@ -207,12 +335,13 @@ describe("reader", function () {
         });
 
         for (let isDirectStream of [true, false]) {
-          const inner = () => {
-            for (let position of ["begin" /*"end"*/]) {
-              it(`streaming back ${huge_.constructor.name}(${
-                huge_.byteLength ?? huge_.size
+          const positions = ["begin", "end"];
+          const inner = (thisArray) => {
+            for (let position of positions) {
+              it(`streaming back ${thisArray.constructor.name}(${
+                thisArray.byteLength ?? thisArray.size
               }:${inputLength}) starting request.body.getReader() at ${position}`, async () => {
-                var huge = huge_;
+                var huge = thisArray;
                 var called = false;
                 gc();
 
@@ -232,7 +361,15 @@ describe("reader", function () {
                       try {
                         var reader;
 
-                        if (position === "begin") reader = req.body.getReader();
+                        if (position === "begin") {
+                          reader = req.body.getReader();
+                        }
+
+                        if (position === "end") {
+                          await 1;
+                          reader = req.body.getReader();
+                        }
+
                         expect(req.headers.get("x-custom")).toBe("hello");
                         expect(req.headers.get("content-type")).toBe(
                           "text/plain"
@@ -249,32 +386,39 @@ describe("reader", function () {
                         expect(req.headers.get("user-agent")).toBe(
                           navigator.userAgent
                         );
-                        if (position === "end") {
-                          await 1;
-                          await 123;
 
-                          await new Promise((resolve, reject) => {
-                            setTimeout(resolve, 1);
-                          });
-                          reader = req.body.getReader();
-                        }
+                        const direct = {
+                          type: "direct",
+                          async pull(controller) {
+                            while (true) {
+                              const { done, value } = await reader.read();
+                              if (done) {
+                                called = true;
+                                controller.end();
+
+                                return;
+                              }
+                              controller.write(value);
+                            }
+                          },
+                        };
+
+                        const web = {
+                          async pull(controller) {
+                            while (true) {
+                              const { done, value } = await reader.read();
+                              if (done) {
+                                called = true;
+                                controller.close();
+                                return;
+                              }
+                              controller.enqueue(value);
+                            }
+                          },
+                        };
 
                         return new Response(
-                          new ReadableStream({
-                            type: "direct",
-                            async pull(controller) {
-                              while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) {
-                                  called = true;
-                                  controller.end();
-
-                                  return;
-                                }
-                                controller.write(value);
-                              }
-                            },
-                          }),
+                          new ReadableStream(isDirectStream ? direct : web),
                           {
                             headers: req.headers,
                           }
@@ -293,6 +437,7 @@ describe("reader", function () {
                       headers: {
                         "content-type": "text/plain",
                         "x-custom": "hello",
+                        "x-typed-array": thisArray.constructor.name,
                       },
                     });
                     huge = undefined;
@@ -307,6 +452,12 @@ describe("reader", function () {
                     );
 
                     gc();
+                    if (!response.headers.has("content-type")) {
+                      console.error(
+                        Object.fromEntries(response.headers.entries())
+                      );
+                    }
+
                     expect(response.headers.get("content-type")).toBe(
                       "text/plain"
                     );
@@ -321,9 +472,9 @@ describe("reader", function () {
           };
 
           if (isDirectStream) {
-            describe("direct stream", () => inner());
+            describe(" direct stream", () => inner(thisArray));
           } else {
-            describe("default stream", () => inner());
+            describe("default stream", () => inner(thisArray));
           }
         }
       }
@@ -333,38 +484,3 @@ describe("reader", function () {
     throw e;
   }
 });
-
-{
-  const inputFixture = [
-    ["Hello World", "Hello World"],
-    ["Hello World 123", Buffer.from("Hello World 123").buffer],
-    ["Hello World 456", Buffer.from("Hello World 456")],
-  ];
-  describe("echo", () => {
-    for (const [name, input] of inputFixture) {
-      test(`${name}`, async () => {
-        return await runInServer(
-          {
-            fetch(req) {
-              return new Response(req.body, { headers: req.headers });
-            },
-          },
-          async (url) => {
-            var request = new Request({
-              body: input,
-              method: "POST",
-              url: url,
-              headers: {
-                "content-type": "text/plain",
-              },
-            });
-            var response = await fetch(request);
-            expect(response.status).toBe(200);
-            expect(response.headers.get("content-type")).toBe("text/plain");
-            expect(await response.text()).toBe(name);
-          }
-        );
-      });
-    }
-  });
-}

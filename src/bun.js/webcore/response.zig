@@ -639,7 +639,7 @@ pub const Fetch = struct {
                 .redirected = this.result.redirected,
                 .body = .{
                     .init = .{
-                        .headers = FetchHeaders.createFromPicoHeaders(this.global_this, http_response.headers),
+                        .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
                         .status_code = @truncate(u16, http_response.status_code),
                     },
                     .value = body_value,
@@ -3909,6 +3909,12 @@ pub const AnyBlob = union(enum) {
                 }
 
                 var str = this.InternalBlob.toStringOwned(global);
+
+                // the GC will collect the string
+                this.* = .{
+                    .InlineBlob = .{},
+                };
+
                 return str.parseJSON(global);
             },
         }
@@ -5057,12 +5063,12 @@ pub const Request = struct {
         try writer.writeAll("}");
     }
 
-    pub fn fromRequestContext(ctx: *RequestContext, global: *JSGlobalObject) !Request {
+    pub fn fromRequestContext(ctx: *RequestContext) !Request {
         var req = Request{
             .url = std.mem.span(ctx.getFullURL()),
             .body = Body.Value.empty,
             .method = ctx.method,
-            .headers = FetchHeaders.createFromPicoHeaders(global, ctx.request.headers),
+            .headers = FetchHeaders.createFromPicoHeaders(ctx.request.headers),
             .url_was_allocated = true,
         };
         return req;

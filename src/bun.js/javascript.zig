@@ -368,8 +368,6 @@ pub const VirtualMachine = struct {
     global_api_constructors: [GlobalConstructors.len]JSC.JSValue = undefined,
 
     origin_timer: std.time.Timer = undefined,
-    active_tasks: usize = 0,
-
     macro_event_loop: EventLoop = EventLoop{},
     regular_event_loop: EventLoop = EventLoop{},
     event_loop: *EventLoop = undefined,
@@ -378,6 +376,8 @@ pub const VirtualMachine = struct {
     file_blobs: JSC.WebCore.Blob.Store.Map,
 
     source_mappings: SavedSourceMap = undefined,
+
+    active_tasks: usize = 0,
 
     rare_data: ?*JSC.RareData = null,
     poller: JSC.Poller = JSC.Poller{},
@@ -2044,7 +2044,7 @@ pub const EventListenerMixin = struct {
 
         fetch_event.* = FetchEvent{
             .request_context = request_context,
-            .request = try Request.fromRequestContext(request_context, vm.global),
+            .request = try Request.fromRequestContext(request_context),
             .onPromiseRejectionCtx = @as(*anyopaque, ctx),
             .onPromiseRejectionHandler = FetchEventRejectionHandler.onRejection,
         };

@@ -130,6 +130,8 @@ pub const ZigString = extern struct {
         return this.len * 2;
     }
 
+    /// Count the number of code points in the string.
+    /// This function is slow. Use maxUITF8ByteLength() to get a quick estimate
     pub fn utf8ByteLength(this: ZigString) usize {
         if (this.isUTF8()) {
             return this.len;
@@ -712,23 +714,19 @@ pub const FetchHeaders = opaque {
     }
 
     pub fn createFromPicoHeaders(
-        global: *JSGlobalObject,
         pico_headers: anytype,
     ) *FetchHeaders {
         const out = PicoHeaders{ .ptr = pico_headers.ptr, .len = pico_headers.len };
         const result = shim.cppFn("createFromPicoHeaders_", .{
-            global,
             &out,
         });
         return result;
     }
 
     pub fn createFromPicoHeaders_(
-        global: *JSGlobalObject,
         pico_headers: *const anyopaque,
     ) *FetchHeaders {
         return shim.cppFn("createFromPicoHeaders_", .{
-            global,
             pico_headers,
         });
     }
@@ -2770,6 +2768,15 @@ pub const JSValue = enum(JSValueReprInt) {
     pub fn unprotect(this: JSValue) void {
         if (this.isEmptyOrUndefinedOrNull() or this.isNumber()) return;
         JSC.C.JSValueUnprotect(JSC.VirtualMachine.vm.global, this.asObjectRef());
+    }
+
+    pub fn JSONValueFromString(
+        global: *JSGlobalObject,
+        str: [*]const u8,
+        len: usize,
+        ascii: bool,
+    ) JSValue {
+        return cppFn("JSONValueFromString", .{ global, str, len, ascii });
     }
 
     /// Create an object with exactly two properties

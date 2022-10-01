@@ -271,9 +271,9 @@ export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque)
 }
 
 export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
-    if (comptime Environment.allow_assert) {
-        std.debug.assert(Mimalloc.mi_check_owned(ZigString.init(ptr[0..len]).slice().ptr));
-    }
+    // if (comptime Environment.allow_assert) {
+    //     std.debug.assert(Mimalloc.mi_check_owned(ptr));
+    // }
     // we must untag the string pointer
     Mimalloc.mi_free(@intToPtr(*anyopaque, @ptrToInt(ZigString.init(ptr[0..len]).slice().ptr)));
 }

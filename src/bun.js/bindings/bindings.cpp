@@ -225,21 +225,35 @@ typedef struct PicoHTTPHeaders {
     const PicoHTTPHeader* ptr;
     size_t len;
 } PicoHTTPHeaders;
-WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(JSC__JSGlobalObject* arg0, const void* arg1)
+WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
 
     if (pico_headers.len > 0) {
-        Vector<KeyValuePair<String, String>> pairs;
-        pairs.reserveCapacity(pico_headers.len);
-        for (size_t i = 0; i < pico_headers.len; i++) {
-            WTF::String name = WTF::String(pico_headers.ptr[i].name, pico_headers.ptr[i].name_len);
-            WTF::String value = WTF::String(pico_headers.ptr[i].value, pico_headers.ptr[i].value_len);
-            pairs.uncheckedAppend(KeyValuePair<String, String>(name, value));
+        HTTPHeaderMap map = HTTPHeaderMap();
+
+        for (size_t j = 0; j < pico_headers.len; j++) {
+            PicoHTTPHeader header = pico_headers.ptr[j];
+            if (header.value_len == 0)
+                continue;
+
+            StringView nameView = StringView(reinterpret_cast<const char*>(header.name), header.name_len);
+
+            LChar* data = nullptr;
+            auto value = String::createUninitialized(header.value_len, data);
+            memcpy(data, header.value, header.value_len);
+
+            HTTPHeaderName name;
+
+            if (WebCore::findHTTPHeaderName(nameView, name)) {
+                map.add(name, WTFMove(value));
+            } else {
+                map.setUncommonHeader(nameView.toString().isolatedCopy(), WTFMove(value));
+            }
         }
-        headers->fill(WebCore::FetchHeaders::Init(WTFMove(pairs)));
-        pairs.releaseBuffer();
+
+        headers->setInternalHeaders(WTFMove(map));
     }
 
     return headers;
@@ -247,53 +261,28 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(JSC__JSGlob
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)
 {
     uWS::HttpRequest req = *reinterpret_cast<uWS::HttpRequest*>(arg1);
-    std::bitset<255> seenHeaderSizes;
-    // uWebSockets limits to 50 headers
-    uint32_t nameHashes[55];
     size_t i = 0;
 
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     HTTPHeaderMap map = HTTPHeaderMap();
 
-outer:
     for (const auto& header : req) {
         StringView nameView = StringView(reinterpret_cast<const LChar*>(header.first.data()), header.first.length());
-
-        uint32_t hash = nameView.hash();
-        nameHashes[i++] = hash;
         size_t name_len = nameView.length();
 
-        if (UNLIKELY(name_len >= 255)) {
-            auto value = WTF::StringView(reinterpret_cast<const LChar*>(header.second.data()), header.second.length()).toString();
-            map.add(nameView.toString(), value);
-            continue;
-        }
-
-        if (seenHeaderSizes[name_len]) {
-            if (i > 56)
-                __builtin_unreachable();
-
-            for (size_t j = 0; j < i - 1; j++) {
-                if (nameHashes[j] == hash) {
-                    // When the same header is seen twice, we need to merge them
-                    // Merging already allocates
-                    // so we can skip that step here
-                    map.add(nameView.toString(), WTF::String(WTF::StringImpl::createWithoutCopying(header.second.data(), header.second.length())));
-                    goto outer;
-                }
-            }
-        }
+        LChar* data = nullptr;
+        auto value = String::createUninitialized(header.second.length(), data);
+        memcpy(data, header.second.data(), header.second.length());
 
         HTTPHeaderName name;
 
-        auto value = WTF::StringView(reinterpret_cast<const LChar*>(header.second.data()), header.second.length()).toString();
         if (WebCore::findHTTPHeaderName(nameView, name)) {
-            map.add(name, value);
+            map.add(name, WTFMove(value));
         } else {
-            map.setUncommonHeader(nameView.toString().isolatedCopy(), value);
+            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTFMove(value));
         }
 
-        seenHeaderSizes[name_len] = true;
+        // seenHeaderSizes[name_len] = true;
 
         if (i > 56)
             __builtin_unreachable();

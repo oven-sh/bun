@@ -2524,13 +2524,14 @@ pub fn ReadableStreamSource(
             pub const name = std.fmt.comptimePrint("{s}_JSReadableStreamSource", .{std.mem.span(name_)});
 
             pub fn pull(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-                var this = callFrame.argument(0).asPtr(ReadableStreamSourceType);
-                const view = callFrame.argument(1);
+                const arguments = callFrame.arguments(3);
+                var this = arguments.ptr[0].asPtr(ReadableStreamSourceType);
+                const view = arguments.ptr[1];
                 view.ensureStillAlive();
                 var buffer = view.asArrayBuffer(globalThis) orelse return JSC.JSValue.jsUndefined();
                 return processResult(
                     globalThis,
-                    callFrame,
+                    arguments.ptr[2],
                     this.pullFromJS(buffer.slice(), view),
                 );
             }
@@ -2548,17 +2549,14 @@ pub fn ReadableStreamSource(
                 }
             }
 
-            pub fn processResult(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame, result: StreamResult) JSC.JSValue {
-                const arguments = callFrame.arguments(2);
-                var array = arguments.ptr[1].asObjectRef();
-
+            pub fn processResult(globalThis: *JSGlobalObject, flags: JSValue, result: StreamResult) JSC.JSValue {
                 switch (result) {
                     .err => |err| {
                         globalThis.vm().throwError(globalThis, err.toJSC(globalThis));
                         return JSValue.jsUndefined();
                     },
                     .temporary_and_done, .owned_and_done, .into_array_and_done => {
-                        JSC.C.JSObjectSetPropertyAtIndex(globalThis, array, 0, JSValue.jsBoolean(true).asObjectRef(), null);
+                        JSC.C.JSObjectSetPropertyAtIndex(globalThis, flags.asObjectRef(), 0, JSValue.jsBoolean(true).asObjectRef(), null);
                         return result.toJS(globalThis);
                     },
                     else => return result.toJS(globalThis),

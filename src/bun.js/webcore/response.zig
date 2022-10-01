@@ -612,6 +612,7 @@ pub const Fetch = struct {
             const http_response = this.result.response;
             var response = allocator.create(Response) catch unreachable;
             var internal_blob = this.response_buffer.list.toManaged(this.response_buffer.allocator);
+
             this.response_buffer = .{
                 .allocator = default_allocator,
                 .list = .{
@@ -4802,27 +4803,26 @@ pub const Body = struct {
         }
 
         pub fn useAsAnyBlob(this: *Value) AnyBlob {
-            switch (this.*) {
-                .Blob => {
-                    var new_blob = this.Blob;
-                    std.debug.assert(new_blob.allocator == null); // owned by Body
-                    this.* = .{ .Used = .{} };
-                    return .{ .Blob = new_blob };
-                },
-                .InternalBlob => {
-                    const data = this.InternalBlob;
-                    this.* = .{ .Used = .{} };
-                    return .{ .InternalBlob = data };
-                },
-                .InlineBlob => {
-                    const data = this.InlineBlob;
-                    this.* = .{ .Used = .{} };
-                    return .{ .InlineBlob = data };
-                },
-                else => {
-                    return .{ .Blob = Blob.initEmpty(undefined) };
-                },
+            const any_blob: AnyBlob = switch (this.*) {
+                .Blob => .{ .Blob = this.Blob },
+                .InternalBlob => .{ .InternalBlob = this.InternalBlob },
+                .InlineBlob => .{ .InlineBlob = this.InlineBlob },
+                else => .{ .Blob = Blob.initEmpty(undefined) },
+            };
+
+            if (this.* == .Locked) {
+                if (this.Locked.promise) |prom| {
+                    prom.unprotect();
+                }
+
+                if (this.Locked.readable) |readable| {
+                    readable.done();
+                    // TODO: convert the known streams back into blobs
+                }
             }
+
+            this.* = .{ .Used = {} };
+            return any_blob;
         }
 
         pub fn toErrorInstance(this: *Value, error_instance: JSC.JSValue, global: *JSGlobalObject) void {

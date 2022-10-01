@@ -295,14 +295,10 @@ pub export fn Bun__onDidAppendPlugin(jsc_vm: *VirtualMachine, globalObject: *JSG
     jsc_vm.bundler.linker.plugin_runner = &jsc_vm.plugin_runner.?;
 }
 
-// If you read JavascriptCore/API/JSVirtualMachine.mm - https://github.com/WebKit/WebKit/blob/acff93fb303baa670c055cb24c2bad08691a01a0/Source/JavaScriptCore/API/JSVirtualMachine.mm#L101
-// We can see that it's sort of like std.mem.Allocator but for JSGlobalContextRef, to support Automatic Reference Counting
-// Its unavailable on Linux
-
-// JavaScriptCore expects 1 VM per thread
-// However, there can be many JSGlobalObject
-// We currently assume a 1:1 correspondence between the two.
-// This is technically innacurate
+/// TODO: rename this to ScriptExecutionContext
+/// This is the shared global state for a single JS instance execution
+/// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
+/// However, that may change in the future
 pub const VirtualMachine = struct {
     global: *JSGlobalObject,
     allocator: std.mem.Allocator,
@@ -451,7 +447,13 @@ pub const VirtualMachine = struct {
 
     pub const MacroMap = std.AutoArrayHashMap(i32, js.JSObjectRef);
 
+    /// Threadlocals are slow on macOS
     pub threadlocal var vm_loaded = false;
+
+    /// Threadlocals are slow on macOS
+    /// Consider using `globalThis.bunVM()` instead.
+    /// There may be a time where we run multiple VMs in the same thread
+    /// At that point, this threadlocal will be a problem.
     pub threadlocal var vm: *VirtualMachine = undefined;
 
     pub fn enableMacroMode(this: *VirtualMachine) void {

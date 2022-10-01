@@ -48,6 +48,8 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
                 .globalThis = globalThis,
             };
             this.promise.protect();
+            this.ref.ref(this.event_loop.virtual_machine);
+
             return this;
         }
 
@@ -57,10 +59,13 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
             this.onFinish();
         }
 
-        pub fn runFromJS(this: This) void {
+        pub fn runFromJS(this: *This) void {
             var promise_value = this.promise;
+            this.ref.unref(this.event_loop.virtual_machine);
+
             promise_value.ensureStillAlive();
             promise_value.unprotect();
+
             var promise = promise_value.asInternalPromise() orelse {
                 if (comptime @hasDecl(Context, "deinit")) {
                     @call(.{}, Context.deinit, .{this.ctx});
@@ -74,8 +79,6 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn schedule(this: *This) void {
-            this.ref.ref(this.event_loop.virtual_machine);
-
             WorkPool.schedule(&this.task);
         }
 
@@ -84,7 +87,6 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn deinit(this: *This) void {
-            this.ref.unref(this.event_loop.virtual_machine);
             this.allocator.destroy(this);
         }
     };
@@ -106,11 +108,12 @@ pub fn IOTask(comptime Context: type) type {
         pub fn createOnJSThread(allocator: std.mem.Allocator, globalThis: *JSGlobalObject, value: *Context) !*This {
             var this = try allocator.create(This);
             this.* = .{
-                .event_loop = VirtualMachine.vm.eventLoop(),
+                .event_loop = globalThis.bunVM().eventLoop(),
                 .ctx = value,
                 .allocator = allocator,
                 .globalThis = globalThis,
             };
+            this.ref.ref(this.event_loop.virtual_machine);
 
             return this;
         }
@@ -120,8 +123,9 @@ pub fn IOTask(comptime Context: type) type {
             Context.run(this.ctx, this);
         }
 
-        pub fn runFromJS(this: This) void {
+        pub fn runFromJS(this: *This) void {
             var ctx = this.ctx;
+            this.ref.unref(this.event_loop.virtual_machine);
             ctx.then(this.globalThis);
         }
 
@@ -376,7 +380,7 @@ pub const EventLoop = struct {
                     this.tick();
 
                     if (promise.status(this.global.vm()) == .Pending) {
-                        if (this.tickConcurrentWithCount() == 0) {
+                        if (this.virtual_machine.uws_event_loop.?.active > 0 or this.virtual_machine.uws_event_loop.?.num_polls > 0) {
                             this.virtual_machine.uws_event_loop.?.tick();
                         }
                     }

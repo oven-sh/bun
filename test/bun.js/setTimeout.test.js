@@ -41,3 +41,43 @@ it("clearTimeout", async () => {
   });
   expect(called).toBe(false);
 });
+
+it("setTimeout(() => {}, 0)", async () => {
+  var called = false;
+  setTimeout(() => {
+    called = true;
+  }, 0);
+  await new Promise((resolve, reject) => {
+    setTimeout(() => {
+      resolve();
+    }, 10);
+  });
+  expect(called).toBe(true);
+  var ranFirst = -1;
+  setTimeout(() => {
+    if (ranFirst === -1) ranFirst = 1;
+  }, 1);
+  setTimeout(() => {
+    if (ranFirst === -1) ranFirst = 0;
+  }, 0);
+
+  await new Promise((resolve, reject) => {
+    setTimeout(() => {
+      resolve();
+    }, 10);
+  });
+  expect(ranFirst).toBe(0);
+
+  ranFirst = -1;
+
+  const id = setTimeout(() => {
+    ranFirst = 0;
+  }, 0);
+  clearTimeout(id);
+  await new Promise((resolve, reject) => {
+    setTimeout(() => {
+      resolve();
+    }, 10);
+  });
+  expect(ranFirst).toBe(-1);
+});

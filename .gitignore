@@ -1,5 +1,3 @@
-_test
-.gitignore
 .DS_Store
 zig-cache
 *.wasm

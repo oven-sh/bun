@@ -524,16 +524,34 @@ extern "C" napi_status napi_wrap(napi_env env,
     napi_value js_object,
     void* native_object,
     napi_finalize finalize_cb,
+
+    // Typically when wrapping a class instance, a finalize callback should be
+    // provided that simply deletes the native instance that is received as the
+    // data argument to the finalize callback.
     void* finalize_hint,
+
     napi_ref* result)
 {
-    if (!toJS(js_object).isObject()) {
-        return napi_arraybuffer_expected;
+    JSValue value = toJS(js_object);
+    if (!value || value.isUndefinedOrNull()) {
+        return napi_object_expected;
     }
 
     auto* globalObject = toJS(env);
     auto& vm = globalObject->vm();
-    auto* val = jsDynamicCast<NapiPrototype*>(toJS(js_object));
+    auto* val = jsDynamicCast<NapiPrototype*>(value);
+
+    if (!val) {
+        return napi_object_expected;
+    }
+
+    if (val->napiRef) {
+        // Calling napi_wrap() a second time on an object will return an error.
+        // To associate another native instance with the object, use
+        // napi_remove_wrap() first.
+        return napi_invalid_arg;
+    }
+
     auto clientData = WebCore::clientData(vm);
 
     auto* ref = new NapiRef(globalObject, 0);

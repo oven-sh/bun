@@ -151,25 +151,6 @@ pub const Response = struct {
         return ZigString.init("basic").toValue(globalThis);
     }
 
-    pub fn getBodyUsed(
-        this: *Response,
-        _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
-        return JSValue.jsBoolean(this.body.value == .Used);
-    }
-
-    pub fn getBody(
-        this: *Response,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
-        if (this.body.value == .Used) {
-            globalThis.throw("Body already used", .{});
-            return JSValue.jsUndefined();
-        }
-
-        return this.body.value.toReadableStream(globalThis);
-    }
-
     pub fn getStatusText(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
@@ -239,7 +220,7 @@ pub const Response = struct {
         return new_response;
     }
 
-    pub usingnamespace NewBlobInterface(@This());
+    pub usingnamespace BodyMixin(@This());
 
     pub fn getStatus(
         this: *Response,
@@ -4456,51 +4437,21 @@ pub const Body = struct {
                 .Used, .Empty => {
                     return JSC.WebCore.ReadableStream.empty(globalThis);
                 },
-                .InternalBlob => |*bytes| {
-                    var blob = Blob.init(bytes.toOwnedSlice(), bytes.bytes.allocator, globalThis);
-                    if (bytes.was_string)
-                        blob.content_type = MimeType.text.value;
+                .InternalBlob, .Blob, .InlineBlob => {
+                    var blob = this.use();
                     defer blob.detach();
-                    var readable = JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, blob.size);
+                    blob.resolveSize();
+                    const value = JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, blob.size);
+
                     this.* = .{
                         .Locked = .{
-                            .readable = JSC.WebCore.ReadableStream.fromJS(readable, globalThis).?,
+                            .readable = JSC.WebCore.ReadableStream.fromJS(value, globalThis).?,
                             .global = globalThis,
                         },
                     };
-                    return readable;
-                },
-                .InlineBlob => |*bytes| {
-                    var blob = Blob.create(
-                        bytes.toOwnedSlice(),
-                        bun.default_allocator,
-                        globalThis,
-                        bytes.was_string,
-                    );
-                    if (bytes.was_string)
-                        blob.content_type = MimeType.text.value;
-                    defer blob.detach();
-                    var readable = JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, blob.size);
-                    this.* = .{
-                        .Locked = .{
-                            .readable = JSC.WebCore.ReadableStream.fromJS(readable, globalThis).?,
-                            .global = globalThis,
-                        },
-                    };
-                    return readable;
-                },
-                .Blob => {
-                    var blob = this.Blob;
-                    defer blob.detach();
-                    var readable = JSC.WebCore.ReadableStream.fromBlob(globalThis, &blob, blob.size);
-                    readable.protect();
-                    this.* = .{
-                        .Locked = .{
-                            .readable = JSC.WebCore.ReadableStream.fromJS(readable, globalThis).?,
-                            .global = globalThis,
-                        },
-                    };
-                    return readable;
+                    this.Locked.readable.?.value.protect();
+
+                    return value;
                 },
                 .Locked => {
                     var locked = &this.Locked;
@@ -4827,8 +4778,9 @@ pub const Body = struct {
                     return new_blob;
                 },
                 .InlineBlob => {
+                    const cloned = this.InlineBlob.bytes;
                     const new_blob = Blob.create(
-                        this.InlineBlob.toOwnedSlice(),
+                        cloned[0..this.InlineBlob.len],
                         bun.default_allocator,
                         JSC.VirtualMachine.vm.global,
                         this.InlineBlob.was_string,
@@ -5156,18 +5108,6 @@ pub const Request = struct {
         return ZigString.init("").toValueGC(globalThis);
     }
 
-    pub fn getBody(
-        this: *Request,
-        globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
-        if (this.body == .Used) {
-            globalThis.throw("Body already used", .{});
-            return JSValue.jsUndefined();
-        }
-
-        return this.body.toReadableStream(globalThis);
-    }
-
     pub fn getIntegrity(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
@@ -5351,14 +5291,7 @@ pub const Request = struct {
         return &this.body;
     }
 
-    pub fn getBodyUsed(
-        this: *Request,
-        _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return JSC.JSValue.jsBoolean(this.body == .Used);
-    }
-
-    pub usingnamespace NewBlobInterface(@This());
+    pub usingnamespace BodyMixin(@This());
 
     pub fn doClone(
         this: *Request,
@@ -5416,21 +5349,45 @@ pub const Request = struct {
     }
 };
 
-fn NewBlobInterface(comptime Type: type) type {
+fn BodyMixin(comptime Type: type) type {
     return struct {
         pub fn getText(
             this: *Type,
-            globalObject: *JSC.JSGlobalObject,
-            cf: *JSC.CallFrame,
+            globalThis: *JSC.JSGlobalObject,
+            _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            std.mem.doNotOptimizeAway(cf);
             var value: *Body.Value = this.getBodyValue();
+            if (value.* == .Used) {
+                globalThis.throw("Body already used", .{});
+                return JSValue.jsUndefined();
+            }
+
             if (value.* == .Locked) {
-                return value.Locked.setPromise(globalObject, .getText);
+                return value.Locked.setPromise(globalThis, .getText);
             }
 
             var blob = value.useAsAnyBlob();
-            return JSC.JSPromise.wrap(globalObject, blob.toString(globalObject, .transfer));
+            return JSC.JSPromise.wrap(globalThis, blob.toString(globalThis, .transfer));
+        }
+
+        pub fn getBody(
+            this: *Type,
+            globalThis: *JSC.JSGlobalObject,
+        ) callconv(.C) JSValue {
+            var body: *Body.Value = this.getBodyValue();
+            if (body.* == .Used) {
+                globalThis.throw("Body already used", .{});
+                return JSValue.jsUndefined();
+            }
+
+            return body.toReadableStream(globalThis);
+        }
+
+        pub fn getBodyUsed(
+            this: *Type,
+            _: *JSC.JSGlobalObject,
+        ) callconv(.C) JSValue {
+            return JSValue.jsBoolean(this.getBodyValue().* == .Used);
         }
 
         pub fn getJSON(
@@ -5439,6 +5396,11 @@ fn NewBlobInterface(comptime Type: type) type {
             _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
+            if (value.* == .Used) {
+                globalObject.throw("Body already used", .{});
+                return JSValue.jsUndefined();
+            }
+
             if (value.* == .Locked) {
                 return value.Locked.setPromise(globalObject, .getJSON);
             }
@@ -5446,13 +5408,18 @@ fn NewBlobInterface(comptime Type: type) type {
             var blob = value.useAsAnyBlob();
             return JSC.JSPromise.wrap(globalObject, blob.toJSON(globalObject, .share));
         }
+
         pub fn getArrayBuffer(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            cf: *JSC.CallFrame,
+            _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            std.mem.doNotOptimizeAway(cf);
             var value: *Body.Value = this.getBodyValue();
+
+            if (value.* == .Used) {
+                globalObject.throw("Body already used", .{});
+                return JSValue.jsUndefined();
+            }
 
             if (value.* == .Locked) {
                 return value.Locked.setPromise(globalObject, .getArrayBuffer);
@@ -5465,9 +5432,8 @@ fn NewBlobInterface(comptime Type: type) type {
         pub fn getBlob(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-            cf: *JSC.CallFrame,
+            _: *JSC.CallFrame,
         ) callconv(.C) JSC.JSValue {
-            std.mem.doNotOptimizeAway(cf);
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Locked) {
@@ -5480,21 +5446,6 @@ fn NewBlobInterface(comptime Type: type) type {
             blob.allocator = getAllocator(globalObject);
             return JSC.JSPromise.resolvedPromiseValue(globalObject, ptr.toJS(globalObject));
         }
-
-        // pub fn getBody(
-        //     this: *Type,
-        //     ctx: js.JSContextRef,
-        //     _: js.JSObjectRef,
-        //     _: js.JSObjectRef,
-        //     _: []const js.JSValueRef,
-        //     _: js.ExceptionRef,
-        // ) js.JSValueRef {
-        //     var value: *Body.Value = this.getBodyValue();
-
-        //     switch (value.*) {
-        //         .Empty => {},
-        //     }
-        // }
     };
 }
 

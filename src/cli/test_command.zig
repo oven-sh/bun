@@ -51,6 +51,8 @@ pub const CommandLineReporter = struct {
     summary: Summary = Summary{},
     prev_file: u64 = 0,
 
+    failures_to_repeat_buf: std.ArrayListUnmanaged(u8) = .{},
+
     pub const Summary = struct {
         pass: u32 = 0,
         expectations: u32 = 0,
@@ -135,11 +137,12 @@ pub const CommandLineReporter = struct {
     }
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*Jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
-        var buffered_writer = std.io.bufferedWriter(writer_);
-        var writer = buffered_writer.writer();
-        defer buffered_writer.flush() catch unreachable;
-
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+
+        // when the tests fail, we want to repeat the failures at the end
+        // so that you can see them better when there are lots of tests that ran
+        const initial_length = this.failures_to_repeat_buf.items.len;
+        var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
 
         if (Output.enable_ansi_colors_stderr)
             writer.print(comptime Output.prettyFmt("<r><red>✗<r>", true), .{}) catch unreachable
@@ -147,6 +150,10 @@ pub const CommandLineReporter = struct {
             writer.print(comptime Output.prettyFmt("<r><red>✗<r>", false), .{}) catch unreachable;
 
         printTestLine(label, parent, writer);
+
+        writer_.writeAll(this.failures_to_repeat_buf.items[initial_length..]) catch unreachable;
+        Output.flush();
+
         // this.updateDots();
         this.summary.fail += 1;
         this.summary.expectations += expectations;
@@ -340,7 +347,15 @@ pub const TestCommand = struct {
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
-        Output.pretty("\n", .{});
+        if (reporter.summary.pass > 20 and reporter.summary.fail > 0) {
+            Output.prettyError("\n<r><d>{d} tests failed<r>:\n", .{reporter.summary.fail});
+
+            Output.flush();
+
+            var error_writer = Output.errorWriter();
+            error_writer.writeAll(reporter.failures_to_repeat_buf.items) catch unreachable;
+        }
+
         Output.flush();
 
         Output.prettyError("\n", .{});
@@ -374,7 +389,6 @@ pub const TestCommand = struct {
         });
         Output.printStartEnd(ctx.start_time, std.time.nanoTimestamp());
         Output.prettyError("\n", .{});
-
         Output.flush();
 
         if (reporter.summary.fail > 0) {

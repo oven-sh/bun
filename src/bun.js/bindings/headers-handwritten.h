@@ -192,7 +192,7 @@ typedef struct {
     uint32_t len;
     uint32_t byte_len;
     uint8_t cell_type;
-    uint64_t _value;
+    int64_t _value;
     bool shared;
 } Bun__ArrayBuffer;
 

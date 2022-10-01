@@ -4681,9 +4681,9 @@ pub const Body = struct {
             };
         }
 
-        pub fn resolve(this: *Value, new: *Value, global: *JSGlobalObject) void {
-            if (this.* == .Locked) {
-                var locked = &this.Locked;
+        pub fn resolve(to_resolve: *Value, new: *Value, global: *JSGlobalObject) void {
+            if (to_resolve.* == .Locked) {
+                var locked = &to_resolve.Locked;
                 if (locked.readable) |readable| {
                     readable.done();
                     locked.readable = null;
@@ -4702,7 +4702,7 @@ pub const Body = struct {
                         .getText => {
                             switch (new.*) {
                                 .InternalBlob, .InlineBlob => {
-                                    var blob = this.useAsAnyBlob();
+                                    var blob = new.useAsAnyBlob();
                                     promise.resolve(global, blob.toString(global, .transfer));
                                 },
                                 else => {
@@ -4723,7 +4723,7 @@ pub const Body = struct {
                             }
                         },
                         .getArrayBuffer => {
-                            var blob = this.useAsAnyBlob();
+                            var blob = new.useAsAnyBlob();
                             promise.resolve(global, blob.toArrayBuffer(global, .transfer));
                         },
                         .getBlob => {
@@ -5425,8 +5425,8 @@ fn BodyMixin(comptime Type: type) type {
                 return value.Locked.setPromise(globalObject, .getArrayBuffer);
             }
 
-            var blob: Blob = value.use();
-            return JSC.JSPromise.wrap(globalObject, blob.getArrayBufferTransfer(globalObject));
+            var blob: AnyBlob = value.useAsAnyBlob();
+            return JSC.JSPromise.wrap(globalObject, blob.toArrayBuffer(globalObject, .transfer));
         }
 
         pub fn getBlob(

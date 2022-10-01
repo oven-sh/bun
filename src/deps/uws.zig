@@ -261,13 +261,16 @@ pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
 pub const Timer = opaque {
-    pub fn create(loop: *Loop, falltrhough: bool, ptr: ?*anyopaque) *Timer {
-        return us_create_timer(loop, @as(i32, @boolToInt(falltrhough)), if (ptr != null) 8 else 0);
+    pub fn create(loop: *Loop, falltrhough: bool, ptr: anytype) *Timer {
+        const Type = @TypeOf(ptr);
+        return us_create_timer(loop, @as(i32, @boolToInt(falltrhough)), @sizeOf(Type));
     }
 
-    pub fn set(this: *Timer, ptr: ?*anyopaque, cb: ?fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
+    pub fn set(this: *Timer, ptr: anytype, cb: ?fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {
         us_timer_set(this, cb, ms, repeat_ms);
-        us_timer_ext(this).* = ptr.?;
+        var value_ptr = us_timer_ext(this);
+        @setRuntimeSafety(false);
+        @ptrCast(*@TypeOf(ptr), @alignCast(@alignOf(*@TypeOf(ptr)), value_ptr)).* = ptr;
     }
 
     pub fn deinit(this: *Timer) void {
@@ -276,6 +279,11 @@ pub const Timer = opaque {
 
     pub fn ext(this: *Timer, comptime Type: type) ?*Type {
         return @ptrCast(*Type, @alignCast(@alignOf(Type), us_timer_ext(this).*.?));
+    }
+
+    pub fn as(this: *Timer, comptime Type: type) Type {
+        @setRuntimeSafety(false);
+        return @ptrCast(*?Type, @alignCast(@alignOf(Type), us_timer_ext(this))).*.?;
     }
 };
 pub const SocketContext = opaque {

@@ -2199,7 +2199,7 @@ pub const TOML = struct {
 };
 
 pub const Timer = struct {
-    last_id: i32 = 0,
+    last_id: i32 = 1,
     warned: bool = false,
     active: u32 = 0,
     timeouts: TimeoutMap = TimeoutMap{},
@@ -2207,7 +2207,7 @@ pub const Timer = struct {
     const TimeoutMap = std.AutoArrayHashMapUnmanaged(i32, *Timeout);
 
     pub fn getNextID() callconv(.C) i32 {
-        VirtualMachine.vm.timer.last_id += 1;
+        VirtualMachine.vm.timer.last_id +%= 1;
         return VirtualMachine.vm.timer.last_id;
     }
 
@@ -2217,77 +2217,101 @@ pub const Timer = struct {
         callback: JSC.Strong = .{},
         interval: i32 = 0,
         repeat: bool = false,
-        cancelled: bool = false,
         globalThis: *JSC.JSGlobalObject,
         timer: *uws.Timer,
         poll_ref: JSC.PollRef = JSC.PollRef.init(),
-        task_ref: JSC.Ref = JSC.Ref.init(),
 
-        // When deleting a timeout that is currently being called, we delay
-        in_progress: bool = false,
-        reschedule: bool = false,
-        task: JSC.AnyTask = undefined,
-
-        pub fn ref(this: *Timeout) void {
-            this.task_ref.ref(this.globalThis.bunVM());
-        }
-
-        pub fn unref(this: *Timeout) void {
-            this.task_ref.unref(this.globalThis.bunVM());
-        }
+        pub var invalid_timer_ref: *Timeout = undefined;
 
         pub fn run(timer: *uws.Timer) callconv(.C) void {
-            timer.ext(Timeout).?.then();
-        }
+            const id: i32 = timer.as(i32);
 
-        pub fn perform(this: *Timeout) void {
-            var vm = this.globalThis.bunVM();
-            const callback = this.callback.get() orelse @panic("Expected callback in timer");
-            const result = callback.call(this.globalThis, &.{});
+            // use the threadlocal despite being slow on macOS
+            // to handle the timeout being cancelled after already enqueued
+            var vm = JSC.VirtualMachine.vm;
 
-            if (result.isAnyError(this.globalThis)) {
-                vm.runErrorHandler(result, null);
+            var this_entry = vm.timer.timeouts.getEntry(
+                id,
+            ) orelse {
+                // this timer was cancelled after the event loop callback was queued
+                return;
+            };
+
+            var this: *Timeout = this_entry.value_ptr.*;
+
+            std.debug.assert(this != invalid_timer_ref);
+
+            var cb: CallbackJob = .{
+                .callback = if (this.repeat)
+                    JSC.Strong.create(this.callback.get() orelse return, this.globalThis)
+                else
+                    this.callback,
+                .globalThis = this.globalThis,
+                .id = this.id,
+            };
+
+            var job = vm.allocator.create(CallbackJob) catch @panic(
+                "Out of memory while allocating Timeout",
+            );
+
+            job.* = cb;
+            job.task = CallbackJob.Task.init(job);
+            job.ref.ref(vm);
+
+            vm.enqueueTask(JSC.Task.init(&job.task));
+
+            // This allows us to:
+            //  - free the memory before the job is run
+            //  - reuse the JSC.Strong
+            if (!this.repeat) {
+                this.callback = .{};
+                this_entry.value_ptr.* = invalid_timer_ref;
+                this.deinit();
             }
-            this.in_progress = false;
-            if (!this.repeat) this.cancelled = true;
+        }
 
-            if (this.reschedule) {
-                this.in_progress = true;
+        // TODO: reference count to avoid multiple Strong references to the same
+        // object in setInterval
+        const CallbackJob = struct {
+            id: i32 = 0,
+            task: JSC.AnyTask = undefined,
+            ref: JSC.Ref = JSC.Ref.init(),
+            globalThis: *JSC.JSGlobalObject,
+            callback: JSC.Strong = .{},
+
+            pub const Task = JSC.AnyTask.New(CallbackJob, perform);
+
+            pub fn perform(this: *CallbackJob) void {
+                defer {
+                    this.callback.deinit();
+                    this.ref.unref(this.globalThis.bunVM());
+                    bun.default_allocator.destroy(this);
+                }
+                var vm = this.globalThis.bunVM();
+
+                if (!vm.timer.timeouts.contains(this.id)) {
+                    // we didn't find the timeout, so it was already cleared
+                    // that means this job shouldn't run.
+                    return;
+                }
+
+                const callback = this.callback.get() orelse @panic("Expected callback in timer");
+
+                const result = callback.call(this.globalThis, &.{});
+
+                if (result.isAnyError(this.globalThis)) {
+                    vm.runErrorHandler(result, null);
+                }
             }
-
-            if (this.cancelled and !this.in_progress) this.deinit();
-        }
-
-        pub fn schedule(this: *Timeout) void {
-            this.in_progress = true;
-            this.task = JSC.AnyTask.New(Timeout, perform).init(this);
-            this.globalThis.bunVM().eventLoop().enqueueTask(JSC.Task.init(&this.task));
-            this.reschedule = false;
-        }
-
-        pub fn then(this: *Timeout) void {
-            if (comptime JSC.is_bindgen)
-                unreachable;
-
-            if (!this.cancelled and !this.in_progress) {
-                this.schedule();
-            } else if (!this.cancelled and this.in_progress) {
-                this.reschedule = true;
-            }
-
-            if (this.cancelled and !this.in_progress) this.deinit();
-        }
+        };
 
         pub fn deinit(this: *Timeout) void {
             if (comptime JSC.is_bindgen)
                 unreachable;
 
             var vm = this.globalThis.bunVM();
-            this.cancelled = true;
             this.poll_ref.unref(vm);
-            _ = vm.timer.timeouts.swapRemove(this.id);
             this.timer.deinit();
-            this.unref();
             this.callback.deinit();
             vm.allocator.destroy(this);
         }
@@ -2311,9 +2335,13 @@ pub const Timer = struct {
             .globalThis = globalThis,
             .timer = uws.Timer.create(vm.uws_event_loop.?, false, timeout),
         };
-        timeout.timer.set(timeout, Timeout.run, timeout.interval, @as(i32, @boolToInt(repeat)) * timeout.interval);
+        timeout.timer.set(
+            id,
+            Timeout.run,
+            timeout.interval,
+            @as(i32, @boolToInt(repeat)) * timeout.interval,
+        );
         timeout.poll_ref.ref(vm);
-        timeout.ref();
         vm.timer.timeouts.put(vm.allocator, id, timeout) catch unreachable;
     }
 
@@ -2348,12 +2376,15 @@ pub const Timer = struct {
 
     pub fn clearTimer(id: JSValue, _: *JSGlobalObject) void {
         if (comptime is_bindgen) unreachable;
-        var timer: *Timeout = VirtualMachine.vm.timer.timeouts.get(id.toInt32()) orelse return;
-        if (timer.in_progress) {
-            timer.cancelled = true;
-        } else {
-            timer.deinit();
+
+        var timer = VirtualMachine.vm.timer.timeouts.fetchSwapRemove(id.toInt32()) orelse return;
+        if (timer.value == Timeout.invalid_timer_ref) {
+            // this timer was scheduled to run but was cancelled before it was run
+            // so long as the callback isn't already in progress, fetchSwapRemove will handle invalidating it
+            return;
         }
+
+        timer.value.deinit();
     }
 
     pub fn clearTimeout(

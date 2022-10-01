@@ -30,6 +30,10 @@ it("clearTimeout", async () => {
     expect(false).toBe(true);
   }, 1);
   clearTimeout(id);
+
+  // assert it doesn't crash if you call clearTimeout twice
+  clearTimeout(id);
+
   await new Promise((resolve, reject) => {
     setTimeout(() => {
       resolve();

@@ -1631,6 +1631,9 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             }
 
             const arg = args[0];
+            arg.ensureStillAlive();
+            defer arg.ensureStillAlive();
+
             if (arg.asArrayBuffer(globalThis)) |buffer| {
                 const slice = buffer.slice();
                 if (slice.len == 0) {
@@ -1908,7 +1911,6 @@ pub fn HTTPServerWritable(comptime ssl: bool) type {
         }
 
         fn hasBackpressure(this: *const @This()) bool {
-            std.debug.assert(!this.has_backpressure or this.buffer.len > 0);
             return this.has_backpressure;
         }
 
@@ -2679,6 +2681,7 @@ pub const ByteBlobLoader = struct {
 
         this.remain -|= copied;
         this.offset +|= copied;
+        std.debug.assert(buffer.ptr != temporary.ptr);
         @memcpy(buffer.ptr, temporary.ptr, temporary.len);
         if (this.remain == 0) {
             return .{ .into_array_and_done = .{ .value = array, .len = copied } };
@@ -2816,6 +2819,7 @@ pub const ByteStream = struct {
             std.debug.assert(this.buffer.items.len == 0);
             var to_copy = this.pending_buffer[0..@minimum(chunk.len, this.pending_buffer.len)];
             const pending_buffer_len = this.pending_buffer.len;
+            std.debug.assert(to_copy.ptr != chunk.ptr);
             @memcpy(to_copy.ptr, chunk.ptr, to_copy.len);
             this.pending_buffer = &.{};
 

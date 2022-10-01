@@ -575,6 +575,36 @@ extern "C" napi_status napi_wrap(napi_env env,
     return napi_ok;
 }
 
+extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
+    void** result)
+{
+    JSValue value = toJS(js_object);
+    if (!value || value.isUndefinedOrNull()) {
+        return napi_object_expected;
+    }
+
+    auto* globalObject = toJS(env);
+    auto& vm = globalObject->vm();
+    auto* val = jsDynamicCast<NapiPrototype*>(value);
+
+    if (!val) {
+        return napi_object_expected;
+    }
+
+    if (!val->napiRef) {
+        // not sure if this should succeed or return an error
+        return napi_ok;
+    }
+
+    *result = val->napiRef->data;
+
+    auto* ref = val->napiRef;
+    val->napiRef = nullptr;
+    delete ref;
+
+    return napi_ok;
+}
+
 extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
     void** result)
 {

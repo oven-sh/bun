@@ -125,4 +125,5 @@
     _napi_unref_threadsafe_function;
     _napi_unwrap;
     _napi_wrap;
+    _napi_remove_wrap;
 };

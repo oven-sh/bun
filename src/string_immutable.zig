@@ -3118,65 +3118,6 @@ pub fn firstNonASCII16CheckMin(comptime Slice: type, slice: Slice, comptime chec
     return null;
 }
 
-/// Fast path for printing template literal strings. Skips the first character.
-/// Returns a value greater than 0.
-pub fn @"nextUTF16NonASCIIOr$`\\"(
-    comptime Slice: type,
-    slice: Slice,
-    quote: u8,
-    comptime raw: bool,
-    comptime is_quote_backtick: bool,
-) u32 {
-    var remaining = slice[1..];
-
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_u16_vector_size) {
-            const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
-
-            var cmp = @bitCast(AsciiVectorU16U1, (vec > max_u16_ascii)) |
-                @bitCast(AsciiVectorU16U1, (vec < min_u16_ascii)) |
-                @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '\\'))));
-
-            if (comptime !raw) {
-                cmp |= @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, quote))));
-
-                if (is_quote_backtick) {
-                    cmp |= @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '$'))));
-                }
-            }
-
-            if (is_quote_backtick) {
-                cmp &= @bitCast(AsciiVectorU16U1, (vec != @splat(ascii_u16_vector_size, @as(u16, '\n')))) &
-                    @bitCast(AsciiVectorU16U1, (vec != @splat(ascii_u16_vector_size, @as(u16, '\t'))));
-            }
-
-            const bitmask = @ptrCast(*const u8, &cmp).*;
-            const first = @ctz(u8, bitmask);
-            if (first < ascii_u16_vector_size) {
-                return @intCast(u32, @as(u32, first) +
-                    @intCast(u32, slice.len - remaining.len));
-            }
-
-            remaining = remaining[ascii_u16_vector_size..];
-        }
-    }
-
-    for (remaining) |char, i| {
-        switch (char) {
-            '\\', 0...'\t' - 1, '\n' + 1...first_ascii - 1, last_ascii + 1...std.math.maxInt(u16) => {
-                return @intCast(u32, i + (slice.len - remaining.len));
-            },
-
-            else => {
-                if (!raw and ((is_quote_backtick and char == '$' and i + 1 < remaining.len and remaining[i + 1] == '{') or char == quote or (!is_quote_backtick and (char == '\n' or char == '\t'))))
-                    return @intCast(u32, i + (slice.len - remaining.len));
-            },
-        }
-    }
-
-    return 1;
-}
-
 test "indexOfNotChar" {
     {
         var yes: [312]u8 = undefined;

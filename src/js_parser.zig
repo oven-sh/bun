@@ -11539,7 +11539,6 @@ fn NewParser_(
                     const parts = try p.parseTemplateParts(false);
 
                     // Check if TemplateLiteral is unsupported. We don't care for this product.`
-                    // if ()
 
                     return p.e(E.Template{
                         .head = head,

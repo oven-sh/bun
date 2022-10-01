@@ -10,6 +10,7 @@ const Lock = @import("./lock.zig").Lock;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
 const bun = @import("global.zig");
+const string_immutable = @import("./string_immutable.zig");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -51,7 +52,12 @@ const first_high_surrogate = 0xD800;
 const last_high_surrogate = 0xDBFF;
 const first_low_surrogate = 0xDC00;
 const last_low_surrogate = 0xDFFF;
-const CodepointIterator = @import("./string_immutable.zig").CodepointIterator;
+const CodepointIterator = string_immutable.CodepointIterator;
+const AsciiU16Vector = string_immutable.AsciiU16Vector;
+const AsciiVectorU16U1 = string_immutable.AsciiVectorU16U1;
+const ascii_u16_vector_size = string_immutable.ascii_u16_vector_size;
+const min_u16_ascii = string_immutable.min_u16_ascii;
+const max_u16_ascii = string_immutable.max_u16_ascii;
 const CodeUnitType = i32;
 const assert = std.debug.assert;
 
@@ -613,7 +619,7 @@ pub fn NewPrinter(
                 comptime_int, u16, u8 => {
                     p.writer.print(StringType, str);
                 },
-                [2]u8, [6]u8 => {
+                [2]u8, [4]u8, [6]u8 => {
                     const span = std.mem.span(&str);
                     p.writer.print(@TypeOf(span), span);
                 },
@@ -1142,128 +1148,328 @@ pub fn NewPrinter(
             ) catch unreachable;
         }
 
-        pub fn _printQuotedUTF16(e: *Printer, text: []const u16, quote: u8, comptime raw: bool, comptime is_quote_backtick: bool) void {
+        /// Fast path for printing template literal strings. Skips the first character.
+        /// Returns a value greater than 0.
+        pub fn @"nextUTF16NonASCIIOr$`\\"(
+            comptime Slice: type,
+            slice: Slice,
+            quote: u8,
+            comptime is_quote_backtick: bool,
+        ) u32 {
+            var remaining = slice[1..]; // skip the character that was already validated.
+
+            if (comptime Environment.enableSIMD) {
+                while (remaining.len >= ascii_u16_vector_size) {
+                    const vec: AsciiU16Vector = remaining[0..ascii_u16_vector_size].*;
+
+                    var cmp = (@bitCast(AsciiVectorU16U1, (vec > max_u16_ascii)) |
+                        @bitCast(AsciiVectorU16U1, (vec < min_u16_ascii)) |
+                        @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '\\')))) |
+                        @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, quote))))) &
+                        @bitCast(AsciiVectorU16U1, (vec != @splat(ascii_u16_vector_size, @as(u16, '\t'))));
+
+                    if (comptime is_quote_backtick) {
+                        cmp |= @bitCast(AsciiVectorU16U1, (vec == @splat(ascii_u16_vector_size, @as(u16, '$'))));
+                        cmp &= @bitCast(AsciiVectorU16U1, (vec != @splat(ascii_u16_vector_size, @as(u16, '\n'))));
+                    }
+
+                    const bitmask = @ptrCast(*const u8, &cmp).*;
+                    const first = @ctz(u8, bitmask);
+                    if (first < ascii_u16_vector_size) {
+                        return @intCast(u32, @as(u32, first) +
+                            @intCast(u32, slice.len - remaining.len));
+                    }
+
+                    remaining = remaining[ascii_u16_vector_size..];
+                }
+            }
+            return @intCast(u32, slice.len - remaining.len);
+        }
+
+        /// Returns ', ", or \` depending on which will require fewer escape characters. Returns 0 if the raw `text` cannot be processed (e.g. \x5G, \uXMNG).
+        fn bestQuoteCharForProcessedRawString(comptime char_width: anytype, text: []const char_width) u8 {
             var i: u32 = 0;
-            const n: u32 = @intCast(u32, text.len);
-            var is_interpolater_open = false;
+            const n = @intCast(u32, text.len);
+            var single_cost: u32 = 0;
+            var double_cost: u32 = 0;
+            var backtick_cost: u32 = 0;
 
             while (i < n) {
-                const c: CodeUnitType = text[i];
+                const c = text[i];
+                switch (c) {
+                    '\'' => {
+                        single_cost += 1;
+                    },
+                    '"' => {
+                        double_cost += 1;
+                    },
+                    '`' => {
+                        backtick_cost += 1;
+                    },
+                    '\n' => { // '\\', 'n'
+                        single_cost += 1;
+                        double_cost += 1;
+                    },
+                    '$' => {
+                        if (i + 1 < n and text[i + 1] == '{') {
+                            backtick_cost += 1;
+                        }
+                    },
+                    '\\' => {
+                        i += 1;
+                        const c2 = if (i < n) text[i] else 0;
+                        var sigfigs: u3 = 0;
+
+                        switch (c2) {
+                            '0' => { // \0 is allowed but not if it's followed by a number
+                                i += 1;
+                                if (i == n) break;
+                                const c3 = text[i];
+                                switch (c3) {
+                                    '0'...'9' => return 0,
+                                    else => continue, // skip increment
+                                }
+                            },
+                            '1'...'9' => return 0,
+                            'x' => {
+                                // technically a lie, since 0x0A will give us 2 sigfigs, but it does not matter
+                                // because the pertinent information is whether `sigfigs` is <= 2 or not.
+                                while (sigfigs < 2) : (sigfigs += 1) {
+                                    i += 1;
+                                    if (i == n) return 0;
+                                    switch (text[i]) {
+                                        '0'...'9', 'a'...'f', 'A'...'F' => {},
+                                        else => return 0,
+                                    }
+                                }
+                            },
+                            'u' => {
+                                i += 1;
+                                if (i == n) return 0;
+
+                                if (text[i] == '{') {
+                                    while (true) { // skip leading 0's
+                                        i += 1;
+                                        if (i == n) return 0;
+                                        if (text[i] != '0') break;
+                                    }
+
+                                    while (sigfigs < 6) : (sigfigs += 1) {
+                                        switch (text[i]) {
+                                            '0'...'9', 'a'...'f', 'A'...'F' => {},
+                                            '}' => break,
+                                            else => return 0,
+                                        }
+                                        i += 1;
+                                        if (i == n) return 0;
+                                    }
+
+                                    if (sigfigs == 0) return 0;
+                                    if (sigfigs == 6) {
+                                        if (text[i] != '}') {
+                                            return 0;
+                                        }
+                                        switch (std.mem.order(char_width, text[i - 6 .. i], &[_]char_width{ '1', '0', 'F', 'F', 'F', 'F' })) {
+                                            .gt => return 0,
+                                            else => {},
+                                        }
+                                    }
+                                } else {
+                                    const t = i + 3;
+                                    while (true) {
+                                        switch (text[i]) {
+                                            '0' => sigfigs += @boolToInt(sigfigs != 0),
+                                            '1'...'9', 'a'...'f', 'A'...'F' => sigfigs += 1,
+                                            else => return 0,
+                                        }
+                                        if (i == t) break;
+                                        i += 1;
+                                        if (i == n) return 0;
+                                    }
+                                }
+                            },
+                            else => continue, // skip increment
+                        }
+
+                        if (sigfigs <= 2) {
+                            const has_brace = text[i] == '}';
+                            i -= @boolToInt(has_brace);
+                            defer i += @boolToInt(has_brace);
+                            switch (text[i - 1]) {
+                                '0', '{' => { // \x0A, \u000A, \u{A}, etc
+                                    if (text[i] == 'A') { // 0x0A
+                                        // '\\', 'n',
+                                        single_cost += 1;
+                                        double_cost += 1;
+                                    }
+                                },
+                                '2' => {
+                                    switch (text[i]) {
+                                        '2' => double_cost += 1, // "
+                                        '7' => single_cost += 1, // '
+                                        else => {},
+                                    }
+                                }, // 0x22 " , 0x27 '
+
+                                // 0x60 `
+                                '6' => backtick_cost += @boolToInt(text[i] == '0'),
+                                else => {},
+                            }
+                        }
+                    },
+                    else => {},
+                }
+
                 i += 1;
-                const c2: CodeUnitType = if (i < n) text[i] else 0;
+            }
 
-                if (((raw or quote == '`') and (c == '\t' or c == '\n') or
-                    (first_ascii <= c and c <= last_ascii and (raw or (c != '\\' and c != quote)) and
-                    (raw or quote != '`' or c != '$' or c2 != '{'))))
-                {
-                    if (raw and is_interpolater_open and c == '\\') {
-                        e.print("`}");
-                        is_interpolater_open = false;
+            const min_cost = std.math.min3(single_cost, double_cost, backtick_cost);
+
+            if (min_cost == double_cost) {
+                return '"';
+            } else if (min_cost == single_cost) {
+                return '\'';
+            } else if (min_cost == backtick_cost) {
+                return '`';
+            } else unreachable;
+        }
+
+        // Kinda a weird name, but this is a raw string that gets processed alongside its raw string
+        pub fn printProcessedRawQuotedUTF16(e: *Printer, comptime char_width: anytype, text: []const char_width) void {
+            // /? -> ?
+            // \r -> \r
+            // \09, \05, \x5G -> undefined
+            // \uXXXX\xXXXX => \u{XXXXX} ?
+
+            const quote = bestQuoteCharForProcessedRawString(char_width, text);
+
+            if (quote == 0) {
+                return e.print("undefined"); // when a text is impossible to process, it becomes undefined when passed into a template literal call
+            }
+
+            e.print(quote);
+
+            var i: u32 = 0;
+            const n = @intCast(u32, text.len);
+
+            // When the previous character was a high surrogate and the current is a low surrogate,
+            // we combine them.
+            var high_surrogate_char_prev: u32 = 0;
+            while (i < n) : (i += 1) {
+                var c: u32 = text[i];
+                var c2: u16 = if (i + 1 < n) text[i + 1] else 0;
+
+                if (c == '\\') {
+                    i += 1;
+                    assert(i < n);
+                    c = text[i];
+                    switch (c) {
+                        'b', 'f', 'n', 'v', 't', 'r', '0', '\\' => {
+                            e.print([_]u8{ '\\', @intCast(u8, c) });
+                            continue;
+                        },
+                        '\r' => {
+                            // Windows CRLF counts as a single continuation
+                            i += @boolToInt(i + 1 < n and text[i + 1] == '\n');
+                            continue;
+                        },
+                        '\n', 0x2028, 0x2029 => continue, // line continuation
+                        'x', 'u' => {
+                            i += 1;
+                            assert(i < n);
+                            // because this escape sequence was already validated, we know we are not looking at \x{}
+                            const has_brace = text[i] == '{';
+
+                            if (has_brace) {
+                                while (true) {
+                                    i += 1;
+                                    // skip leading zeroes
+                                    if (text[i] != '0') break;
+                                }
+                            }
+
+                            var target_i = i + @as(u32, switch (c) {
+                                'x' => 2,
+                                'u' => 4,
+                                else => unreachable,
+                            }) + @as(u32, if (has_brace) 2 else 0);
+
+                            var value: u32 = 0;
+
+                            while (true) : (i += 1) {
+                                c = text[i];
+                                const place = @as(u32, switch (c) {
+                                    '0'...'9' => '0',
+                                    'a'...'f' => 'a' - 10,
+                                    'A'...'F' => 'A' - 10,
+                                    '}' => break,
+                                    else => unreachable,
+                                });
+                                value = (value * 16) | (c - place);
+                                if (i + 1 == target_i) break; // do not advance over next character
+                            }
+                            c = value; // let this character be processed below
+                        },
+
+                        else => {},
                     }
+                }
 
-                    if (!raw and quote != '`') {
-                        e.print(@intCast(u8, c));
-                        continue;
-                    }
+                c2 = if (i + 1 < n) text[i + 1] else 0;
 
-                    // Fast path for printing long UTF-16 template literals
-                    // this only applies to template literal strings
-                    // but we print a template literal if there is a \n or a \r
-                    // which is often if the string is long and UTF-16
-                    const len = strings.@"nextUTF16NonASCIIOr$`\\"([]const u16, text[i - 1 ..], quote, raw, is_quote_backtick);
-                    assert(len != 0);
-                    var ptr = e.writer.reserve(len) catch unreachable;
-                    var to_copy = ptr[0..len];
-                    strings.copyU16IntoU8(to_copy, []const u16, text[i - 1 .. i - 1 + len]);
-                    e.writer.advance(len);
-                    i += len - 1;
+                if (c == '\\' or c == quote or (quote == '`' and c == '$' and c2 == '{')) {
+                    e.print([_]u8{ '\\', @intCast(u8, c) });
+                } else if ((first_ascii <= c and c <= last_ascii) or c == '\t' or (quote == '`' and c == '\n')) {
+                    e.print(@intCast(u8, c));
                 } else {
-                    // combine c and c2 into a single u32 codepoint
-                    var cp: CodeUnitType = cp: {
-                        const is_paired_surrogate = first_high_surrogate <= c and c <= last_high_surrogate and
-                            first_low_surrogate <= c2 and c2 <= last_low_surrogate;
-
-                        // skip c2 if we are dealing with it here
-                        i += @boolToInt(is_paired_surrogate);
-                        const s = 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
-                        break :cp if (is_paired_surrogate) s else c;
+                    const escape_char: u8 = switch (c) {
+                        0x00 => switch (c2) {
+                            // if c is \0 and c2 is numeric, we can't use '\0', so we have to use '\x00'.
+                            // E.g. `\09` is not valid JS, so we use `\x009`
+                            '0'...'9' => @intCast(u8, 'x'),
+                            else => @intCast(u8, '0'),
+                        },
+                        0x08 => 'b',
+                        0x09 => unreachable, // '\t'
+                        0x0A => if (quote == '`') unreachable else 'n', // '\n'
+                        0x0B => 'v',
+                        0x0C => 'f',
+                        0x0D => unreachable, // '\r' should be unreachable
+                        0x100...0x10FFFF => 'u',
+                        0x110000...std.math.maxInt(u32) => unreachable,
+                        else => 'x',
                     };
 
-                    if (c == 0x08 or c == 0x0B or c == 0x0C or (!raw and (c == '\r' or c == '\\' or c == quote or if (quote == '`') c == '$' and c2 == '{' else c == '\n' or c == '\t'))) {
-                        // if c is '\b', '\v', or '\f', we set `cp` to 0 because we do not want to do a hex escape
-                        cp = 0;
+                    var is_using_previous_char = false;
+                    var cp: u32 = c;
+
+                    if (high_surrogate_char_prev != 0 and ascii_only_always_on_unless_minifying and first_low_surrogate <= c and c <= last_low_surrogate) {
+                        is_using_previous_char = true;
+                        cp = 0x10000 + (((high_surrogate_char_prev & 0x03ff) << 10) | (c & 0x03ff));
                     }
 
-                    if (!ascii_only_always_on_unless_minifying and cp != 0) {
+                    if (!ascii_only_always_on_unless_minifying) {
                         e.writeWTF8Rune(cp);
                         continue;
                     }
 
-                    // Counts the number of sextets needed to represent `cp`.
-                    // This is equal to number of non-leading zeroes div 4, rounded up
-                    // e.g., for cp=0x12345, we would get 5 because there are 5 sextets (`12345`)
-                    // however, for cp=0, it will be 0, because we can insert the escape character in place of 'u'/'x'
-                    var cp_hex_width = @intCast(u3, (@typeInfo(CodeUnitType).Int.bits - @clz(CodeUnitType, cp) + 3) / 4);
-                    assert(cp_hex_width <= 6);
-
-                    // if c is \0 and c2 is numeric, we can't use '\0', so we have to use '\x00'.
-                    // E.g. `\09` is not valid JS
-                    cp_hex_width += @boolToInt(c == 0x0 and '0' <= c2 and c2 <= '9');
-                    // if cp_hex_width is 1 or 3, we add 0 as padding, as in \x0F or \u0FFF
-                    cp_hex_width += @boolToInt(cp_hex_width == 1 or cp_hex_width == 3);
-
-                    var ptr = ptr: {
-                        const escaped_char_size: u32 = cp_hex_width +
-                            @as(u32, if (raw and c == '\\' and is_interpolater_open) "`}".len else 0) +
-                            @as(u32, if (raw and !is_interpolater_open) "${`".len else 0) +
-                            @as(u32, "\\x".len | "\\u".len | "\\0".len | "\\b".len | "\\v".len | "\\f".len | "\\r".len | "\\\\".len) +
-                            @as(u32, if (cp >= 0x10000) "{}".len else 0);
-
-                        const reserved = e.writer.reserve(escaped_char_size) catch unreachable;
-                        e.writer.advance(escaped_char_size);
-                        break :ptr reserved[0..escaped_char_size];
-                    };
-
-                    if (raw) {
-                        if (is_interpolater_open) {
-                            if (c == '\\') {
-                                ptr[0..2].* = [_]u8{ '`', '}' };
-                                ptr = ptr[2..];
-                                is_interpolater_open = false;
-                            }
-                        } else {
-                            is_interpolater_open = true;
-                            ptr[0..3].* = [_]u8{ '$', '{', '`' };
-                            ptr = ptr[3..];
-                        }
-                    }
-
-                    const escape_char = switch (c) {
-                        0x00 => if (cp_hex_width == 0) @as(u8, '0') else @as(u8, 'x'),
-                        0x08 => 'b',
-                        0x0B => 'v',
-                        0x0C => 'f',
-                        0x1...0x7, 0x0E...first_ascii - 1, last_ascii + 1...0xFF => 'x',
-                        else => blk: {
-                            if (raw) {
-                                if (c == '\r' | 0x0D) unreachable;
-                                if (c == '$')
-                                    break :blk 'u';
-                            }
-
-                            if (quote != '`') {
-                                if (c == '\n' | 0x0A) break :blk 'n';
-                                if (c == '\t' | 0x09) break :blk 't';
-                            }
-
-                            if (c == '\r') break :blk 'r';
-
-                            if (c == '\\' or c == quote or (quote == '`' and c == '$' and c2 == '{')) {
-                                break :blk @intCast(u8, c);
-                            }
-
-                            break :blk 'u';
+                    var escaped_char_size: u4 = @intCast(u4, switch (escape_char) {
+                        'x' => "\\xFF".len,
+                        'u' => switch (cp) {
+                            0x100...0xFFFF => "\\uFFFF".len,
+                            0x10000...0xFFFFF => "\\u{FFFFF}".len,
+                            else => "\\u{FFFFFF}".len,
                         },
+                        else => "\\_".len,
+                    });
+
+                    var ptr = ptr: { // If we wrote a high surrogate in the form of `\uFFFF`, we can overwrite it with `\u{10FFFF}`
+                        const reuseable_size = @as(u3, if (is_using_previous_char) "\\uFFFF".len else 0);
+                        assert(escaped_char_size > reuseable_size);
+                        const reserved_space = escaped_char_size - reuseable_size;
+                        const ptr = e.writer.reserve(reserved_space) catch unreachable;
+                        e.writer.advance(reserved_space);
+                        break :ptr @intToPtr(@TypeOf(ptr), @ptrToInt(ptr) - reuseable_size)[0..escaped_char_size];
                     };
 
                     ptr[0..2].* = [_]u8{ '\\', escape_char };
@@ -1271,14 +1477,15 @@ pub fn NewPrinter(
 
                     if (cp >= 0x10000) {
                         ptr[0] = '{';
-                        ptr = ptr[1..];
+                        ptr[ptr.len - 1] = '}';
+                        ptr = ptr[1 .. ptr.len - 1];
                     }
 
                     // for cp=0x12345, we are iterating over 1, 2, 3, 4, then 5
                     // (every 4 bits turns into 1 char)
-                    while (cp_hex_width > 0) {
-                        cp_hex_width -= 1;
-                        const x = @intCast(u4, (cp >> (@as(u5, cp_hex_width) * 4)) & 0b1111);
+                    assert(6 >= ptr.len and ptr.len >= 0);
+                    while (ptr.len > 0) {
+                        const x = @intCast(u4, (cp >> @intCast(u5, (ptr.len - 1) * 4)) & 0b1111);
                         ptr[0] = @as(u8, x) + @as(u8, switch (x) {
                             0...9 => '0',
                             10...15 => 'A' - 10,
@@ -1286,15 +1493,108 @@ pub fn NewPrinter(
                         ptr = ptr[1..];
                     }
 
-                    if (cp >= 0x10000) {
-                        ptr[0] = '}';
-                        ptr = ptr[1..];
+                    if (first_high_surrogate <= c and c <= last_high_surrogate) {
+                        // Hold on for next codepoint....
+                        high_surrogate_char_prev = c;
                     }
                 }
             }
 
-            if (raw and is_interpolater_open) {
-                e.print("`}");
+            e.print(quote);
+        }
+
+        pub fn _printQuotedUTF16(e: *Printer, text: []const u16, quote: u8, comptime is_quote_backtick: bool) void {
+            var i: u32 = 0;
+            const n: u32 = @intCast(u32, text.len);
+
+            while (i < n) {
+                const c: CodeUnitType = text[i];
+                const c2: CodeUnitType = if (i + 1 < n) text[i + 1] else 0;
+
+                if (switch (c) {
+                    '\n' => is_quote_backtick,
+                    '\t' => true,
+                    first_ascii...last_ascii => c != '\\' and c != quote and (!is_quote_backtick or c != '$' or c2 != '{'),
+                    else => false,
+                }) {
+                    // Fast path for printing long UTF-16 template literals
+                    // this only applies to template literal strings
+                    // but we print a template literal if there is a \n or a \r
+                    // which is often if the string is long and UTF-16
+                    const len = @"nextUTF16NonASCIIOr$`\\"([]const u16, text[i..], quote, is_quote_backtick);
+                    var ptr = e.writer.reserve(len) catch unreachable;
+                    var to_copy = ptr[0..len];
+                    strings.copyU16IntoU8(to_copy, []const u16, text[i .. i + len]);
+                    e.writer.advance(len);
+                    i += len;
+                } else {
+                    // combine c and c2 into a single u32 codepoint
+                    const is_paired_surrogate = first_high_surrogate <= c and c <= last_high_surrogate and
+                        first_low_surrogate <= c2 and c2 <= last_low_surrogate;
+
+                    i += 1;
+                    // skip c2 if we are dealing with it now
+                    i += @boolToInt(is_paired_surrogate);
+                    const cp: CodeUnitType = if (!is_paired_surrogate) c else 0x10000 + (((c & 0x03ff) << 10) | (c2 & 0x03ff));
+
+                    const escape_char: u8 = switch (c) {
+                        0x00 => switch (c2) {
+                            // if c is \0 and c2 is numeric, we can't use '\0', so we have to use '\x00'.
+                            // E.g. `\09` is not valid JS, so we use `\x009`
+                            '0'...'9' => @intCast(u8, 'x'),
+                            else => @intCast(u8, '0'),
+                        },
+                        0x08 => 'b',
+                        0x09 => unreachable, // '\t'
+                        0x0A => if (is_quote_backtick) unreachable else 'n', // '\n'
+                        0x0B => 'v',
+                        0x0C => 'f',
+                        0x0D => 'r', // when raw, '\r' characters will be filtered out already
+                        '\\', '\'', '"', '`', '$' => @intCast(u8, c),
+                        0x100...0x10FFFF => 'u',
+                        0x110000...std.math.maxInt(CodeUnitType) => unreachable,
+                        else => 'x',
+                    };
+
+                    if (!ascii_only_always_on_unless_minifying and c != escape_char) {
+                        e.writeWTF8Rune(@intCast(u32, cp));
+                        continue;
+                    }
+
+                    var escaped_char_size: u4 = @intCast(u4, switch (escape_char) {
+                        'x' => "\\xFF".len,
+                        'u' => switch (cp) {
+                            0x100...0xFFFF => "\\uFFFF".len,
+                            0x10000...0xFFFFF => "\\u{FFFFF}".len,
+                            else => "\\u{FFFFFF}".len,
+                        },
+                        else => "\\_".len,
+                    });
+
+                    var ptr = (e.writer.reserve(escaped_char_size) catch unreachable)[0..escaped_char_size];
+                    e.writer.advance(escaped_char_size);
+
+                    ptr[0..2].* = [_]u8{ '\\', escape_char };
+                    ptr = ptr[2..];
+
+                    if (ascii_only_always_on_unless_minifying and cp >= 0x10000) {
+                        ptr[0] = '{';
+                        ptr[ptr.len - 1] = '}';
+                        ptr = ptr[1 .. ptr.len - 1];
+                    }
+
+                    // for cp=0x12345, we are iterating over 1, 2, 3, 4, then 5
+                    // (every 4 bits turns into 1 char)
+                    assert(6 >= ptr.len and ptr.len >= 0);
+                    while (ptr.len > 0) {
+                        const x = @intCast(u4, (cp >> @intCast(u5, (ptr.len - 1) * 4)) & 0b1111);
+                        ptr[0] = @as(u8, x) + @as(u8, switch (x) {
+                            0...9 => '0',
+                            10...15 => 'A' - 10,
+                        });
+                        ptr = ptr[1..];
+                    }
+                }
             }
         }
 
@@ -1982,22 +2282,65 @@ pub fn NewPrinter(
                         }
                     }
 
-                    p.print("`");
-                    if (e.head.isPresent()) {
-                        e.head.resovleRopeIfNeeded(p.options.allocator);
-                        p.printStringContent(&e.head, '`', e.is_raw_template_call);
-                    }
+                    var is_ascii = e.head.isUTF8();
 
                     for (e.parts) |*part| {
-                        p.print("${");
-                        p.printExpr(part.value, .lowest, ExprFlag.None());
-                        p.print("}");
-                        if (part.tail.isPresent()) {
-                            part.tail.resovleRopeIfNeeded(p.options.allocator);
-                            p.printStringContent(&part.tail, '`', e.is_raw_template_call);
-                        }
+                        is_ascii = is_ascii and part.tail.isUTF8();
                     }
-                    p.print("`");
+
+                    if (e.is_raw_template_call and !is_ascii) {
+                        p.print("(Object.defineProperty([");
+
+                        // print post-processed strings here.
+                        e.head.resovleRopeIfNeeded(p.options.allocator);
+                        p.printProcessedRawStringContent(&e.head);
+                        for (e.parts) |*part| {
+                            p.print(", ");
+                            part.tail.resovleRopeIfNeeded(p.options.allocator);
+                            p.printProcessedRawStringContent(&part.tail);
+                        }
+                        p.print("], \"raw\", { value: [");
+                        // print raw strings here. I.e. we need to escape our backslashes again.
+                        {
+                            e.head.resovleRopeIfNeeded(p.options.allocator);
+                            const quote = p.bestQuoteCharForEString(&e.head, true);
+                            p.print(quote);
+                            p.printStringContent(&e.head, quote, true);
+                            p.print(quote);
+                        }
+
+                        for (e.parts) |*part| {
+                            p.print(", ");
+                            part.tail.resovleRopeIfNeeded(p.options.allocator);
+                            const quote = p.bestQuoteCharForEString(&part.tail, true);
+                            p.print(quote);
+                            p.printStringContent(&part.tail, quote, true);
+                            p.print(quote);
+                        }
+                        p.print("] })");
+                        for (e.parts) |*part| {
+                            p.print(", ");
+                            p.printExpr(part.value, .lowest, ExprFlag.None());
+                        }
+                        p.print(")");
+                    } else {
+                        p.print("`");
+                        if (e.head.isPresent()) {
+                            e.head.resovleRopeIfNeeded(p.options.allocator);
+                            p.printStringContent(&e.head, '`', false);
+                        }
+
+                        for (e.parts) |*part| {
+                            p.print("${");
+                            p.printExpr(part.value, .lowest, ExprFlag.None());
+                            p.print("}");
+                            if (part.tail.isPresent()) {
+                                part.tail.resovleRopeIfNeeded(p.options.allocator);
+                                p.printStringContent(&part.tail, '`', false);
+                            }
+                        }
+                        p.print("`");
+                    }
                 },
                 .e_reg_exp => |e| {
                     const n = p.writer.written;
@@ -2324,63 +2667,60 @@ pub fn NewPrinter(
             p.print(")");
         }
 
-        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8, comptime raw: bool) void {
-            if (raw) {
-                e._printQuotedUTF16(text, quote, true, true);
-            } else if (quote == '`') {
-                e._printQuotedUTF16(text, quote, false, true);
+        pub fn printQuotedUTF16(e: *Printer, text: []const u16, quote: u8) void {
+            if (quote == '`') {
+                e._printQuotedUTF16(text, quote, true);
             } else {
-                e._printQuotedUTF16(text, quote, false, false);
+                e._printQuotedUTF16(text, quote, false);
             }
         }
         // This assumes the string has already been quoted.
         pub fn printStringContent(p: *Printer, str: *const E.String, c: u8, is_raw_template_call: bool) void {
             if (!str.isUTF8()) {
                 // its already quoted for us!
-                if (is_raw_template_call) {
-                    p.printQuotedUTF16(str.slice16(), c, true);
-                } else {
-                    p.printQuotedUTF16(str.slice16(), c, false);
-                }
+                p.printQuotedUTF16(str.slice16(), c);
             } else {
-                p.printUTF8StringEscapedQuotes(str.data, c);
+                p.printUTF8StringEscapedQuotes(str.data, c, is_raw_template_call);
+            }
+        }
+
+        // This assumes the string has already been quoted.
+        pub fn printProcessedRawStringContent(p: *Printer, str: *const E.String) void {
+            if (!str.isUTF8()) {
+                p.printProcessedRawQuotedUTF16(u16, str.slice16());
+            } else {
+                p.printProcessedRawQuotedUTF16(u8, str.data);
             }
         }
 
         // Add one outer branch so the inner loop does fewer branches
-        pub fn printUTF8StringEscapedQuotes(p: *Printer, str: string, c: u8) void {
+        pub fn printUTF8StringEscapedQuotes(p: *Printer, str: string, c: u8, raw: bool) void {
             switch (c) {
-                '`' => _printUTF8StringEscapedQuotes(p, str, '`', true),
-                '"', '\'' => _printUTF8StringEscapedQuotes(p, str, c, false),
+                '`' => _printUTF8StringEscapedQuotes(p, str, '`', true, raw),
+                '"', '\'' => _printUTF8StringEscapedQuotes(p, str, c, false, raw),
                 else => unreachable,
             }
         }
 
-        pub fn _printUTF8StringEscapedQuotes(p: *Printer, str: string, c: u8, comptime is_c_backtick: bool) void {
+        pub fn _printUTF8StringEscapedQuotes(p: *Printer, str: string, quote: u8, comptime is_c_backtick: bool, raw: bool) void {
             var utf8 = str;
             var i: usize = 0;
             // Walk the string searching for quote characters
             // Escape any we find
             // Skip over already-escaped strings
-            while (i < utf8.len) : (i += 1) {
-                if (utf8[i] == '\\') {
-                    i += 1;
-                } else if (utf8[i] == '$') {
-                    // We must escape here for JSX string literals that contain unescaped newlines
-                    // Those will get transformed into a template string
-                    // which can potentially have unescaped $
-                    if (is_c_backtick and i + 1 < utf8.len and utf8[i + 1] == '{') {
-                        p.print(utf8[0..i]);
-                        p.print("\\$");
-
-                        utf8 = utf8[i + 1 ..];
-                        i = 0;
-                    }
-                } else if (utf8[i] == c) {
+            while (i < utf8.len) {
+                if ((is_c_backtick and utf8[i] == '$' and i + 1 < utf8.len and utf8[i + 1] == '{') or
+                    // When interpreting a raw string, we escape all backslashes that appear in the raw string.
+                    // E.g. String.raw`\?` -> "\\?"
+                    (raw and utf8[i] == '\\') or
+                    utf8[i] == quote)
+                {
                     p.print(utf8[0..i]);
-                    p.print(([_]u8{ '\\', c }));
+                    p.print(([_]u8{ '\\', utf8[i] }));
                     utf8 = utf8[i + 1 ..];
                     i = 0;
+                } else {
+                    i += 1;
                 }
             }
             if (utf8.len > 0) {
@@ -2539,7 +2879,7 @@ pub fn NewPrinter(
                                 p.print('[');
                             }
                             p.print(quote);
-                            p.printUTF8StringEscapedQuotes(key.data, quote);
+                            p.printUTF8StringEscapedQuotes(key.data, quote, false);
                             p.print(quote);
                             if (quote == '`') {
                                 p.print(']');
@@ -2613,7 +2953,7 @@ pub fn NewPrinter(
                     } else {
                         const c = p.bestQuoteCharForString(key.slice16(), false);
                         p.print(c);
-                        p.printQuotedUTF16(key.slice16(), c, false);
+                        p.printQuotedUTF16(key.slice16(), c);
                         p.print(c);
                     }
                 },
@@ -3922,7 +4262,7 @@ pub fn NewPrinter(
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.print(c);
-                    p.printQuotedUTF16(s.value, c, false);
+                    p.printQuotedUTF16(s.value, c);
                     p.print(c);
                     p.printSemicolonAfterStatement();
                 },

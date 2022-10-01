@@ -276,7 +276,7 @@ fn NewLexer_(
             return Error.SyntaxError;
         }
 
-        fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
+        fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType, comptime quote: CodePoint) !void {
             var buf = buf_.*;
             defer buf_.* = buf;
             if (comptime is_json) lexer.is_ascii_only = false;
@@ -346,7 +346,7 @@ fn NewLexer_(
 
                             // legacy octal literals
                             '0'...'7' => {
-                                if (comptime is_json) {
+                                if (comptime is_json or quote == '`') {
                                     lexer.end = start + iter.i + 1;
                                     return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected octal literal in JSON");
                                 }
@@ -413,18 +413,10 @@ fn NewLexer_(
                                     if (!iterator.next(&iter)) return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in hex literal escape sequence");
                                     c3 = iter.c;
                                     switch (c3) {
-                                        '0'...'9' => {
-                                            value = value * 16 | (c3 - '0');
-                                        },
-                                        'a'...'f' => {
-                                            value = value * 16 | (c3 - ('a' - 10));
-                                        },
-                                        'A'...'F' => {
-                                            value = value * 16 | (c3 - ('A' - 10));
-                                        },
-                                        else => {
-                                            return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid hex literal");
-                                        },
+                                        '0'...'9' => value = value * 16 | (c3 - '0'),
+                                        'a'...'f' => value = value * 16 | (c3 - ('a' - 10)),
+                                        'A'...'F' => value = value * 16 | (c3 - ('A' - 10)),
+                                        else => return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid hex literal"),
                                     }
                                 }
 
@@ -453,21 +445,11 @@ fn NewLexer_(
                                     var j: u3 = 0;
                                     while (j < 6) : (j += 1) {
                                         switch (c3) {
-                                            '0'...'9' => {
-                                                value = value * 16 | (c3 - '0');
-                                            },
-                                            'a'...'f' => {
-                                                value = value * 16 | (c3 - ('a' - 10));
-                                            },
-                                            'A'...'F' => {
-                                                value = value * 16 | (c3 - ('A' - 10));
-                                            },
-                                            '}' => {
-                                                break;
-                                            },
-                                            else => {
-                                                return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected character in unicode literal");
-                                            },
+                                            '0'...'9' => value = value * 16 | (c3 - '0'),
+                                            'a'...'f' => value = value * 16 | (c3 - ('a' - 10)),
+                                            'A'...'F' => value = value * 16 | (c3 - ('A' - 10)),
+                                            '}' => break,
+                                            else => return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected character in unicode literal"),
                                         }
 
                                         if (!iterator.next(&iter)) return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unexpected EOF in unicode literal");
@@ -478,12 +460,8 @@ fn NewLexer_(
                                         while (true) {
                                             switch (c3) {
                                                 '0'...'9', 'a'...'f', 'A'...'F' => {},
-                                                '}' => {
-                                                    return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unicode escape sequence is out of range");
-                                                },
-                                                else => {
-                                                    return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid character in unicode escape sequence");
-                                                },
+                                                '}' => return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Unicode escape sequence is out of range"),
+                                                else => return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid character in unicode escape sequence"),
                                             }
 
                                             if (!iterator.next(&iter)) {
@@ -493,26 +471,15 @@ fn NewLexer_(
                                             c3 = iter.c;
                                         }
                                     }
-
-                                    // fixed-length
                                 } else {
                                     // Fixed-length
-                                    // comptime var j: usize = 0;
                                     var j: u3 = 0;
                                     while (j < 4) : (j += 1) {
                                         switch (c3) {
-                                            '0'...'9' => {
-                                                value = value * 16 | (c3 - '0');
-                                            },
-                                            'a'...'f' => {
-                                                value = value * 16 | (c3 - ('a' - 10));
-                                            },
-                                            'A'...'F' => {
-                                                value = value * 16 | (c3 - ('A' - 10));
-                                            },
-                                            else => {
-                                                return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid character in unicode escape sequence");
-                                            },
+                                            '0'...'9' => value = value * 16 | (c3 - '0'),
+                                            'a'...'f' => value = value * 16 | (c3 - ('a' - 10)),
+                                            'A'...'F' => value = value * 16 | (c3 - ('A' - 10)),
+                                            else => return lexer.addRangedSyntaxError(escape_start, iter.i + start + 2, "Invalid character in unicode escape sequence"),
                                         }
 
                                         if (j < 3) {
@@ -652,13 +619,9 @@ fn NewLexer_(
                         // Implicitly-quoted strings end when they reach a newline OR end of file
                         // This only applies to .env
                         switch (comptime quote) {
-                            0 => {
-                                break :stringLiteral;
-                            },
+                            0 => break :stringLiteral,
                             '`' => {},
-                            else => {
-                                try lexer.addDefaultError("Unterminated string literal");
-                            },
+                            else => try lexer.addDefaultError("Unterminated string literal"),
                         }
                     },
 
@@ -673,7 +636,7 @@ fn NewLexer_(
                                 } else {
                                     lexer.token = T.t_template_head;
                                 }
-                                break :stringLiteral;
+                                return InnerStringLiteral{ .needs_slow_path = needs_slow_path, .suffix_len = suffix_len };
                             }
                             continue :stringLiteral;
                         }
@@ -700,7 +663,7 @@ fn NewLexer_(
                                     lexer.step();
                                     continue;
                                 };
-                                lexer.end = lexer.current -| 1;
+                                lexer.end = lexer.current - 1;
                                 lexer.step();
                                 continue;
                             }
@@ -735,7 +698,7 @@ fn NewLexer_(
             lexer.string_literal_buffer.shrinkRetainingCapacity(0);
             if (string_literal_details.needs_slow_path) {
                 lexer.string_literal_buffer.ensureUnusedCapacity(lexer.string_literal_slice.len) catch unreachable;
-                try lexer.decodeEscapeSequences(lexer.start, lexer.string_literal_slice, @TypeOf(lexer.string_literal_buffer), &lexer.string_literal_buffer);
+                try lexer.decodeEscapeSequences(lexer.start, lexer.string_literal_slice, @TypeOf(lexer.string_literal_buffer), &lexer.string_literal_buffer, quote);
                 lexer.string_literal = lexer.string_literal_buffer.items;
             }
             if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and lexer.string_literal_is_ascii;
@@ -747,7 +710,7 @@ fn NewLexer_(
             }
         }
 
-        /// Parses a backtick without post-processing escape sequences. Used for calls of the form: foo`\x10`, especially String.raw`\?`. The only
+        /// Parses a backtick without post-processing escape sequences. Used for calls of the form: foo`\x10`, especially String.raw`\?`.
         pub fn parseBacktickLiteralRaw(lexer: *LexerType) !void {
             if (lexer.rescan_close_brace_as_template_token) {
                 lexer.token = T.t_template_tail;
@@ -756,6 +719,7 @@ fn NewLexer_(
             }
 
             lexer.step(); // skip over ` mark
+            var string_literal_slice_end: usize = 0;
             var needs_slow_path = false;
             var utf16_size_difference: u32 = 0;
 
@@ -781,14 +745,16 @@ fn NewLexer_(
 
                     '$' => {
                         lexer.step();
-                        if (lexer.code_point != '{') continue;
+                        if (lexer.code_point == '{') {
+                            string_literal_slice_end = lexer.end - 1;
 
-                        if (lexer.rescan_close_brace_as_template_token) {
-                            lexer.token = T.t_template_middle;
-                        } else {
-                            lexer.token = T.t_template_head;
+                            if (lexer.rescan_close_brace_as_template_token) {
+                                lexer.token = T.t_template_middle;
+                            } else {
+                                lexer.token = T.t_template_head;
+                            }
+                            break;
                         }
-                        break;
                     },
 
                     // exit condition
@@ -819,22 +785,20 @@ fn NewLexer_(
             }
 
             // varies slightly from corresponding non-raw line of code because we call lexer.step() after, rather than before this line
-            const string_literal_slice_end = lexer.end - @boolToInt(lexer.code_point == '{');
+            if (string_literal_slice_end == 0) string_literal_slice_end = lexer.end;
             lexer.step();
-            std.debug.assert(string_literal_slice_end <= lexer.source.contents.len);
             lexer.string_literal_slice = lexer.source.contents[lexer.start + 1 .. string_literal_slice_end];
 
-            const utf16_length = lexer.string_literal_slice.len - utf16_size_difference;
             lexer.string_literal_is_ascii = !needs_slow_path;
             lexer.string_literal_buffer.clearRetainingCapacity();
             if (needs_slow_path) {
-                lexer.string_literal_buffer.ensureTotalCapacity(utf16_length) catch unreachable;
+                lexer.string_literal_buffer.ensureTotalCapacity(lexer.string_literal_slice.len - utf16_size_difference) catch unreachable;
                 try lexer.decodeEscapeSequencesRaw(lexer.string_literal_slice, &lexer.string_literal_buffer);
                 lexer.string_literal = lexer.string_literal_buffer.items;
             }
         }
 
-        fn decodeEscapeSequencesRaw(_: *LexerType, text: string, buf: *std.ArrayList(u16)) !void {
+        fn decodeEscapeSequencesRaw(_: *LexerType, text: string, buf: *std.ArrayList(u16)) !void { // TODO: vectorize?
             const iterator = strings.CodepointIterator{ .bytes = text, .i = 0 };
             var iter = strings.CodepointIterator.Cursor{};
             while (iterator.next(&iter)) {
@@ -1014,7 +978,7 @@ fn NewLexer_(
             const original_text = lexer.raw();
             if (original_text.len < 1024) {
                 var buf = FakeArrayList16{ .items = &small_escape_sequence_buffer, .i = 0 };
-                try lexer.decodeEscapeSequences(lexer.start, original_text, FakeArrayList16, &buf);
+                try lexer.decodeEscapeSequences(lexer.start, original_text, FakeArrayList16, &buf, 0);
                 result.contents = lexer.utf16ToString(buf.items[0..buf.i]);
             } else {
                 if (!large_escape_sequence_list_loaded) {
@@ -1023,7 +987,7 @@ fn NewLexer_(
                 }
 
                 large_escape_sequence_list.shrinkRetainingCapacity(0);
-                try lexer.decodeEscapeSequences(lexer.start, original_text, std.ArrayList(u16), &large_escape_sequence_list);
+                try lexer.decodeEscapeSequences(lexer.start, original_text, std.ArrayList(u16), &large_escape_sequence_list, 0);
                 result.contents = lexer.utf16ToString(large_escape_sequence_list.items);
             }
 

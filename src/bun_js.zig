@@ -149,7 +149,7 @@ pub const Run = struct {
             while (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0 or this.vm.uws_event_loop.?.active > 0) {
                 this.vm.tick();
 
-                if (this.vm.eventLoop().tickConcurrentWithCount() == 0) {
+                if (this.vm.uws_event_loop.?.num_polls > 0 or this.vm.uws_event_loop.?.active > 0) {
                     this.vm.uws_event_loop.?.tick();
                 }
             }

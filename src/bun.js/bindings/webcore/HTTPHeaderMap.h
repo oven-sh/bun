@@ -212,6 +212,7 @@ public:
     template <class Encoder> void encode(Encoder&) const;
     template <class Decoder> static WARN_UNUSED_RETURN bool decode(Decoder&, HTTPHeaderMap&);
     void setUncommonHeader(const String& name, const String& value);
+    void setUncommonHeaderCloneName(const StringView name, const String& value);
 
 private:
     WEBCORE_EXPORT String getUncommonHeader(const String& name) const;

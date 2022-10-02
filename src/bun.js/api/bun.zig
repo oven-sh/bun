@@ -2324,6 +2324,15 @@ pub const Timer = struct {
                 .repeat = timer_id.repeat > 0,
             };
 
+            // This allows us to:
+            //  - free the memory before the job is run
+            //  - reuse the JSC.Strong
+            if (!repeats) {
+                this.callback = .{};
+                map.put(vm.allocator, timer_id.id, null) catch unreachable;
+                this.deinit();
+            }
+
             var job = vm.allocator.create(CallbackJob) catch @panic(
                 "Out of memory while allocating Timeout",
             );
@@ -2333,15 +2342,6 @@ pub const Timer = struct {
             job.ref.ref(vm);
 
             vm.enqueueTask(JSC.Task.init(&job.task));
-
-            // This allows us to:
-            //  - free the memory before the job is run
-            //  - reuse the JSC.Strong
-            if (!repeats) {
-                this.callback = .{};
-                map.put(vm.allocator, timer_id.id, null) catch unreachable;
-                this.deinit();
-            }
         }
 
         pub fn deinit(this: *Timeout) void {
@@ -2405,13 +2405,16 @@ pub const Timer = struct {
             .globalThis = globalThis,
             .timer = uws.Timer.create(
                 vm.uws_event_loop.?,
-                true,
                 Timeout.ID{
                     .id = id,
                     .repeat = @as(u32, @boolToInt(repeat)),
                 },
             ),
         };
+
+        timeout.poll_ref.ref(vm);
+        map.put(vm.allocator, id, timeout) catch unreachable;
+
         timeout.timer.set(
             Timeout.ID{
                 .id = id,
@@ -2421,9 +2424,6 @@ pub const Timer = struct {
             interval,
             @as(i32, @boolToInt(repeat)) * interval,
         );
-        timeout.poll_ref.ref(vm);
-
-        map.put(vm.allocator, id, timeout) catch unreachable;
     }
 
     pub fn setTimeout(

@@ -291,7 +291,7 @@ describe("util.promisify", () => {
           {
             code: 'ERR_INVALID_ARG_TYPE',
             name: 'TypeError',
-            message: 'The "original" argument must be of type function.' + invalidArgTypeHelper(input)
+            message: 'The "original" argument must be of type Function'
           });
       });
     })

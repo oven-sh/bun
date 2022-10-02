@@ -10,7 +10,7 @@ it("Blob inspect", () => {
   expect(Bun.inspect(Bun.file(123))).toBe(`FileRef (fd: 123) {
   type: "application/octet-stream"
 }`);
-  expect(Bun.inspect(new Response(""))).toBe(`Response (0 KB) {
+  expect(Bun.inspect(new Response(new Blob()))).toBe(`Response (0 KB) {
   ok: true,
   url: "",
   statusText: "",

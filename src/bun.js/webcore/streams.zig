@@ -737,6 +737,11 @@ pub const Sink = struct {
     status: Status = Status.closed,
     used: bool = false,
 
+    pub const pending = Sink{
+        .ptr = @intToPtr(*anyopaque, 0xaaaaaaaa),
+        .vtable = undefined,
+    };
+
     pub const Status = enum {
         ready,
         closed,
@@ -2663,6 +2668,28 @@ pub const ByteBlobLoader = struct {
     pub const Source = ReadableStreamSource(@This(), "ByteBlob", onStart, onPull, onCancel, deinit);
 };
 
+pub const PipeFunction = fn (ctx: *anyopaque, stream: StreamResult, allocator: std.mem.Allocator) void;
+
+pub const Pipe = struct {
+    ctx: ?*anyopaque = null,
+    onPipe: ?PipeFunction = null,
+
+    pub fn New(comptime Type: type, comptime Function: anytype) type {
+        return struct {
+            pub fn pipe(self: *anyopaque, stream: StreamResult, allocator: std.mem.Allocator) void {
+                Function(@ptrCast(*Type, @alignCast(@alignOf(Type), self)), stream, allocator);
+            }
+
+            pub fn init(self: *Type) Pipe {
+                return Pipe{
+                    .ctx = self,
+                    .onPipe = pipe,
+                };
+            }
+        };
+    }
+};
+
 pub const ByteStream = struct {
     buffer: std.ArrayList(u8) = .{
         .allocator = bun.default_allocator,
@@ -2676,33 +2703,11 @@ pub const ByteStream = struct {
     },
     done: bool = false,
     pending_buffer: []u8 = &.{},
-    pending_value: ?*JSC.napi.Ref = null,
+    pending_value: JSC.Strong = .{},
     offset: usize = 0,
     highWaterMark: Blob.SizeType = 0,
     pipe: Pipe = .{},
     size_hint: Blob.SizeType = 0,
-
-    pub const Pipe = struct {
-        ctx: ?*anyopaque = null,
-        onPipe: ?PipeFunction = null,
-
-        pub fn New(comptime Type: type, comptime Function: anytype) type {
-            return struct {
-                pub fn pipe(self: *anyopaque, stream: StreamResult, allocator: std.mem.Allocator) void {
-                    Function(@ptrCast(*Type, @alignCast(@alignOf(Type), self)), stream, allocator);
-                }
-
-                pub fn init(self: *Type) Pipe {
-                    return Pipe{
-                        .ctx = self,
-                        .onPipe = pipe,
-                    };
-                }
-            };
-        }
-    };
-
-    pub const PipeFunction = fn (ctx: *anyopaque, stream: StreamResult, allocator: std.mem.Allocator) void;
 
     pub const tag = ReadableStream.Tag.Bytes;
 
@@ -2727,12 +2732,10 @@ pub const ByteStream = struct {
     }
 
     pub fn value(this: *@This()) JSValue {
-        if (this.pending_value == null)
+        const result = this.pending_value.get() orelse {
             return .zero;
-
-        const result = this.pending_value.?.get();
-        this.pending_value.?.set(.zero);
-
+        };
+        this.pending_value.clear();
         return result;
     }
 
@@ -2850,11 +2853,7 @@ pub const ByteStream = struct {
 
     pub fn setValue(this: *@This(), view: JSC.JSValue) void {
         JSC.markBinding();
-        if (this.pending_value) |pending| {
-            pending.set(view);
-        } else {
-            this.pending_value = JSC.napi.Ref.create(this.parent().globalThis, view);
-        }
+        this.pending_value.set(this.parent().globalThis, view);
     }
 
     pub fn parent(this: *@This()) *Source {
@@ -2921,10 +2920,7 @@ pub const ByteStream = struct {
         const view = this.value();
         if (this.buffer.capacity > 0) this.buffer.clearAndFree();
         this.done = true;
-        if (this.pending_value) |ref| {
-            this.pending_value = null;
-            ref.destroy();
-        }
+        this.pending_value.deinit();
 
         if (view != .zero) {
             this.pending_buffer = &.{};
@@ -2937,10 +2933,7 @@ pub const ByteStream = struct {
         JSC.markBinding();
         if (this.buffer.capacity > 0) this.buffer.clearAndFree();
 
-        if (this.pending_value) |ref| {
-            this.pending_value = null;
-            ref.destroy();
-        }
+        this.pending_value.deinit();
         if (!this.done) {
             this.done = true;
 
@@ -3564,3 +3557,4 @@ pub fn NewReadyWatcher(
 //         pub fn onError(this: *Streamer): anytype,
 //     };
 // }
+

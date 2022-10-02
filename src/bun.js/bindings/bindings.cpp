@@ -214,17 +214,22 @@ void WebCore__FetchHeaders__count(WebCore__FetchHeaders* headers, uint32_t* coun
     *count = headers->size();
     *buf_len = i;
 }
+
+typedef struct ZigSliceString {
+    const unsigned char* ptr;
+    size_t len;
+} ZigSliceString;
+
 typedef struct PicoHTTPHeader {
-    unsigned const char* name;
-    size_t name_len;
-    unsigned const char* value;
-    size_t value_len;
+    ZigSliceString name;
+    ZigSliceString value;
 } PicoHTTPHeader;
 
 typedef struct PicoHTTPHeaders {
     const PicoHTTPHeader* ptr;
     size_t len;
 } PicoHTTPHeaders;
+
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void* arg1)
 {
     PicoHTTPHeaders pico_headers = *reinterpret_cast<const PicoHTTPHeaders*>(arg1);
@@ -233,29 +238,36 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
     if (pico_headers.len > 0) {
         HTTPHeaderMap map = HTTPHeaderMap();
 
-        for (size_t j = 0; j < pico_headers.len; j++) {
+        size_t end = pico_headers.len;
+
+        for (size_t j = 0; j < end; j++) {
             PicoHTTPHeader header = pico_headers.ptr[j];
-            if (header.value_len == 0)
+            if (header.value.len == 0)
                 continue;
 
-            StringView nameView = StringView(reinterpret_cast<const char*>(header.name), header.name_len);
+            StringView nameView = StringView(reinterpret_cast<const char*>(header.name.ptr), header.name.len);
 
             LChar* data = nullptr;
-            auto value = String::createUninitialized(header.value_len, data);
-            memcpy(data, header.value, header.value_len);
+            auto value = String::createUninitialized(header.value.len, data);
+            memcpy(data, header.value.ptr, header.value.len);
 
             HTTPHeaderName name;
 
+            // memory safety: the header names must be cloned if they're not statically known
+            // the value must also be cloned
+            // isolatedCopy() doesn't actually clone, it's only for threadlocal isolation
             if (WebCore::findHTTPHeaderName(nameView, name)) {
-                map.add(name, WTFMove(value));
+                map.add(name, value);
             } else {
-                map.setUncommonHeader(nameView.toString().isolatedCopy(), WTFMove(value));
+                // the case where we do not need to clone the name
+                // when the header name is already present in the list
+                // we don't have that information here, so map.setUncommonHeaderCloneName exists
+                map.setUncommonHeaderCloneName(nameView, value);
             }
         }
 
         headers->setInternalHeaders(WTFMove(map));
     }
-
     return headers;
 }
 WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(JSC__JSGlobalObject* arg0, void* arg1)

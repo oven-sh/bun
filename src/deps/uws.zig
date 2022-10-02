@@ -261,9 +261,13 @@ pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
 pub const Timer = opaque {
-    pub fn create(loop: *Loop, falltrhough: bool, ptr: anytype) *Timer {
+    pub fn create(loop: *Loop, ptr: anytype) *Timer {
         const Type = @TypeOf(ptr);
-        return us_create_timer(loop, @as(i32, @boolToInt(falltrhough)), @sizeOf(Type));
+
+        // never fallthrough poll
+        // the problem is uSockets hardcodes it on the other end
+        // so we can never free non-fallthrough polls
+        return us_create_timer(loop, 0, @sizeOf(Type));
     }
 
     pub fn set(this: *Timer, ptr: anytype, cb: ?fn (*Timer) callconv(.C) void, ms: i32, repeat_ms: i32) void {

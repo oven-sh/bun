@@ -1169,7 +1169,7 @@ pub const Blob = struct {
                     bun.default_allocator.destroy(this);
                 },
                 .Locked => {
-                    value.Locked.callback = thenWrap;
+                    value.Locked.onReceiveValue = thenWrap;
                     value.Locked.task = this;
                 },
             }
@@ -1351,7 +1351,7 @@ pub const Blob = struct {
                         };
 
                         response.body.value.Locked.task = task;
-                        response.body.value.Locked.callback = WriteFileWaitFromLockedValueTask.thenWrap;
+                        response.body.value.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
                         return promise.asValue(ctx.ptr()).asObjectRef();
                     },
@@ -1380,7 +1380,7 @@ pub const Blob = struct {
                         };
 
                         request.body.Locked.task = task;
-                        request.body.Locked.callback = WriteFileWaitFromLockedValueTask.thenWrap;
+                        request.body.Locked.onReceiveValue = WriteFileWaitFromLockedValueTask.thenWrap;
 
                         return promise.asValue(ctx.ptr()).asObjectRef();
                     },
@@ -4220,6 +4220,7 @@ pub const Body = struct {
         } else if (this.value == .InternalBlob or this.value == .InlineBlob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
             try writer.writeAll("\n");
+            try formatter.writeIndent(Writer, writer);
             try Blob.writeFormatForSize(this.value.size(), writer, enable_ansi_colors);
         } else if (this.value == .Locked) {
             if (this.value.Locked.readable) |stream| {
@@ -4311,15 +4312,72 @@ pub const Body = struct {
 
         global: *JSGlobalObject,
         task: ?*anyopaque = null,
+
         /// runs after the data is available.
-        callback: ?fn (ctx: *anyopaque, value: *Value) void = null,
+        onReceiveValue: ?fn (ctx: *anyopaque, value: *Value) void = null,
+
         /// conditionally runs when requesting data
         /// used in HTTP server to ignore request bodies unless asked for it
-        onPull: ?fn (ctx: *anyopaque) void = null,
-        onDrain: ?fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
+        onStartBuffering: ?fn (ctx: *anyopaque) void = null,
+
+        onStartStreaming: ?fn (ctx: *anyopaque) JSC.WebCore.DrainResult = null,
 
         deinit: bool = false,
         action: Action = Action.none,
+
+        pub fn toAnyBlob(this: *PendingValue) ?AnyBlob {
+            if (this.promise != null)
+                return null;
+
+            return this.toAnyBlobAllowPromise();
+        }
+
+        pub fn toAnyBlobAllowPromise(this: *PendingValue) ?AnyBlob {
+            const stream = this.readable orelse return null;
+
+            switch (stream.ptr) {
+                .Blob => |blobby| {
+                    var blob = JSC.WebCore.Blob.initWithStore(blobby.store, this.global);
+                    blob.offset = blobby.offset;
+                    blob.size = blobby.remain;
+                    blob.store.?.ref();
+                    stream.detach(this.global);
+                    stream.done();
+                    blobby.deinit();
+                    this.readable = null;
+                    return AnyBlob{ .Blob = blob };
+                },
+                .File => |blobby| {
+                    var blob = JSC.WebCore.Blob.initWithStore(blobby.store, this.global);
+                    blobby.store.ref();
+
+                    // it should be lazy, file shouldn't have opened yet.
+                    std.debug.assert(!blobby.started);
+
+                    stream.detach(this.global);
+                    blobby.deinit();
+                    stream.done();
+                    this.readable = null;
+                    return AnyBlob{ .Blob = blob };
+                },
+                .Bytes => |bytes| {
+
+                    // If we've received the complete body by the time this function is called
+                    // we can avoid streaming it and convert it to a Blob
+                    if (bytes.has_received_last_chunk) {
+                        stream.detach(this.global);
+                        var blob: JSC.WebCore.AnyBlob = undefined;
+                        blob.from(bytes.buffer);
+                        bytes.parent().deinit();
+                        this.readable = null;
+                        return blob;
+                    }
+
+                    return null;
+                },
+                else => return null,
+            }
+        }
 
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
@@ -4358,9 +4416,9 @@ pub const Body = struct {
                 const promise_value = promise.asValue(globalThis);
                 value.promise = promise_value;
 
-                if (value.onPull) |onPull| {
-                    value.onPull = null;
-                    onPull(value.task.?);
+                if (value.onStartBuffering) |onStartBuffering| {
+                    value.onStartBuffering = null;
+                    onStartBuffering(value.task.?);
                 }
                 return promise_value;
             }
@@ -4375,6 +4433,7 @@ pub const Body = struct {
         };
     };
 
+    /// This is a duplex stream!
     pub const Value = union(Tag) {
         Blob: Blob,
         /// Single-use Blob
@@ -4386,6 +4445,19 @@ pub const Body = struct {
         Used: void,
         Empty: void,
         Error: JSValue,
+
+        pub fn toBlobIfPossible(this: *Value) void {
+            if (this.* != .Locked)
+                return;
+
+            if (this.Locked.toAnyBlob()) |blob| {
+                this.* = switch (blob) {
+                    .Blob => .{ .Blob = blob.Blob },
+                    .InternalBlob => .{ .InternalBlob = blob.InternalBlob },
+                    .InlineBlob => .{ .InlineBlob = blob.InlineBlob },
+                };
+            }
+        }
 
         pub fn size(this: *const Value) Blob.SizeType {
             return switch (this.*) {
@@ -4409,9 +4481,10 @@ pub const Body = struct {
                 var _blob = InlineBlob{
                     .bytes = undefined,
                     .was_string = was_string,
+                    .len = @truncate(InlineBlob.IntSize, data.len),
                 };
                 @memcpy(&_blob.bytes, data.ptr, data.len);
-
+                allocator.free(data);
                 return Value{
                     .InlineBlob = _blob,
                 };
@@ -4469,8 +4542,8 @@ pub const Body = struct {
                         .estimated_size = 0,
                     };
 
-                    if (locked.onDrain) |drain| {
-                        locked.onDrain = null;
+                    if (locked.onStartStreaming) |drain| {
+                        locked.onStartStreaming = null;
                         drain_result = drain(locked.task.?);
                     }
 
@@ -4696,9 +4769,10 @@ pub const Body = struct {
                     locked.readable = null;
                 }
 
-                if (locked.callback) |callback| {
-                    locked.callback = null;
+                if (locked.onReceiveValue) |callback| {
+                    locked.onReceiveValue = null;
                     callback(locked.task.?, new);
+                    return;
                 }
 
                 if (locked.promise) |promise_| {
@@ -4761,6 +4835,8 @@ pub const Body = struct {
         }
 
         pub fn use(this: *Value) Blob {
+            this.toBlobIfPossible();
+
             switch (this.*) {
                 .Blob => {
                     var new_blob = this.Blob;
@@ -4802,24 +4878,27 @@ pub const Body = struct {
             }
         }
 
+        pub fn tryUseAsAnyBlob(this: *Value) ?AnyBlob {
+            const any_blob: AnyBlob = switch (this.*) {
+                .Blob => AnyBlob{ .Blob = this.Blob },
+                .InternalBlob => AnyBlob{ .InternalBlob = this.InternalBlob },
+                .InlineBlob => AnyBlob{ .InlineBlob = this.InlineBlob },
+                .Locked => this.Locked.toAnyBlobAllowPromise() orelse return null,
+                else => return null,
+            };
+
+            this.* = .{ .Used = .{} };
+            return any_blob;
+        }
+
         pub fn useAsAnyBlob(this: *Value) AnyBlob {
             const any_blob: AnyBlob = switch (this.*) {
                 .Blob => .{ .Blob = this.Blob },
                 .InternalBlob => .{ .InternalBlob = this.InternalBlob },
                 .InlineBlob => .{ .InlineBlob = this.InlineBlob },
+                .Locked => this.Locked.toAnyBlobAllowPromise() orelse AnyBlob{ .InlineBlob = .{ .len = 0 } },
                 else => .{ .Blob = Blob.initEmpty(undefined) },
             };
-
-            if (this.* == .Locked) {
-                if (this.Locked.promise) |prom| {
-                    prom.unprotect();
-                }
-
-                if (this.Locked.readable) |readable| {
-                    readable.done();
-                    // TODO: convert the known streams back into blobs
-                }
-            }
 
             this.* = .{ .Used = {} };
             return any_blob;
@@ -4845,9 +4924,9 @@ pub const Body = struct {
                 }
 
                 this.* = .{ .Error = error_instance };
-                if (locked.callback) |callback| {
-                    locked.callback = null;
-                    callback(locked.task.?, this);
+                if (locked.onReceiveValue) |onReceiveValue| {
+                    locked.onReceiveValue = null;
+                    onReceiveValue(locked.task.?, this);
                 }
                 return;
             }
@@ -5049,7 +5128,11 @@ pub const Request = struct {
             } else if (this.body == .InternalBlob or this.body == .InlineBlob) {
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                try Blob.writeFormatForSize(this.body.slice().len, writer, enable_ansi_colors);
+                if (this.body.size() == 0) {
+                    try Blob.initEmpty(undefined).writeFormat(formatter, writer, enable_ansi_colors);
+                } else {
+                    try Blob.writeFormatForSize(this.body.size(), writer, enable_ansi_colors);
+                }
             } else if (this.body == .Locked) {
                 if (this.body.Locked.readable) |stream| {
                     try writer.writeAll("\n");

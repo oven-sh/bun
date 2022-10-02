@@ -393,7 +393,7 @@ pub const HTMLRewriter = struct {
         rewriter: *LOLHTML.HTMLRewriter,
         context: LOLHTMLContext,
         response: *Response,
-        input: JSC.WebCore.Blob = undefined,
+        input: JSC.WebCore.AnyBlob = undefined,
         pub fn init(context: LOLHTMLContext, global: *JSGlobalObject, original: *Response, builder: *LOLHTML.HTMLRewriter.Builder) JSValue {
             var result = bun.default_allocator.create(Response) catch unreachable;
             var sink = bun.default_allocator.create(BufferOutputSink) catch unreachable;
@@ -456,12 +456,13 @@ pub const HTMLRewriter = struct {
             result.status_text = bun.default_allocator.dupe(u8, original.status_text) catch unreachable;
 
             var input = original.body.value.useAsAnyBlob();
+            sink.input = input;
 
             const is_pending = input.needsToReadFile();
             defer if (!is_pending) input.detach();
 
             if (is_pending) {
-                input.Blob.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
+                sink.input.Blob.doReadFileInternal(*BufferOutputSink, sink, onFinishedLoading, global);
             } else if (sink.runOutputSink(input.slice(), false, false)) |error_value| {
                 return error_value;
             }
@@ -482,7 +483,7 @@ pub const HTMLRewriter = struct {
                     } else if (sink.response.body.value == .Locked and @ptrToInt(sink.response.body.value.Locked.task) == @ptrToInt(sink) and
                         sink.response.body.value.Locked.promise != null)
                     {
-                        sink.response.body.value.Locked.callback = null;
+                        sink.response.body.value.Locked.onReceiveValue = null;
                         sink.response.body.value.Locked.task = null;
                     }
 

@@ -1494,6 +1494,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
+            value.toBlobIfPossible();
+
             switch (value.*) {
                 .Error => {
                     const err = value.Error;
@@ -1536,37 +1538,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         switch (stream.ptr) {
                             .Invalid => {},
 
-                            // fast path for Blob
-                            .Blob => |val| {
-                                streamLog("was Blob", .{});
-                                var blob = JSC.WebCore.Blob.initWithStore(val.store, this.server.globalThis);
-                                blob.offset = val.offset;
-                                blob.size = val.remain;
-                                this.blob = .{ .Blob = blob };
-
-                                val.store.ref();
-                                stream.detach(this.server.globalThis);
-                                val.deinit();
-                                this.renderWithBlobFromBodyValue();
-                                return;
-                            },
-
-                            // fast path for File
-                            .File => |val| {
-                                streamLog("was File Blob", .{});
-                                this.blob = .{
-                                    .Blob = JSC.WebCore.Blob.initWithStore(val.store, this.server.globalThis),
-                                };
-                                val.store.ref();
-
-                                // it should be lazy, file shouldn't have opened yet.
-                                std.debug.assert(!val.started);
-
-                                stream.detach(this.server.globalThis);
-                                val.deinit();
-                                this.renderWithBlobFromBodyValue();
-                                return;
-                            },
+                            // toBlobIfPossible should've caught this
+                            .Blob, .File => unreachable,
 
                             .JavaScript, .Direct => {
                                 var pair = StreamPair{ .stream = stream, .this = this };
@@ -1589,7 +1562,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     return;
                                 }
 
-                                byte_stream.pipe = JSC.WebCore.ByteStream.Pipe.New(@This(), onPipe).init(this);
+                                byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
 
@@ -1611,7 +1584,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
 
                     // when there's no stream, we need to
-                    lock.callback = doRenderWithBodyLocked;
+                    lock.onReceiveValue = doRenderWithBodyLocked;
                     lock.task = this;
 
                     return;
@@ -1972,7 +1945,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.request_body_buf.appendSlice(this.allocator, chunk) catch @panic("Out of memory while allocating request body");
         }
 
-        pub fn onDrainRequestBody(this: *RequestContext) JSC.WebCore.DrainResult {
+        pub fn onStartStreamingRequestBody(this: *RequestContext) JSC.WebCore.DrainResult {
             if (this.aborted) {
                 return JSC.WebCore.DrainResult{
                     .aborted = void{},
@@ -2003,7 +1976,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             };
         }
         const max_request_body_preallocate_length = 1024 * 256;
-        pub fn onPull(this: *RequestContext) void {
+        pub fn onStartBuffering(this: *RequestContext) void {
             const request = JSC.JSValue.c(this.request_js_object);
             request.ensureStillAlive();
 
@@ -2013,7 +1986,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (len == 0) {
                     if (request.as(Request)) |req| {
                         var old = req.body;
-                        old.Locked.callback = null;
+                        old.Locked.onReceiveValue = null;
                         req.body = .{ .Empty = .{} };
                         old.resolve(&req.body, this.server.globalThis);
                         return;
@@ -2024,7 +1997,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (len >= this.server.config.max_request_body_size) {
                     if (request.as(Request)) |req| {
                         var old = req.body;
-                        old.Locked.callback = null;
+                        old.Locked.onReceiveValue = null;
                         req.body = .{ .Empty = .{} };
                         old.toError(error.RequestBodyTooLarge, this.server.globalThis);
                         return;
@@ -2041,7 +2014,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // no transfer-encoding
                 if (request.as(Request)) |req| {
                     var old = req.body;
-                    old.Locked.callback = null;
+                    old.Locked.onReceiveValue = null;
                     req.body = .{ .Empty = .{} };
                     old.resolve(&req.body, this.server.globalThis);
                     return;
@@ -2053,12 +2026,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             this.resp.onData(*RequestContext, onBufferedBodyChunk, this);
         }
 
-        pub fn onPullCallback(this: *anyopaque) void {
-            onPull(bun.cast(*RequestContext, this));
+        pub fn onStartBufferingCallback(this: *anyopaque) void {
+            onStartBuffering(bun.cast(*RequestContext, this));
         }
 
-        pub fn onDrainRequestBodyCallback(this: *anyopaque) JSC.WebCore.DrainResult {
-            return onDrainRequestBody(bun.cast(*RequestContext, this));
+        pub fn onStartStreamingRequestBodyCallback(this: *anyopaque) JSC.WebCore.DrainResult {
+            return onStartStreamingRequestBody(bun.cast(*RequestContext, this));
         }
 
         pub const Export = shim.exportFunctions(.{
@@ -2544,8 +2517,8 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                         .Locked = .{
                             .task = ctx,
                             .global = this.globalThis,
-                            .onPull = RequestContext.onPullCallback,
-                            .onDrain = RequestContext.onDrainRequestBodyCallback,
+                            .onStartBuffering = RequestContext.onStartBufferingCallback,
+                            .onStartStreaming = RequestContext.onStartStreamingRequestBodyCallback,
                         },
                     };
                     resp.onData(*RequestContext, RequestContext.onBufferedBodyChunk, ctx);

@@ -8,7 +8,7 @@ describe("fetch", () => {
     gc();
     it(url, async () => {
       gc();
-      const response = await fetch(url);
+      const response = await fetch(url, {}, { verbose: true });
       gc();
       const text = await response.text();
       gc();

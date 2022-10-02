@@ -45,6 +45,13 @@ var dead_socket = @intToPtr(*DeadSocket, 1);
 const print_every = 0;
 var print_every_i: usize = 0;
 
+// we always rewrite the entire HTTP request when write() returns EAGAIN
+// so we can reuse this buffer
+var shared_request_headers_buf: [256]picohttp.Header = undefined;
+
+// this doesn't need to be stack memory because it is immediately cloned after use
+var shared_response_headers_buf: [256]picohttp.Header = undefined;
+
 fn NewHTTPContext(comptime ssl: bool) type {
     return struct {
         const pool_size = 64;
@@ -716,8 +723,8 @@ completion_callback: HTTPClientResult.Callback = undefined,
 force_last_modified: bool = false,
 if_modified_since: string = "",
 request_content_len_buf: ["-4294967295".len]u8 = undefined,
-request_headers_buf: [128]picohttp.Header = undefined,
-response_headers_buf: [128]picohttp.Header = undefined,
+
+cloned_metadata: HTTPResponseMetadata = .{},
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -1044,7 +1051,7 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_entries = this.header_entries.slice();
     var header_names = header_entries.items(.name);
     var header_values = header_entries.items(.value);
-    var request_headers_buf = &this.request_headers_buf;
+    var request_headers_buf = &shared_request_headers_buf;
 
     var override_accept_encoding = false;
     var override_accept_header = false;
@@ -1188,6 +1195,12 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
 }
 
 const Task = ThreadPool.Task;
+
+const HTTPResponseMetadata = struct {
+    url: []const u8 = "",
+    owned_buf: []u8 = "",
+    response: picohttp.Response = .{},
+};
 
 fn printRequest(request: picohttp.Request) void {
     @setCold(true);
@@ -1345,7 +1358,7 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
 
             const response = picohttp.Response.parseParts(
                 to_read,
-                &this.response_headers_buf,
+                &shared_response_headers_buf,
                 &amount_read,
             ) catch |err| {
                 switch (err) {
@@ -1370,6 +1383,8 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 }
                 return;
             };
+
+            this.state.pending_response = response;
 
             pending_buffers[0] = to_read[@minimum(@intCast(usize, response.bytes_read), to_read.len)..];
             if (pending_buffers[0].len == 0 and pending_buffers[1].len > 0) {
@@ -1417,6 +1432,8 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 this.closeAndFail(err, is_ssl, socket);
                 return;
             };
+
+            this.cloneMetadata();
 
             if (!can_continue) {
                 this.done(is_ssl, ctx, socket);
@@ -1526,9 +1543,29 @@ fn fail(this: *HTTPClient, err: anyerror) void {
     this.state.stage = .fail;
 
     const callback = this.completion_callback;
-    const result = this.toResult();
+    const result = this.toResult(this.cloned_metadata);
     this.state.reset();
     callback.run(result);
+}
+
+// We have to clone metadata immediately after use
+fn cloneMetadata(this: *HTTPClient) void {
+    var builder_ = StringBuilder{};
+    var builder = &builder_;
+    this.state.pending_response.count(builder);
+    builder.count(this.url.href);
+    builder.allocate(bun.default_allocator) catch unreachable;
+    var headers_buf = bun.default_allocator.alloc(picohttp.Header, this.state.pending_response.headers.len) catch unreachable;
+    const response = this.state.pending_response.clone(headers_buf, builder);
+
+    this.state.pending_response = response;
+
+    const href = builder.append(this.url.href);
+    this.cloned_metadata = .{
+        .owned_buf = builder.ptr.?[0..builder.cap],
+        .response = response,
+        .url = href,
+    };
 }
 
 pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
@@ -1543,7 +1580,8 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, amount: c_uint) void {
 pub fn done(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     var out_str = this.state.body_out_str.?;
     var body = out_str.*;
-    const result = this.toResult();
+    this.cloned_metadata.response = this.state.pending_response;
+    const result = this.toResult(this.cloned_metadata);
     const callback = this.completion_callback;
 
     this.state.response_stage = .done;
@@ -1632,24 +1670,15 @@ pub const HTTPClientResult = struct {
     };
 };
 
-pub fn toResult(this: *HTTPClient) HTTPClientResult {
-    var builder_ = StringBuilder{};
-    var builder = &builder_;
-    this.state.pending_response.count(builder);
-    builder.count(this.url.href);
-    builder.allocate(bun.default_allocator) catch unreachable;
-    var headers_buf = bun.default_allocator.alloc(picohttp.Header, this.state.pending_response.headers.len) catch unreachable;
-    const response = this.state.pending_response.clone(headers_buf, builder);
-    const href = builder.append(this.url.href);
-
+pub fn toResult(this: *HTTPClient, metadata: HTTPResponseMetadata) HTTPClientResult {
     return HTTPClientResult{
         .body = this.state.body_out_str,
-        .response = response,
-        .metadata_buf = builder.ptr.?[0..builder.cap],
+        .response = metadata.response,
+        .metadata_buf = metadata.owned_buf,
         .redirected = this.remaining_redirect_count != default_redirect_count,
-        .href = href,
+        .href = metadata.url,
         .fail = this.state.fail,
-        .headers_buf = headers_buf,
+        .headers_buf = metadata.response.headers,
     };
 }
 

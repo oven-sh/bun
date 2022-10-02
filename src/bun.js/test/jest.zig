@@ -415,7 +415,7 @@ pub const Expect = struct {
             );
             return js.JSValueMakeUndefined(ctx);
         }
-        this.scope.tests.items[this.test_id].counter.actual += 1;
+        active_test_expectation_counter.actual += 1;
         const left = JSValue.fromRef(arguments[0]);
         left.ensureStillAlive();
         const right = this.value;
@@ -478,7 +478,7 @@ pub const Expect = struct {
             );
             return js.JSValueMakeUndefined(ctx);
         }
-        this.scope.tests.items[this.test_id].counter.actual += 1;
+        active_test_expectation_counter.actual += 1;
 
         const expected = JSC.JSValue.fromRef(arguments[0]).toU32();
         const actual = this.value.getLengthOfArray(ctx.ptr());
@@ -654,7 +654,6 @@ pub const ExpectPrototype = struct {
 };
 
 pub const TestScope = struct {
-    counter: Counter = Counter{},
     label: string = "",
     parent: *DescribeScope,
     callback: js.JSValueRef,
@@ -741,14 +740,14 @@ pub const TestScope = struct {
         const err = arguments.ptr[0];
         globalThis.bunVM().runErrorHandler(err, null);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
-        task.handleResult(.{ .fail = task.describe.tests.items[task.test_id].counter.actual });
+        task.handleResult(.{ .fail = active_test_expectation_counter.actual });
         return JSValue.jsUndefined();
     }
 
     pub fn onResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const arguments = callframe.arguments(2);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);
-        task.handleResult(.{ .pass = task.describe.tests.items[task.test_id].counter.actual });
+        task.handleResult(.{ .pass = active_test_expectation_counter.actual });
         return JSValue.jsUndefined();
     }
 
@@ -768,7 +767,7 @@ pub const TestScope = struct {
 
         if (initial_value.isException(vm.global.vm()) or initial_value.isError() or initial_value.isAggregateError(vm.global)) {
             vm.runErrorHandler(initial_value, null);
-            return .{ .fail = this.counter.actual };
+            return .{ .fail = active_test_expectation_counter.actual };
         }
 
         if (!initial_value.isEmptyOrUndefinedOrNull() and (initial_value.asPromise() != null or initial_value.asInternalPromise() != null)) {
@@ -782,7 +781,7 @@ pub const TestScope = struct {
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
                     vm.runErrorHandler(promise.result(vm.global.vm()), null);
-                    return .{ .fail = this.counter.actual };
+                    return .{ .fail = active_test_expectation_counter.actual };
                 },
                 .Pending => {
                     _ = promise.asValue(vm.global).then(vm.global, task, onResolve, onReject);
@@ -797,15 +796,15 @@ pub const TestScope = struct {
 
         this.callback = null;
 
-        if (this.counter.expected > 0 and this.counter.expected < this.counter.actual) {
+        if (active_test_expectation_counter.expected > 0 and active_test_expectation_counter.expected < active_test_expectation_counter.actual) {
             Output.prettyErrorln("Test fail: {d} / {d} expectations\n (make this better!)", .{
-                this.counter.actual,
-                this.counter.expected,
+                active_test_expectation_counter.actual,
+                active_test_expectation_counter.expected,
             });
-            return .{ .fail = this.counter.actual };
+            return .{ .fail = active_test_expectation_counter.actual };
         }
 
-        return .{ .pass = this.counter.actual };
+        return .{ .pass = active_test_expectation_counter.actual };
     }
 
     pub const name = "TestScope";
@@ -1168,6 +1167,8 @@ pub const DescribeScope = struct {
     }
 };
 
+var active_test_expectation_counter: TestScope.Counter = undefined;
+
 const TestRunnerTask = struct {
     test_id: TestRunner.Test.ID,
     describe: *DescribeScope,
@@ -1179,7 +1180,11 @@ const TestRunnerTask = struct {
 
     pub fn run(this: *TestRunnerTask) bool {
         var describe = this.describe;
+
+        // reset the global state for each test
+        // prior to the run
         DescribeScope.active = describe;
+        active_test_expectation_counter = .{};
 
         var globalThis = this.globalThis;
         var test_: TestScope = this.describe.tests.items[this.test_id];

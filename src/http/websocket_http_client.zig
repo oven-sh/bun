@@ -790,6 +790,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn clearData(this: *WebSocket) void {
+            this.poll_ref.unref(this.globalThis.bunVM());
             this.clearReceiveBuffers(true);
             this.clearSendBuffers(true);
             this.ping_len = 0;
@@ -1371,6 +1372,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         fn dispatchClose(this: *WebSocket) void {
             var out = this.outgoing_websocket orelse return;
+            this.poll_ref.unref(this.globalThis.bunVM());
             JSC.markBinding();
             WebSocket__didCloseWithErrorCode(out, ErrorCode.closed);
         }
@@ -1458,8 +1460,6 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
         pub fn finalize(this: *WebSocket) callconv(.C) void {
             this.clearData();
-
-            this.poll_ref.unref(this.globalThis.bunVM());
 
             this.outgoing_websocket = null;
 

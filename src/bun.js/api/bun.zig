@@ -2202,6 +2202,8 @@ pub const Timer = struct {
     last_id: i32 = 1,
     warned: bool = false,
 
+    // We split up the map here to avoid storing an extra "repeat" boolean
+
     /// Used by setTimeout()
     timeout_map: TimeoutMap = TimeoutMap{},
 

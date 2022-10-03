@@ -2071,7 +2071,7 @@ pub fn NewPrinter(
                         p.print(" ");
                     }
 
-                    p.print(e.value);
+                    p.printRegExp(e);
 
                     // Need a space before the next identifier to avoid it turning into flags
                     p.prev_reg_exp_end = p.writer.written;
@@ -2443,6 +2443,139 @@ pub fn NewPrinter(
             }
             if (utf8.len > 0) {
                 p.print(utf8);
+            }
+        }
+        
+        pub fn printRegExp(e: *Printer, reg_exp: *E.RegExp) void {
+            var text: string = reg_exp.value;
+            if (!ascii_only_always_on_unless_minifying) {
+                e.print(text);
+                return;
+            }
+
+            var is_unicode = false;
+            if (reg_exp.flags_offset) |flags_offset| {
+                for (text[flags_offset..]) |chr| {
+                    if (chr == 'u') {
+                        is_unicode = true;
+                        break;
+                    }
+                }
+                text = text[0..flags_offset];
+            }
+
+            var in_set = false; // whether we are currently in a set
+            var is_escaping = false; // whether the previous character was a backslash that escapes this character
+            var iterator = strings.CodepointIterator{ .bytes = text, .i = 0 };
+            var iter = strings.CodepointIterator.Cursor{};
+            while (iterator.next(&iter)) {
+                switch (iter.c) {
+                    '\\' => {
+                        is_escaping = !is_escaping;
+                        continue;
+                    },
+                    '[' => { // it's possible to hit this condition with [[], but it affect functionality.
+                        if (!is_escaping) in_set = true;
+                    },
+                    ']' => {
+                        if (!is_escaping) in_set = false;
+                    },
+                    else => {
+                        if (iter.c != '\t' and (first_ascii > iter.c or iter.c > last_ascii)) {
+                            e.print(text[0..iter.i]);
+                            text = text[iter.i + iter.width ..];
+                            iterator = strings.CodepointIterator{ .bytes = text, .i = 0 };
+
+                            const escape_char: u8 = switch (iter.c) {
+                                // if iter.c is \0 and the next char is numeric, we can't use '\0', so we have to use '\x00'.
+                                // E.g. `\09` is not valid JS, so we use `\x009`
+                                0x00 => if (iter.i + 1 < text.len and '0' <= text[iter.i + 1] and text[iter.i + 1] <= '9')
+                                    @as(u8, 'x')
+                                else
+                                    @as(u8, '0'),
+
+                                0x08 => if (in_set) @as(u8, 'b') else @as(u8, 'x'), // '\b' is the backspace character only when in a [set].
+                                0x09 => unreachable, // '\t'
+                                0x0A => unreachable, // '\n'
+                                0x0B => 'v',
+                                0x0C => 'f',
+                                0x0D => unreachable, // '\r' should be unreachable
+                                0x100...0x10FFFF => 'u',
+                                0x110000...std.math.maxInt(i32) => unreachable,
+                                else => 'x',
+                            };
+
+                            var escaped_char_size: u4 = @intCast(u4, switch (escape_char) {
+                                'x' => "\\xFF".len,
+                                'u' => if (is_unicode) switch (iter.c) {
+                                    0x100...0xFFFF => "\\uFFFF".len,
+                                    0x10000...0xFFFFF => "\\u{FFFFF}".len,
+                                    else => "\\u{FFFFFF}".len,
+                                } else switch (iter.c) {
+                                    0x100...0xFFFF => "\\uFFFF".len,
+                                    else => "\\uFFFF\\uFFFF".len,
+                                },
+                                else => "\\_".len,
+                            });
+
+                            var ptr = (e.writer.reserve(escaped_char_size) catch unreachable)[0..escaped_char_size];
+                            e.writer.advance(escaped_char_size);
+
+                            ptr[0..2].* = [_]u8{ '\\', escape_char };
+                            ptr = ptr[2..];
+
+                            if (iter.c >= 0x10000) {
+                                if (is_unicode) {
+                                    ptr[0] = '{';
+                                    ptr[ptr.len - 1] = '}';
+                                    ptr = ptr[1 .. ptr.len - 1];
+                                } else {
+                                    const k = iter.c - 0x10000;
+                                    const first_half = first_high_surrogate + ((k >> 10) & 0x3FF);
+                                    var i: u4 = 3;
+
+                                    while (true) {
+                                        const x = @intCast(u4, (first_half >> (i * 4)) & 0b1111);
+                                        ptr[0] = @as(u8, x) + @as(u8, switch (x) {
+                                            0...9 => '0',
+                                            10...15 => 'A' - 10,
+                                        });
+                                        ptr = ptr[1..];
+                                        if (i == 0) break;
+                                        i -= 1;
+                                    }
+
+                                    ptr[0..2].* = [_]u8{ '\\', escape_char };
+                                    ptr = ptr[2..];
+
+                                    iter.c = first_low_surrogate + (k & 0x3FF);
+                                }
+                            }
+
+                            // for cp=0x12345, we are iterating over 1, 2, 3, 4, then 5
+                            // (every 4 bits turns into 1 char)
+                            assert(6 >= ptr.len and ptr.len >= 0);
+                            while (ptr.len > 0) {
+                                const x = @intCast(u4, (iter.c >> @intCast(u5, (ptr.len - 1) * 4)) & 0b1111);
+                                ptr[0] = @as(u8, x) + @as(u8, switch (x) {
+                                    0...9 => '0',
+                                    10...15 => 'A' - 10,
+                                });
+                                ptr = ptr[1..];
+                            }
+                        }
+                    },
+                }
+
+                is_escaping = false;
+            }
+
+            if (text.len > 0) {
+                if (reg_exp.flags_offset) |flags_offset| {
+                    e.print(reg_exp.value[flags_offset - text.len ..]);
+                } else {
+                    e.print(text);
+                }
             }
         }
 

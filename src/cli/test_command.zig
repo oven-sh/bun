@@ -374,12 +374,7 @@ pub const TestCommand = struct {
 
         Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
 
-        if (reporter.summary.fail == 0 and reporter.summary.expectations > 0) {
-            Output.prettyError("<r><green>", .{});
-        } else {
-            Output.prettyError("<r>", .{});
-        }
-        if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expectations\n", .{reporter.summary.expectations});
+        if (reporter.summary.expectations > 0) Output.prettyError(" {d:5>} expect() calls\n", .{reporter.summary.expectations});
 
         Output.prettyError(
             \\ Ran {d} tests across {d} files 

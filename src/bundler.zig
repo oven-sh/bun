@@ -428,7 +428,7 @@ pub const Bundler = struct {
             existing_bundle,
         );
 
-        var env_loader = env_loader_ orelse DotEnv.instance orelse brk: {
+        var env_loader: *DotEnv.Loader = env_loader_ orelse DotEnv.instance orelse brk: {
             var map = try allocator.create(DotEnv.Map);
             map.* = DotEnv.Map.init(allocator);
 
@@ -440,6 +440,9 @@ pub const Bundler = struct {
         if (DotEnv.instance == null) {
             DotEnv.instance = env_loader;
         }
+
+        env_loader.quiet = log.level == .err;
+
         // var pool = try allocator.create(ThreadPool);
         // try pool.init(ThreadPool.InitConfig{
         //     .allocator = allocator,

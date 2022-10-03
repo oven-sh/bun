@@ -2384,6 +2384,24 @@ pub const ArrayBuffer = extern struct {
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
 
+    pub const Strong = struct {
+        array_buffer: ArrayBuffer,
+        held: JSC.Strong = .{},
+
+        pub fn clear(this: *ArrayBuffer.Strong) void {
+            var ref: *JSC.napi.Ref = this.ref orelse return;
+            ref.set(JSC.JSValue.zero);
+        }
+
+        pub fn slice(this: *const ArrayBuffer.Strong) []u8 {
+            return this.array_buffer.slice();
+        }
+
+        pub fn deinit(this: *ArrayBuffer.Strong) void {
+            this.held.deinit();
+        }
+    };
+
     pub const empty = ArrayBuffer{ .offset = 0, .len = 0, .byte_len = 0, .typed_array_type = .Uint8Array, .ptr = undefined };
 
     pub const name = "Bun__ArrayBuffer";
@@ -3902,7 +3920,7 @@ pub const Ref = struct {
 pub const PollRef = struct {
     status: Status = .inactive,
 
-    const log = Output.scoped(.PollRef, true);
+    const log = Output.scoped(.PollRef, false);
 
     const Status = enum { active, inactive, done };
 

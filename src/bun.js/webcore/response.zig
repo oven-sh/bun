@@ -3991,7 +3991,7 @@ pub const AnyBlob = union(enum) {
         };
     }
 
-    pub fn store(this: *@This()) ?*Blob.Store {
+    pub fn store(this: *const @This()) ?*Blob.Store {
         if (this.* == .Blob) {
             return this.Blob.store;
         }
@@ -4333,50 +4333,14 @@ pub const Body = struct {
         }
 
         pub fn toAnyBlobAllowPromise(this: *PendingValue) ?AnyBlob {
-            const stream = this.readable orelse return null;
+            var stream = if (this.readable != null) &this.readable.? else return null;
 
-            switch (stream.ptr) {
-                .Blob => |blobby| {
-                    var blob = JSC.WebCore.Blob.initWithStore(blobby.store, this.global);
-                    blob.offset = blobby.offset;
-                    blob.size = blobby.remain;
-                    blob.store.?.ref();
-                    stream.detach(this.global);
-                    stream.done();
-                    blobby.deinit();
-                    this.readable = null;
-                    return AnyBlob{ .Blob = blob };
-                },
-                .File => |blobby| {
-                    var blob = JSC.WebCore.Blob.initWithStore(blobby.store, this.global);
-                    blobby.store.ref();
-
-                    // it should be lazy, file shouldn't have opened yet.
-                    std.debug.assert(!blobby.started);
-
-                    stream.detach(this.global);
-                    blobby.deinit();
-                    stream.done();
-                    this.readable = null;
-                    return AnyBlob{ .Blob = blob };
-                },
-                .Bytes => |bytes| {
-
-                    // If we've received the complete body by the time this function is called
-                    // we can avoid streaming it and convert it to a Blob
-                    if (bytes.has_received_last_chunk) {
-                        stream.detach(this.global);
-                        var blob: JSC.WebCore.AnyBlob = undefined;
-                        blob.from(bytes.buffer);
-                        bytes.parent().deinit();
-                        this.readable = null;
-                        return blob;
-                    }
-
-                    return null;
-                },
-                else => return null,
+            if (stream.toAnyBlob(this.global)) |blob| {
+                this.readable = null;
+                return blob;
             }
+
+            return null;
         }
 
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {

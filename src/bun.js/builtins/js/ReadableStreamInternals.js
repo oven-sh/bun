@@ -268,6 +268,9 @@ function readableStreamPipeToWritableStream(
 ) {
   "use strict";
 
+  const isDirectStream = !!@getByIdDirectPrivate(source, "start");
+
+
   @assert(@isReadableStream(source));
   @assert(@isWritableStream(destination));
   @assert(!@isReadableStreamLocked(source));

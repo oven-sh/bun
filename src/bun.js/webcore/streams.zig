@@ -49,12 +49,59 @@ const Request = JSC.WebCore.Request;
 const assert = std.debug.assert;
 const Syscall = JSC.Node.Syscall;
 
+const AnyBlob = JSC.WebCore.AnyBlob;
 pub const ReadableStream = struct {
     value: JSValue,
     ptr: Source,
 
     pub fn toJS(this: *const ReadableStream) JSValue {
         return this.value;
+    }
+
+    pub fn toAnyBlob(
+        stream: *ReadableStream,
+        globalThis: *JSC.JSGlobalObject,
+    ) ?JSC.WebCore.AnyBlob {
+        switch (stream.ptr) {
+            .Blob => |blobby| {
+                var blob = JSC.WebCore.Blob.initWithStore(blobby.store, globalThis);
+                blob.offset = blobby.offset;
+                blob.size = blobby.remain;
+                blob.store.?.ref();
+                stream.detach(globalThis);
+                stream.done();
+                blobby.deinit();
+
+                return AnyBlob{ .Blob = blob };
+            },
+            .File => |blobby| {
+                var blob = JSC.WebCore.Blob.initWithStore(blobby.store, globalThis);
+                blobby.store.ref();
+
+                // it should be lazy, file shouldn't have opened yet.
+                std.debug.assert(!blobby.started);
+
+                stream.detach(globalThis);
+                blobby.deinit();
+                stream.done();
+                return AnyBlob{ .Blob = blob };
+            },
+            .Bytes => |bytes| {
+
+                // If we've received the complete body by the time this function is called
+                // we can avoid streaming it and convert it to a Blob
+                if (bytes.has_received_last_chunk) {
+                    stream.detach(globalThis);
+                    var blob: JSC.WebCore.AnyBlob = undefined;
+                    blob.from(bytes.buffer);
+                    bytes.parent().deinit();
+                    return blob;
+                }
+
+                return null;
+            },
+            else => return null,
+        }
     }
 
     pub fn done(this: *const ReadableStream) void {
@@ -2973,6 +3020,8 @@ pub const FileBlobLoader = struct {
     stored_global_this_: ?*JSC.JSGlobalObject = null,
     poll_ref: JSC.PollRef = .{},
 
+    has_adjusted_pipe_size_on_linux: bool = false,
+
     pub usingnamespace NewReadyWatcher(@This(), .read, ready);
 
     pub inline fn globalThis(this: *FileBlobLoader) *JSC.JSGlobalObject {
@@ -3358,14 +3407,40 @@ pub const FileBlobLoader = struct {
 
                 // macOS FIONREAD doesn't seem to work here
                 // but we can get this information from the kqueue callback so we don't need to
-                if (len == 0) {
-                    const FIONREAD = if (Environment.isLinux) std.os.linux.T.FIONREAD else bun.C.FIONREAD;
-                    const rc: c_int = std.c.ioctl(this.fd, FIONREAD, &len);
-                    if (rc != 0) {
-                        len = 0;
+                if (comptime Environment.isLinux) {
+                    if (len == 0) {
+                        const FIONREAD = if (Environment.isLinux) std.os.linux.T.FIONREAD else bun.C.FIONREAD;
+                        const rc: c_int = std.c.ioctl(this.fd, FIONREAD, &len);
+                        if (rc != 0) {
+                            len = 0;
+                        }
+
+                        // In  Linux  versions  before 2.6.11, the capacity of a
+                        // pipe was the same as the system page size (e.g., 4096
+                        // bytes on i386).  Since Linux 2.6.11, the pipe
+                        // capacity is 16 pages (i.e., 65,536 bytes in a system
+                        // with a page size of 4096 bytes).  Since Linux 2.6.35,
+                        // the default pipe capacity is 16 pages, but the
+                        // capacity can be queried  and  set  using  the
+                        // fcntl(2) F_GETPIPE_SZ and F_SETPIPE_SZ operations.
+                        // See fcntl(2) for more information.
+
+                        //:# define F_SETPIPE_SZ    1031    /* Set pipe page size array.
+                        const F_SETPIPE_SZ = 1031;
+                        const F_GETPIPE_SZ = 1032;
+
+                        if (!this.has_adjusted_pipe_size_on_linux) {
+                            if (len + 1024 > 16 * std.mem.page_size) {
+                                this.has_adjusted_pipe_size_on_linux = true;
+                                var pipe_len: c_int = 0;
+                                _ = std.c.fcntl(this.fd, F_GETPIPE_SZ, &pipe_len);
+                                if (pipe_len <= 16 * std.mem.page_size) {
+                                    _ = std.c.fcntl(this.fd, F_SETPIPE_SZ, 512 * 1024);
+                                }
+                            }
+                        }
                     }
                 }
-
                 if (len > read_buf.len * 10 and read_buf.len < std.mem.page_size) {
                     // then we need to allocate a buffer
                     // to read into

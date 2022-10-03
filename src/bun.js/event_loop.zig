@@ -519,7 +519,7 @@ pub const Poller = struct {
     const FileBlobLoader = JSC.WebCore.FileBlobLoader;
     const FileSink = JSC.WebCore.FileSink;
     const Subprocess = JSC.Subprocess;
-
+    const BufferedInput = Subprocess.BufferedInput;
     /// epoll only allows one pointer
     /// We unfortunately need two pointers: one for a function call and one for the context
     /// We use a tagged pointer union and then call the function with the context pointer
@@ -527,6 +527,7 @@ pub const Poller = struct {
         FileBlobLoader,
         FileSink,
         Subprocess,
+        BufferedInput,
     });
     const Kevent = std.os.Kevent;
     const kevent = std.c.kevent;

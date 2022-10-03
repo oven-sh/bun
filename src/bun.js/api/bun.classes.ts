@@ -19,6 +19,14 @@ export default [
         getter: "getStdout",
         cache: true,
       },
+      writable: {
+        getter: "getStdin",
+        cache: true,
+      },
+      readable: {
+        getter: "getStdout",
+        cache: true,
+      },
       stderr: {
         getter: "getStderr",
         cache: true,

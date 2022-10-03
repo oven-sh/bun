@@ -335,7 +335,7 @@ const char* const s_readableStreamInternalsReadableStreamDefaultControllerStartC
 const JSC::ConstructAbility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructAbility = JSC::ConstructAbility::CannotConstruct;
 const JSC::ConstructorKind s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeConstructorKind = JSC::ConstructorKind::None;
 const JSC::ImplementationVisibility s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeImplementationVisibility = JSC::ImplementationVisibility::Public;
-const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 3257;
+const int s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeLength = 3326;
 static const JSC::Intrinsic s_readableStreamInternalsReadableStreamPipeToWritableStreamCodeIntrinsic = JSC::NoIntrinsic;
 const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCode =
     "(function (\n" \
@@ -347,6 +347,9 @@ const char* const s_readableStreamInternalsReadableStreamPipeToWritableStreamCod
     "  signal\n" \
     ") {\n" \
     "  \"use strict\";\n" \
+    "\n" \
+    "  const isDirectStream = !!@getByIdDirectPrivate(source, \"start\");\n" \
+    "\n" \
     "\n" \
     "  @assert(@isReadableStream(source));\n" \
     "  @assert(@isWritableStream(destination));\n" \

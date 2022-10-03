@@ -252,7 +252,7 @@ function peekQueueValue(queue)
 
     @assert(queue.content.isNotEmpty());
 
-    return queue.peek().value;
+    return queue.peek()?.value;
 }
 
 function resetQueue(queue)

@@ -773,6 +773,37 @@ const Arguments = struct {
         max_retries: u32 = 0,
         recursive: bool = false,
         retry_delay: c_uint = 100,
+
+        pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?RmDir {
+            const path = PathLike.fromJS(ctx, arguments, exception) orelse {
+                if (exception.* == null) {
+                    JSC.throwInvalidArguments(
+                        "path must be a string or TypedArray",
+                        .{},
+                        ctx,
+                        exception,
+                    );
+                }
+                return null;
+            };
+
+            if (exception.* != null) return null;
+            var recursive = false;
+            if (arguments.next()) |val| {
+                arguments.eat();
+
+                if (val.isObject()) {
+                    if (val.getIfPropertyExists(ctx.ptr(), "recursive")) |recursive_| {
+                        recursive = recursive_.toBoolean();
+                    }
+                }
+            }
+
+            return RmDir{
+                .path = path,
+                .recursive = recursive,
+            };
+        }
     };
 
     /// https://github.com/nodejs/node/blob/master/lib/fs.js#L1285
@@ -3601,7 +3632,10 @@ pub const NodeFS = struct {
         switch (comptime flavor) {
             .sync => {
                 var dir = args.old_path.sliceZ(&this.sync_error_buf);
-                _ = dir;
+                switch (Syscall.getErrno(system.rmdir(dir))) {
+                    .SUCCESS => return Maybe(Return.Rmdir).success,
+                    else => |err| return Maybe(Return.Rmdir).errnoSys(err, .rmdir),
+                }
             },
             else => {},
         }
@@ -3614,6 +3648,29 @@ pub const NodeFS = struct {
         _ = args;
         _ = this;
         _ = flavor;
+        switch (comptime flavor) {
+            .sync => {
+                var dest = args.path.sliceZ(&this.sync_error_buf);
+
+                if (comptime Environment.isMac) {
+                    var flags: u32 = 0;
+                    if (args.recursive) {
+                        flags |= bun.C.darwin.RemoveFileFlags.cross_mount;
+                        flags |= bun.C.darwin.RemoveFileFlags.allow_long_paths;
+                        flags |= bun.C.darwin.RemoveFileFlags.recursive;
+                    }
+
+                    switch (bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags)) {
+                        0 => return Maybe(Return.Rm).success,
+                        else => |err| return Maybe(Return.Rm).errnoSys(err, .unlink).?,
+                    }
+                } else if (comptime Environment.isLinux) {
+                    // TODO:
+                }
+            },
+            else => {},
+        }
+
         return Maybe(Return.Rm).todo;
     }
     pub fn stat(this: *NodeFS, args: Arguments.Stat, comptime flavor: Flavor) Maybe(Return.Stat) {

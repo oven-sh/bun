@@ -9,6 +9,9 @@ export var appendFile = function appendFile(...args) {
 export var close = function close(...args) {
   callbackify(fs.closeSync, args);
 };
+export var rm = function rm(...args) {
+  callbackify(fs.rmSync, args);
+};
 export var copyFile = function copyFile(...args) {
   callbackify(fs.copyFileSync, args);
 };
@@ -186,6 +189,7 @@ export var truncateSync = fs.truncateSync.bind(fs);
 export var unlinkSync = fs.unlinkSync.bind(fs);
 export var utimesSync = fs.utimesSync.bind(fs);
 export var lutimesSync = fs.lutimesSync.bind(fs);
+export var rmSync = fs.rmSync.bind(fs);
 
 export var createReadStream = fs.createReadStream.bind(fs);
 export var createWriteStream = fs.createWriteStream.bind(fs);
@@ -224,6 +228,7 @@ export var promises = {
   unlink: promisify(fs.unlinkSync),
   utimes: promisify(fs.utimesSync),
   lutimes: promisify(fs.lutimesSync),
+  rm: promisify(fs.rmSync),
 };
 
 promises.readFile = promises.readfile = promisify(fs.readFileSync);
@@ -232,7 +237,8 @@ promises.readFile = promises.readfile = promisify(fs.readFileSync);
 realpath.native = realpath;
 realpathSync.native = realpathSync;
 
-var object = {
+export default {
+  [Symbol.for("CommonJS")]: 0,
   access,
   appendFile,
   close,
@@ -292,6 +298,7 @@ var object = {
   readdirSync,
   readFileSync,
   writeFileSync,
+  rmSync,
   readlinkSync,
   realpathSync,
   renameSync,
@@ -306,7 +313,3 @@ var object = {
   constants,
   promises,
 };
-
-var CJSInterop = () => object;
-CJSInterop[Symbol.for("CommonJS")] = true;
-export default CJSInterop;

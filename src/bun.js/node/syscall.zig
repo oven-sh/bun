@@ -566,6 +566,10 @@ pub const Error = struct {
     syscall: Syscall.Tag = @intToEnum(Syscall.Tag, 0),
     path: []const u8 = "",
 
+    pub inline fn isRetry(this: *const Error) bool {
+        return this.getErrno() == .AGAIN;
+    }
+
     pub fn fromCode(errno: os.E, syscall: Syscall.Tag) Error {
         return .{ .errno = @truncate(Int, @enumToInt(errno)), .syscall = syscall };
     }

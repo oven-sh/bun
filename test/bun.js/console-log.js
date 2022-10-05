@@ -56,3 +56,5 @@ const infinteLoop = {
 
 infinteLoop.bar = infinteLoop;
 console.log(infinteLoop, "am");
+
+console.log(new Array(4).fill({}))

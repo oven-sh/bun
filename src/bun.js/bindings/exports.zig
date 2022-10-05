@@ -1651,6 +1651,12 @@ pub const ZigConsoleClient = struct {
                 }
             }
 
+            defer {
+                if (comptime Format.canHaveCircularReferences()) {
+                    _ = this.map.remove(@enumToInt(value));
+                } 
+            }
+
             switch (comptime Format) {
                 .StringPossiblyFormatted => {
                     var str = ZigString.init("");

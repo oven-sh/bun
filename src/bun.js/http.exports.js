@@ -261,6 +261,8 @@ export class ServerResponse extends Writable {
   _removedConnection = false;
   _removedContLen = false;
 
+  #fakeSocket;
+
   _write(chunk, encoding, callback) {
     if (!this.#firstWrite && !this.headersSent) {
       this.#firstWrite = chunk;
@@ -338,7 +340,11 @@ export class ServerResponse extends Writable {
   }
 
   get socket() {
-    throw new Error("not implemented");
+    if (!this.#fakeSocket) {
+      this.#fakeSocket = Object.create(this);
+    }
+
+    return this.#fakeSocket;
   }
 
   get connection() {

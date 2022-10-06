@@ -2099,6 +2099,9 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 .fetch = .{
                     .rfn = onFetch,
                 },
+                .reload = .{
+                    .rfn = onReload,
+                },
             },
             .{
                 .port = .{
@@ -2115,6 +2118,37 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
                 },
             },
         );
+
+        pub fn onReload(
+            this: *ThisServer,
+            ctx: js.JSContextRef,
+            _: js.JSObjectRef,
+            _: js.JSObjectRef,
+            arguments: []const js.JSValueRef,
+            exception: js.ExceptionRef,
+        ) js.JSObjectRef {
+            if (arguments.len < 1) {
+                JSC.throwInvalidArguments("Expected 1 argument, got 0", .{}, ctx, exception);
+                return js.JSValueMakeUndefined(ctx);
+            }
+
+            var args_slice = JSC.Node.ArgumentsSlice.from(ctx.bunVM(), arguments);
+            defer args_slice.deinit();
+            var new_config = ServerConfig.fromJS(ctx, &args_slice, exception);
+            if (exception.* != null) return js.JSValueMakeUndefined(ctx);
+
+            // only reload those two
+            if (new_config.onRequest != .zero) {
+                this.config.onRequest = new_config.onRequest;
+                this.config.onRequest.unprotect();
+            }
+            if (new_config.onError != .zero) {
+                this.config.onError = new_config.onError;
+                this.config.onError.unprotect();
+            }
+
+            return this.thisObject.asObjectRef();
+        }
 
         pub fn onFetch(
             this: *ThisServer,
@@ -2279,13 +2313,15 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
             }
         }
 
-        pub fn stop(this: *ThisServer) void {
-            if (this.listener) |listener| {
-                this.listener = null;
-                this.unref();
-                listener.close();
-            }
+        pub fn stopListening(this: *ThisServer) void {
+            var listener = this.listener orelse return;
+            this.listener = null;
+            this.unref();
+            listener.close();
+        }
 
+        pub fn stop(this: *ThisServer) void {
+            this.stopListening();
             this.deinitIfWeCan();
         }
 

@@ -1476,7 +1476,7 @@ pub const VirtualMachine = struct {
 
     pub fn loadEntryPoint(this: *VirtualMachine, entry_path: string) !*JSInternalPromise {
         this.main = entry_path;
-        try this.entry_point.generate(@TypeOf(this.bundler), &this.bundler, Fs.PathName.init(entry_path), main_file_name);
+        try this.entry_point.generate(this.bun_watcher != null, Fs.PathName.init(entry_path), main_file_name);
         this.eventLoop().ensureWaker();
 
         var promise: *JSInternalPromise = undefined;

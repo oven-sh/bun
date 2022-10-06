@@ -189,6 +189,7 @@ pub const Arguments = struct {
         clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: jsx, js, json, tsx, ts, css") catch unreachable,
         clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
         clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
+        clap.parseParam("--hot                             Enable auto reload in bun's JavaScript runtime") catch unreachable,
         clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
         clap.parseParam("<POS>...                          ") catch unreachable,
     };
@@ -403,6 +404,7 @@ pub const Arguments = struct {
         opts.generate_node_module_bundle = cmd == .BunCommand;
         opts.inject = args.options("--inject");
         opts.extension_order = args.options("--extension-order");
+        ctx.debug.hot_reload = args.flag("--hot");
         ctx.passthrough = args.remaining();
 
         opts.no_summary = args.flag("--no-summary");
@@ -781,6 +783,7 @@ pub const Command = struct {
         dump_limits: bool = false,
         fallback_only: bool = false,
         silent: bool = false,
+        hot_reload: bool = false,
 
         // technical debt
         macros: ?MacroMap = null,

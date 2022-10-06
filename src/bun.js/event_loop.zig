@@ -182,6 +182,7 @@ pub const CppTask = opaque {
 };
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
+const HotReloadTask = JSC.HotReloader.HotReloadTask;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -195,6 +196,7 @@ pub const Task = TaggedPointerUnion(.{
     napi_async_work,
     ThreadSafeFunction,
     CppTask,
+    HotReloadTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -272,6 +274,11 @@ pub const EventLoop = struct {
                     transform_task.*.runFromJS();
                     transform_task.deinit();
                 },
+                .HotReloadTask => {
+                    var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
+                    transform_task.*.run();
+                    transform_task.deinit();
+                },
                 @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {
                     var any: *AnyTask = task.get(AnyTask).?;
                     any.run();
@@ -322,6 +329,13 @@ pub const EventLoop = struct {
         }
 
         return this.tasks.count - start_count;
+    }
+
+    pub fn autoTick(this: *EventLoop) void {
+        if (this.virtual_machine.uws_event_loop.?.num_polls > 0 or this.virtual_machine.uws_event_loop.?.active > 0) {
+            this.virtual_machine.uws_event_loop.?.tick();
+            this.afterUSocketsTick();
+        }
     }
 
     // TODO: fix this technical debt
@@ -380,9 +394,7 @@ pub const EventLoop = struct {
                     this.tick();
 
                     if (promise.status(this.global.vm()) == .Pending) {
-                        if (this.virtual_machine.uws_event_loop.?.active > 0 or this.virtual_machine.uws_event_loop.?.num_polls > 0) {
-                            this.virtual_machine.uws_event_loop.?.tick();
-                        }
+                        this.autoTick();
                     }
                 }
             },
@@ -420,7 +432,6 @@ pub const EventLoop = struct {
     }
 
     pub fn afterUSocketsTick(this: *EventLoop) void {
-        this.defer_count.store(0, .Monotonic);
         const processes = this.pending_processes_to_exit.keys();
         if (processes.len > 0) {
             for (processes) |process| {
@@ -428,8 +439,6 @@ pub const EventLoop = struct {
             }
             this.pending_processes_to_exit.clearRetainingCapacity();
         }
-
-        this.tick();
     }
 
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
@@ -438,7 +447,6 @@ pub const EventLoop = struct {
         this.concurrent_tasks.push(task);
 
         if (this.virtual_machine.uws_event_loop) |loop| {
-            _ = this.defer_count.fetchAdd(1, .Monotonic);
             loop.wakeup();
         }
     }
@@ -470,6 +478,13 @@ pub const Poller = struct {
                 // kqueue sends the same notification multiple times in the same tick potentially
                 // so we have to dedupe it
                 _ = loader.globalThis.bunVM().eventLoop().pending_processes_to_exit.getOrPut(loader) catch unreachable;
+            },
+            @field(Pollable.Tag, "BufferedInput") => {
+                var loader = ptr.as(JSC.Subprocess.BufferedInput);
+
+                loader.poll_ref.deactivate(loop);
+
+                loader.onReady(@bitCast(i64, kqueue_event.data));
             },
             @field(Pollable.Tag, "FileSink") => {
                 var loader = ptr.as(JSC.WebCore.FileSink);

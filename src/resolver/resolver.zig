@@ -314,13 +314,26 @@ var bin_folders_lock: Mutex = Mutex.init();
 var bin_folders_loaded: bool = false;
 
 const Timer = @import("../system_timer.zig").Timer;
-pub fn ResolveWatcher(comptime Context: type) type {
-    return struct {
-        context: *Context,
-        callback: fn (*Context, dir_path: string, dir_fd: StoredFileDescriptorType) void = undefined,
 
-        pub fn watch(this: @This(), dir_path: string, fd: StoredFileDescriptorType) void {
-            return this.callback(this.context, dir_path, fd);
+pub const AnyResolveWatcher = struct {
+    context: *anyopaque,
+    callback: fn (*anyopaque, dir_path: string, dir_fd: StoredFileDescriptorType) void = undefined,
+
+    pub fn watch(this: @This(), dir_path: string, fd: StoredFileDescriptorType) void {
+        return this.callback(this.context, dir_path, fd);
+    }
+};
+
+pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type {
+    return struct {
+        pub fn init(context: Context) AnyResolveWatcher {
+            return AnyResolveWatcher{
+                .context = context,
+                .callback = watch,
+            };
+        }
+        pub fn watch(this: *anyopaque, dir_path: string, fd: StoredFileDescriptorType) void {
+            onWatch(bun.cast(Context, this), dir_path, fd);
         }
     };
 }
@@ -341,7 +354,7 @@ pub const Resolver = struct {
     debug_logs: ?DebugLogs = null,
     elapsed: u64 = 0, // tracing
 
-    watcher: ?ResolveWatcher(HTTPWatcher) = null,
+    watcher: ?AnyResolveWatcher = null,
 
     caches: CacheSet,
 
@@ -2538,7 +2551,6 @@ pub const Resolver = struct {
         if (comptime FeatureFlags.watch_directories) {
             // For existent directories which don't find a match
             // Start watching it automatically,
-            // onStartWatchingDirectory fn decides whether to actually watch.
             if (r.watcher) |watcher| {
                 watcher.watch(entries.dir, entries.fd);
             }

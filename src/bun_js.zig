@@ -115,6 +115,9 @@ pub const Run = struct {
     }
 
     pub fn start(this: *Run) void {
+        if (this.ctx.debug.hot_reload) {
+            JSC.HotReloader.enableHotModuleReloading(this.vm);
+        }
         var promise = this.vm.loadEntryPoint(this.entry_path) catch return;
 
         if (promise.status(this.vm.global.vm()) == .Rejected) {
@@ -148,10 +151,7 @@ pub const Run = struct {
         {
             while (this.vm.eventLoop().tasks.count > 0 or this.vm.active_tasks > 0 or this.vm.uws_event_loop.?.active > 0) {
                 this.vm.tick();
-
-                if (this.vm.uws_event_loop.?.num_polls > 0 or this.vm.uws_event_loop.?.active > 0) {
-                    this.vm.uws_event_loop.?.tick();
-                }
+                this.vm.eventLoop().autoTick();
             }
 
             if (this.vm.log.msgs.items.len > 0) {

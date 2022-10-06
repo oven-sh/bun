@@ -184,6 +184,7 @@ pub extern fn JSC__SourceCode__fromString(arg0: [*c]JSC__SourceCode, arg1: [*c]c
 pub extern fn JSC__JSFunction__calculatedDisplayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSFunction__displayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSFunction__getName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
+pub extern fn JSC__JSFunction__optimizeSoon(JSValue0: JSC__JSValue) void;
 pub extern fn JSC__JSGlobalObject__arrayIteratorPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.ArrayIteratorPrototype;
 pub extern fn JSC__JSGlobalObject__arrayPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.ArrayPrototype;
 pub extern fn JSC__JSGlobalObject__asyncFunctionPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.AsyncFunctionPrototype;

@@ -135,6 +135,7 @@ pub const CommandLineReporter = struct {
         this.summary.pass += 1;
         this.summary.expectations += expectations;
     }
+
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, parent: ?*Jest.DescribeScope) void {
         var writer_: std.fs.File.Writer = Output.errorWriter();
         var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
@@ -481,7 +482,7 @@ pub const TestCommand = struct {
                 while (Jest.Jest.runner.?.has_pending_tests) : (vm.eventLoop().tick()) {
                     vm.eventLoop().tick();
                     if (!Jest.Jest.runner.?.has_pending_tests) break;
-                    vm.uws_event_loop.?.tick();
+                    vm.eventLoop().autoTick();
                 }
             }
             _ = vm.global.vm().runGC(false);

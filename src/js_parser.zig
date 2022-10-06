@@ -17377,7 +17377,6 @@ fn NewParser_(
 
                     var instanceMembers = ListManaged(Stmt).init(p.allocator);
 
-                    var staticMembers = ListManaged(Stmt).init(p.allocator);
                     var instanceDecorators = ListManaged(Stmt).init(p.allocator);
                     var staticDecorators = ListManaged(Stmt).init(p.allocator);
 
@@ -17483,7 +17482,6 @@ fn NewParser_(
                         stmts.append(p.s(S.Class{ .class = class }, class.class_name.?.loc)) catch unreachable;
                     }
 
-                    stmts.appendSlice(staticMembers.toOwnedSlice()) catch unreachable;
                     stmts.appendSlice(instanceDecorators.toOwnedSlice()) catch unreachable;
                     stmts.appendSlice(staticDecorators.toOwnedSlice()) catch unreachable;
 

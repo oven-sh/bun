@@ -330,7 +330,7 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::JSValue(JSC::jsNumber(0)));
 
     this->putDirect(this->vm(), clientData->builtinNames().versionPublicName(),
-        JSC::jsString(this->vm(), makeAtomString(Bun__version)));
+        JSC::jsString(this->vm(), makeAtomString(REPORTED_NODE_VERSION)));
 
     // this gives some way of identifying at runtime whether the SSR is happening in node or not.
     // this should probably be renamed to what the name of the bundler is, instead of "notNodeJS"
@@ -470,7 +470,7 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 9);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString("16.14.0"))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(REPORTED_NODE_VERSION))));
     object->putDirect(
         vm, JSC::Identifier::fromString(vm, "bun"_s),
         JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__version + 1 /* prefix with v */))));

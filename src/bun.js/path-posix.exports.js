@@ -16,6 +16,7 @@ function bound(obj) {
   };
 }
 var path = bound(Bun._Path(false));
+path[Symbol.for("CommonJS")] = 0;
 
 export var {
   basename,

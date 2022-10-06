@@ -1,5 +1,5 @@
 function bound(obj) {
-  return {
+  var result = {
     basename: obj.basename.bind(obj),
     dirname: obj.dirname.bind(obj),
     extname: obj.extname.bind(obj),
@@ -14,12 +14,16 @@ function bound(obj) {
     sep: obj.sep,
     delimiter: obj.delimiter,
   };
+  result.default = result;
+  return result;
 }
 var path = bound(Bun._Path());
-path.win32 = win32;
-path.posix = posix;
+
 export var posix = bound(Bun._Path(false));
 export var win32 = bound(Bun._Path(true));
+
+path.win32 = win32;
+path.posix = posix;
 
 export var {
   basename,
@@ -35,6 +39,9 @@ export var {
   toNamespacedPath,
   sep,
   delimiter,
+  __esModule,
 } = path;
 
+path[Symbol.for("CommonJS")] = 0;
+path.__esModule = true;
 export default path;

@@ -115,6 +115,9 @@ pub const Run = struct {
     }
 
     pub fn start(this: *Run) void {
+        if (this.ctx.debug.hot_reload) {
+            JSC.HotReloader.enableHotModuleReloading(this.vm);
+        }
         var promise = this.vm.loadEntryPoint(this.entry_path) catch return;
 
         if (promise.status(this.vm.global.vm()) == .Rejected) {

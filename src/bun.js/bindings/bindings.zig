@@ -1860,6 +1860,13 @@ pub const JSGlobalObject = extern struct {
         this.vm().throwError(this, err);
     }
 
+    pub fn reload(this: *JSC.JSGlobalObject) void {
+        this.vm().drainMicrotasks();
+        this.vm().collectAsync();
+
+        return cppFn("reload", .{this});
+    }
+
     pub const BunPluginTarget = enum(u8) {
         bun = 0,
         node = 1,
@@ -2124,6 +2131,7 @@ pub const JSGlobalObject = extern struct {
     }
 
     pub const Extern = [_][]const u8{
+        "reload",
         "bunVM",
         "putCachedObject",
         "getCachedObject",

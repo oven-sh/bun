@@ -182,6 +182,7 @@ pub const CppTask = opaque {
 };
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const MicrotaskForDefaultGlobalObject = JSC.MicrotaskForDefaultGlobalObject;
+const HotReloadTask = JSC.HotReloader.HotReloadTask;
 // const PromiseTask = JSInternalPromise.Completion.PromiseTask;
 pub const Task = TaggedPointerUnion(.{
     FetchTasklet,
@@ -195,6 +196,7 @@ pub const Task = TaggedPointerUnion(.{
     napi_async_work,
     ThreadSafeFunction,
     CppTask,
+    HotReloadTask,
     // PromiseTask,
     // TimeoutTasklet,
 });
@@ -270,6 +272,11 @@ pub const EventLoop = struct {
                 @field(Task.Tag, @typeName(WriteFileTask)) => {
                     var transform_task: *WriteFileTask = task.get(WriteFileTask).?;
                     transform_task.*.runFromJS();
+                    transform_task.deinit();
+                },
+                .HotReloadTask => {
+                    var transform_task: *HotReloadTask = task.get(HotReloadTask).?;
+                    transform_task.*.run();
                     transform_task.deinit();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(AnyTask))) => {

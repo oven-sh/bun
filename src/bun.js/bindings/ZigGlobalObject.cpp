@@ -2738,6 +2738,24 @@ DEFINE_VISIT_CHILDREN(GlobalObject);
 
 // DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
 
+void GlobalObject::reload()
+{
+    JSModuleLoader* moduleLoader = this->moduleLoader();
+    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(
+        this,
+        Identifier::fromString(this->vm(), "registry"_s)));
+
+    registry->clear(this->vm());
+    this->requireMap()->clear(this->vm());
+    this->vm().heap.collectSync();
+}
+
+extern "C" void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    globalObject->reload();
+}
+
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, JSValue origin)

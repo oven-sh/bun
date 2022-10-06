@@ -2139,12 +2139,12 @@ pub fn NewServer(comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
 
             // only reload those two
             if (new_config.onRequest != .zero) {
-                this.config.onRequest = new_config.onRequest;
                 this.config.onRequest.unprotect();
+                this.config.onRequest = new_config.onRequest;
             }
             if (new_config.onError != .zero) {
-                this.config.onError = new_config.onError;
                 this.config.onError.unprotect();
+                this.config.onError = new_config.onError;
             }
 
             return this.thisObject.asObjectRef();

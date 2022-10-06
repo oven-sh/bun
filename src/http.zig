@@ -1486,7 +1486,7 @@ pub const RequestContext = struct {
             const boot = vm.bundler.options.framework.?.server.path;
             std.debug.assert(boot.len > 0);
             errdefer vm.deinit();
-            vm.watcher = handler.watcher;
+            vm.bun_dev_watcher = handler.watcher;
             {
                 vm.bundler.configureRouter(false) catch |err| {
                     handler.handleJSError(.configure_router, err) catch {};
@@ -3886,10 +3886,7 @@ pub const Server = struct {
         server.watcher = try Watcher.init(server, server.bundler.fs, server.allocator);
 
         if (comptime FeatureFlags.watch_directories and !Environment.isTest) {
-            server.bundler.resolver.watcher = ResolveWatcher(Watcher){
-                .context = server.watcher,
-                .callback = onMaybeWatchDirectory,
-            };
+            server.bundler.resolver.watcher = ResolveWatcher(*Watcher, onMaybeWatchDirectory).init(server.watcher);
         }
     }
 

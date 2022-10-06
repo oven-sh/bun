@@ -305,7 +305,8 @@ pub const VirtualMachine = struct {
     has_loaded_constructors: bool = false,
     node_modules: ?*NodeModuleBundle = null,
     bundler: Bundler,
-    watcher: ?*http.Watcher = null,
+    bun_dev_watcher: ?*http.Watcher = null,
+    bun_watcher: ?*JSC.Watcher = null,
     console: *ZigConsoleClient,
     log: *logger.Log,
     event_listeners: EventListenerMixin.Map,
@@ -379,6 +380,12 @@ pub const VirtualMachine = struct {
     poller: JSC.Poller = JSC.Poller{},
     us_loop_reference_count: usize = 0,
     is_us_loop_entered: bool = false,
+    pending_internal_promise: *JSC.JSInternalPromise = undefined,
+    pub fn reload(this: *VirtualMachine) void {
+        Output.debug("Reloading...", .{});
+        this.global.reload();
+        this.pending_internal_promise = this.loadEntryPoint(this.main) catch @panic("Failed to reload");
+    }
 
     pub fn io(this: *VirtualMachine) *IO {
         if (this.io_ == null) {
@@ -514,6 +521,10 @@ pub const VirtualMachine = struct {
         }
 
         return slice;
+    }
+
+    pub fn isWatcherEnabled(this: *VirtualMachine) bool {
+        return this.bun_dev_watcher != null or this.bun_watcher != null;
     }
 
     pub fn init(
@@ -1483,15 +1494,17 @@ pub const VirtualMachine = struct {
             }
 
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(std.mem.span(main_file_name)));
+            this.pending_internal_promise = promise;
         } else {
             promise = JSModuleLoader.loadAndEvaluateModule(this.global, &ZigString.init(this.main));
+            this.pending_internal_promise = promise;
         }
 
         this.waitForPromise(promise);
 
         this.eventLoop().autoTick();
 
-        return promise;
+        return this.pending_internal_promise;
     }
 
     pub fn loadMacroEntryPoint(this: *VirtualMachine, entry_path: string, function_name: string, specifier: string, hash: i32) !*JSInternalPromise {
@@ -2852,7 +2865,13 @@ pub const ModuleLoader = struct {
                 var fd: ?StoredFileDescriptorType = null;
                 var package_json: ?*PackageJSON = null;
 
-                if (jsc_vm.watcher) |watcher| {
+                if (jsc_vm.bun_dev_watcher) |watcher| {
+                    if (watcher.indexOf(hash)) |index| {
+                        const _fd = watcher.watchlist.items(.fd)[index];
+                        fd = if (_fd > 0) _fd else null;
+                        package_json = watcher.watchlist.items(.package_json)[index];
+                    }
+                } else if (jsc_vm.bun_watcher) |watcher| {
                     if (watcher.indexOf(hash)) |index| {
                         const _fd = watcher.watchlist.items(.fd)[index];
                         fd = if (_fd > 0) _fd else null;
@@ -2979,12 +2998,28 @@ pub const ModuleLoader = struct {
                     return error.PrintingErrorWriteFailed;
                 }
 
-                if (jsc_vm.has_loaded) {
-                    return jsc_vm.refCountedResolvedSource(printer.ctx.written, specifier, path.text, null);
-                }
-
                 if (comptime Environment.dump_source) {
                     try dumpSource(specifier, &printer);
+                }
+
+                if (jsc_vm.isWatcherEnabled()) {
+                    const resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, specifier, path.text, null);
+
+                    if (parse_result.input_fd) |fd_| {
+                        if (jsc_vm.bun_watcher != null and !is_node_override and std.fs.path.isAbsolute(path.text) and !strings.contains(path.text, "node_modules")) {
+                            jsc_vm.bun_watcher.?.addFile(
+                                fd_,
+                                path.text,
+                                hash,
+                                loader,
+                                0,
+                                package_json,
+                                true,
+                            ) catch {};
+                        }
+                    }
+
+                    return resolved_source;
                 }
 
                 return ResolvedSource{
@@ -3361,5 +3396,226 @@ const FetchFlags = enum {
 
     pub fn disableTranspiling(this: FetchFlags) bool {
         return this != .transpile;
+    }
+};
+
+pub const Watcher = @import("../watcher.zig").NewWatcher(*HotReloader);
+
+pub const HotReloader = struct {
+    const watcher = @import("../watcher.zig");
+
+    onAccept: std.ArrayHashMapUnmanaged(Watcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
+    vm: *JSC.VirtualMachine,
+
+    pub const HotReloadTask = struct {
+        reloader: *HotReloader,
+        count: u8 = 0,
+        hashes: [8]u32 = [_]u32{0} ** 8,
+        concurrent_task: JSC.ConcurrentTask = undefined,
+
+        pub fn append(this: *HotReloadTask, id: u32) void {
+            if (this.count == 8) {
+                this.enqueue();
+                var reloader = this.reloader;
+                this.* = .{
+                    .reloader = reloader,
+                    .count = 0,
+                };
+            }
+
+            this.hashes[this.count] = id;
+            this.count += 1;
+        }
+
+        pub fn run(this: *HotReloadTask) void {
+            this.reloader.vm.reload();
+        }
+
+        pub fn enqueue(this: *HotReloadTask) void {
+            if (this.count == 0)
+                return;
+            var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
+
+            that.* = this.*;
+            this.count = 0;
+            that.concurrent_task.task = Task.init(that);
+            that.reloader.vm.eventLoop().enqueueTaskConcurrent(&that.concurrent_task);
+        }
+
+        pub fn deinit(this: *HotReloadTask) void {
+            bun.default_allocator.destroy(this);
+        }
+    };
+
+    fn NewCallback(comptime FunctionSignature: type) type {
+        return union(enum) {
+            javascript_callback: JSC.Strong,
+            zig_callback: struct {
+                ptr: *anyopaque,
+                function: FunctionSignature,
+            },
+        };
+    }
+
+    pub const OnAcceptCallback = NewCallback(fn (
+        vm: *JSC.VirtualMachine,
+        specifier: []const u8,
+    ) void);
+
+    pub fn enableHotModuleReloading(this: *VirtualMachine) void {
+        if (this.bun_watcher != null)
+            return;
+
+        var reloader = bun.default_allocator.create(HotReloader) catch @panic("OOM");
+        reloader.* = .{
+            .vm = this,
+        };
+        this.bun_watcher = JSC.Watcher.init(
+            reloader,
+            this.bundler.fs,
+            bun.default_allocator,
+        ) catch @panic("Failed to enable File Watcher");
+
+        this.bundler.resolver.watcher = Resolver.ResolveWatcher(*Watcher, onMaybeWatchDirectory).init(this.bun_watcher.?);
+
+        this.bun_watcher.?.start() catch @panic("Failed to start File Watcher");
+    }
+
+    pub fn onMaybeWatchDirectory(watch: *Watcher, file_path: string, dir_fd: StoredFileDescriptorType) void {
+        // We don't want to watch:
+        // - Directories outside the root directory
+        // - Directories inside node_modules
+        if (std.mem.indexOf(u8, file_path, "node_modules") == null and std.mem.indexOf(u8, file_path, watch.fs.top_level_dir) != null) {
+            watch.addDirectory(dir_fd, file_path, Watcher.getHash(file_path), false) catch {};
+        }
+    }
+
+    pub fn onFileUpdate(
+        this: *HotReloader,
+        events: []watcher.WatchEvent,
+        changed_files: []?[:0]u8,
+        watchlist: watcher.Watchlist,
+    ) void {
+        var slice = watchlist.slice();
+        const file_paths = slice.items(.file_path);
+        var counts = slice.items(.count);
+        const kinds = slice.items(.kind);
+        const hashes = slice.items(.hash);
+        var file_descriptors = slice.items(.fd);
+        var ctx = this.vm.bun_watcher.?;
+        defer ctx.flushEvictions();
+        defer Output.flush();
+
+        var bundler = &this.vm.bundler;
+        var fs: *Fs.FileSystem = bundler.fs;
+        var rfs: *Fs.FileSystem.RealFS = &fs.fs;
+        var resolver = &bundler.resolver;
+        var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+
+        var current_task: HotReloadTask = .{
+            .reloader = this,
+        };
+        defer current_task.enqueue();
+
+        for (events) |event| {
+            const file_path = file_paths[event.index];
+            const update_count = counts[event.index] + 1;
+            counts[event.index] = update_count;
+            const kind = kinds[event.index];
+
+            // so it's consistent with the rest
+            // if we use .extname we might run into an issue with whether or not the "." is included.
+            // const path = Fs.PathName.init(file_path);
+            const id = hashes[event.index];
+
+            if (comptime Environment.isDebug) {
+                Output.prettyErrorln("[watcher] {s}: -- {}", .{ @tagName(kind), event.op });
+            }
+
+            switch (kind) {
+                .file => {
+                    if (event.op.delete or event.op.rename) {
+                        ctx.removeAtIndex(
+                            event.index,
+                            0,
+                            &.{},
+                            .file,
+                        );
+                    }
+
+                    if (comptime bun.FeatureFlags.verbose_watcher) {
+                        Output.prettyErrorln("<r><d>File changed: {s}<r>", .{fs.relativeTo(file_path)});
+                    }
+
+                    if (event.op.write) {
+                        current_task.append(id);
+                    }
+                },
+                .directory => {
+                    const affected = event.names(changed_files);
+                    var entries_option: ?*Fs.FileSystem.RealFS.EntriesOption = null;
+                    if (affected.len > 0) {
+                        entries_option = rfs.entries.get(file_path);
+                    }
+
+                    rfs.bustEntriesCache(file_path);
+                    resolver.dir_cache.remove(file_path);
+
+                    if (entries_option) |dir_ent| {
+                        var last_file_hash: Watcher.HashType = std.math.maxInt(Watcher.HashType);
+                        for (affected) |changed_name_ptr| {
+                            const changed_name: []const u8 = std.mem.span((changed_name_ptr orelse continue));
+                            if (changed_name.len == 0 or changed_name[0] == '~' or changed_name[0] == '.') continue;
+
+                            const loader = (bundler.options.loaders.get(Fs.PathName.init(changed_name).ext) orelse .file);
+                            if (loader.isJavaScriptLikeOrJSON() or loader == .css) {
+                                var path_string: bun.PathString = undefined;
+                                var file_hash: Watcher.HashType = last_file_hash;
+                                const abs_path: string = brk: {
+                                    if (dir_ent.entries.get(changed_name)) |file_ent| {
+                                        // reset the file descriptor
+                                        file_ent.entry.cache.fd = 0;
+                                        file_ent.entry.need_stat = true;
+                                        path_string = file_ent.entry.abs_path;
+                                        file_hash = Watcher.getHash(path_string.slice());
+                                        for (hashes) |hash, entry_id| {
+                                            if (hash == file_hash) {
+                                                file_descriptors[entry_id] = 0;
+                                                break;
+                                            }
+                                        }
+
+                                        break :brk path_string.slice();
+                                    } else {
+                                        var file_path_without_trailing_slash = std.mem.trimRight(u8, file_path, std.fs.path.sep_str);
+                                        @memcpy(&_on_file_update_path_buf, file_path_without_trailing_slash.ptr, file_path_without_trailing_slash.len);
+                                        _on_file_update_path_buf[file_path_without_trailing_slash.len] = std.fs.path.sep;
+
+                                        @memcpy(_on_file_update_path_buf[file_path_without_trailing_slash.len + 1 ..].ptr, changed_name.ptr, changed_name.len);
+                                        const path_slice = _on_file_update_path_buf[0 .. file_path_without_trailing_slash.len + changed_name.len + 1];
+                                        file_hash = Watcher.getHash(path_slice);
+                                        break :brk path_slice;
+                                    }
+                                };
+
+                                // skip consecutive duplicates
+                                if (last_file_hash == file_hash) continue;
+                                last_file_hash = file_hash;
+
+                                Output.prettyErrorln("<r>   <d>File change: {s}<r>", .{fs.relativeTo(abs_path)});
+                            }
+                        }
+                    }
+
+                    // if (event.op.delete or event.op.rename)
+                    //     ctx.watcher.removeAtIndex(event.index, hashes[event.index], parent_hashes, .directory);
+                    if (comptime false) {
+                        Output.prettyErrorln("<r>📁  <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                    } else {
+                        Output.prettyErrorln("<r>    <d>Dir change: {s}<r>", .{fs.relativeTo(file_path)});
+                    }
+                },
+            }
+        }
     }
 };

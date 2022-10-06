@@ -254,8 +254,6 @@ pub const Response = struct {
 
     pub fn mimeTypeWithDefault(response: *const Response, default: MimeType, request_ctx_: ?*const RequestContext) string {
         if (response.header(.ContentType)) |content_type| {
-            // Remember, we always lowercase it
-            // hopefully doesn't matter here tho
             return content_type;
         }
 
@@ -271,10 +269,29 @@ pub const Response = struct {
                     return blob.content_type;
                 }
 
+                // auto-detect HTML if unspecified
+                if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
+                    return MimeType.html.value;
+                }
+
                 return default.value;
             },
-            .InlineBlob => return response.body.value.InlineBlob.contentType(),
-            .InternalBlob => return response.body.value.InternalBlob.contentType(),
+            .InlineBlob => {
+                // auto-detect HTML if unspecified
+                if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
+                    return MimeType.html.value;
+                }
+
+                return response.body.value.InlineBlob.contentType();
+            },
+            .InternalBlob => {
+                // auto-detect HTML if unspecified
+                if (strings.hasPrefixComptime(response.body.value.slice(), "<!DOCTYPE html>")) {
+                    return MimeType.html.value;
+                }
+
+                return response.body.value.InternalBlob.contentType();
+            },
             .Used, .Locked, .Empty, .Error => return default.value,
         }
     }

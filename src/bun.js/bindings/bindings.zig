@@ -1820,6 +1820,10 @@ pub const JSFunction = extern struct {
     pub fn calculatedDisplayName(this: *JSFunction, vm: *VM) String {
         return cppFn("calculatedDisplayName", .{ this, vm });
     }
+
+    pub fn optimizeSoon(value: JSValue) void {
+        cppFn("optimizeSoon", .{value});
+    }
     // pub fn toString(this: *JSFunction, globalThis: *JSGlobalObject) *const JSString {
     //     return cppFn("toString", .{ this, globalThis });
     // }
@@ -1831,6 +1835,7 @@ pub const JSFunction = extern struct {
         "getName",
         "displayName",
         "calculatedDisplayName",
+        "optimizeSoon",
     };
 };
 
@@ -1853,6 +1858,13 @@ pub const JSGlobalObject = extern struct {
     ) void {
         var err = JSC.toInvalidArguments(fmt, args, this);
         this.vm().throwError(this, err);
+    }
+
+    pub fn reload(this: *JSC.JSGlobalObject) void {
+        this.vm().drainMicrotasks();
+        this.vm().collectAsync();
+
+        return cppFn("reload", .{this});
     }
 
     pub const BunPluginTarget = enum(u8) {
@@ -2119,6 +2131,7 @@ pub const JSGlobalObject = extern struct {
     }
 
     pub const Extern = [_][]const u8{
+        "reload",
         "bunVM",
         "putCachedObject",
         "getCachedObject",

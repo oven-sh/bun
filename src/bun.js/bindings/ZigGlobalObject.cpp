@@ -1377,6 +1377,10 @@ extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig:
     if (UNLIKELY(!readableStream))
         return;
 
+    if (!ReadableStream(*globalObject, *readableStream).isLocked()) {
+        return;
+    }
+
     WebCore::Exception exception { AbortError };
     ReadableStream(*globalObject, *readableStream).cancel(exception);
 }
@@ -2313,6 +2317,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     putDirectBuiltinFunction(vm, this, builtinNames.createNativeReadableStreamPrivateName(), readableStreamCreateNativeReadableStreamCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectBuiltinFunction(vm, this, builtinNames.requireESMPrivateName(), importMetaObjectRequireESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    putDirectBuiltinFunction(vm, this, builtinNames.requirePrivateName(), importMetaObjectRequireCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectBuiltinFunction(vm, this, builtinNames.loadCJS2ESMPrivateName(), importMetaObjectLoadCJS2ESMCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 
     putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::Function);
@@ -2732,6 +2737,24 @@ DEFINE_VISIT_CHILDREN(GlobalObject);
 // }
 
 // DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
+
+void GlobalObject::reload()
+{
+    JSModuleLoader* moduleLoader = this->moduleLoader();
+    JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(
+        this,
+        Identifier::fromString(this->vm(), "registry"_s)));
+
+    registry->clear(this->vm());
+    this->requireMap()->clear(this->vm());
+    this->vm().heap.collectSync();
+}
+
+extern "C" void JSC__JSGlobalObject__reload(JSC__JSGlobalObject* arg0)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    globalObject->reload();
+}
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,

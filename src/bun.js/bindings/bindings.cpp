@@ -76,6 +76,7 @@
 #include "wtf/text/AtomString.h"
 #include "HTTPHeaderNames.h"
 #include "JSDOMPromiseDeferred.h"
+#include "JavaScriptCore/TestRunnerUtils.h"
 
 template<typename UWSResponse>
 static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
@@ -559,6 +560,13 @@ JSC__JSValue JSC__JSValue__createInternalPromise(JSC__JSGlobalObject* globalObje
     JSC::VM& vm = globalObject->vm();
     return JSC::JSValue::encode(
         JSC::JSValue(JSC::JSInternalPromise::create(vm, globalObject->internalPromiseStructure())));
+}
+
+void JSC__JSFunction__optimizeSoon(JSC__JSValue JSValue0)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+
+    JSC::optimizeNextInvocation(value);
 }
 
 void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2,

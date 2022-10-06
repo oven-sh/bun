@@ -184,6 +184,7 @@ pub extern fn JSC__SourceCode__fromString(arg0: [*c]JSC__SourceCode, arg1: [*c]c
 pub extern fn JSC__JSFunction__calculatedDisplayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSFunction__displayName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
 pub extern fn JSC__JSFunction__getName(arg0: [*c]JSC__JSFunction, arg1: [*c]JSC__VM) bWTF__String;
+pub extern fn JSC__JSFunction__optimizeSoon(JSValue0: JSC__JSValue) void;
 pub extern fn JSC__JSGlobalObject__arrayIteratorPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.ArrayIteratorPrototype;
 pub extern fn JSC__JSGlobalObject__arrayPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.ArrayPrototype;
 pub extern fn JSC__JSGlobalObject__asyncFunctionPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.AsyncFunctionPrototype;
@@ -213,6 +214,7 @@ pub extern fn JSC__JSGlobalObject__objectPrototype(arg0: ?*JSC__JSGlobalObject) 
 pub extern fn JSC__JSGlobalObject__promisePrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.JSPromisePrototype;
 pub extern fn JSC__JSGlobalObject__putCachedObject(arg0: ?*JSC__JSGlobalObject, arg1: [*c]const ZigString, JSValue2: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSGlobalObject__regExpPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.RegExpPrototype;
+pub extern fn JSC__JSGlobalObject__reload(arg0: ?*JSC__JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__setIteratorPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.SetIteratorPrototype;
 pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: ?*JSC__JSGlobalObject, arg1: [*c]u8, arg2: u16) bool;
 pub extern fn JSC__JSGlobalObject__stringPrototype(arg0: ?*JSC__JSGlobalObject) ?*bindings.StringPrototype;

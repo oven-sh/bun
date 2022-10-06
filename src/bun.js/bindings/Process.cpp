@@ -12,6 +12,8 @@ namespace Zig {
 
 using namespace JSC;
 
+#define REPORTED_NODE_VERSION "18.10.1"
+
 using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
@@ -330,7 +332,7 @@ void Process::finishCreation(JSC::VM& vm)
         JSC::JSValue(JSC::jsNumber(0)));
 
     this->putDirect(this->vm(), clientData->builtinNames().versionPublicName(),
-        JSC::jsString(this->vm(), makeAtomString(Bun__version)));
+        JSC::jsString(this->vm(), makeAtomString(REPORTED_NODE_VERSION)));
 
     // this gives some way of identifying at runtime whether the SSR is happening in node or not.
     // this should probably be renamed to what the name of the bundler is, instead of "notNodeJS"
@@ -470,27 +472,27 @@ JSC_DEFINE_CUSTOM_GETTER(Process_getVersionsLazy,
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 9);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString("16.14.0"))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(REPORTED_NODE_VERSION))));
     object->putDirect(
         vm, JSC::Identifier::fromString(vm, "bun"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__version + 1 /* prefix with v */))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__version + 1 /* prefix with v */))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString(BUN_WEBKIT_VERSION))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(BUN_WEBKIT_VERSION))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_mimalloc))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_mimalloc))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_libarchive))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_libarchive))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_picohttpparser))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_picohttpparser))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_boringssl))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_boringssl))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_zlib))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_zlib))));
     object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString(Bun__versions_zig))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__versions_zig))));
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s),
-        JSC::JSValue(JSC::jsString(vm, makeAtomString("67"))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString("67"))));
 
     thisObject->putDirect(vm, clientData->builtinNames().versionsPrivateName(), object);
     return JSC::JSValue::encode(object);

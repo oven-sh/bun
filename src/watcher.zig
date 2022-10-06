@@ -287,10 +287,6 @@ pub const WatchEvent = struct {
 
 pub const Watchlist = std.MultiArrayList(WatchItem);
 
-// This implementation only works on macOS, for now.
-// The Internet seems to suggest basically always using FSEvents instead of kqueue
-// It seems like the main concern is max open file descriptors
-// Since we adjust the ulimit already, I think we can avoid that.
 pub fn NewWatcher(comptime ContextType: type) type {
     return struct {
         const Watcher = @This();
@@ -425,23 +421,24 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 std.debug.assert(DarwinWatcher.fd > 0);
                 const KEvent = std.c.Kevent;
 
-                var changelist_array: [1]KEvent = std.mem.zeroes([1]KEvent);
+                var changelist_array: [128]KEvent = std.mem.zeroes([128]KEvent);
                 var changelist = &changelist_array;
                 while (true) {
                     defer Output.flush();
 
-                    _ = std.os.system.kevent(
+                    const count_ = std.os.system.kevent(
                         DarwinWatcher.fd,
                         @as([*]KEvent, changelist),
                         0,
                         @as([*]KEvent, changelist),
-                        1,
+                        128,
 
                         null,
                     );
 
-                    var watchevents = this.watch_events[0..1];
-                    for (changelist) |event, i| {
+                    var changes = changelist[0..@intCast(usize, @maximum(0, count_))];
+                    var watchevents = this.watch_events[0..changes.len];
+                    for (changes) |event, i| {
                         watchevents[i].fromKEvent(event);
                     }
 

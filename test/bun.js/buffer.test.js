@@ -4,6 +4,15 @@ import { gc } from "./gc";
 beforeEach(() => gc());
 afterEach(() => gc());
 
+it("Buffer.toJSON()", () => {
+  expect(JSON.stringify(Buffer.from("hello"))).toBe(
+    JSON.stringify({
+      type: "Buffer",
+      data: [104, 101, 108, 108, 111],
+    })
+  );
+});
+
 it("buffer", () => {
   var buf = new Buffer(20);
   gc();

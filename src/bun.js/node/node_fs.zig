@@ -770,6 +770,8 @@ const Arguments = struct {
     pub const RmDir = struct {
         path: PathLike,
 
+        force: bool = false,
+
         max_retries: u32 = 0,
         recursive: bool = false,
         retry_delay: c_uint = 100,
@@ -789,12 +791,17 @@ const Arguments = struct {
 
             if (exception.* != null) return null;
             var recursive = false;
+            var force = false;
             if (arguments.next()) |val| {
                 arguments.eat();
 
                 if (val.isObject()) {
-                    if (val.getIfPropertyExists(ctx.ptr(), "recursive")) |recursive_| {
-                        recursive = recursive_.toBoolean();
+                    if (val.get(ctx.ptr(), "recursive")) |boolean| {
+                        recursive = boolean.toBoolean();
+                    }
+
+                    if (val.get(ctx.ptr(), "force")) |boolean| {
+                        force = boolean.toBoolean();
                     }
                 }
             }
@@ -802,6 +809,7 @@ const Arguments = struct {
             return RmDir{
                 .path = path,
                 .recursive = recursive,
+                .force = force,
             };
         }
     };
@@ -3653,16 +3661,49 @@ pub const NodeFS = struct {
                 var dest = args.path.sliceZ(&this.sync_error_buf);
 
                 if (comptime Environment.isMac) {
-                    var flags: u32 = 0;
-                    if (args.recursive) {
-                        flags |= bun.C.darwin.RemoveFileFlags.cross_mount;
-                        flags |= bun.C.darwin.RemoveFileFlags.allow_long_paths;
-                        flags |= bun.C.darwin.RemoveFileFlags.recursive;
-                    }
+                    while (true) {
+                        var flags: u32 = 0;
+                        if (args.recursive) {
+                            flags |= bun.C.darwin.RemoveFileFlags.cross_mount;
+                            flags |= bun.C.darwin.RemoveFileFlags.allow_long_paths;
+                            flags |= bun.C.darwin.RemoveFileFlags.recursive;
+                        }
 
-                    switch (bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags)) {
-                        0 => return Maybe(Return.Rm).success,
-                        else => |err| return Maybe(Return.Rm).errnoSys(err, .unlink).?,
+                        if (Maybe(Return.Rm).errnoSys(bun.C.darwin.removefileat(std.os.AT.FDCWD, dest, null, flags), .unlink)) |errno| {
+                            switch (@intToEnum(os.E, errno.err.errno)) {
+                                .AGAIN, .INTR => continue,
+                                .NOENT => {
+                                    if (args.force) {
+                                        return Maybe(Return.Rm).success;
+                                    }
+
+                                    return errno;
+                                },
+
+                                .MLINK => {
+                                    var copy: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                    @memcpy(&copy, dest.ptr, dest.len);
+                                    copy[dest.len] = 0;
+                                    var dest_copy = copy[0..dest.len :0];
+                                    switch (Syscall.unlink(dest_copy).getErrno()) {
+                                        .AGAIN, .INTR => continue,
+                                        .NOENT => {
+                                            if (args.force) {
+                                                continue;
+                                            }
+
+                                            return errno;
+                                        },
+                                        .SUCCESS => continue,
+                                        else => return errno,
+                                    }
+                                },
+                                .SUCCESS => unreachable,
+                                else => return errno,
+                            }
+                        }
+
+                        return Maybe(Return.Rm).success;
                     }
                 } else if (comptime Environment.isLinux) {
                     // TODO:

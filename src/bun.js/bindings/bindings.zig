@@ -1820,6 +1820,10 @@ pub const JSFunction = extern struct {
     pub fn calculatedDisplayName(this: *JSFunction, vm: *VM) String {
         return cppFn("calculatedDisplayName", .{ this, vm });
     }
+
+    pub fn optimizeSoon(value: JSValue) void {
+        cppFn("optimizeSoon", .{value});
+    }
     // pub fn toString(this: *JSFunction, globalThis: *JSGlobalObject) *const JSString {
     //     return cppFn("toString", .{ this, globalThis });
     // }
@@ -1831,6 +1835,7 @@ pub const JSFunction = extern struct {
         "getName",
         "displayName",
         "calculatedDisplayName",
+        "optimizeSoon",
     };
 };
 

@@ -851,6 +851,24 @@ pub const VirtualMachine = struct {
                         .hash = 0,
                     };
                 },
+                .@"node:path/win32" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile("path-win32.exports.js")),
+                        .specifier = ZigString.init("node:path/win32"),
+                        .source_url = ZigString.init("node:path/win32"),
+                        .hash = 0,
+                    };
+                },
+                .@"node:path/posix" => {
+                    return ResolvedSource{
+                        .allocator = null,
+                        .source_code = ZigString.init(jsModuleFromFile("path-posix.exports.js")),
+                        .specifier = ZigString.init("node:path/posix"),
+                        .source_url = ZigString.init("node:path/posix"),
+                        .hash = 0,
+                    };
+                },
 
                 .@"node:os" => {
                     return ResolvedSource{
@@ -1471,9 +1489,7 @@ pub const VirtualMachine = struct {
 
         this.waitForPromise(promise);
 
-        if (this.eventLoop().start_server_on_next_tick) {
-            this.uws_event_loop.?.tick();
-        }
+        this.eventLoop().autoTick();
 
         return promise;
     }
@@ -2617,6 +2633,8 @@ pub const HardcodedModule = enum {
     @"node:module",
     @"node:os",
     @"node:path",
+    @"node:path/posix",
+    @"node:path/win32",
     @"node:perf_hooks",
     @"node:process",
     @"node:stream",
@@ -2653,8 +2671,8 @@ pub const HardcodedModule = enum {
             .{ "node:module", HardcodedModule.@"node:module" },
             .{ "node:os", HardcodedModule.@"node:os" },
             .{ "node:path", HardcodedModule.@"node:path" },
-            .{ "node:path/posix", HardcodedModule.@"node:path" },
-            .{ "node:path/win32", HardcodedModule.@"node:path" },
+            .{ "node:path/posix", HardcodedModule.@"node:path/posix" },
+            .{ "node:path/win32", HardcodedModule.@"node:path/win32" },
             .{ "node:perf_hooks", HardcodedModule.@"node:perf_hooks" },
             .{ "node:process", HardcodedModule.@"node:process" },
             .{ "node:stream", HardcodedModule.@"node:stream" },
@@ -2697,8 +2715,8 @@ pub const HardcodedModule = enum {
             .{ "node:module", "node:module" },
             .{ "node:os", "node:os" },
             .{ "node:path", "node:path" },
-            .{ "node:path/posix", "node:path" },
-            .{ "node:path/win32", "node:path" },
+            .{ "node:path/posix", "node:path/posix" },
+            .{ "node:path/win32", "node:path/win32" },
             .{ "node:perf_hooks", "node:perf_hooks" },
             .{ "node:process", "node:process" },
             .{ "node:stream", "node:stream" },
@@ -2711,8 +2729,8 @@ pub const HardcodedModule = enum {
             .{ "node:url", "node:url" },
             .{ "os", "node:os" },
             .{ "path", "node:path" },
-            .{ "path/posix", "node:path" },
-            .{ "path/win32", "node:path" },
+            .{ "path/posix", "node:path/posix" },
+            .{ "path/win32", "node:path/win32" },
             .{ "perf_hooks", "node:perf_hooks" },
             .{ "process", "node:process" },
             .{ "stream", "node:stream" },

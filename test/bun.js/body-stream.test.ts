@@ -95,6 +95,8 @@ var port = 40001;
               async (url) => {
                 var response;
 
+                // once, then batch of 5
+
                 if (useRequestObject) {
                   response = await fetch(
                     new Request({
@@ -122,6 +124,46 @@ var port = 40001;
                 );
                 expect(response.headers.get("content-type")).toBe("text/plain");
                 expect(await response.text()).toBe(name);
+
+                var promises = new Array(5);
+                for (let i = 0; i < 5; i++) {
+                  if (useRequestObject) {
+                    promises[i] = await fetch(
+                      new Request({
+                        body: input,
+                        method: "POST",
+                        url: url,
+                        headers: {
+                          "content-type": "text/plain",
+                          "x-counter": i,
+                        },
+                      })
+                    );
+                  } else {
+                    promises[i] = await fetch(url, {
+                      body: input,
+                      method: "POST",
+                      headers: {
+                        "content-type": "text/plain",
+                        "x-counter": i,
+                      },
+                    });
+                  }
+                }
+
+                const results = await Promise.all(promises);
+                for (let i = 0; i < 5; i++) {
+                  const response = results[i];
+                  expect(response.status).toBe(200);
+                  expect(response.headers.get("content-length")).toBe(
+                    String(Buffer.from(input).byteLength)
+                  );
+                  expect(response.headers.get("content-type")).toBe(
+                    "text/plain"
+                  );
+                  expect(response.headers.get("x-counter")).toBe(String(i));
+                  expect(await response.text()).toBe(name);
+                }
               }
             );
           });

@@ -17356,76 +17356,153 @@ fn NewParser_(
         ) []Stmt {
             switch (stmtorexpr) {
                 .stmt => |stmt| {
-                    if (stmt.data != .s_class) {
-                        // syntax error?
-                    }
-
                     var class = stmt.data.s_class.class;
-                    var stmts = p.allocator.alloc(Stmt, 2) catch unreachable;
-                    stmts[0] = stmt;
+                    var ctor: ?*E.Function = null;
 
+                    var hasDecorators: bool = class.ts_decorators.len > 0;
                     for (class.properties) |prop| {
-                        if (prop.flags.contains(Flags.Property.is_method)) {
-                            if (prop.ts_decorators.len > 0) {
-
-                                // Instance properties use the prototype, static properties use the class
-                                // var target js_ast.Expr
-                                // if prop.Flags.Has(js_ast.PropertyIsStatic) {
-                                // 	target = nameFunc()
-                                // } else {
-                                // 	target = js_ast.Expr{Loc: loc, Data: &js_ast.EDot{Target: nameFunc(), Name: "prototype", NameLoc: loc}}
-                                // }
-
-                                // decorator := p.callRuntime(loc, "__decorateClass", []js_ast.Expr{
-                                // 	{Loc: loc, Data: &js_ast.EArray{Items: prop.TSDecorators}},
-                                // 	target,
-                                // 	descriptorKey,
-                                // 	{Loc: loc, Data: &js_ast.ENumber{Value: descriptorKind}},
-                                // })
-
-                                std.debug.print("prop has decorator and is a method", .{});
-                                var loc = prop.key.?.loc;
-
-                                var args = p.allocator.alloc(Expr, 4) catch unreachable;
-                                args[0] = p.e(E.Array{ .items = prop.ts_decorators }, loc);
-                                // args[1] = p.e(E.Dot{ .target = js_ast.Expr, .name = "prototype", .name_loc = loc }, loc);
-                                switch (prop.key.?.data) {
-                                    .e_identifier => |k| {
-                                        args[2] = p.e(E.Identifier{ .ref = k.ref }, loc);
-                                    },
-                                    .e_number => |k| {
-                                        args[2] = p.e(E.Number{ .value = k.value }, loc);
-                                    },
-                                    .e_string => |k| {
-                                        args[2] = p.e(E.String{ .data = k.data }, loc);
-                                    },
-                                    else => {},
-                                }
-
-                                args[3] = p.e(E.Number{ .value = 2 }, loc);
-                                // var decorator = p.callRuntime(
-                                //     loc,
-                                //     "__decorateClass",
-                                // );
-                                // stmts[1] = p.e({p.callRuntime(loc, "__decorateClass", args)}, loc);
-                            }
+                        if (prop.ts_decorators.len > 0) {
+                            hasDecorators = true;
+                            break;
                         }
                     }
+
+                    if (!hasDecorators) {
+                        var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;
+                        stmts[0] = stmt;
+                        return stmts;
+                    }
+
+                    var stmts = ListManaged(Stmt).init(p.allocator);
+
+                    var instanceMembers = ListManaged(Stmt).init(p.allocator);
+
+                    var staticMembers = ListManaged(Stmt).init(p.allocator);
+                    var instanceDecorators = ListManaged(Stmt).init(p.allocator);
+                    var staticDecorators = ListManaged(Stmt).init(p.allocator);
+
+                    var updatedClassProps = ListManaged(G.Property).init(p.allocator);
+
+                    for (class.properties) |prop| {
+
+                        // handle decorators
+                        if (prop.ts_decorators.len > 0) {
+                            var loc = prop.key.?.loc;
+                            var descriptorKind: f64 = 1;
+                            if (!prop.flags.contains(.is_method)) {
+                                descriptorKind = 2;
+                            }
+
+                            var descriptorKey = switch (prop.key.?.data) {
+                                .e_identifier => |k| p.e(E.Identifier{ .ref = k.ref }, loc),
+                                .e_number => |k| p.e(E.Number{ .value = k.value }, loc),
+                                .e_string => |k| p.e(E.String{ .data = k.data }, loc),
+                                else => undefined,
+                            };
+
+                            var args = p.allocator.alloc(Expr, 4) catch unreachable;
+                            args[0] = p.e(E.Array{ .items = prop.ts_decorators }, loc);
+                            args[1] = p.e(E.Dot{ .target = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc), .name = "prototype", .name_loc = loc }, loc);
+                            args[2] = descriptorKey;
+                            args[3] = p.e(E.Number{ .value = descriptorKind }, loc);
+
+                            var decorator = p.callRuntime(prop.key.?.loc, "__decorateClass", args);
+                            var decoratorStmt = p.s(S.SExpr{ .value = decorator }, decorator.loc);
+
+                            if (prop.flags.contains(.is_static)) {
+                                staticDecorators.append(decoratorStmt) catch unreachable;
+                            } else {
+                                instanceDecorators.append(decoratorStmt) catch unreachable;
+                            }
+                        }
+
+                        // handle fields
+                        if (!prop.flags.contains(.is_method)) {
+                            var loc = prop.key.?.loc;
+                            var initialValue: js_ast.Expr = undefined;
+                            if (prop.initializer != null) {
+                                initialValue = prop.initializer.?;
+                            } else {
+                                initialValue = p.e(E.Undefined{}, loc);
+                            }
+
+                            var target = p.e(E.This{}, loc);
+                            target = p.e(E.Dot{ .target = target, .name = prop.key.?.data.e_string.data, .name_loc = loc }, loc);
+
+                            instanceMembers.append(p.s(S.SExpr{ .value = Expr.assign(target, initialValue, p.allocator) }, loc)) catch unreachable;
+                        }
+
+                        // handle methods
+                        if (prop.flags.contains(.is_method)) {
+                            if (prop.value.?.data == .e_function and prop.key.?.data == .e_string and
+                                prop.key.?.data.e_string.eqlComptime("constructor"))
+                            {
+                                ctor = prop.value.?.data.e_function;
+                            }
+                            updatedClassProps.append(prop) catch unreachable;
+                        }
+                    }
+
+                    class.properties = updatedClassProps.toOwnedSlice();
+
+                    if (instanceMembers.items.len > 0) {
+                        // create constructor if needed
+                        if (ctor == null) {
+                            ctor = &(E.Function{
+                                .func = G.Fn{
+                                    .name = null,
+                                    .open_parens_loc = logger.Loc.Empty,
+                                    .args = &([_]Arg{}),
+
+                                    // might need super() before these statements
+                                    .body = .{ .loc = stmt.loc, .stmts = instanceMembers.toOwnedSlice() },
+                                    .flags = Flags.Function.init(.{}),
+                                },
+                            });
+
+                            var properties = ListManaged(G.Property).fromOwnedSlice(p.allocator, class.properties);
+
+                            // move ctor to first index
+                            properties.insert(0, G.Property{
+                                .flags = Flags.Property.init(.{ .is_method = true }),
+                                .key = p.e(E.String{ .data = "constructor" }, stmt.loc),
+                                .value = p.e(ctor.?, stmt.loc),
+                            }) catch unreachable;
+
+                            class.properties = properties.toOwnedSlice();
+                        } else {
+                            // constructor already exists, append initializers
+                            var ctorStmts = ListManaged(Stmt).fromOwnedSlice(p.allocator, ctor.?.func.body.stmts);
+                            ctorStmts.appendSlice(instanceMembers.toOwnedSlice()) catch unreachable;
+                            ctor.?.func.body.stmts = ctorStmts.toOwnedSlice();
+                        }
+                    }
+
+                    // append class
+                    if (class.ts_decorators.len > 0) {} else {
+                        stmts.append(p.s(S.Class{ .class = class }, class.class_name.?.loc)) catch unreachable;
+                    }
+
+                    stmts.appendSlice(staticMembers.toOwnedSlice()) catch unreachable;
+                    stmts.appendSlice(instanceDecorators.toOwnedSlice()) catch unreachable;
+                    stmts.appendSlice(staticDecorators.toOwnedSlice()) catch unreachable;
 
                     if (class.ts_decorators.len > 0) {
                         var class_loc = stmt.loc;
                         var args = p.allocator.alloc(Expr, 2) catch unreachable;
-
                         args[0] = p.e(E.Array{ .items = class.ts_decorators }, class_loc);
                         args[1] = p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc);
-                        stmts[2] = Expr.assignStmt(
+                        stmts.append(Expr.assignStmt(
                             p.e(E.Identifier{ .ref = class.class_name.?.ref.? }, class.class_name.?.loc),
                             p.callRuntime(class_loc, "__decorateClass", args),
                             p.allocator,
-                        );
+                        )) catch unreachable;
+
+                        p.recordUsage(class.class_name.?.ref.?);
+                        p.recordUsage(class.class_name.?.ref.?);
                     }
 
-                    return stmts;
+                    return stmts.toOwnedSlice();
                 },
                 .expr => |expr| {
                     var stmts = p.allocator.alloc(Stmt, 1) catch unreachable;

@@ -3015,11 +3015,9 @@ pub const FileBlobLoader = struct {
     user_chunk_size: Blob.SizeType = 0,
     scheduled_count: u32 = 0,
     concurrent: Concurrent = Concurrent{},
-    input_tag: StreamResult.Tag = StreamResult.Tag.done,
     started: bool = false,
     stored_global_this_: ?*JSC.JSGlobalObject = null,
     poll_ref: JSC.PollRef = .{},
-
     has_adjusted_pipe_size_on_linux: bool = false,
 
     pub usingnamespace NewReadyWatcher(@This(), .read, ready);
@@ -3316,7 +3314,6 @@ pub const FileBlobLoader = struct {
 
     pub fn onPullInto(this: *FileBlobLoader, buffer: []u8, view: JSC.JSValue) StreamResult {
         const chunk_size = this.calculateChunkSize(std.math.maxInt(usize));
-        this.input_tag = .into_array;
         std.debug.assert(this.started);
 
         switch (chunk_size) {
@@ -3401,7 +3398,7 @@ pub const FileBlobLoader = struct {
         // if it's a pipe, we really don't know what to expect what the max size will be
         // if the pipe is sending us WAY bigger data than what we can fit in the buffer
         // we allocate a new buffer of up to 4 MB
-        if (std.os.S.ISFIFO(this.mode)) {
+        if (std.os.S.ISFIFO(this.mode) and view != .zero) {
             outer: {
                 var len: c_int = available_to_read orelse 0;
 
@@ -3473,9 +3470,11 @@ pub const FileBlobLoader = struct {
                             buf_to_use = read_buf;
                         }
 
-                        this.view.set(this.globalThis(), view);
-                        this.buf = read_buf;
-                        this.watch(this.fd);
+                        if (view != .zero) {
+                            this.view.set(this.globalThis(), view);
+                            this.buf = read_buf;
+                            this.watch(this.fd);
+                        }
 
                         return .{
                             .pending = &this.pending,
